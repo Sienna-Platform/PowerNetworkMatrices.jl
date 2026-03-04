@@ -41,8 +41,12 @@ function clean_old_generated_files(dir::String)
         @warn "Directory does not exist: $dir"
         return
     end
-    generated_files =
-        filter(f -> startswith(f, "generated_") && endswith(f, ".md"), readdir(dir))
+    generated_files = filter(
+        f ->
+            startswith(f, "generated_") &&
+                (endswith(f, ".md") || endswith(f, ".ipynb")),
+        readdir(dir),
+    )
     for file in generated_files
         rm(joinpath(dir, file); force = true)
         @info "Removed old generated file: $file"
@@ -52,6 +56,31 @@ end
 #########################################################
 # Literate post-processing functions for tutorial generation
 #########################################################
+
+# Compute base URL for the docs site based on Documenter's deploy context.
+# This ensures that links generated in notebooks point to the correct
+# location for stable, dev, and preview builds.
+function _compute_docs_base_url()
+    base = "https://nrel-sienna.github.io/PowerNetworkMatrices.jl"
+
+    current_version = get(ENV, "DOCUMENTER_CURRENT_VERSION", "")
+
+    # Preview builds (e.g. "previews/PR123")
+    if startswith(current_version, "previews/PR")
+        return "$base/$current_version"
+    end
+
+    # Dev builds
+    if current_version == "dev"
+        dev_suffix = get(ENV, "DOCUMENTER_DEVURL", "dev")
+        return "$base/$dev_suffix"
+    end
+
+    # Default to stable (also covers tagged versions where content is shared)
+    return "$base/stable"
+end
+
+const _DOCS_BASE_URL = _compute_docs_base_url()
 
 # postprocess function to insert md
 function insert_md(content)
@@ -85,7 +114,8 @@ function preprocess_admonitions_for_notebook(str::AbstractString)
     out = String[]
     i = 1
     n = length(lines)
-    admonition_start = r"^# !!! (note|info|tip|warning|danger|compat|todo|details)(?:\s+\"([^\"]*)\")?\s*$"
+    admonition_start =
+        r"^# !!! (note|info|tip|warning|danger|compat|todo|details)(?:\s+\"([^\"]*)\")?\s*$"
     content_line = r"^#     (.*)$"  # Documenter admonition body: # then 4 spaces
     blank_comment = r"^#\s*$"      # # or # with only spaces
 
@@ -240,7 +270,6 @@ end
 
 # Add italicized "view online" comment after each image from ```@raw html ... ``` (or
 # the raw HTML / markdown form Literate writes). Used as a postprocess in Literate.notebook.
-# Expects _DOCS_BASE_URL to be defined by the includer (e.g. in make.jl).
 # Literate strips the backtick wrapper and outputs raw HTML; we match that multi-line block.
 function add_image_links(nb::Dict, outputfile_base::AbstractString)
     tutorial_url = "$_DOCS_BASE_URL/tutorials/$(outputfile_base)/"
@@ -251,16 +280,34 @@ function add_image_links(nb::Dict, outputfile_base::AbstractString)
         source = get(cell, "source", [])
         isempty(source) && continue
         text = join(source)
+        # Check if this cell already has the "view online" message to avoid duplicates
+        contains(text, "If image is not available when viewing in a Jupyter notebook") &&
+            continue
         suffix = "\n\n" * msg * "\n"
         append_after = m -> string(m) * suffix
-        # Literate outputs raw HTML (no ```@raw html```); match <p...>...<img...>...</p>
-        text = replace(text, r"<p[^>]*>[\s\S]*?<img[\s\S]*?</p>" => append_after)
-        # Standalone <img> (Literate converts @raw html to plain HTML in notebooks, no wrapper)
-        text = replace(text, r"<img[^>]*?/?>" => append_after)
-        # If source still had literal ```@raw html ... ``` in the notebook
-        text = replace(text, r"```@raw html[\s\S]*?```" => append_after)
-        # Markdown image ![...](...)
-        text = replace(text, r"!\[[^\]]*\]\([^\)]*\)" => append_after)
+        # Use a single non-overlapping regex to match image-containing fragments:
+        # - <p...>...<img...>...</p> (Literate raw HTML paragraphs)
+        # - ```@raw html ... ``` blocks
+        # - Markdown images ![...](...)
+        # - standalone <img> tags (only if not already matched by <p> wrapper)
+        # Define readable sub-patterns for each of the above cases.
+        p_with_img_pattern = r"<p[^>]*>[\s\S]*?<img[\s\S]*?</p>"
+        raw_html_block_pattern = r"```@raw html[\s\S]*?```"
+        markdown_image_pattern = r"!\[[^\]]*\]\([^\)]*\)"
+        standalone_img_pattern = r"<img[^>]*?/?>"
+        # Combine them into one non-overlapping regex to keep behaviour identical.
+        image_fragment_pattern = Regex(
+            "(?:" *
+            p_with_img_pattern.pattern * "|" *
+            raw_html_block_pattern.pattern * "|" *
+            markdown_image_pattern.pattern * "|" *
+            standalone_img_pattern.pattern * ")",
+        )
+        text = replace(
+            text,
+            image_fragment_pattern =>
+                append_after,
+        )
         # Convert back to notebook source array (lines, last without trailing \n if non-empty)
         lines = split(text, "\n"; keepempty = true)
         new_source = String[]
@@ -335,7 +382,8 @@ function make_tutorials()
                     credit = false,
                     execute = false,
                     preprocess = preprocess_admonitions_for_notebook,
-                    postprocess = nb -> add_image_links(add_pkg_status_to_notebook(nb), outputfile))
+                    postprocess = nb ->
+                        add_image_links(add_pkg_status_to_notebook(nb), outputfile))
             end
         end
     end
