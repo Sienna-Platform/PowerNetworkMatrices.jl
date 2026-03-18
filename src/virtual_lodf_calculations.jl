@@ -24,7 +24,9 @@ The VirtualLODF struct is indexed using branch names.
         tolerance clamping. Used for partial susceptance change computations.
 - `arc_susceptances::Vector{Float64}`:
         Effective susceptance for each arc, extracted from the BA matrix.
-        For arc j, this is the maximum absolute nonzero in BA column j.
+        For arc j, this is the absolute value of the first nonzero in BA column j.
+        BA columns always have the structure [+b, -b] (from-bus and to-bus entries),
+        so both nonzeros have the same magnitude.
 - `ref_bus_positions::Set{Int}`:
         Vector containing the indexes of the rows of the transposed BA matrix
         corresponding to the reference buses.
@@ -131,16 +133,19 @@ end
 
 """
 Extract the effective susceptance for each arc from the BA matrix.
-For arc j, the susceptance is the maximum absolute value in BA column j.
+For arc j, the susceptance is the absolute value of the first nonzero in BA column j.
+BA columns always have the structure [+b, -b] (from-bus and to-bus entries),
+so both nonzeros have the same magnitude.
 """
 function _extract_arc_susceptances(
     BA::SparseArrays.SparseMatrixCSC{Float64, Int},
 )::Vector{Float64}
     n_arcs = size(BA, 2)
     b = Vector{Float64}(undef, n_arcs)
+    nzv = SparseArrays.nonzeros(BA)
     for j in 1:n_arcs
-        nzvals = SparseArrays.nonzeros(view(BA, :, j))
-        b[j] = isempty(nzvals) ? 0.0 : maximum(abs, nzvals)
+        rng = nzrange(BA, j)
+        b[j] = isempty(rng) ? 0.0 : abs(nzv[first(rng)])
     end
     return b
 end
