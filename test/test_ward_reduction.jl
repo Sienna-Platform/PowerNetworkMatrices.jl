@@ -12,6 +12,21 @@ function _basic_test_ward_reduction(sys, study_buses)
         @test external_bus ∉ keys(wr.bus_reduction_map)
         @test external_bus ∈ keys(wr.reverse_bus_search_map)
     end
+    # Validate boundary_bus_to_removed_arcs: for each boundary bus, its arc set should
+    # match the set of arcs in the original system that connect it to external buses
+    A_full = IncidenceMatrix(sys)
+    study_buses_set = Set(study_buses)
+    expected_bb_to_arcs = Dict{Int, Set{Tuple{Int, Int}}}()
+    for arc in PNM.get_arc_axis(A_full)
+        if arc[1] ∈ study_buses_set && arc[2] ∉ study_buses_set
+            set = get!(expected_bb_to_arcs, arc[1], Set{Tuple{Int, Int}}())
+            push!(set, arc)
+        elseif arc[2] ∈ study_buses_set && arc[1] ∉ study_buses_set
+            set = get!(expected_bb_to_arcs, arc[2], Set{Tuple{Int, Int}}())
+            push!(set, arc)
+        end
+    end
+    @test wr.boundary_bus_to_removed_arcs == expected_bb_to_arcs
 end
 
 function _check_for_repeated_arcs(matrix)
