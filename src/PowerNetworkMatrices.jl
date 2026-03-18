@@ -7,6 +7,7 @@ export find_subnetworks
 export from_hdf5
 export get_ptdf_data
 export get_lodf_data
+export get_partial_lodf_row
 export get_bus_reduction_map
 export get_ward_reduction
 export get_reductions

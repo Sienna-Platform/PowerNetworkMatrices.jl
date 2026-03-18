@@ -363,3 +363,119 @@ end
 function get_tol(mat::VirtualLODF)
     return mat.tol[]
 end
+
+"""
+    _getindex_partial(vlodf, arc_idx, delta_b) -> Vector{Float64}
+
+Compute the partial LODF column for a susceptance change `delta_b` on arc `arc_idx`.
+
+Uses the Sherman-Morrison (matrix inversion lemma) formula derived from DC power flow
+sensitivity analysis. For a change Δb in the susceptance of arc e, the change in flow
+on monitoring arc ℓ per unit pre-change flow on arc e is:
+
+    partial_LODF[ℓ, e] = α · (b_ℓ / b_e) · H[ℓ,e] / (1 - α · H[e,e])
+
+where:
+- α = -Δb / b_e   (positive for outage/decrease, negative for increase)
+- H[ℓ, e] = (A · (ABA)⁻¹ · BA)[ℓ, e] = b_e · C[e, ℓ]  (computed via KLU solve)
+- b_ℓ = susceptance of monitoring arc ℓ
+- H[e,e] = PTDF_A_diag[e]
+
+When `delta_b = -b_e` (full outage), α = 1 and this reduces to the standard LODF column:
+    LODF[ℓ, e] = b_ℓ · C[e, ℓ] / (1 - H[e,e])
+When `delta_b = 0`, returns zeros (no change).
+The self-element (ℓ = e) is overridden to -1.0 for full outage per standard LODF convention.
+"""
+function _getindex_partial(
+    vlodf::VirtualLODF,
+    arc_idx::Int,
+    delta_b::Float64,
+)::Vector{Float64}
+    n_arcs = size(vlodf.BA, 2)
+
+    # Zero change means zero redistribution.
+    if abs(delta_b) < eps()
+        return zeros(n_arcs)
+    end
+
+    b_arc = vlodf.arc_susceptances[arc_idx]
+
+    # Steps 1-2: Compute B⁻¹(b_e · ν_e) via KLU solve.
+    @inbounds for i in eachindex(vlodf.valid_ix)
+        vlodf.work_ba_col[i] = vlodf.BA[vlodf.valid_ix[i], arc_idx]
+    end
+    lin_solve = KLU.solve!(vlodf.K, vlodf.work_ba_col)
+
+    # Step 3: Map solution back to full bus space.
+    fill!(vlodf.temp_data, 0.0)
+    @inbounds for i in eachindex(vlodf.valid_ix)
+        vlodf.temp_data[vlodf.valid_ix[i]] = lin_solve[i]
+    end
+
+    # Step 4: H_col[ℓ] = b_e · C[e,ℓ] for all monitoring arcs ℓ.
+    H_col = vlodf.A * vlodf.temp_data
+
+    # Step 5: Scalar denominator: 1 - α · H[e,e].
+    # α = -Δb / b_e (positive for outage/decrease, negative for increase).
+    H_ee = vlodf.PTDF_A_diag[arc_idx]
+    alpha = -delta_b / b_arc
+    denom = 1.0 - alpha * H_ee
+
+    # Step 6: Partial LODF column: scale by b_ℓ/b_e to convert from C[e,ℓ] to b_ℓ·C[e,ℓ].
+    # partial_lodf[ℓ] = α · b_ℓ/b_e · H_col[ℓ] / denom
+    #                 = α · b_ℓ · C[e,ℓ] / (1 - α · H_ee)
+    partial_lodf =
+        (alpha / (denom * b_arc)) .* (vlodf.arc_susceptances .* H_col)
+
+    # By convention, the outaged arc's own redistribution factor is -1.0 for a full
+    # outage: the arc carries -100% of its own pre-contingency flow post-outage.
+    # The raw formula gives α·H[e,e]/denom for the self-element, which is
+    # b_e·C[e,e]/(1-b_e·C[e,e]) = H_ee/(1-H_ee) ≠ -1 in general.
+    if abs(delta_b + b_arc) < eps()
+        partial_lodf[arc_idx] = -1.0
+    end
+
+    return partial_lodf
+end
+
+"""
+    get_partial_lodf_row(vlodf::VirtualLODF, arc_idx::Int, delta_b::Float64) -> Vector{Float64}
+
+Compute the LODF row for a partial susceptance change `delta_b` on arc `arc_idx`.
+
+For a full outage, set `delta_b = -arc_susceptance`. For a single circuit outage
+on a double-circuit arc with total susceptance `b_total`, set `delta_b = -b_circuit`.
+
+# Arguments
+- `vlodf::VirtualLODF`: VirtualLODF matrix
+- `arc_idx::Int`: Arc index (integer)
+- `delta_b::Float64`: Change in susceptance (negative for outage)
+
+# Returns
+- `Vector{Float64}`: LODF row of length n_arcs
+
+$(TYPEDSIGNATURES)
+"""
+function get_partial_lodf_row(
+    vlodf::VirtualLODF,
+    arc_idx::Int,
+    delta_b::Float64,
+)
+    return _getindex_partial(vlodf, arc_idx, delta_b)
+end
+
+"""
+    get_partial_lodf_row(vlodf::VirtualLODF, arc::Tuple{Int, Int}, delta_b::Float64) -> Vector{Float64}
+
+Arc-tuple indexed version of [`get_partial_lodf_row`](@ref).
+
+$(TYPEDSIGNATURES)
+"""
+function get_partial_lodf_row(
+    vlodf::VirtualLODF,
+    arc::Tuple{Int, Int},
+    delta_b::Float64,
+)
+    arc_idx = vlodf.lookup[1][arc]
+    return _getindex_partial(vlodf, arc_idx, delta_b)
+end
