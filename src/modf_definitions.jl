@@ -21,10 +21,12 @@ After construction, contains only integer indices and floats —
 no PSY types, no System reference.
 
 # Fields
+- `uuid::Base.UUID`: Unique identifier matching the source Outage supplemental attribute.
 - `name::String`: Human-readable identifier, typically branch name(s) joined by '+'.
 - `modifications::Vector{BranchModification}`: One entry per affected arc.
 """
 struct ContingencySpec
+    uuid::Base.UUID
     name::String
     modifications::Vector{BranchModification}
 end

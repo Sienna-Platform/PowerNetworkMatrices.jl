@@ -32,10 +32,10 @@ Caching is two-tiered:
         Indices of non-reference buses.
 - `contingency_cache::Dict{Base.UUID, ContingencySpec}`:
         Resolved contingencies keyed by outage UUID.
-- `woodbury_cache::Dict{String, WoodburyFactors}`:
-        Precomputed Woodbury factors keyed by contingency name.
-- `row_caches::Dict{String, RowCache}`:
-        One RowCache per contingency, keyed by contingency name.
+- `woodbury_cache::Dict{Base.UUID, W}`:
+        Precomputed Woodbury factors keyed by outage UUID.
+- `row_caches::Dict{Base.UUID, RowCache}`:
+        One RowCache per contingency, keyed by outage UUID.
 - `subnetwork_axes::Dict{Int, Ax}`:
         Maps reference bus indices to subnetwork axes.
 - `tol::Base.RefValue{Float64}`:
@@ -49,7 +49,7 @@ Caching is two-tiered:
 - `work_ba_col::Vector{Float64}`:
         Pre-allocated work array for BA column extraction.
 """
-struct VirtualMODF{Ax, L <: NTuple{2, Dict}} <: PowerNetworkMatrix{Float64}
+struct VirtualMODF{Ax, L <: NTuple{2, Dict}, W <: WoodburyFactors} <: PowerNetworkMatrix{Float64}
     K::KLU.KLUFactorization{Float64, Int}
     BA::SparseArrays.SparseMatrixCSC{Float64, Int}
     A::SparseArrays.SparseMatrixCSC{Int8, Int}
@@ -60,8 +60,8 @@ struct VirtualMODF{Ax, L <: NTuple{2, Dict}} <: PowerNetworkMatrix{Float64}
     lookup::L
     valid_ix::Vector{Int}
     contingency_cache::Dict{Base.UUID, ContingencySpec}
-    woodbury_cache::Dict{String, WoodburyFactors}
-    row_caches::Dict{String, RowCache}
+    woodbury_cache::Dict{Base.UUID, W}
+    row_caches::Dict{Base.UUID, RowCache}
     subnetwork_axes::Dict{Int, Ax}
     tol::Base.RefValue{Float64}
     max_cache_size_bytes::Int
@@ -104,7 +104,7 @@ function Base.isempty(vmodf::VirtualMODF)
     return isempty(vmodf.contingency_cache)
 end
 
-Base.size(vmodf::VirtualMODF) = (size(vmodf.BA, 2), length(vmodf.axes[2]))
+Base.size(vmodf::VirtualMODF) = (length(vmodf.axes[1]), length(vmodf.axes[2]))
 
 Base.setindex!(::VirtualMODF, _, idx...) = error("Operation not supported by VirtualMODF")
 Base.setindex!(::VirtualMODF, _, ::CartesianIndex) =
@@ -167,6 +167,7 @@ function VirtualMODF(
     work_ba_col = zeros(length(valid_ix))
     max_cache_bytes = max_cache_size * MiB
 
+    WF_concrete = WoodburyFactors{LinearAlgebra.LU{Float64, Matrix{Float64}, Vector{Int}}}
     vmodf = VirtualMODF(
         K,
         BA.data,
@@ -178,8 +179,8 @@ function VirtualMODF(
         look_up,
         valid_ix,
         Dict{Base.UUID, ContingencySpec}(),
-        Dict{String, WoodburyFactors}(),
-        Dict{String, RowCache}(),
+        Dict{Base.UUID, WF_concrete}(),
+        Dict{Base.UUID, RowCache}(),
         subnetwork_axes,
         Ref(tol),
         max_cache_bytes,
@@ -213,7 +214,8 @@ function _register_outages!(vmodf::VirtualMODF, sys::PSY.System)
             _register_outage!(vmodf, sys, outage)
             count += 1
         catch e
-            @warn "Could not register outage: $e"
+            e isa ErrorException || rethrow()
+            @warn "Could not register outage: $(e.msg)"
         end
     end
 
@@ -232,7 +234,7 @@ end
 Resolve an Outage supplemental attribute to a ContingencySpec and cache it.
 
 Resolution chain:
-1. Get associated components via `PSY.get_associated_components(sys, outage)`
+1. Get ACTransmission components via `PSY.get_associated_components(sys, outage; component_type=PSY.ACTransmission)`
 2. Filter to PSY.ACTransmission components
 3. Check NetworkReductionData for double-circuit membership
 4. Compute Δb: -b_circuit (parallel) or -b_arc (direct)
@@ -316,7 +318,7 @@ function _register_outage!(
 
     ctg_name = isempty(component_names) ? string(outage_uuid) :
                join(component_names, "+")
-    ctg = ContingencySpec(ctg_name, merged)
+    ctg = ContingencySpec(outage_uuid, ctg_name, merged)
 
     # Cache the result
     vmodf.contingency_cache[outage_uuid] = ctg
