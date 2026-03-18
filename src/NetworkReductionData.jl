@@ -19,8 +19,8 @@ network reduction algorithms.
 - `reverse_transformer3W_map::Dict{ThreeWindingTransformerWinding, Tuple{Int, Int}}`: Reverse transformer mappings
 - `removed_buses::Set{Int}`: Set of buses eliminated from the network
 - `removed_arcs::Set{Tuple{Int, Int}}`: Set of arcs eliminated from the network
-- `boundary_bus_to_removed_arcs::Dict{Int, Set{Tuple{Int, Int}}}`: Maps boundary buses to the set of removed arcs connected to them
 - `removed_arc_to_surviving_bus::Dict{Tuple{Int, Int}, Int}`: Maps removed arcs to the connected surviving bus number (occurs for radial reduction or Ward reduction)
+- `boundary_bus_to_removed_arcs::Dict{Int, Set{Tuple{Int, Int}}}`: Maps boundary buses to the set of removed arcs connected to them
 - `added_admittance_map::Dict{Int, YBUS_ELTYPE}`: Admittances added to buses during reduction
 - `added_branch_map::Dict{Tuple{Int, Int}, YBUS_ELTYPE}`: New branches created during reduction
 - `all_branch_maps_by_type::Dict{String, Any}`: Branch mappings organized by component type
