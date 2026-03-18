@@ -92,3 +92,74 @@ end
     vmodf = VirtualMODF(sys5)
     @test_throws ErrorException vmodf[1, 1] = 1.0
 end
+
+@testset "VirtualMODF: cache management" begin
+    sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    vmodf = VirtualMODF(sys5)
+
+    # Register a contingency and compute a row
+    e = 1
+    b_e = vmodf.arc_susceptances[e]
+    ctg_uuid = Base.UUID(UInt128(500))
+    ctg = ContingencySpec(ctg_uuid, "cache_test", [BranchModification(e, -b_e)])
+    vmodf.contingency_cache[ctg_uuid] = ctg
+
+    _ = vmodf[1, ctg]  # Triggers computation + caching
+
+    @test !isempty(vmodf.woodbury_cache)
+    @test haskey(vmodf.row_caches, ctg_uuid)  # UUID key
+
+    # clear_caches! should clear Woodbury and row caches but keep contingencies
+    PNM.clear_caches!(vmodf)
+    @test isempty(vmodf.woodbury_cache)
+    @test isempty(vmodf.row_caches)
+    @test !isempty(vmodf.contingency_cache)
+
+    # clear_all_caches! should clear everything
+    _ = vmodf[1, ctg]  # Recompute
+    PNM.clear_all_caches!(vmodf)
+    @test isempty(vmodf.contingency_cache)
+    @test isempty(vmodf.woodbury_cache)
+    @test isempty(vmodf.row_caches)
+end
+
+@testset "VirtualMODF: show and auxiliary functions" begin
+    sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    vmodf = VirtualMODF(sys5)
+
+    # Test show does not error
+    io = IOBuffer()
+    show(io, MIME"text/plain"(), vmodf)
+    @test length(take!(io)) > 0
+
+    # Test size (n_arcs × n_buses)
+    n_arcs = length(PNM.get_arc_axis(vmodf))
+    n_buses = length(vmodf.axes[2])
+    @test size(vmodf) == (n_arcs, n_buses)
+
+    # Test isempty (c_sys5 has no outages)
+    @test isempty(vmodf)
+end
+
+@testset "VirtualMODF: Woodbury cache reuse" begin
+    sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    vmodf = VirtualMODF(sys5)
+
+    e = 1
+    b_e = vmodf.arc_susceptances[e]
+    ctg_uuid = Base.UUID(UInt128(700))
+    ctg = ContingencySpec(ctg_uuid, "reuse_test", [BranchModification(e, -b_e)])
+    vmodf.contingency_cache[ctg_uuid] = ctg
+
+    # First query: computes Woodbury factors + row
+    row1 = vmodf[1, ctg]
+    @test haskey(vmodf.woodbury_cache, ctg_uuid)  # UUID key
+
+    # Second query with different monitored arc: reuses Woodbury
+    row2 = vmodf[2, ctg]
+    # Both rows should be cached now
+    @test haskey(vmodf.row_caches, ctg_uuid)  # UUID key
+    cache = vmodf.row_caches[ctg_uuid]
+    @test haskey(cache, 1)
+    @test haskey(cache, 2)
+end

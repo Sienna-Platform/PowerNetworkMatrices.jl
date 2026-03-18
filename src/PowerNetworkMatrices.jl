@@ -30,6 +30,8 @@ export validate_connectivity
 export VirtualLODF
 export VirtualMODF
 export get_registered_contingencies
+export clear_caches!
+export clear_all_caches!
 export ContingencySpec
 export BranchModification
 export VirtualPTDF

@@ -587,6 +587,31 @@ function Base.getindex(
 end
 
 """
+    clear_caches!(vmodf::VirtualMODF)
+
+Clear Woodbury and row caches. Does NOT clear the contingency registration
+cache — registered outages remain valid and can be queried again.
+"""
+function clear_caches!(vmodf::VirtualMODF)
+    empty!(vmodf.woodbury_cache)
+    empty!(vmodf.row_caches)
+    return
+end
+
+"""
+    clear_all_caches!(vmodf::VirtualMODF)
+
+Clear everything including contingency registrations. After this,
+outages must be re-registered by reconstructing the VirtualMODF.
+"""
+function clear_all_caches!(vmodf::VirtualMODF)
+    empty!(vmodf.contingency_cache)
+    empty!(vmodf.woodbury_cache)
+    empty!(vmodf.row_caches)
+    return
+end
+
+"""
 Merge BranchModifications that target the same arc index.
 """
 function _merge_modifications(mods::Vector{BranchModification})
