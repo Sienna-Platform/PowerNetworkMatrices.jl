@@ -95,6 +95,7 @@ include("virtual_ptdf_calculations.jl")
 include("PowerflowMatrixTypes.jl")
 include("lodf_calculations.jl")
 include("virtual_lodf_calculations.jl")
+include("modf_definitions.jl")
 include("system_utils.jl")
 include("serialization.jl")
 
