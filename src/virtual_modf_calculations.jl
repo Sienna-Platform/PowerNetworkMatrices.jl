@@ -338,6 +338,10 @@ where U = [ν_{e1} ... ν_{eM}] and A = diag(Δb₁, ..., Δb_M).
 
 The expensive part (M KLU solves + M×M factorization) is shared
 across all monitored arcs for this contingency.
+
+!!! warning
+    This function is NOT thread-safe. It mutates `vmodf.work_ba_col` on
+    every call. Do not call concurrently on the same `VirtualMODF` instance.
 """
 function _get_woodbury_factors(
     vmodf::VirtualMODF,
@@ -387,7 +391,7 @@ function _get_woodbury_factors(
     W_lu = LinearAlgebra.lu(W_mat)
     # Use smallest pivot magnitude to detect near-singularity; det is numerically
     # unstable for large M (grows exponentially), while min pivot is O(1) cost.
-    is_island = minimum(abs, LinearAlgebra.diag(W_lu.U)) < MODF_ISLANDING_TOLERANCE
+    is_island = any(i -> abs(W_lu.U[i, i]) < MODF_ISLANDING_TOLERANCE, 1:M)
 
     wf = WoodburyFactors(Z, W_lu, branch_indices, delta_b_vec, is_island)
     vmodf.woodbury_cache[contingency.uuid] = wf
@@ -401,7 +405,11 @@ Compute the post-contingency PTDF row for a monitored arc.
 Uses Woodbury correction: PTDF_m[mon,:] = b_mon_post · ν_mon⊤ · B_m⁻¹
 
 The row is computed as: b_mon_post · (z_m - Z · W⁻¹ · (ν_mon⊤ · Z))
-where z_m = B⁻¹ν_mon / b_mon (one additional KLU solve).
+where z_m = B⁻¹ν_mon / b_mon_pre (one additional KLU solve).
+
+!!! warning
+    This function is NOT thread-safe. It mutates `vmodf.work_ba_col` on
+    every call. Do not call concurrently on the same `VirtualMODF` instance.
 """
 function _compute_modf_row(
     vmodf::VirtualMODF,
@@ -429,35 +437,35 @@ function _compute_modf_row(
     end
 
     # z_m = B⁻¹ν_m / b_mon_pre via KLU solve on BA column
-    b_arc_mon = vmodf.arc_susceptances[monitored_idx]
+    b_mon_pre = vmodf.arc_susceptances[monitored_idx]
     @inbounds for i in eachindex(vmodf.valid_ix)
         vmodf.work_ba_col[i] = vmodf.BA[vmodf.valid_ix[i], monitored_idx]
     end
     lin_solve = KLU.solve!(vmodf.K, vmodf.work_ba_col)
 
-    z_m = zeros(n_bus)
+    # Build z_m directly into vmodf.temp_data to avoid allocation
+    fill!(vmodf.temp_data, 0.0)
     @inbounds for i in eachindex(vmodf.valid_ix)
-        z_m[vmodf.valid_ix[i]] = lin_solve[i] / b_arc_mon
+        vmodf.temp_data[vmodf.valid_ix[i]] = lin_solve[i] / b_mon_pre
     end
 
-    # ν_m⊤ · Z  (1 × M vector): row monitored_idx of A dotted with each column of Z
-    # Equivalent to (A * Z)[monitored_idx, :] but avoids full matrix multiply
+    # ν_m⊤ · Z  (1 × M vector — small, ok to allocate)
     zm_Z = zeros(M)
     for j in 1:M
         zm_Z[j] = dot(view(vmodf.A, monitored_idx, :), view(wf.Z, :, j))
     end
 
-    # Woodbury correction: W⁻¹ · zm_Z, then apply to Z columns
+    # Woodbury correction: W⁻¹ · zm_Z, then subtract correction from temp_data in place
     correction_coeff = wf.W_lu \ zm_Z
-    correction = zeros(n_bus)
     for j in 1:M
-        @inbounds for n in 1:n_bus
-            correction[n] += correction_coeff[j] * wf.Z[n, j]
+        c = correction_coeff[j]
+        @inbounds for n in eachindex(vmodf.temp_data)
+            vmodf.temp_data[n] -= c * wf.Z[n, j]
         end
     end
 
-    # Post-contingency PTDF row = b_mon_post · (z_m - correction)
-    return b_mon .* (z_m .- correction)
+    # Post-contingency PTDF row = b_mon_post · (z_m - correction), now in temp_data
+    return b_mon .* vmodf.temp_data
 end
 
 """
