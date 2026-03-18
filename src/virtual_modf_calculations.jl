@@ -486,6 +486,106 @@ function _compute_modf_entry(
     return _compute_modf_row(vmodf, monitored_idx, wf)
 end
 
+# --- Row cache management ---
+
+"""
+    _get_or_create_row_cache(vmodf, ctg_uuid) -> RowCache
+
+Get or create the per-contingency RowCache for the given UUID.
+"""
+function _get_or_create_row_cache(vmodf::VirtualMODF, ctg_uuid::Base.UUID)
+    if !haskey(vmodf.row_caches, ctg_uuid)
+        row_size = length(vmodf.temp_data) * sizeof(Float64)
+        vmodf.row_caches[ctg_uuid] =
+            RowCache(vmodf.max_cache_size_bytes, Set{Int}(), row_size)
+    end
+    return vmodf.row_caches[ctg_uuid]
+end
+
+# --- getindex: by integer monitored index + ContingencySpec ---
+
+"""
+Get the post-contingency PTDF row for monitored arc `monitored_idx` under `contingency`.
+Uses per-contingency RowCache for LRU-eviction caching.
+
+$(TYPEDSIGNATURES)
+"""
+function Base.getindex(
+    vmodf::VirtualMODF,
+    monitored_idx::Int,
+    contingency::ContingencySpec,
+)
+    cache = _get_or_create_row_cache(vmodf, contingency.uuid)
+
+    if haskey(cache, monitored_idx)
+        return cache[monitored_idx]
+    end
+
+    row = _compute_modf_entry(vmodf, monitored_idx, contingency)
+
+    if get_tol(vmodf) > eps()
+        cache[monitored_idx] = sparsify(row, get_tol(vmodf))
+    else
+        cache[monitored_idx] = copy(row)
+    end
+
+    return cache[monitored_idx]
+end
+
+# --- getindex: by arc tuple + ContingencySpec ---
+
+"""
+Arc-tuple indexed version of getindex for VirtualMODF.
+
+$(TYPEDSIGNATURES)
+"""
+function Base.getindex(
+    vmodf::VirtualMODF,
+    monitored::Tuple{Int, Int},
+    contingency::ContingencySpec,
+)
+    m_idx = vmodf.lookup[1][monitored]
+    return vmodf[m_idx, contingency]
+end
+
+# --- getindex: by Int + PSY.Outage (UUID lookup) ---
+
+"""
+Get the post-contingency PTDF row for monitored arc `monitored` when outage `outage` trips.
+The outage must have been registered at VirtualMODF construction time.
+
+$(TYPEDSIGNATURES)
+"""
+function Base.getindex(
+    vmodf::VirtualMODF,
+    monitored::Int,
+    outage::PSY.Outage,
+)
+    outage_uuid = IS.get_uuid(outage)
+    if !haskey(vmodf.contingency_cache, outage_uuid)
+        error(
+            "Outage (UUID=$outage_uuid) is not registered. " *
+            "Construct VirtualMODF with the system containing this outage.",
+        )
+    end
+    ctg = vmodf.contingency_cache[outage_uuid]
+    return vmodf[monitored, ctg]
+end
+
+"""
+Arc-tuple indexed version of getindex by PSY.Outage.
+
+$(TYPEDSIGNATURES)
+"""
+function Base.getindex(
+    vmodf::VirtualMODF,
+    monitored::Tuple{Int, Int},
+    outage::PSY.Outage,
+)
+    m_idx = vmodf.lookup[1][monitored]
+    return vmodf[m_idx, outage]
+end
+
 """
 Merge BranchModifications that target the same arc index.
 """

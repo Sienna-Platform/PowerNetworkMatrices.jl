@@ -40,3 +40,52 @@ end
         empty!(vmodf.woodbury_cache)
     end
 end
+
+@testset "VirtualMODF: getindex by ContingencySpec" begin
+    sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    vmodf = VirtualMODF(sys5)
+
+    # Register a manual contingency
+    e = 1
+    b_e = vmodf.arc_susceptances[e]
+    ctg_uuid = Base.UUID(UInt128(999))
+    ctg = ContingencySpec(ctg_uuid, "test_outage", [BranchModification(e, -b_e)])
+    vmodf.contingency_cache[ctg_uuid] = ctg
+
+    # Query by integer monitored index + ContingencySpec
+    # Row length equals the number of buses in VirtualMODF's bus axis (non-reference buses)
+    n_buses = length(vmodf.axes[2])
+    row1 = vmodf[1, ctg]
+    @test length(row1) == n_buses
+
+    # Second query should hit cache
+    row2 = vmodf[1, ctg]
+    @test row1 == row2
+
+    # Different monitored arc, same contingency — should reuse Woodbury factors
+    row3 = vmodf[2, ctg]
+    @test length(row3) == n_buses
+    @test row3 != row1  # Different monitored arcs give different rows
+end
+
+@testset "VirtualMODF: getindex by arc tuple" begin
+    sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    vmodf = VirtualMODF(sys5)
+
+    e = 1
+    b_e = vmodf.arc_susceptances[e]
+    ctg_uuid = Base.UUID(UInt128(998))
+    ctg = ContingencySpec(ctg_uuid, "test_outage_tuple", [BranchModification(e, -b_e)])
+    vmodf.contingency_cache[ctg_uuid] = ctg
+
+    # Query using arc tuple
+    arc_tuple = vmodf.axes[1][1]
+    row = vmodf[arc_tuple, ctg]
+    @test length(row) > 0
+end
+
+@testset "VirtualMODF: setindex! throws error" begin
+    sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    vmodf = VirtualMODF(sys5)
+    @test_throws ErrorException vmodf[1, 1] = 1.0
+end
