@@ -19,6 +19,12 @@ The VirtualLODF struct is indexed using branch names.
 - `inv_PTDF_A_diag::Vector{Float64}`:
         Vector contiaining the element-wise reciprocal of the diagonal elements
         coming from multuiplying the PTDF matrix with th Incidence matrix
+- `PTDF_A_diag::Vector{Float64}`:
+        Raw diagonal elements of the PTDF·A product (H[e,e] values), before
+        tolerance clamping. Used for partial susceptance change computations.
+- `arc_susceptances::Vector{Float64}`:
+        Effective susceptance for each arc, extracted from the BA matrix.
+        For arc j, this is the maximum absolute nonzero in BA column j.
 - `ref_bus_positions::Set{Int}`:
         Vector containing the indexes of the rows of the transposed BA matrix
         corresponding to the reference buses.
@@ -49,6 +55,8 @@ struct VirtualLODF{Ax, L <: NTuple{2, Dict}} <: PowerNetworkMatrix{Float64}
     BA::SparseArrays.SparseMatrixCSC{Float64, Int}
     A::SparseArrays.SparseMatrixCSC{Int8, Int}
     inv_PTDF_A_diag::Vector{Float64}
+    PTDF_A_diag::Vector{Float64}
+    arc_susceptances::Vector{Float64}
     dist_slack::Vector{Float64}
     axes::Ax
     lookup::L
@@ -122,6 +130,22 @@ function _get_PTDF_A_diag(
 end
 
 """
+Extract the effective susceptance for each arc from the BA matrix.
+For arc j, the susceptance is the maximum absolute value in BA column j.
+"""
+function _extract_arc_susceptances(
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+)::Vector{Float64}
+    n_arcs = size(BA, 2)
+    b = Vector{Float64}(undef, n_arcs)
+    for j in 1:n_arcs
+        nzvals = SparseArrays.nonzeros(view(BA, :, j))
+        b[j] = isempty(nzvals) ? 0.0 : maximum(abs, nzvals)
+    end
+    return b
+end
+
+"""
 Builds the Virtual LODF matrix from a system. The return is a VirtualLODF
 struct with an empty cache.
 
@@ -172,6 +196,8 @@ function VirtualLODF(
         A.data,
         Set(ref_bus_positions),
     )
+    PTDF_A_diag_raw = copy(PTDF_diag)
+    arc_susceptances = _extract_arc_susceptances(BA.data)
     PTDF_diag[PTDF_diag .> 1 - LODF_ENTRY_TOLERANCE] .= 0.0
 
     if isempty(persistent_arcs)
@@ -195,6 +221,8 @@ function VirtualLODF(
         BA.data,
         A.data,
         1.0 ./ (1.0 .- PTDF_diag),
+        PTDF_A_diag_raw,
+        arc_susceptances,
         dist_slack,
         axes,
         look_up,
