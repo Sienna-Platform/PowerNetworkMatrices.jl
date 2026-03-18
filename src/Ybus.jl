@@ -1271,7 +1271,7 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
         arc_admittance_from_to = ybus.arc_admittance_from_to
         arc_admittance_to_from = ybus.arc_admittance_to_from
     end
-
+    nr.boundary_bus_to_removed_arcs = nr_new.boundary_bus_to_removed_arcs
     return Ybus(
         data,
         adjacency_data,
@@ -1944,7 +1944,11 @@ function get_reduction(
             push!(removed_arcs, arc)
         end
     end
-    bus_reduction_map, reverse_bus_search_map, added_branch_map, added_admittance_map =
+    bus_reduction_map,
+    reverse_bus_search_map,
+    added_branch_map,
+    added_admittance_map,
+    boundary_bus_to_removed_arcs =
         get_ward_reduction(
             ybus.data,
             bus_lookup,
@@ -1969,6 +1973,7 @@ function get_reduction(
         added_branch_map = added_branch_map,
         added_admittance_map = added_admittance_map,
         removed_arc_to_surviving_bus = removed_arc_to_surviving_bus,
+        boundary_bus_to_removed_arcs = boundary_bus_to_removed_arcs,
         reductions = ReductionContainer(; ward_reduction = reduction),
     )
 end

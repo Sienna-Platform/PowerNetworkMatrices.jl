@@ -47,6 +47,21 @@ function get_ward_reduction(
     n_boundary = length(boundary_buses)
     n_buses = length(bus_axis)
 
+    boundary_bus_to_removed_arcs = Dict{Int, Set{Tuple{Int, Int}}}()
+    for arc in arc_axis
+        if (arc[1] ∈ boundary_buses)
+            if (arc[2] ∉ study_buses)
+                set = get!(boundary_bus_to_removed_arcs, arc[1], Set{Tuple{Int, Int}}())
+                push!(set, arc)
+            end
+        end
+        if (arc[2] ∈ boundary_buses)
+            if (arc[1] ∉ study_buses)
+                set = get!(boundary_bus_to_removed_arcs, arc[2], Set{Tuple{Int, Int}}())
+                push!(set, arc)
+            end
+        end
+    end
     bus_reduction_map_index = Dict{Int, Set{Int}}(k => Set{Int}() for k in study_buses)
 
     added_branch_map = Dict{Tuple{Int, Int}, YBUS_ELTYPE}()
@@ -125,5 +140,6 @@ function get_ward_reduction(
     return bus_reduction_map_index,
     reverse_bus_search_map,
     added_branch_map,
-    added_admittance_map
+    added_admittance_map,
+    boundary_bus_to_removed_arcs
 end
