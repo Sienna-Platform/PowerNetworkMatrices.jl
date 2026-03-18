@@ -518,7 +518,7 @@ function Base.getindex(
     cache = _get_or_create_row_cache(vmodf, contingency.uuid)
 
     if haskey(cache, monitored_idx)
-        return cache[monitored_idx]
+        return copy(cache[monitored_idx])
     end
 
     row = _compute_modf_entry(vmodf, monitored_idx, contingency)
@@ -529,7 +529,7 @@ function Base.getindex(
         cache[monitored_idx] = copy(row)
     end
 
-    return cache[monitored_idx]
+    return copy(cache[monitored_idx])
 end
 
 # --- getindex: by arc tuple + ContingencySpec ---

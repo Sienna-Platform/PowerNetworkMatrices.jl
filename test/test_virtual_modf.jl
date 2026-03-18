@@ -81,7 +81,10 @@ end
     # Query using arc tuple
     arc_tuple = vmodf.axes[1][1]
     row = vmodf[arc_tuple, ctg]
-    @test length(row) > 0
+    # Tuple indexing should give the same result as integer indexing
+    row_by_idx = vmodf[1, ctg]
+    @test length(row) == length(row_by_idx)
+    @test isapprox(row, row_by_idx, atol = 1e-14)
 end
 
 @testset "VirtualMODF: setindex! throws error" begin
