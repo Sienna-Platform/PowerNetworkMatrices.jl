@@ -32,7 +32,7 @@ Caching is two-tiered:
         Indices of non-reference buses.
 - `contingency_cache::Dict{Base.UUID, ContingencySpec}`:
         Resolved contingencies keyed by outage UUID.
-- `woodbury_cache::Dict{Base.UUID, W}`:
+- `woodbury_cache::Dict{Base.UUID, WoodburyFactors}`:
         Precomputed Woodbury factors keyed by outage UUID.
 - `row_caches::Dict{Base.UUID, RowCache}`:
         One RowCache per contingency, keyed by outage UUID.
@@ -49,8 +49,7 @@ Caching is two-tiered:
 - `work_ba_col::Vector{Float64}`:
         Pre-allocated work array for BA column extraction.
 """
-struct VirtualMODF{Ax, L <: NTuple{2, Dict}, W <: WoodburyFactors} <:
-       PowerNetworkMatrix{Float64}
+struct VirtualMODF{Ax, L <: NTuple{2, Dict}} <: PowerNetworkMatrix{Float64}
     K::KLU.KLUFactorization{Float64, Int}
     BA::SparseArrays.SparseMatrixCSC{Float64, Int}
     A::SparseArrays.SparseMatrixCSC{Int8, Int}
@@ -61,7 +60,7 @@ struct VirtualMODF{Ax, L <: NTuple{2, Dict}, W <: WoodburyFactors} <:
     lookup::L
     valid_ix::Vector{Int}
     contingency_cache::Dict{Base.UUID, ContingencySpec}
-    woodbury_cache::Dict{Base.UUID, W}
+    woodbury_cache::Dict{Base.UUID, WoodburyFactors}
     row_caches::Dict{Base.UUID, RowCache}
     subnetwork_axes::Dict{Int, Ax}
     tol::Base.RefValue{Float64}
@@ -168,7 +167,6 @@ function VirtualMODF(
     work_ba_col = zeros(length(valid_ix))
     max_cache_bytes = max_cache_size * MiB
 
-    WF_concrete = WoodburyFactors{LinearAlgebra.LU{Float64, Matrix{Float64}, Vector{Int}}}
     vmodf = VirtualMODF(
         K,
         BA.data,
@@ -180,7 +178,7 @@ function VirtualMODF(
         look_up,
         valid_ix,
         Dict{Base.UUID, ContingencySpec}(),
-        Dict{Base.UUID, WF_concrete}(),
+        Dict{Base.UUID, WoodburyFactors}(),
         Dict{Base.UUID, RowCache}(),
         subnetwork_axes,
         Ref(tol),
