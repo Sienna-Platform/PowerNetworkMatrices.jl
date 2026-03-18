@@ -127,18 +127,31 @@ end
     sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     vmodf = VirtualMODF(sys5)
 
-    # Test show does not error
+    # Test show on empty vmodf
     io = IOBuffer()
     show(io, MIME"text/plain"(), vmodf)
-    @test length(take!(io)) > 0
+    output_empty = String(take!(io))
+    @test length(output_empty) > 0
+
+    # Test show on non-empty vmodf (register a contingency)
+    e = 1
+    b_e = vmodf.arc_susceptances[e]
+    ctg_uuid_show = Base.UUID(UInt128(9999))
+    ctg_show = ContingencySpec(ctg_uuid_show, "show_test", [BranchModification(e, -b_e)])
+    vmodf.contingency_cache[ctg_uuid_show] = ctg_show
+    io2 = IOBuffer()
+    show(io2, MIME"text/plain"(), vmodf)
+    output_nonempty = String(take!(io2))
+    @test occursin("registered contingencies", output_nonempty)
 
     # Test size (n_arcs × n_buses)
     n_arcs = length(PNM.get_arc_axis(vmodf))
     n_buses = length(vmodf.axes[2])
     @test size(vmodf) == (n_arcs, n_buses)
 
-    # Test isempty (c_sys5 has no outages)
-    @test isempty(vmodf)
+    # Test isempty (c_sys5 has no outages; vmodf was built fresh above)
+    vmodf_empty = VirtualMODF(sys5)
+    @test isempty(vmodf_empty)
 end
 
 @testset "VirtualMODF: Woodbury cache reuse" begin
@@ -162,4 +175,7 @@ end
     cache = vmodf.row_caches[ctg_uuid]
     @test haskey(cache, 1)
     @test haskey(cache, 2)
+
+    # Woodbury factors should be computed exactly once for this contingency
+    @test length(vmodf.woodbury_cache) == 1
 end

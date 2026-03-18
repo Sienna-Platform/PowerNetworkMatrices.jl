@@ -1,42 +1,23 @@
 module PowerNetworkMatrices
 
 export ABA_Matrix
-export BA_Matrix
-export factorize
-export find_subnetworks
-export from_hdf5
-export get_ptdf_data
-export get_lodf_data
-export get_partial_lodf_row
-export get_bus_reduction_map
-export get_ward_reduction
-export get_reductions
-export get_network_reduction_data
-export IncidenceMatrix
 export AdjacencyMatrix
-export is_factorized
+export ArcAdmittanceMatrix
+export BA_Matrix
+export BranchModification
+export ContingencySpec
+export DegreeTwoReduction
+export IncidenceMatrix
 export LODF
-export PTDF
 export NetworkReduction
 export NetworkReductionData
+export PTDF
 export RadialReduction
-export DegreeTwoReduction
-export WardReduction
-
-export depth_first_search
-export iterative_union_find
-export to_hdf5
-export validate_connectivity
 export VirtualLODF
 export VirtualMODF
-export get_registered_contingencies
-export clear_caches!
-export clear_all_caches!
-export ContingencySpec
-export BranchModification
 export VirtualPTDF
+export WardReduction
 export Ybus
-export ArcAdmittanceMatrix
 export DC_ABA_Matrix_Factorized
 export DC_ABA_Matrix_Unfactorized
 export DC_PTDF_Matrix
@@ -44,6 +25,26 @@ export DC_vPTDF_Matrix
 export DC_BA_Matrix
 export AC_Ybus_Matrix
 export YBUS_ELTYPE
+
+export clear_all_caches!
+export clear_caches!
+export factorize
+export is_factorized
+
+export depth_first_search
+export find_subnetworks
+export from_hdf5
+export get_bus_reduction_map
+export get_lodf_data
+export get_network_reduction_data
+export get_partial_lodf_row
+export get_ptdf_data
+export get_registered_contingencies
+export get_reductions
+export get_ward_reduction
+export iterative_union_find
+export to_hdf5
+export validate_connectivity
 
 using DocStringExtensions
 import InfrastructureSystems as IS
