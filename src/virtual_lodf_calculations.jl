@@ -404,6 +404,9 @@ function _getindex_partial(
     end
 
     b_arc = vlodf.arc_susceptances[arc_idx]
+    if b_arc == 0.0
+        return zeros(n_arcs)
+    end
 
     # Steps 1-2: Compute B⁻¹(b_e · ν_e) via KLU solve.
     @inbounds for i in eachindex(vlodf.valid_ix)
@@ -436,7 +439,7 @@ function _getindex_partial(
     # outage: the arc carries -100% of its own pre-contingency flow post-outage.
     # The raw formula gives α·H[e,e]/denom for the self-element, which is
     # b_e·C[e,e]/(1-b_e·C[e,e]) = H_ee/(1-H_ee) ≠ -1 in general.
-    if abs(delta_b + b_arc) < eps()
+    if abs(delta_b + b_arc) < eps() * b_arc
         partial_lodf[arc_idx] = -1.0
     end
 
