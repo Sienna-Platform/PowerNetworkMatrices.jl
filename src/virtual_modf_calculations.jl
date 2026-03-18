@@ -602,8 +602,13 @@ end
 """
     clear_all_caches!(vmodf::VirtualMODF)
 
-Clear everything including contingency registrations. After this,
-outages must be re-registered by reconstructing the VirtualMODF.
+Clear all caches including contingency registrations. After calling this function,
+the `VirtualMODF` object is effectively empty and cannot be queried — it has
+no registered contingencies. To restore functionality, a new `VirtualMODF` must
+be constructed from a `PSY.System`.
+
+Use `clear_caches!` instead to preserve contingency registrations while
+freeing computation cache memory.
 """
 function clear_all_caches!(vmodf::VirtualMODF)
     empty!(vmodf.contingency_cache)

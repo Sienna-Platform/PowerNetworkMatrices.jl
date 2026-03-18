@@ -154,6 +154,36 @@ end
     @test isempty(vmodf_empty)
 end
 
+@testset "VirtualMODF: N-1 public getindex accuracy" begin
+    sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    vlodf = VirtualLODF(sys5)
+    ptdf_ref = PTDF(sys5)
+    vmodf = VirtualMODF(sys5)
+
+    n_arcs = size(vlodf, 1)
+    n_buses = length(vmodf.axes[2])
+
+    # Register a single-arc full outage
+    e = 1
+    b_e = vmodf.arc_susceptances[e]
+    ctg_uuid = Base.UUID(UInt128(8888))
+    ctg = ContingencySpec(ctg_uuid, "public_api_test", [BranchModification(e, -b_e)])
+    vmodf.contingency_cache[ctg_uuid] = ctg
+
+    # Verify all monitored arcs through the public getindex API
+    for m in 1:n_arcs
+        row = vmodf[m, ctg]  # public API — goes through RowCache
+        expected = ptdf_ref[m, :] .+ vlodf[m, e] .* ptdf_ref[e, :]
+        @test length(row) == n_buses
+        @test isapprox(row, expected, atol = 1e-6)
+    end
+
+    # Second query should hit cache and return identical values
+    row_cached = vmodf[1, ctg]
+    row_fresh = vmodf[1, ctg]
+    @test row_cached == row_fresh
+end
+
 @testset "VirtualMODF: Woodbury cache reuse" begin
     sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     vmodf = VirtualMODF(sys5)
