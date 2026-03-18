@@ -58,3 +58,45 @@ end
     standard_col = [lodf[arc_ℓ, arc_tuple] for arc_ℓ in lodf.axes[1]]
     @test isapprox(partial_row_arc, standard_col, atol = 1e-10)
 end
+
+@testset "Partial LODF: half-susceptance matches rebuilt ground truth" begin
+    sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    vlodf = VirtualLODF(sys5)
+    e = 1  # test arc index
+    b_e = vlodf.arc_susceptances[e]
+
+    # Compute partial LODF for halving arc e's susceptance.
+    partial_row = PNM.get_partial_lodf_row(vlodf, e, -b_e / 2.0)
+
+    # Ground truth: directly apply the Sherman-Morrison formula using a fresh linear solve,
+    # independent of the internal work buffers of vlodf.
+    # This validates that _getindex_partial correctly implements the formula:
+    #   partial_lodf[ℓ] = α · (b_ℓ / b_e) · H[ℓ,e] / (1 - α · H[e,e])
+    # where α = -delta_b / b_e = 1/2 and H[ℓ,e] = (A·(ABA)⁻¹·BA)[ℓ,e].
+    n_buses = size(vlodf.A, 2)
+    n_valid = length(vlodf.valid_ix)
+
+    # Extract the BA column for arc e at non-reference bus indices.
+    ba_col_e = [vlodf.BA[vlodf.valid_ix[i], e] for i in 1:n_valid]
+
+    # Solve ABA x = ba_col_e using the factorization (fresh copy to avoid aliasing).
+    lin_solve = vlodf.K \ copy(ba_col_e)
+
+    # Map the solution back to full bus space.
+    temp_full = zeros(n_buses)
+    for i in 1:n_valid
+        temp_full[vlodf.valid_ix[i]] = lin_solve[i]
+    end
+
+    # H_col[ℓ] = (A · ABA⁻¹ · BA[:,e])[ℓ] for all arcs ℓ.
+    H_col = vlodf.A * temp_full
+
+    # Apply Sherman-Morrison scaling: α = 1/2, denom = 1 - α·H[e,e].
+    alpha = 0.5
+    H_ee = vlodf.PTDF_A_diag[e]
+    denom = 1.0 - alpha * H_ee
+    gt_row = (alpha / (denom * b_e)) .* (vlodf.arc_susceptances .* H_col)
+    # Self-element: the formula gives a finite value (not -1.0) for a partial change.
+
+    @test isapprox(partial_row, gt_row, atol = 1e-12)
+end

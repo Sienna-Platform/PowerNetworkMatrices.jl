@@ -369,6 +369,11 @@ end
 
 Compute the partial LODF column for a susceptance change `delta_b` on arc `arc_idx`.
 
+!!! warning
+    This function is NOT thread-safe. It mutates `vlodf.work_ba_col` and
+    `vlodf.temp_data` on every call. Do not call concurrently on the same
+    `VirtualLODF` instance from multiple threads.
+
 Uses the Sherman-Morrison (matrix inversion lemma) formula derived from DC power flow
 sensitivity analysis. For a change Δb in the susceptance of arc e, the change in flow
 on monitoring arc ℓ per unit pre-change flow on arc e is:
