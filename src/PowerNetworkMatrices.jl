@@ -28,6 +28,8 @@ export iterative_union_find
 export to_hdf5
 export validate_connectivity
 export VirtualLODF
+export VirtualMODF
+export get_registered_contingencies
 export VirtualPTDF
 export Ybus
 export ArcAdmittanceMatrix
@@ -96,6 +98,7 @@ include("PowerflowMatrixTypes.jl")
 include("lodf_calculations.jl")
 include("virtual_lodf_calculations.jl")
 include("modf_definitions.jl")
+include("virtual_modf_calculations.jl")
 include("system_utils.jl")
 include("serialization.jl")
 
