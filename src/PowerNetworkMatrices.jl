@@ -30,6 +30,8 @@ export validate_connectivity
 export VirtualLODF
 export VirtualMODF
 export get_registered_contingencies
+export ContingencySpec
+export BranchModification
 export VirtualPTDF
 export Ybus
 export ArcAdmittanceMatrix
