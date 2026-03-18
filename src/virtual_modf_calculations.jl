@@ -49,7 +49,8 @@ Caching is two-tiered:
 - `work_ba_col::Vector{Float64}`:
         Pre-allocated work array for BA column extraction.
 """
-struct VirtualMODF{Ax, L <: NTuple{2, Dict}, W <: WoodburyFactors} <: PowerNetworkMatrix{Float64}
+struct VirtualMODF{Ax, L <: NTuple{2, Dict}, W <: WoodburyFactors} <:
+       PowerNetworkMatrix{Float64}
     K::KLU.KLUFactorization{Float64, Int}
     BA::SparseArrays.SparseMatrixCSC{Float64, Int}
     A::SparseArrays.SparseMatrixCSC{Int8, Int}
