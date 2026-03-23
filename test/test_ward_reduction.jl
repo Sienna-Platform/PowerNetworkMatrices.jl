@@ -7,7 +7,7 @@ function _basic_test_ward_reduction(sys, study_buses)
     external_buses =
         setdiff([get_number(x) for x in get_components(ACBus, sys)], study_buses)
     @test !isempty(wr.added_admittance_map)
-    @test !isempty(wr.added_branch_map)
+    @test !isempty(wr.added_arc_impedance_map)
     for external_bus in external_buses
         @test external_bus ∉ keys(wr.bus_reduction_map)
         @test external_bus ∈ keys(wr.reverse_bus_search_map)
@@ -17,7 +17,7 @@ end
 function _check_for_repeated_arcs(matrix)
     nrd = get_network_reduction_data(matrix)
     arc_axis = PNM.get_arc_axis(matrix)
-    for arc_tuple in keys(nrd.added_branch_map)
+    for arc_tuple in keys(nrd.added_arc_impedance_map)
         @test arc_tuple ∈ arc_axis
         @test (arc_tuple[2], arc_tuple[1]) ∉ arc_axis
     end
@@ -27,7 +27,7 @@ end
 function _test_matrices_ward_reduction(sys, study_buses)
     ybus = Ybus(sys; network_reductions = NetworkReduction[WardReduction(study_buses)])
     wr = get_network_reduction_data(ybus)
-    added_branch_arcs = [x for x in keys(wr.added_branch_map)]
+    added_branch_arcs = [x for x in keys(wr.added_arc_impedance_map)]
     direct_arcs = [x for x in keys(wr.direct_branch_map)]
     parallel_arcs = [x for x in keys(wr.parallel_branch_map)]
     expected_arc_axis = union(Set(added_branch_arcs), Set(direct_arcs), Set(parallel_arcs))
@@ -106,7 +106,7 @@ end
     ptdf_3 = PTDF(sys)
     ptdf_2 = @test_logs (
         :warn,
-        r"Equivalent branch computed during Ward reduction is in parallel with existing system branch",
+        r"Equivalent arc impedance computed during Ward reduction is in parallel with existing system arc.",
     ) match_mode = :any PTDF(
         sys;
         network_reductions = NetworkReduction[WardReduction([101, 102])],
@@ -114,8 +114,9 @@ end
     existing_line_susceptance = PSY.get_series_susceptance(
         ptdf_2.network_reduction_data.direct_branch_map[(101, 102)],
     )
-    ward_line_susceptance =
-        1 / imag(1 / (ptdf_2.network_reduction_data.added_branch_map[(101, 102)]))
+    ward_line_susceptance = PSY.get_series_susceptance(
+        ptdf_2.network_reduction_data.added_arc_impedance_map[(101, 102)],
+    )
     ward_multiplier =
         existing_line_susceptance / (existing_line_susceptance + ward_line_susceptance)
     @test abs(ptdf_3[(101, 102), 102] - ward_multiplier * ptdf_2[(101, 102), 102]) < 0.007
@@ -135,7 +136,7 @@ end
     )
     @test isa(wr, NetworkReductionData)
     @test length(wr.bus_reduction_map) == 1
-    @test length(wr.added_branch_map) == 0
+    @test length(wr.added_arc_impedance_map) == 0
     @test length(wr.added_admittance_map) == 1
 
     wr =
@@ -143,7 +144,7 @@ end
             Ybus(sys; network_reductions = NetworkReduction[WardReduction([15, 16, 17])]),
         )
     @test isa(wr, NetworkReductionData)
-    @test length(wr.added_branch_map) == 0
+    @test length(wr.added_arc_impedance_map) == 0
     @test length(wr.added_admittance_map) == 0
 
     @test_throws IS.DataFormatError get_network_reduction_data(

@@ -397,6 +397,20 @@ function ybus_branch_entries(br::PSY.ACTransmission)
     return (Y11, Y12, Y21, Y22)
 end
 
+function ybus_branch_entries(br::PSY.GenericArcImpedance)
+    Y_l = (1 / (PSY.get_r(br) + PSY.get_x(br) * 1im))
+    Y11 = Y_l
+    if !isfinite(Y11) || !isfinite(Y_l)
+        error(
+            "Data in $(PSY.get_name(br)) is incorrect. r = $(PSY.get_r(br)), x = $(PSY.get_x(br))",
+        )
+    end
+    Y12 = -Y_l
+    Y21 = Y12
+    Y22 = Y_l
+    return (Y11, Y12, Y21, Y22)
+end
+
 function ybus_branch_entries(parallel_br::BranchesParallel)
     arc = get_arc_tuple(first(parallel_br))
     Y11 = Y12 = Y21 = Y22 = zero(YBUS_ELTYPE)
@@ -1242,7 +1256,7 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
             ybus,
             bus_numbers_to_remove,
             nr_new.removed_arcs,
-            Set(keys(nr_new.added_branch_map)),
+            Set(keys(nr_new.added_arc_impedance_map)),
         )
 
     if new_y_ft !== nothing
@@ -1346,21 +1360,25 @@ function _apply_added_components!(
     data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int},
     bus_lookup::Dict{Int, Int},
 )
-    if !isempty(nr_new.added_branch_map) && !isempty(nr.added_branch_map) ||
+    if !isempty(nr_new.added_arc_impedance_map) && !isempty(nr.added_arc_impedance_map) ||
        !isempty(nr_new.added_admittance_map) && !isempty(nr.added_admittance_map)
         error(
-            "Only the final applied reduction can add new branches and/or admittances to the Ybus (e.g. Ward Reduction)",
+            "Only the final applied reduction can add new arc impedances and/or fixed admittances to the Ybus (e.g. Ward Reduction)",
         )
     end
-    nr.added_branch_map = nr_new.added_branch_map
+    nr.added_arc_impedance_map = nr_new.added_arc_impedance_map
     nr.added_admittance_map = nr_new.added_admittance_map
     for (bus_no, admittance) in nr.added_admittance_map
-        data[bus_lookup[bus_no], bus_lookup[bus_no]] += admittance
+        Y = PSY.get_Y(admittance)
+        data[bus_lookup[bus_no], bus_lookup[bus_no]] += Y
     end
-    for (bus_tuple, admittance) in nr.added_branch_map
+    for (bus_tuple, admittance) in nr.added_arc_impedance_map
         bus_from, bus_to = bus_tuple
-        data[bus_lookup[bus_from], bus_lookup[bus_to]] -= admittance
-        data[bus_lookup[bus_to], bus_lookup[bus_from]] -= admittance
+        Y11, Y12, Y21, Y22 = ybus_branch_entries(admittance)
+        data[bus_lookup[bus_from], bus_lookup[bus_from]] += Y11
+        data[bus_lookup[bus_from], bus_lookup[bus_to]] += Y12
+        data[bus_lookup[bus_to], bus_lookup[bus_from]] += Y21
+        data[bus_lookup[bus_to], bus_lookup[bus_to]] += Y22
     end
     return
 end
@@ -1946,7 +1964,7 @@ function get_reduction(
     end
     bus_reduction_map,
     reverse_bus_search_map,
-    added_branch_map,
+    added_arc_impedance_map,
     added_admittance_map,
     boundary_bus_to_removed_arcs =
         get_ward_reduction(
@@ -1959,9 +1977,9 @@ function get_reduction(
             study_buses,
         )
 
-    for arc_tuple in keys(added_branch_map)
+    for arc_tuple in keys(added_arc_impedance_map)
         if ybus.data[bus_lookup[arc_tuple[1]], bus_lookup[arc_tuple[2]]] != 0.0
-            @warn "Equivalent branch computed during Ward reduction is in parallel with existing system branch.\\
+            @warn "Equivalent arc impedance computed during Ward reduction is in parallel with existing system arc.\\
                     Indexing into PTDF/LODF with branch names may give unexpected results for arc $arc_tuple"
         end
     end
@@ -1970,7 +1988,7 @@ function get_reduction(
         bus_reduction_map = bus_reduction_map,
         reverse_bus_search_map = reverse_bus_search_map,
         removed_arcs = removed_arcs,
-        added_branch_map = added_branch_map,
+        added_arc_impedance_map = added_arc_impedance_map,
         added_admittance_map = added_admittance_map,
         removed_arc_to_surviving_bus = removed_arc_to_surviving_bus,
         boundary_bus_to_removed_arcs = boundary_bus_to_removed_arcs,

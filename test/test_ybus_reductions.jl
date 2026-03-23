@@ -48,7 +48,7 @@ end
     @test nrd.removed_buses == Set{Int}()
     @test nrd.removed_arcs == Set([(112, 113), (104, 105)])
     @test Set(keys(nrd.added_admittance_map)) == Set{Int}()
-    @test Set(keys(nrd.added_branch_map)) == Set{Tuple{Int, Int}}()
+    @test Set(keys(nrd.added_arc_impedance_map)) == Set{Tuple{Int, Int}}()
     @test Set(A.axes[1]) == union(
         Set(keys(nrd.direct_branch_map)),
         Set(keys(nrd.parallel_branch_map)),
@@ -80,7 +80,7 @@ end
     @test nrd.removed_arcs ==
           Set([(107, 108), (107, 1001), (103, 116), (112, 113), (104, 105)])
     @test Set(keys(nrd.added_admittance_map)) == Set{Int}()
-    @test Set(keys(nrd.added_branch_map)) == Set{Tuple{Int, Int}}()
+    @test Set(keys(nrd.added_arc_impedance_map)) == Set{Tuple{Int, Int}}()
     @test Set(A.axes[1]) == union(
         Set(keys(nrd.direct_branch_map)),
         Set(keys(nrd.parallel_branch_map)),
@@ -120,7 +120,7 @@ end
         (117, 118),
     ])
     @test Set(keys(nrd.added_admittance_map)) == Set{Int}()
-    @test Set(keys(nrd.added_branch_map)) == Set{Tuple{Int, Int}}()
+    @test Set(keys(nrd.added_arc_impedance_map)) == Set{Tuple{Int, Int}}()
     @test Set(A.axes[1]) == union(
         Set(keys(nrd.direct_branch_map)),
         Set(keys(nrd.parallel_branch_map)),
@@ -177,7 +177,7 @@ end
     nrd = get_network_reduction_data(ybus)
     @test Set(ybus.axes[1]) == Set(study_buses)
     @test length(nrd.added_admittance_map) == length(boundary_buses)
-    @test length(nrd.added_branch_map) == factorial(length(boundary_buses) - 1)
+    @test length(nrd.added_arc_impedance_map) == factorial(length(boundary_buses) - 1)
     ybus_full = Ybus(sys)
     for i in study_buses, j in study_buses
         if i ∈ boundary_buses && j ∈ boundary_buses
@@ -191,7 +191,7 @@ end
         Set(keys(nrd.parallel_branch_map)),
         Set(keys(nrd.series_branch_map)),
         Set(keys(nrd.transformer3W_map)),
-        Set(keys(nrd.added_branch_map)),
+        Set(keys(nrd.added_arc_impedance_map)),
     )
     @test Set(A.axes[2]) == Set(keys(nrd.bus_reduction_map))
 end

@@ -21,8 +21,8 @@ network reduction algorithms.
 - `removed_arcs::Set{Tuple{Int, Int}}`: Set of arcs eliminated from the network
 - `removed_arc_to_surviving_bus::Dict{Tuple{Int, Int}, Int}`: Maps removed arcs to the connected surviving bus number (occurs for radial reduction or Ward reduction)
 - `boundary_bus_to_removed_arcs::Dict{Int, Set{Tuple{Int, Int}}}`: Maps boundary buses to the set of removed arcs connected to them
-- `added_admittance_map::Dict{Int, YBUS_ELTYPE}`: Admittances added to buses during reduction
-- `added_branch_map::Dict{Tuple{Int, Int}, YBUS_ELTYPE}`: New branches created during reduction
+- `added_admittance_map::Dict{Int, PSY.FixedAdmittance}`: Admittances added to buses during reduction
+- `added_arc_impedance_map::Dict{Tuple{Int, Int}, PSY.GenericArcImpedance}`: New arcs created during reduction
 - `all_branch_maps_by_type::Dict{String, Any}`: Branch mappings organized by component type
 - `reductions::ReductionContainer`: Container tracking applied reduction algorithms
 - `name_to_arc_map::Dict{Type, DataStructures.SortedDict{String, Tuple{Tuple{Int, Int}, String}}}`: Lazily filled with the call to [`populate_branch_maps_by_type!`](@ref), maps string names to their corresponding arcs and the map where the arc can be found. Used in optimization models or power flow reporting after reductions are applied. It is possible to have repeated arcs for some names if case of serial or parallel combinations.
@@ -59,9 +59,9 @@ network reduction algorithms.
     removed_arc_to_surviving_bus::Dict{Tuple{Int, Int}, Int} = Dict{Tuple{Int, Int}, Int}()
     boundary_bus_to_removed_arcs::Dict{Int, Set{Tuple{Int, Int}}} =
         Dict{Int, Set{Tuple{Int, Int}}}()
-    added_admittance_map::Dict{Int, YBUS_ELTYPE} = Dict{Int, YBUS_ELTYPE}()
-    added_branch_map::Dict{Tuple{Int, Int}, YBUS_ELTYPE} =
-        Dict{Tuple{Int, Int}, YBUS_ELTYPE}()
+    added_admittance_map::Dict{Int, PSY.FixedAdmittance} = Dict{Int, PSY.FixedAdmittance}()
+    added_arc_impedance_map::Dict{Tuple{Int, Int}, PSY.GenericArcImpedance} =
+        Dict{Tuple{Int, Int}, PSY.GenericArcImpedance}()
     all_branch_maps_by_type::Dict{String, Any} = Dict{String, Any}()
     reductions::ReductionContainer = ReductionContainer()
     name_to_arc_map::Dict{
@@ -346,7 +346,7 @@ get_removed_buses(rb::NetworkReductionData) = rb.removed_buses
 get_removed_arcs(rb::NetworkReductionData) = rb.removed_arcs
 get_removed_arc_to_surviving_bus(rb::NetworkReductionData) = rb.removed_arc_to_surviving_bus
 get_added_admittance_map(rb::NetworkReductionData) = rb.added_admittance_map
-get_added_branch_map(rb::NetworkReductionData) = rb.added_branch_map
+get_added_arc_impedance_map(rb::NetworkReductionData) = rb.added_arc_impedance_map
 get_all_branch_maps_by_type(rb::NetworkReductionData) = rb.all_branch_maps_by_type
 
 """
@@ -500,7 +500,7 @@ function get_arc_axis(nr::NetworkReductionData)
     parallel_arcs = collect(keys(nr.parallel_branch_map))
     series_arcs = collect(keys(nr.series_branch_map))
     transformer_arcs = collect(keys(nr.transformer3W_map))
-    additional_arcs = collect(keys(nr.added_branch_map))
+    additional_arcs = collect(keys(nr.added_arc_impedance_map))
     arc_ax = unique(
         vcat(direct_arcs, parallel_arcs, series_arcs, transformer_arcs, additional_arcs),
     )
@@ -533,6 +533,6 @@ function Base.show(io::IO, ::MIME{Symbol("text/plain")}, nrd::NetworkReductionDa
     println("\tNumber of 3WT winding arcs:$(length(nrd.transformer3W_map))")
     println("\tNumber of removed buses: $(length(nrd.removed_buses))")
     println("\tNumber of removed arcs: $(length(nrd.removed_arcs))")
-    println("\tNumber of added branches: $(length(nrd.added_branch_map))")
+    println("\tNumber of added arcs: $(length(nrd.added_arc_impedance_map))")
     println("\tNumber of added admittances: $(length(nrd.added_admittance_map))")
 end
