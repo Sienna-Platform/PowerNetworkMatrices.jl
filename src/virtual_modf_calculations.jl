@@ -327,6 +327,46 @@ end
 # --- Woodbury factor computation ---
 
 """
+    _invert_woodbury_W(W_mat, M) -> (W_inv::Matrix{Float64}, is_islanding::Bool)
+
+Invert the M×M Woodbury W matrix. Uses analytical formulas for M ≤ 2
+(the common N-1 and N-2 cases) to avoid LU factorization overhead.
+Falls back to LU for M > 2.
+"""
+function _invert_woodbury_W(
+    W_mat::Matrix{Float64},
+    M::Int,
+)::Tuple{Matrix{Float64}, Bool}
+    if M == 1
+        w = W_mat[1, 1]
+        is_island = abs(w) < MODF_ISLANDING_TOLERANCE
+        W_inv = Matrix{Float64}(undef, 1, 1)
+        W_inv[1, 1] = is_island ? 0.0 : 1.0 / w
+        return W_inv, is_island
+    elseif M == 2
+        a, b, c, d = W_mat[1, 1], W_mat[1, 2], W_mat[2, 1], W_mat[2, 2]
+        det_W = a * d - b * c
+        is_island = abs(det_W) < MODF_ISLANDING_TOLERANCE
+        W_inv = Matrix{Float64}(undef, 2, 2)
+        if is_island
+            fill!(W_inv, 0.0)
+        else
+            inv_det = 1.0 / det_W
+            W_inv[1, 1] = d * inv_det
+            W_inv[1, 2] = -b * inv_det
+            W_inv[2, 1] = -c * inv_det
+            W_inv[2, 2] = a * inv_det
+        end
+        return W_inv, is_island
+    else
+        W_lu = LinearAlgebra.lu(W_mat)
+        is_island = any(i -> abs(W_lu.U[i, i]) < MODF_ISLANDING_TOLERANCE, 1:M)
+        W_inv = is_island ? zeros(M, M) : LinearAlgebra.inv(W_lu)
+        return W_inv, is_island
+    end
+end
+
+"""
     _get_woodbury_factors(vmodf, contingency) -> WoodburyFactors
 
 Compute and cache the Woodbury factors for a contingency.
@@ -387,12 +427,11 @@ function _get_woodbury_factors(
     # W = diag(1/Δb) + K_mat = A⁻¹ + U⊤B⁻¹U
     W_mat = LinearAlgebra.diagm(1.0 ./ delta_b_vec) + K_mat
 
-    W_lu = LinearAlgebra.lu(W_mat)
-    # Use smallest pivot magnitude to detect near-singularity; det is numerically
-    # unstable for large M (grows exponentially), while min pivot is O(1) cost.
-    is_island = any(i -> abs(W_lu.U[i, i]) < MODF_ISLANDING_TOLERANCE, 1:M)
+    # Pre-invert W: analytical for M ≤ 2 (avoids LU overhead for the common N-1/N-2 cases),
+    # LU-based for M > 2.
+    W_inv, is_island = _invert_woodbury_W(W_mat, M)
 
-    wf = WoodburyFactors(Z, W_lu, branch_indices, delta_b_vec, is_island)
+    wf = WoodburyFactors(Z, W_inv, branch_indices, delta_b_vec, is_island)
     vmodf.woodbury_cache[contingency.uuid] = wf
     return wf
 end
@@ -455,7 +494,7 @@ function _compute_modf_row(
     end
 
     # Woodbury correction: W⁻¹ · zm_Z, then subtract correction from temp_data in place
-    correction_coeff = wf.W_lu \ zm_Z
+    correction_coeff = wf.W_inv * zm_Z
     for j in 1:M
         c = correction_coeff[j]
         @inbounds for n in eachindex(vmodf.temp_data)
