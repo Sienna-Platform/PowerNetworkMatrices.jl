@@ -85,7 +85,7 @@ This provides a conservative estimate that accounts for potential overestimation
 """
 function get_equivalent_rating(bp::BranchesParallel)
     # Sum of ratings divided by number of circuits
-    return sum(PSY.get_rating(branch) for branch in bp.branches) / length(bp.branches)
+    return sum(get_equivalent_rating(branch) for branch in bp.branches) / length(bp.branches)
 end
 
 """
