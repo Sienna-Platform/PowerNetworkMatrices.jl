@@ -1962,11 +1962,17 @@ function get_reduction(
             push!(removed_arcs, arc)
         end
     end
+
+    boundary_bus_to_removed_arcs = Dict{Int, Set{Tuple{Int, Int}}}()
+    for (removed_arc, boundary_bus) in removed_arc_to_surviving_bus
+        set = get!(boundary_bus_to_removed_arcs, boundary_bus, Set{Tuple{Int, Int}}())
+        push!(set, removed_arc)
+    end
+
     bus_reduction_map,
     reverse_bus_search_map,
     added_arc_impedance_map,
-    added_admittance_map,
-    boundary_bus_to_removed_arcs =
+    added_admittance_map =
         get_ward_reduction(
             ybus.data,
             bus_lookup,

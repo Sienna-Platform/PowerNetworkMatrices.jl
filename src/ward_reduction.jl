@@ -42,26 +42,10 @@ function get_ward_reduction(
 )
     all_buses = bus_axis
     external_buses = setdiff(all_buses, study_buses)
-    boundary_buses = unique(boundary_buses)
     n_external = length(external_buses)
     n_boundary = length(boundary_buses)
     n_buses = length(bus_axis)
 
-    boundary_bus_to_removed_arcs = Dict{Int, Set{Tuple{Int, Int}}}()
-    for arc in arc_axis
-        if (arc[1] ∈ boundary_buses)
-            if (arc[2] ∉ study_buses)
-                set = get!(boundary_bus_to_removed_arcs, arc[1], Set{Tuple{Int, Int}}())
-                push!(set, arc)
-            end
-        end
-        if (arc[2] ∈ boundary_buses)
-            if (arc[1] ∉ study_buses)
-                set = get!(boundary_bus_to_removed_arcs, arc[2], Set{Tuple{Int, Int}}())
-                push!(set, arc)
-            end
-        end
-    end
     bus_reduction_map_index = Dict{Int, Set{Int}}(k => Set{Int}() for k in study_buses)
 
     added_arc_impedance_map = Dict{Tuple{Int, Int}, PSY.GenericArcImpedance}()
@@ -165,6 +149,5 @@ function get_ward_reduction(
     return bus_reduction_map_index,
     reverse_bus_search_map,
     added_arc_impedance_map,
-    added_admittance_map,
-    boundary_bus_to_removed_arcs
+    added_admittance_map
 end
