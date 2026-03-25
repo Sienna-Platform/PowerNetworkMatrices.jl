@@ -42,6 +42,7 @@ function get_ward_reduction(
 )
     all_buses = bus_axis
     external_buses = setdiff(all_buses, study_buses)
+    boundary_buses = collect(boundary_buses)
     n_external = length(external_buses)
     n_boundary = length(boundary_buses)
     n_buses = length(bus_axis)
