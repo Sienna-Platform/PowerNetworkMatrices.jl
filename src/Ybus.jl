@@ -828,29 +828,12 @@ function Ybus(
             if r == 0.0 && x < ZERO_IMPEDANCE_LINE_REACTANCE_THRESHOLD
                 from_bus_number = PSY.get_number(PSY.get_from(PSY.get_arc(br)))
                 to_bus_number = PSY.get_number(PSY.get_to(PSY.get_arc(br)))
-                if haskey(reverse_bus_search_map, from_bus_number)
-                    reduced_from_bus_number = reverse_bus_search_map[from_bus_number]
-                    push!(
-                        get!(bus_reduction_map, reduced_from_bus_number, Set{Int}),
-                        to_bus_number,
-                    )
-                    for x in get(bus_reduction_map, to_bus_number, Set{Int}())
-                        reverse_bus_search_map[x] = reduced_from_bus_number
-                    end
-                    delete!(bus_reduction_map, to_bus_number)
-                    reverse_bus_search_map[to_bus_number] = reduced_from_bus_number
-                else
-                    s1 = get(bus_reduction_map, from_bus_number, Set{Int}())
-                    s2 = union(
-                        get(bus_reduction_map, to_bus_number, Set{Int}(to_bus_number)),
-                        to_bus_number,
-                    )
-                    bus_reduction_map[from_bus_number] = union(s1, s2)
-                    delete!(bus_reduction_map, to_bus_number)
-                    for x in s2
-                        reverse_bus_search_map[x] = from_bus_number
-                    end
-                end
+                _update_bus_maps!(
+                    reverse_bus_search_map,
+                    bus_reduction_map,
+                    to_bus_number,
+                    from_bus_number,
+                )
                 push!(nr.removed_arcs, (from_bus_number, to_bus_number))
             else
                 push!(breaker_switches, br)
@@ -1288,23 +1271,13 @@ end
 function _apply_bus_reductions!(nr::NetworkReductionData, nr_new::NetworkReductionData)
     bus_numbers_to_remove = Vector{Int}()
     for (k, v) in nr_new.reverse_bus_search_map
-        nr.reverse_bus_search_map[k] = v
+        _update_bus_maps!(nr.reverse_bus_search_map, nr.bus_reduction_map, k, v)
         push!(bus_numbers_to_remove, k)
     end
     for x in nr_new.removed_buses
         push!(nr.removed_buses, x)
         push!(bus_numbers_to_remove, x)
         delete!(nr.bus_reduction_map, x)
-    end
-    for (k, v) in nr_new.bus_reduction_map
-        if haskey(nr.bus_reduction_map, k)
-            union!(nr.bus_reduction_map[k], nr_new.bus_reduction_map[k])
-            for x in v
-                delete!(nr.bus_reduction_map, x)
-            end
-        else
-            error("Bus $k was previously reduced")
-        end
     end
     return bus_numbers_to_remove
 end
@@ -1373,6 +1346,42 @@ function _apply_series_branch_maps!(nr::NetworkReductionData, nr_new::NetworkRed
         error(
             "Cannot compose series branch maps; should not apply multiple reductions that generate series branch maps",
         )
+    end
+    return
+end
+
+"""
+Updates both existing bus maps (forward and reverse) for a new reduction of bus b1 into bus b2. 
+Handles both the case where b2 is already reduced and the case where it is not. 
+"""
+function _update_bus_maps!(
+    reverse_bus_search_map::Dict{Int, Int},
+    bus_reduction_map::Dict{Int, Set{Int}},
+    b1_number::Int,
+    b2_number::Int,
+)
+    if haskey(reverse_bus_search_map, b2_number)
+        reduced_b2_number = reverse_bus_search_map[b2_number]
+        push!(
+            get!(bus_reduction_map, reduced_b2_number, Set{Int}()),
+            b1_number,
+        )
+        for x in get(bus_reduction_map, b1_number, Set{Int}())
+            reverse_bus_search_map[x] = reduced_b2_number
+        end
+        delete!(bus_reduction_map, b1_number)
+        reverse_bus_search_map[b1_number] = reduced_b2_number
+    else
+        s1 = get(bus_reduction_map, b2_number, Set{Int}())
+        s2 = union(
+            get(bus_reduction_map, b1_number, Set{Int}(b1_number)),
+            b1_number,
+        )
+        bus_reduction_map[b2_number] = union(s1, s2)
+        delete!(bus_reduction_map, b1_number)
+        for x in s2
+            reverse_bus_search_map[x] = b2_number
+        end
     end
     return
 end
