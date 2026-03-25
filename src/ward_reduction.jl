@@ -42,15 +42,15 @@ function get_ward_reduction(
 )
     all_buses = bus_axis
     external_buses = setdiff(all_buses, study_buses)
-    boundary_buses = unique(boundary_buses)
+    boundary_buses = collect(boundary_buses)
     n_external = length(external_buses)
     n_boundary = length(boundary_buses)
     n_buses = length(bus_axis)
 
     bus_reduction_map_index = Dict{Int, Set{Int}}(k => Set{Int}() for k in study_buses)
 
-    added_branch_map = Dict{Tuple{Int, Int}, YBUS_ELTYPE}()
-    added_admittance_map = Dict{Int, YBUS_ELTYPE}()
+    added_arc_impedance_map = Dict{Tuple{Int, Int}, PSY.GenericArcImpedance}()
+    added_admittance_map = Dict{Int, PSY.FixedAdmittance}()
     if isempty(boundary_buses)
         first_ref_study_bus = findfirst(x -> x ∈ ref_bus_numbers, study_buses)
         @error "no boundary buses found; cannot make bus_reduction_map based on impedance based criteria. mapping all external buses to the first reference bus ($first_ref_study_bus)"
@@ -101,29 +101,54 @@ function get_ward_reduction(
 
     # Eq. (2.16) from  https://core.ac.uk/download/pdf/79564835.pdf
     y_eq = y_be * KLU.solve!(klu(y_ee), Matrix{Complex{Float64}}(y_eb))
-
     #Loop upper diagonal of Yeq
     for ix in 1:length(boundary_buses)
         for jx in ix:length(boundary_buses)
             bus_ix = boundary_buses[ix]
             bus_jx = boundary_buses[jx]
             if y_eq[ix, jx] != 0.0
-                if ix == jx
-                    added_admittance_map[bus_ix] = y_eq[ix, jx]
-                else
+                if ix != jx
+                    arc_impedance = 1.0 / y_eq[ix, jx]
+                    generic_arc_impedance = PSY.GenericArcImpedance(;
+                        name = "",
+                        available = true,
+                        active_power_flow = 0.0,
+                        reactive_power_flow = 0.0,
+                        max_flow = 1e6,
+                        arc = PSY.Arc(nothing),
+                        r = real(arc_impedance),
+                        x = imag(arc_impedance),
+                    )
+                    Y11, Y12, _, Y22 = ybus_branch_entries(generic_arc_impedance)
+                    @assert isapprox(-1.0 * Y12, y_eq[ix, jx])
                     #check if the arc of virtual line is already existing so we don't add an additional arc
                     if (bus_ix, bus_jx) ∈ arc_axis
                         arc_key = (bus_ix, bus_jx)
+                        y_eq[ix, ix] -= Y11
+                        y_eq[jx, jx] -= Y22
                     else
                         arc_key = (bus_jx, bus_ix)
+                        y_eq[ix, ix] -= Y22
+                        y_eq[jx, jx] -= Y11
                     end
-                    added_branch_map[arc_key] = y_eq[ix, jx]
+                    added_arc_impedance_map[arc_key] = generic_arc_impedance
                 end
             end
         end
     end
+    for ix in 1:length(boundary_buses)
+        bus_ix = boundary_buses[ix]
+        if y_eq[ix, ix] != 0.0
+            added_admittance_map[bus_ix] = PSY.FixedAdmittance(;
+                name = "",
+                available = true,
+                bus = PSY.ACBus(nothing),
+                Y = y_eq[ix, ix],
+            )
+        end
+    end
     return bus_reduction_map_index,
     reverse_bus_search_map,
-    added_branch_map,
+    added_arc_impedance_map,
     added_admittance_map
 end
