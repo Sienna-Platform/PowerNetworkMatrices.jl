@@ -1362,15 +1362,16 @@ function _update_bus_maps!(
 )
     if haskey(reverse_bus_search_map, b2_number)
         reduced_b2_number = reverse_bus_search_map[b2_number]
-        push!(
-            get!(bus_reduction_map, reduced_b2_number, Set{Int}()),
+        s1 = get(bus_reduction_map, reduced_b2_number, Set{Int}())
+        s2 = union(
+            get(bus_reduction_map, b1_number, Set{Int}(b1_number)),
             b1_number,
         )
-        for x in get(bus_reduction_map, b1_number, Set{Int}())
+        bus_reduction_map[reduced_b2_number] = union(s1, s2)
+        delete!(bus_reduction_map, b1_number)
+        for x in s2
             reverse_bus_search_map[x] = reduced_b2_number
         end
-        delete!(bus_reduction_map, b1_number)
-        reverse_bus_search_map[b1_number] = reduced_b2_number
     else
         s1 = get(bus_reduction_map, b2_number, Set{Int}())
         s2 = union(
