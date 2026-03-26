@@ -25,4 +25,3 @@ end
     @test reverse_bus_search_map[42] == 50
     @test reverse_bus_search_map[51] == 50
 end
-
