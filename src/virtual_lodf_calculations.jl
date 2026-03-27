@@ -27,6 +27,10 @@ The VirtualLODF struct is indexed using branch names.
         For arc j, this is the absolute value of the first nonzero in BA column j.
         BA columns always have the structure [+b, -b] (from-bus and to-bus entries),
         so both nonzeros have the same magnitude.
+- `branch_susceptances_by_arc::Vector{Vector{Float64}}`:
+        Per-branch susceptances for each arc. For single-branch arcs, contains
+        one element equal to the arc susceptance. For parallel branches, contains
+        one entry per branch in the parallel group.
 - `ref_bus_positions::Set{Int}`:
         Vector containing the indexes of the rows of the transposed BA matrix
         corresponding to the reference buses.
@@ -59,6 +63,7 @@ struct VirtualLODF{Ax, L <: NTuple{2, Dict}} <: PowerNetworkMatrix{Float64}
     inv_PTDF_A_diag::Vector{Float64}
     PTDF_A_diag::Vector{Float64}
     arc_susceptances::Vector{Float64}
+    branch_susceptances_by_arc::Vector{Vector{Float64}}
     dist_slack::Vector{Float64}
     axes::Ax
     lookup::L
@@ -151,6 +156,44 @@ function _extract_arc_susceptances(
 end
 
 """
+    _extract_branch_susceptances_by_arc(BA, arc_ax, nr_data) -> Vector{Vector{Float64}}
+
+Extract per-branch susceptances for each arc. For arcs with a single branch,
+returns a one-element vector equal to the arc susceptance. For arcs with
+parallel branches (double circuits), returns one entry per branch.
+
+This enables single-branch contingencies on parallel arcs: when one circuit
+of a double-circuit line trips, the delta_b is -b_branch (not -b_arc).
+"""
+function _extract_branch_susceptances_by_arc(
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    arc_ax::Vector{Tuple{Int, Int}},
+    nr_data::NetworkReductionData,
+)::Vector{Vector{Float64}}
+    n_arcs = size(BA, 2)
+    nzv = SparseArrays.nonzeros(BA)
+    result = Vector{Vector{Float64}}(undef, n_arcs)
+
+    for j in 1:n_arcs
+        arc = arc_ax[j]
+        rng = nzrange(BA, j)
+        arc_b = isempty(rng) ? 0.0 : abs(nzv[first(rng)])
+
+        if haskey(nr_data.parallel_branch_map, arc)
+            bp = nr_data.parallel_branch_map[arc]
+            branch_bs = Float64[
+                get_series_susceptance(branch) for branch in bp.branches
+            ]
+            result[j] = branch_bs
+        else
+            result[j] = [arc_b]
+        end
+    end
+
+    return result
+end
+
+"""
 Builds the Virtual LODF matrix from a system. The return is a VirtualLODF
 struct with an empty cache.
 
@@ -203,6 +246,8 @@ function VirtualLODF(
     )
     PTDF_A_diag_raw = copy(PTDF_diag)
     arc_susceptances = _extract_arc_susceptances(BA.data)
+    branch_susceptances_by_arc = _extract_branch_susceptances_by_arc(
+        BA.data, arc_ax, Ymatrix.network_reduction_data)
     PTDF_diag[PTDF_diag .> 1 - LODF_ENTRY_TOLERANCE] .= 0.0
 
     if isempty(persistent_arcs)
@@ -228,6 +273,7 @@ function VirtualLODF(
         1.0 ./ (1.0 .- PTDF_diag),
         PTDF_A_diag_raw,
         arc_susceptances,
+        branch_susceptances_by_arc,
         dist_slack,
         axes,
         look_up,

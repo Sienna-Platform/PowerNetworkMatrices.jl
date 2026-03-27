@@ -22,6 +22,10 @@ Caching is two-tiered:
         Raw diagonal elements of PTDF·A (H[e,e] values).
 - `arc_susceptances::Vector{Float64}`:
         Effective susceptance for each arc.
+- `branch_susceptances_by_arc::Vector{Vector{Float64}}`:
+        Per-branch susceptances for each arc. For single-branch arcs, contains
+        one element equal to the arc susceptance. For parallel branches, contains
+        one entry per branch in the parallel group.
 - `dist_slack::Vector{Float64}`:
         Distributed slack bus weights.
 - `axes::Ax`:
@@ -55,6 +59,7 @@ struct VirtualMODF{Ax, L <: NTuple{2, Dict}} <: PowerNetworkMatrix{Float64}
     A::SparseArrays.SparseMatrixCSC{Int8, Int}
     PTDF_A_diag::Vector{Float64}
     arc_susceptances::Vector{Float64}
+    branch_susceptances_by_arc::Vector{Vector{Float64}}
     dist_slack::Vector{Float64}
     axes::Ax
     lookup::L
@@ -162,6 +167,8 @@ function VirtualMODF(
     # Compute raw PTDF diagonal and arc susceptances
     PTDF_A_diag = _get_PTDF_A_diag(K, BA.data, A.data, Set(ref_bus_positions))
     arc_susceptances = _extract_arc_susceptances(BA.data)
+    branch_susceptances_by_arc = _extract_branch_susceptances_by_arc(
+        BA.data, arc_ax, Ymatrix.network_reduction_data)
 
     temp_data = zeros(length(bus_ax))
     work_ba_col = zeros(length(valid_ix))
@@ -173,6 +180,7 @@ function VirtualMODF(
         A.data,
         PTDF_A_diag,
         arc_susceptances,
+        branch_susceptances_by_arc,
         dist_slack,
         axes,
         look_up,
