@@ -263,8 +263,8 @@ function _register_outage!(
         error("Outage has no associated ACTransmission components.")
     end
 
-    # Resolve each component to a BranchModification
-    mods = BranchModification[]
+    # Resolve each component to an ArcModification
+    mods = ArcModification[]
     component_names = String[]
 
     for component in associated_components
@@ -275,21 +275,21 @@ function _register_outage!(
             arc_tuple = nr.reverse_parallel_branch_map[component]
             arc_idx = vmodf.lookup[1][arc_tuple]
             b_circuit = PSY.get_series_susceptance(component)
-            push!(mods, BranchModification(arc_idx, -b_circuit))
+            push!(mods, ArcModification(arc_idx, -b_circuit))
 
         elseif haskey(nr.reverse_direct_branch_map, component)
             # Single circuit: full outage
             arc_tuple = nr.reverse_direct_branch_map[component]
             arc_idx = vmodf.lookup[1][arc_tuple]
             b_arc = vmodf.arc_susceptances[arc_idx]
-            push!(mods, BranchModification(arc_idx, -b_arc))
+            push!(mods, ArcModification(arc_idx, -b_arc))
 
         elseif haskey(nr.reverse_series_branch_map, component)
             # Branch is part of a series (degree-two) chain: full outage of the series arc
             arc_tuple = nr.reverse_series_branch_map[component]
             arc_idx = vmodf.lookup[1][arc_tuple]
             b_arc = vmodf.arc_susceptances[arc_idx]
-            push!(mods, BranchModification(arc_idx, -b_arc))
+            push!(mods, ArcModification(arc_idx, -b_arc))
 
         else
             # No reduction applied — fall back to direct arc tuple lookup using PSY bus numbers.
@@ -300,7 +300,7 @@ function _register_outage!(
             if haskey(vmodf.lookup[1], arc_tuple)
                 arc_idx = vmodf.lookup[1][arc_tuple]
                 b_arc = vmodf.arc_susceptances[arc_idx]
-                push!(mods, BranchModification(arc_idx, -b_arc))
+                push!(mods, ArcModification(arc_idx, -b_arc))
             else
                 @warn "Branch $(PSY.get_name(component)) arc ($fr, $to) not found in " *
                       "network matrix lookup. Skipping."
@@ -309,7 +309,7 @@ function _register_outage!(
     end
 
     if isempty(mods)
-        error("No valid branch modifications found for outage.")
+        error("No valid arc modifications found for outage.")
     end
 
     # Merge modifications on the same arc
@@ -655,12 +655,12 @@ function clear_all_caches!(vmodf::VirtualMODF)
 end
 
 """
-Merge BranchModifications that target the same arc index.
+Merge ArcModifications that target the same arc index.
 """
-function _merge_modifications(mods::Vector{BranchModification})
+function _merge_modifications(mods::Vector{ArcModification})
     by_arc = Dict{Int, Float64}()
     for m in mods
         by_arc[m.arc_index] = get(by_arc, m.arc_index, 0.0) + m.delta_b
     end
-    return [BranchModification(idx, db) for (idx, db) in by_arc]
+    return [ArcModification(idx, db) for (idx, db) in by_arc]
 end

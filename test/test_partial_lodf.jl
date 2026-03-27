@@ -77,7 +77,11 @@ end
 
     # Verify that passing delta_b = 0 always gives zeros regardless of arc
     for e in 1:size(vlodf, 1)
-        @test isapprox(get_partial_lodf_row(vlodf, e, 0.0), zeros(size(vlodf, 1)), atol = 1e-14)
+        @test isapprox(
+            get_partial_lodf_row(vlodf, e, 0.0),
+            zeros(size(vlodf, 1)),
+            atol = 1e-14,
+        )
     end
 end
 

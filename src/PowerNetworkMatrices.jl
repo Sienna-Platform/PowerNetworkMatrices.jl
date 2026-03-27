@@ -4,7 +4,7 @@ export ABA_Matrix
 export AdjacencyMatrix
 export ArcAdmittanceMatrix
 export BA_Matrix
-export BranchModification
+export ArcModification
 export ContingencySpec
 export DegreeTwoReduction
 export IncidenceMatrix
