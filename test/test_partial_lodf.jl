@@ -12,6 +12,8 @@
         partial_row = PNM.get_partial_lodf_row(vlodf, e, -b_e)
         standard_col = [lodf[arc_ℓ, arc_e] for arc_ℓ in lodf.axes[1]]
         @test isapprox(partial_row, standard_col, atol = 1e-10)
+        # Full outage self-element must be exactly -1.0 (m-bossart review).
+        @test partial_row[e] == -1.0
     end
 end
 
