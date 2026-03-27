@@ -268,6 +268,41 @@ function _compute_series_outage_delta_b(
 end
 
 """
+    _compute_series_outage_delta_b(series_chain::BranchesSeries, tripped::Vector{<:PSY.ACTransmission}) -> Float64
+
+Compute the change in equivalent arc susceptance when multiple components are
+simultaneously tripped from a series chain.
+
+For a series chain with segments of susceptance b₁, b₂, ..., bₙ, the equivalent
+susceptance is: b_eq = 1 / (1/b₁ + 1/b₂ + ... + 1/bₙ).
+
+When one or more segments are removed, the remaining segments form the new equivalent.
+If all segments are removed, Δb = -b_eq (full arc outage, islands).
+
+Returns Δb = b_new - b_old (always negative for outages).
+"""
+function _compute_series_outage_delta_b(
+    series_chain::BranchesSeries,
+    tripped::Vector{<:PSY.ACTransmission},
+)::Float64
+    b_old = get_series_susceptance(series_chain)
+    tripped_set = Set(tripped)
+    remaining_inv_sum = 0.0
+    any_remaining = false
+    for segment in series_chain
+        if segment ∉ tripped_set
+            remaining_inv_sum += inv(get_series_susceptance(segment))
+            any_remaining = true
+        end
+    end
+    if !any_remaining
+        return -b_old
+    end
+    b_new = 1.0 / remaining_inv_sum
+    return b_new - b_old
+end
+
+"""
     _register_outage!(vmodf, sys, outage) -> ContingencySpec
 
 Resolve an Outage supplemental attribute to a ContingencySpec and cache it.
@@ -304,34 +339,37 @@ function _register_outage!(
         error("Outage has no associated ACTransmission components.")
     end
 
-    # Resolve each component to an ArcModification
-    mods = ArcModification[]
+    # --- Pass 1: Classify components by arc and reduction type ---
+    # For series arcs, collect ALL tripped components before computing Δb.
+    direct_mods = ArcModification[]
+    parallel_mods = ArcModification[]
+    series_components_by_arc = Dict{Int, Vector{PSY.ACTransmission}}()
+    series_arc_tuples = Dict{Int, Tuple{Int, Int}}()
     component_names = String[]
 
     for component in associated_components
         push!(component_names, PSY.get_name(component))
 
         if haskey(nr.reverse_direct_branch_map, component)
-            # Single circuit: full outage (most common case)
             arc_tuple = nr.reverse_direct_branch_map[component]
             arc_idx = vmodf.lookup[1][arc_tuple]
             b_arc = vmodf.arc_susceptances[arc_idx]
-            push!(mods, ArcModification(arc_idx, -b_arc))
+            push!(direct_mods, ArcModification(arc_idx, -b_arc))
 
         elseif haskey(nr.reverse_parallel_branch_map, component)
-            # Double circuit: partial susceptance change
             arc_tuple = nr.reverse_parallel_branch_map[component]
             arc_idx = vmodf.lookup[1][arc_tuple]
             b_circuit = PSY.get_series_susceptance(component)
-            push!(mods, ArcModification(arc_idx, -b_circuit))
+            push!(parallel_mods, ArcModification(arc_idx, -b_circuit))
 
         elseif haskey(nr.reverse_series_branch_map, component)
-            # Branch is part of a series (degree-two) chain.
             arc_tuple = nr.reverse_series_branch_map[component]
             arc_idx = vmodf.lookup[1][arc_tuple]
-            series_chain = nr.series_branch_map[arc_tuple]
-            delta_b = _compute_series_outage_delta_b(series_chain, component)
-            push!(mods, ArcModification(arc_idx, delta_b))
+            if !haskey(series_components_by_arc, arc_idx)
+                series_components_by_arc[arc_idx] = PSY.ACTransmission[]
+                series_arc_tuples[arc_idx] = arc_tuple
+            end
+            push!(series_components_by_arc[arc_idx], component)
 
         else
             @warn "Branch $(PSY.get_name(component)) not found in any reduction map. " *
@@ -339,11 +377,24 @@ function _register_outage!(
         end
     end
 
+    # --- Pass 2: Compute series Δb with all tripped components grouped ---
+    series_mods = ArcModification[]
+    for (arc_idx, tripped) in series_components_by_arc
+        arc_tuple = series_arc_tuples[arc_idx]
+        series_chain = nr.series_branch_map[arc_tuple]
+        delta_b = _compute_series_outage_delta_b(series_chain, tripped)
+        push!(series_mods, ArcModification(arc_idx, delta_b))
+    end
+
+    # Combine all modifications. Series mods already have correct combined Δb,
+    # so merging only needs to handle direct+parallel overlaps on the same arc.
+    mods = vcat(direct_mods, parallel_mods, series_mods)
+
     if isempty(mods)
         error("No valid arc modifications found for outage.")
     end
 
-    # Merge modifications on the same arc
+    # Merge modifications on the same arc (handles parallel circuits on the same arc)
     merged = _merge_modifications(mods)
 
     ctg_name = isempty(component_names) ? string(outage_uuid) :
