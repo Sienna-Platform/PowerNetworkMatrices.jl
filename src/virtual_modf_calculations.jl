@@ -236,16 +236,50 @@ function _register_outages!(vmodf::VirtualMODF, sys::PSY.System)
 end
 
 """
+    _compute_series_outage_delta_b(series_chain::BranchesSeries, component::PSY.ACTransmission) -> Float64
+
+Compute the change in equivalent arc susceptance when `component` is tripped
+from `series_chain`.
+
+For a series chain with segments of susceptance b_1, b_2, ..., b_n:
+    b_eq = 1 / (1/b_1 + 1/b_2 + ... + 1/b_n)
+
+Removing one segment changes the equivalent. Returns delta_b = b_new - b_old.
+If only one segment exists (or all are removed), returns -b_old (full outage).
+"""
+function _compute_series_outage_delta_b(
+    series_chain::BranchesSeries,
+    component::PSY.ACTransmission,
+)::Float64
+    b_old = get_series_susceptance(series_chain)
+    remaining_inv_sum = 0.0
+    any_remaining = false
+    for segment in series_chain
+        if segment !== component
+            remaining_inv_sum += inv(get_series_susceptance(segment))
+            any_remaining = true
+        end
+    end
+    if !any_remaining
+        return -b_old
+    end
+    b_new = 1.0 / remaining_inv_sum
+    return b_new - b_old
+end
+
+"""
     _register_outage!(vmodf, sys, outage) -> ContingencySpec
 
 Resolve an Outage supplemental attribute to a ContingencySpec and cache it.
 
 Resolution chain:
 1. Get ACTransmission components via `PSY.get_associated_components(sys, outage; component_type=PSY.ACTransmission)`
-2. Check NetworkReductionData for reduction map membership
-3. Compute Δb: -b_circuit (parallel), -b_arc (direct), or series-aware (series chain)
-4. Merge modifications on the same arc
-5. Store ContingencySpec keyed by outage UUID
+2. Check direct branch map (most common: unreduced single circuit)
+3. Check parallel branch map (double circuit: Δb = -b_circuit)
+4. Check series branch map (degree-two chain: compute correct Δb)
+5. Warn and skip if component not found in any map
+6. Merge modifications on the same arc
+7. Store ContingencySpec keyed by outage UUID
 """
 function _register_outage!(
     vmodf::VirtualMODF,
@@ -277,41 +311,31 @@ function _register_outage!(
     for component in associated_components
         push!(component_names, PSY.get_name(component))
 
-        if haskey(nr.reverse_parallel_branch_map, component)
+        if haskey(nr.reverse_direct_branch_map, component)
+            # Single circuit: full outage (most common case)
+            arc_tuple = nr.reverse_direct_branch_map[component]
+            arc_idx = vmodf.lookup[1][arc_tuple]
+            b_arc = vmodf.arc_susceptances[arc_idx]
+            push!(mods, ArcModification(arc_idx, -b_arc))
+
+        elseif haskey(nr.reverse_parallel_branch_map, component)
             # Double circuit: partial susceptance change
             arc_tuple = nr.reverse_parallel_branch_map[component]
             arc_idx = vmodf.lookup[1][arc_tuple]
             b_circuit = PSY.get_series_susceptance(component)
             push!(mods, ArcModification(arc_idx, -b_circuit))
 
-        elseif haskey(nr.reverse_direct_branch_map, component)
-            # Single circuit: full outage
-            arc_tuple = nr.reverse_direct_branch_map[component]
-            arc_idx = vmodf.lookup[1][arc_tuple]
-            b_arc = vmodf.arc_susceptances[arc_idx]
-            push!(mods, ArcModification(arc_idx, -b_arc))
-
         elseif haskey(nr.reverse_series_branch_map, component)
-            # Branch is part of a series (degree-two) chain: full outage of the series arc
+            # Branch is part of a series (degree-two) chain.
             arc_tuple = nr.reverse_series_branch_map[component]
             arc_idx = vmodf.lookup[1][arc_tuple]
-            b_arc = vmodf.arc_susceptances[arc_idx]
-            push!(mods, ArcModification(arc_idx, -b_arc))
+            series_chain = nr.series_branch_map[arc_tuple]
+            delta_b = _compute_series_outage_delta_b(series_chain, component)
+            push!(mods, ArcModification(arc_idx, delta_b))
 
         else
-            # No reduction applied — fall back to direct arc tuple lookup using PSY bus numbers.
-            arc = PSY.get_arc(component)
-            fr = PSY.get_number(PSY.get_from(arc))
-            to = PSY.get_number(PSY.get_to(arc))
-            arc_tuple = (fr, to)
-            if haskey(vmodf.lookup[1], arc_tuple)
-                arc_idx = vmodf.lookup[1][arc_tuple]
-                b_arc = vmodf.arc_susceptances[arc_idx]
-                push!(mods, ArcModification(arc_idx, -b_arc))
-            else
-                @warn "Branch $(PSY.get_name(component)) arc ($fr, $to) not found in " *
-                      "network matrix lookup. Skipping."
-            end
+            @warn "Branch $(PSY.get_name(component)) not found in any reduction map. " *
+                  "Skipping registration for this component."
         end
     end
 
