@@ -234,11 +234,10 @@ Resolve an Outage supplemental attribute to a ContingencySpec and cache it.
 
 Resolution chain:
 1. Get ACTransmission components via `PSY.get_associated_components(sys, outage; component_type=PSY.ACTransmission)`
-2. Filter to PSY.ACTransmission components
-3. Check NetworkReductionData for double-circuit membership
-4. Compute Δb: -b_circuit (parallel) or -b_arc (direct)
-5. Merge modifications on the same arc
-6. Store ContingencySpec keyed by outage UUID
+2. Check NetworkReductionData for reduction map membership
+3. Compute Δb: -b_circuit (parallel), -b_arc (direct), or series-aware (series chain)
+4. Merge modifications on the same arc
+5. Store ContingencySpec keyed by outage UUID
 """
 function _register_outage!(
     vmodf::VirtualMODF,
