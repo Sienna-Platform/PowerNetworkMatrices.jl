@@ -394,7 +394,7 @@ function _get_woodbury_factors(
     M = length(mods)
     n_bus = length(vmodf.temp_data)
 
-    branch_indices = [mod.arc_index for mod in mods]
+    arc_indices = [mod.arc_index for mod in mods]
     delta_b_vec = [mod.delta_b for mod in mods]
 
     # Compute Z[:,j] = B⁻¹ν_j for each modified arc, where ν_j = BA[:,e] / b_e
@@ -421,7 +421,7 @@ function _get_woodbury_factors(
     AZ = vmodf.A * Z  # sparse-dense product: n_arcs × M
     K_mat = zeros(M, M)
     for j in 1:M, i in 1:M
-        K_mat[i, j] = AZ[branch_indices[i], j]
+        K_mat[i, j] = AZ[arc_indices[i], j]
     end
 
     # W = diag(1/Δb) + K_mat = A⁻¹ + U⊤B⁻¹U
@@ -431,7 +431,7 @@ function _get_woodbury_factors(
     # LU-based for M > 2.
     W_inv, is_island = _invert_woodbury_W(W_mat, M)
 
-    wf = WoodburyFactors(Z, W_inv, branch_indices, delta_b_vec, is_island)
+    wf = WoodburyFactors(Z, W_inv, arc_indices, delta_b_vec, is_island)
     vmodf.woodbury_cache[contingency.uuid] = wf
     return wf
 end
@@ -461,11 +461,11 @@ function _compute_modf_row(
         return zeros(n_bus)
     end
 
-    M = length(wf.branch_indices)
+    M = length(wf.arc_indices)
 
     # Effective susceptance of monitored arc after modifications
     b_mon = vmodf.arc_susceptances[monitored_idx]
-    for (j, idx) in enumerate(wf.branch_indices)
+    for (j, idx) in enumerate(wf.arc_indices)
         if idx == monitored_idx
             b_mon += wf.delta_b[j]
         end

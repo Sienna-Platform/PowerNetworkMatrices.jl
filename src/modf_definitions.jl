@@ -41,14 +41,14 @@ Computed from van Dijk et al. Eq. 29:
 # Fields
 - `Z::Matrix{Float64}`: B⁻¹U matrix (n_bus × M), one column per modified arc
 - `W_inv::Matrix{Float64}`: Pre-inverted W = (A⁻¹ + U⊤B⁻¹U)⁻¹ (M × M). For M ≤ 2, computed analytically; for M > 2, computed via LU factorization.
-- `branch_indices::Vector{Int}`: Arc indices of modified arcs
+- `arc_indices::Vector{Int}`: Arc indices of modified arcs
 - `delta_b::Vector{Float64}`: Susceptance changes per modified arc
 - `is_islanding::Bool`: Whether this contingency islands the network
 """
 struct WoodburyFactors
     Z::Matrix{Float64}
     W_inv::Matrix{Float64}
-    branch_indices::Vector{Int}
+    arc_indices::Vector{Int}
     delta_b::Vector{Float64}
     is_islanding::Bool
 end
