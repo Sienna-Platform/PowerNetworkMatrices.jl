@@ -260,11 +260,7 @@ function _getindex(
         end
 
         # now get the LODF row
-        # Use mul! with pre-allocated temp_data; A is ultra-sparse (2 nnz/col)
-        # so the SpMV is O(n) and threading overhead would exceed any gain.
-        lodf_row = similar(vlodf.inv_PTDF_A_diag)
-        mul!(lodf_row, vlodf.A, vlodf.temp_data)
-        lodf_row .*= vlodf.inv_PTDF_A_diag
+        lodf_row = (vlodf.A * vlodf.temp_data) .* vlodf.inv_PTDF_A_diag
         lodf_row[row] = -1.0
 
         if get_tol(vlodf) > eps()

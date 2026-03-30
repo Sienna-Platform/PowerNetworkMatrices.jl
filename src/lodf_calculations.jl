@@ -139,8 +139,7 @@ function _calculate_LODF_matrix_KLU(
     ptdf::Matrix{Float64},
 )
     linecount = size(ptdf, 2)
-    ptdf_denominator_t = similar(ptdf, size(a, 1), linecount)
-    threaded_sparse_dense_mul!(ptdf_denominator_t, a, ptdf)
+    ptdf_denominator_t = a * ptdf
     m_I = Int[]
     m_V = Float64[]
     for iline in 1:linecount
@@ -164,8 +163,7 @@ function _calculate_LODF_matrix_DENSE(
     ptdf::Matrix{Float64},
 )
     linecount = size(ptdf, 2)
-    ptdf_denominator_t = similar(ptdf, size(a, 1), linecount)
-    threaded_sparse_dense_mul!(ptdf_denominator_t, a, ptdf)
+    ptdf_denominator_t = a * ptdf
     m_V = Float64[]
     for iline in 1:linecount
         if (1.0 - ptdf_denominator_t[iline, iline]) < LODF_ENTRY_TOLERANCE
