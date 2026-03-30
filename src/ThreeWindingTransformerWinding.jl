@@ -48,11 +48,11 @@ function get_equivalent_r(tw::ThreeWindingTransformerWinding)
     winding_num = get_winding_number(tw)
 
     if winding_num == 1
-        return PSY.get_r_primary(tfw)
+        return PSY.get_r_primary(tfw, Float64)
     elseif winding_num == 2
-        return PSY.get_r_secondary(tfw)
+        return PSY.get_r_secondary(tfw, Float64)
     elseif winding_num == 3
-        return PSY.get_r_tertiary(tfw)
+        return PSY.get_r_tertiary(tfw, Float64)
     else
         throw(ArgumentError("Invalid winding number: $winding_num"))
     end
@@ -69,11 +69,11 @@ function get_equivalent_x(tw::ThreeWindingTransformerWinding)
     winding_num = get_winding_number(tw)
 
     if winding_num == 1
-        return PSY.get_x_primary(tfw)
+        return PSY.get_x_primary(tfw, Float64)
     elseif winding_num == 2
-        return PSY.get_x_secondary(tfw)
+        return PSY.get_x_secondary(tfw, Float64)
     elseif winding_num == 3
-        return PSY.get_x_tertiary(tfw)
+        return PSY.get_x_tertiary(tfw, Float64)
     else
         throw(ArgumentError("Invalid winding number: $winding_num"))
     end
@@ -92,7 +92,7 @@ function get_equivalent_b(tw::ThreeWindingTransformerWinding)
 
     if winding_num == 1
         # Only the primary winding has the shunt susceptance
-        return (from = PSY.get_b(tfw), to = 0.0)
+        return (from = PSY.get_b(tfw, Float64), to = 0.0)
     elseif winding_num == 2 || winding_num == 3
         # Secondary and tertiary windings don't have shunt susceptance
         return (from = 0.0, to = 0.0)
@@ -112,20 +112,20 @@ function get_equivalent_rating(tw::ThreeWindingTransformerWinding)
     winding_num = get_winding_number(tw)
 
     winding_rating = if winding_num == 1
-        PSY.get_rating_primary(tfw)
+        PSY.get_rating_primary(tfw, Float64)
     elseif winding_num == 2
-        PSY.get_rating_secondary(tfw)
+        PSY.get_rating_secondary(tfw, Float64)
     elseif winding_num == 3
-        PSY.get_rating_tertiary(tfw)
+        PSY.get_rating_tertiary(tfw, Float64)
     else
         throw(ArgumentError("Invalid winding number: $winding_num"))
     end
     if winding_rating != 0.0
         return winding_rating
-    elseif isnothing(PSY.get_rating(tfw))
+    elseif isnothing(PSY.get_rating(tfw, Float64))
         return 0.0
     else
-        return PSY.get_rating(tfw)
+        return PSY.get_rating(tfw, Float64)
     end
 end
 

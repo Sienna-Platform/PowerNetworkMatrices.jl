@@ -379,16 +379,16 @@ function add_branch_entries_to_indexing_maps!(
 end
 
 _get_shunt(br::PSY.ACTransmission, node::Symbol) =
-    PSY.get_g(br)[node] + 1im * PSY.get_b(br)[node]
+    PSY.get_g(br, Float64)[node] + 1im * PSY.get_b(br, Float64)[node]
 _get_shunt(::PSY.DiscreteControlledACBranch, ::Symbol) = zero(YBUS_ELTYPE)
 
 """Ybus entries for a `Line` or a `DiscreteControlledACBranch`."""
 function ybus_branch_entries(br::PSY.ACTransmission)
-    Y_l = (1 / (PSY.get_r(br) + PSY.get_x(br) * 1im))
+    Y_l = (1 / (PSY.get_r(br, Float64) + PSY.get_x(br, Float64) * 1im))
     Y11 = Y_l + _get_shunt(br, :from)
     if !isfinite(Y11) || !isfinite(Y_l)
         error(
-            "Data in $(PSY.get_name(br)) is incorrect. r = $(PSY.get_r(br)), x = $(PSY.get_x(br))",
+            "Data in $(PSY.get_name(br)) is incorrect. r = $(PSY.get_r(br, Float64)), x = $(PSY.get_x(br, Float64))",
         )
     end
     Y12 = -Y_l
@@ -422,10 +422,10 @@ _get_tap(br::PSY.TwoWindingTransformer) = PSY.get_tap(br)
 
 """Ybus entries for a `Transformer2W`, `TapTransformer`, or `PhaseShiftingTransformer`."""
 function ybus_branch_entries(br::PSY.TwoWindingTransformer)
-    Y_t = 1 / (PSY.get_r(br) + PSY.get_x(br) * 1im)
+    Y_t = 1 / (PSY.get_r(br, Float64) + PSY.get_x(br, Float64) * 1im)
     tap = _get_tap(br) * exp(PSY.get_α(br) * 1im)
     c_tap = _get_tap(br) * exp(-1 * PSY.get_α(br) * 1im)
-    y_shunt = PSY.get_primary_shunt(br)
+    y_shunt = PSY.get_primary_shunt(br, Float64)
     Y11 = Y_t / abs2(tap)
     if !isfinite(Y11) || !isfinite(Y_t) || !isfinite(y_shunt * c_tap)
         error(
@@ -443,39 +443,39 @@ function ybus_branch_entries(tp::ThreeWindingTransformerWinding)
     br = get_transformer(tp)
     winding_number = get_winding_number(tp)
     if winding_number == 1
-        Y_t = 1 / (PSY.get_r_primary(br) + PSY.get_x_primary(br) * 1im)
+        Y_t = 1 / (PSY.get_r_primary(br, Float64) + PSY.get_x_primary(br, Float64) * 1im)
         tap = PSY.get_primary_turns_ratio(br) * exp(PSY.get_α_primary(br) * 1im)
         c_tap = PSY.get_primary_turns_ratio(br) * exp(-1 * PSY.get_α_primary(br) * 1im)
         Y11 = Y_t / abs2(tap)
-        y_shunt = PSY.get_g(br) + im * PSY.get_b(br)
+        y_shunt = PSY.get_g(br, Float64) + im * PSY.get_b(br, Float64)
         if !isfinite(Y11) || !isfinite(y_shunt)
             error(
                 "Data in $(PSY.get_name(br)) is incorrect.
-                r_p = $(PSY.get_r_primary(br)), x_p = $(PSY.get_x_primary(br)), primary_turns_ratio = $(PSY.get_primary_turns_ratio(br))",
+                r_p = $(PSY.get_r_primary(br, Float64)), x_p = $(PSY.get_x_primary(br, Float64)), primary_turns_ratio = $(PSY.get_primary_turns_ratio(br))",
             )
         end
         # primary bus alone gets the shunt term
         Y11 += y_shunt
     elseif winding_number == 2
-        Y_t = 1 / (PSY.get_r_secondary(br) + PSY.get_x_secondary(br) * 1im)
+        Y_t = 1 / (PSY.get_r_secondary(br, Float64) + PSY.get_x_secondary(br, Float64) * 1im)
         tap = PSY.get_secondary_turns_ratio(br) * exp(PSY.get_α_secondary(br) * 1im)
         c_tap = PSY.get_secondary_turns_ratio(br) * exp(-1 * PSY.get_α_secondary(br) * 1im)
         Y11 = Y_t / abs2(tap)
         if !isfinite(Y11)
             error(
                 "Data in $(PSY.get_name(br)) is incorrect.
-                r_s = $(PSY.get_r_secondary(br)), x_s = $(PSY.get_x_secondary(br)), secondary_turns_ratio = $(PSY.get_secondary_turns_ratio(br))",
+                r_s = $(PSY.get_r_secondary(br, Float64)), x_s = $(PSY.get_x_secondary(br, Float64)), secondary_turns_ratio = $(PSY.get_secondary_turns_ratio(br))",
             )
         end
     elseif winding_number == 3
-        Y_t = 1 / (PSY.get_r_tertiary(br) + PSY.get_x_tertiary(br) * 1im)
+        Y_t = 1 / (PSY.get_r_tertiary(br, Float64) + PSY.get_x_tertiary(br, Float64) * 1im)
         tap = PSY.get_tertiary_turns_ratio(br) * exp(PSY.get_α_tertiary(br) * 1im)
         c_tap = PSY.get_tertiary_turns_ratio(br) * exp(-1 * PSY.get_α_tertiary(br) * 1im)
         Y11 = Y_t / abs2(tap)
         if !isfinite(Y11)
             error(
                 "Data in $(PSY.get_name(br)) is incorrect.
-                r_t = $(PSY.get_r_tertiary(br)), x_t = $(PSY.get_x_tertiary(br)), tertiary_turns_ratio = $(PSY.get_tertiary_turns_ratio(br))",
+                r_t = $(PSY.get_r_tertiary(br, Float64)), x_t = $(PSY.get_x_tertiary(br, Float64)), tertiary_turns_ratio = $(PSY.get_tertiary_turns_ratio(br))",
             )
         end
     end
@@ -643,7 +643,7 @@ function _ybus!(
     nr::NetworkReductionData,
 )
     bus_no = get_bus_index(fa, num_bus, nr)
-    Y = PSY.get_impedance_active_power(fa) - im * PSY.get_impedance_reactive_power(fa)
+    Y = PSY.get_impedance_active_power(fa, Float64) - im * PSY.get_impedance_reactive_power(fa, Float64)
     if !isfinite(Y)
         error(
             "Data in $(PSY.get_name(fa)) is incorrect. Y = $(Y)",
@@ -821,8 +821,8 @@ function Ybus(
     breaker_switches = Vector{PSY.DiscreteControlledACBranch}()
     for br in PSY.get_components(PSY.DiscreteControlledACBranch, sys)
         !PSY.get_available(br) && continue
-        r = PSY.get_r(br)
-        x = PSY.get_x(br)
+        r = PSY.get_r(br, Float64)
+        x = PSY.get_x(br, Float64)
         status = PSY.get_branch_status(br)
         if status == PSY.DiscreteControlledBranchStatus.CLOSED
             if r == 0.0 && x < ZERO_IMPEDANCE_LINE_REACTANCE_THRESHOLD

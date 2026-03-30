@@ -198,7 +198,7 @@ end
             r = branch_2.r,
             x = branch_2.x,
             b = branch_2.b,
-            rating = get_rating(branch_2),
+            rating = get_rating(branch_2, Float64),
             angle_limits = get_angle_limits(branch_2),
         ),
     )
