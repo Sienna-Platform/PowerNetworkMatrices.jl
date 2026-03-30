@@ -79,17 +79,12 @@ function _find_non_islanding_arc(vmodf, branch_map)
     error("No non-islanding branch found in map")
 end
 
-# Build the system once — all reduction configs use the same network data.
-const MODF_LODF_TEST_SYS = PSB.build_system(
-    PSSEParsingTestSystems,
-    "psse_14_network_reduction_test_system",
-)
-
 @testset "MODF vs LODF: no reductions" begin
+    sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
     reductions = NetworkReduction[]
-    ptdf = PTDF(MODF_LODF_TEST_SYS; network_reductions = reductions)
-    vlodf = VirtualLODF(MODF_LODF_TEST_SYS; network_reductions = reductions)
-    vmodf = VirtualMODF(MODF_LODF_TEST_SYS; network_reductions = reductions)
+    ptdf = PTDF(sys; network_reductions = reductions)
+    vlodf = VirtualLODF(sys; network_reductions = reductions)
+    vmodf = VirtualMODF(sys; network_reductions = reductions)
     nrd = get_network_reduction_data(vmodf)
 
     @testset "direct branch" begin
@@ -108,10 +103,11 @@ const MODF_LODF_TEST_SYS = PSB.build_system(
 end
 
 @testset "MODF vs LODF: radial reduction" begin
+    sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
     reductions = NetworkReduction[RadialReduction()]
-    ptdf = PTDF(MODF_LODF_TEST_SYS; network_reductions = reductions)
-    vlodf = VirtualLODF(MODF_LODF_TEST_SYS; network_reductions = reductions)
-    vmodf = VirtualMODF(MODF_LODF_TEST_SYS; network_reductions = reductions)
+    ptdf = PTDF(sys; network_reductions = reductions)
+    vlodf = VirtualLODF(sys; network_reductions = reductions)
+    vmodf = VirtualMODF(sys; network_reductions = reductions)
     nrd = get_network_reduction_data(vmodf)
 
     @testset "direct branch" begin
@@ -130,10 +126,11 @@ end
 end
 
 @testset "MODF vs LODF: degree-two reduction" begin
+    sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
     reductions = NetworkReduction[DegreeTwoReduction()]
-    ptdf = PTDF(MODF_LODF_TEST_SYS; network_reductions = reductions)
-    vlodf = VirtualLODF(MODF_LODF_TEST_SYS; network_reductions = reductions)
-    vmodf = VirtualMODF(MODF_LODF_TEST_SYS; network_reductions = reductions)
+    ptdf = PTDF(sys; network_reductions = reductions)
+    vlodf = VirtualLODF(sys; network_reductions = reductions)
+    vmodf = VirtualMODF(sys; network_reductions = reductions)
     nrd = get_network_reduction_data(vmodf)
 
     @testset "direct branch" begin
@@ -160,10 +157,11 @@ end
 end
 
 @testset "MODF vs LODF: radial + degree-two reduction" begin
+    sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
     reductions = NetworkReduction[RadialReduction(), DegreeTwoReduction()]
-    ptdf = PTDF(MODF_LODF_TEST_SYS; network_reductions = reductions)
-    vlodf = VirtualLODF(MODF_LODF_TEST_SYS; network_reductions = reductions)
-    vmodf = VirtualMODF(MODF_LODF_TEST_SYS; network_reductions = reductions)
+    ptdf = PTDF(sys; network_reductions = reductions)
+    vlodf = VirtualLODF(sys; network_reductions = reductions)
+    vmodf = VirtualMODF(sys; network_reductions = reductions)
     nrd = get_network_reduction_data(vmodf)
 
     @testset "direct branch" begin
