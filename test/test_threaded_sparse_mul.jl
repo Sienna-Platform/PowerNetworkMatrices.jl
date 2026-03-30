@@ -1,0 +1,88 @@
+@testset "Threaded Sparse Multiplication" begin
+    import SparseArrays
+    import LinearAlgebra
+
+    # Build a representative sparse matrix (like a power system incidence/admittance matrix)
+    n = 50
+    A_dense = zeros(Float64, n, n)
+    # Tridiagonal-like sparse pattern (common in power grids)
+    for i in 1:n
+        A_dense[i, i] = 4.0
+        if i > 1
+            A_dense[i, i - 1] = -1.0
+        end
+        if i < n
+            A_dense[i - 1, i] = -1.0
+        end
+    end
+    A_sparse = SparseArrays.sparse(A_dense)
+    x = rand(Float64, n)
+
+    @testset "threaded_mul! computes y = A * x" begin
+        y_expected = A_dense * x
+        y = zeros(Float64, n)
+        PNM.threaded_mul!(y, A_sparse, x)
+        @test isapprox(y, y_expected; atol = 1e-12)
+    end
+
+    @testset "threaded_tmul! computes y = A' * x" begin
+        y_expected = A_dense' * x
+        y = zeros(Float64, n)
+        PNM.threaded_tmul!(y, A_sparse, x)
+        @test isapprox(y, y_expected; atol = 1e-12)
+    end
+
+    @testset "threaded_mul! with non-square matrix" begin
+        m, k = 40, 60
+        B_dense = sprand(Float64, m, k, 0.1) |> Matrix
+        B_sparse = SparseArrays.sparse(B_dense)
+        xk = rand(Float64, k)
+        y_expected = B_dense * xk
+        y = zeros(Float64, m)
+        PNM.threaded_mul!(y, B_sparse, xk)
+        @test isapprox(y, y_expected; atol = 1e-12)
+    end
+
+    @testset "threaded_tmul! with non-square matrix" begin
+        m, k = 40, 60
+        B_dense = sprand(Float64, m, k, 0.1) |> Matrix
+        B_sparse = SparseArrays.sparse(B_dense)
+        xm = rand(Float64, m)
+        y_expected = B_dense' * xm
+        y = zeros(Float64, k)
+        PNM.threaded_tmul!(y, B_sparse, xm)
+        @test isapprox(y, y_expected; atol = 1e-12)
+    end
+
+    @testset "threaded_mul! with Int8 sparse matrix (incidence-like)" begin
+        # Incidence matrices in this codebase are SparseMatrixCSC{Int8, Int}
+        nbus = 30
+        nline = 45
+        I_vals = Int8[]
+        J_vals = Int[]
+        V_vals = Int8[]
+        for line in 1:nline
+            from = rand(1:nbus)
+            to = rand(setdiff(1:nbus, from))
+            push!(I_vals, Int8(from))
+            push!(J_vals, line)
+            push!(V_vals, Int8(1))
+            push!(I_vals, Int8(to))
+            push!(J_vals, line)
+            push!(V_vals, Int8(-1))
+        end
+        A_inc = SparseArrays.sparse(Int.(I_vals), J_vals, V_vals, nbus, nline)
+        xline = rand(Float64, nline)
+        y_expected = Float64.(Matrix(A_inc)) * xline
+        y = zeros(Float64, nbus)
+        PNM.threaded_mul!(y, A_inc, xline)
+        @test isapprox(y, y_expected; atol = 1e-12)
+    end
+
+    @testset "dimension mismatch errors" begin
+        @test_throws AssertionError PNM.threaded_mul!(zeros(n + 1), A_sparse, x)
+        @test_throws AssertionError PNM.threaded_mul!(zeros(n), A_sparse, zeros(n + 1))
+        @test_throws AssertionError PNM.threaded_tmul!(zeros(n + 1), A_sparse, x)
+        @test_throws AssertionError PNM.threaded_tmul!(zeros(n), A_sparse, zeros(n + 1))
+    end
+end
