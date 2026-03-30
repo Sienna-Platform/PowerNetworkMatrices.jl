@@ -34,7 +34,7 @@
 
     @testset "threaded_mul! with non-square matrix" begin
         m, k = 40, 60
-        B_dense = sprand(Float64, m, k, 0.1) |> Matrix
+        B_dense = Matrix(SparseArrays.sprand(Float64, m, k, 0.1))
         B_sparse = SparseArrays.sparse(B_dense)
         xk = rand(Float64, k)
         y_expected = B_dense * xk
@@ -45,7 +45,7 @@
 
     @testset "threaded_tmul! with non-square matrix" begin
         m, k = 40, 60
-        B_dense = sprand(Float64, m, k, 0.1) |> Matrix
+        B_dense = Matrix(SparseArrays.sprand(Float64, m, k, 0.1))
         B_sparse = SparseArrays.sparse(B_dense)
         xm = rand(Float64, m)
         y_expected = B_dense' * xm
@@ -77,6 +77,46 @@
         y = zeros(Float64, nbus)
         PNM.threaded_mul!(y, A_inc, xline)
         @test isapprox(y, y_expected; atol = 1e-12)
+    end
+
+    @testset "threaded_sparse_dense_mul! computes Y = A * X" begin
+        m, k, p = 30, 40, 20
+        A_sd = SparseArrays.sprand(Float64, m, k, 0.15)
+        X_sd = rand(Float64, k, p)
+        Y_expected = Matrix(A_sd) * X_sd
+        Y = zeros(Float64, m, p)
+        PNM.threaded_sparse_dense_mul!(Y, A_sd, X_sd)
+        @test isapprox(Y, Y_expected; atol = 1e-12)
+    end
+
+    @testset "threaded_sparse_dense_mul! with Int8 incidence matrix" begin
+        # Matches LODF pattern: Int8 incidence × Float64 PTDF
+        nbus = 20
+        nline = 30
+        I_vals = Int[]
+        J_vals = Int[]
+        V_vals = Int8[]
+        for line in 1:nline
+            from = rand(1:nbus)
+            to = rand(setdiff(1:nbus, from))
+            push!(I_vals, from)
+            push!(J_vals, line)
+            push!(V_vals, Int8(1))
+            push!(I_vals, to)
+            push!(J_vals, line)
+            push!(V_vals, Int8(-1))
+        end
+        A_inc = SparseArrays.sparse(I_vals, J_vals, V_vals, nbus, nline)
+        ptdf_mock = rand(Float64, nbus, nline)
+        Y_expected = Float64.(Matrix(A_inc)) * ptdf_mock
+        Y = zeros(Float64, nline, nline)
+        # Note: a * ptdf where a is (nline x nbus) incidence, ptdf is (nbus x nline)
+        # For this test use the actual dimensions
+        A_t = SparseArrays.sparse(J_vals, I_vals, V_vals, nline, nbus)
+        Y_expected2 = Float64.(Matrix(A_t)) * ptdf_mock
+        Y2 = zeros(Float64, nline, nline)
+        PNM.threaded_sparse_dense_mul!(Y2, A_t, ptdf_mock)
+        @test isapprox(Y2, Y_expected2; atol = 1e-12)
     end
 
     @testset "dimension mismatch errors" begin

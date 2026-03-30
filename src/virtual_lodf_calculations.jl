@@ -259,8 +259,10 @@ function _getindex(
             vlodf.temp_data[vlodf.valid_ix[i]] = lin_solve[i]
         end
 
-        # now get the LODF row
-        lodf_row = (vlodf.A * vlodf.temp_data) .* vlodf.inv_PTDF_A_diag
+        # now get the LODF row (threaded SpMV for large systems)
+        lodf_row = similar(vlodf.inv_PTDF_A_diag)
+        threaded_mul!(lodf_row, vlodf.A, vlodf.temp_data)
+        lodf_row .*= vlodf.inv_PTDF_A_diag
         lodf_row[row] = -1.0
 
         if get_tol(vlodf) > eps()

@@ -123,3 +123,44 @@ function threaded_mul!(
     end
     return y
 end
+
+"""
+    threaded_sparse_dense_mul!(Y::Matrix, A::SparseMatrixCSC, X::Matrix) -> Y
+
+Compute `Y = A * X` (sparse matrix × dense matrix) with threading over the
+columns of `X`. Each column `Y[:, j] = A * X[:, j]` is an independent SpMV
+and can be computed in parallel without synchronisation.
+
+This is the key operation in LODF construction where the incidence matrix `A`
+(sparse, Int8) is multiplied by the dense PTDF matrix.
+
+Falls back to Julia's built-in `mul!` when `Threads.nthreads() == 1` or
+when the number of output columns is below `THREADED_MUL_MIN_SIZE`.
+"""
+function threaded_sparse_dense_mul!(
+    Y::Matrix{T},
+    A::SparseArrays.SparseMatrixCSC{Tv, Ti},
+    X::Matrix{Tx},
+) where {T <: Number, Tv <: Number, Ti <: Integer, Tx <: Number}
+    m, n = size(A)
+    p = size(X, 2)
+    @assert size(X, 1) == n
+    @assert size(Y) == (m, p)
+
+    if Threads.nthreads() > 1 && p >= THREADED_MUL_MIN_SIZE
+        Threads.@threads for j in 1:p
+            @inbounds for i in 1:m
+                Y[i, j] = zero(T)
+            end
+            @inbounds for col in 1:n
+                xval = T(X[col, j])
+                for k in A.colptr[col]:(A.colptr[col + 1] - 1)
+                    Y[A.rowval[k], j] += T(A.nzval[k]) * xval
+                end
+            end
+        end
+    else
+        mul!(Y, A, X)
+    end
+    return Y
+end

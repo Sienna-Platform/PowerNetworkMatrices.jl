@@ -172,7 +172,8 @@ function PNM._calculate_LODF_matrix_MKLPardiso(
     ptdf::Matrix{Float64},
 )
     linecount = size(ptdf, 2)
-    ptdf_denominator_t = a * ptdf
+    ptdf_denominator_t = similar(ptdf, size(a, 1), linecount)
+    PNM.threaded_sparse_dense_mul!(ptdf_denominator_t, a, ptdf)
     m_I = Int[]
     m_V = Float64[]
     for iline in 1:linecount
