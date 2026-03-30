@@ -260,7 +260,7 @@ function _getindex(
         end
 
         # now get the LODF row
-        lodf_row = (vlodf.A * vlodf.temp_data) .* vlodf.inv_PTDF_A_diag
+        lodf_row = threaded_sparse_mul(vlodf.A, vlodf.temp_data) .* vlodf.inv_PTDF_A_diag
         lodf_row[row] = -1.0
 
         if get_tol(vlodf) > eps()
