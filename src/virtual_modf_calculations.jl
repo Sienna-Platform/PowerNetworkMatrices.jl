@@ -585,7 +585,8 @@ function _compute_modf_row(
     end
 
     # Post-contingency PTDF row = b_mon_post · (z_m - correction), now in temp_data
-    return b_mon .* vmodf.temp_data
+    vmodf.temp_data .*= b_mon
+    return copy(vmodf.temp_data)
 end
 
 """
