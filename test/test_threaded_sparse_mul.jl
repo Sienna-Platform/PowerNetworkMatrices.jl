@@ -1,6 +1,5 @@
 @testset "Threaded Sparse Multiplication" begin
-    import SparseArrays
-    import LinearAlgebra
+    # SparseArrays is available from testing_data.jl (using SparseArrays)
 
     # Build a representative sparse matrix (like a power system incidence/admittance matrix)
     n = 50
