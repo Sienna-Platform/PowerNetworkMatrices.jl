@@ -12,6 +12,7 @@ of multi-threading for the key operations in LODF/PTDF computations.
 using SparseArrays
 using LinearAlgebra
 using Random
+using Statistics
 
 # Include only the threaded_sparse_mul module directly for isolated benchmarking
 include(joinpath(@__DIR__, "..", "..", "src", "threaded_sparse_mul.jl"))
@@ -82,8 +83,8 @@ function benchmark_sparse_mul(;
             t_threaded[i] = @elapsed threaded_mul!(Y_threaded, A, X)
         end
 
-        med_std = sort(t_standard)[div(n_trials, 2) + 1]
-        med_thr = sort(t_threaded)[div(n_trials, 2) + 1]
+        med_std = median(t_standard)
+        med_thr = median(t_threaded)
         speedup = med_std / med_thr
 
         println("Size: A=$(size(A)), X=$(size(X))")
@@ -131,8 +132,8 @@ function benchmark_sparse_mul(;
             t_threaded[i] = @elapsed threaded_mul!(y_threaded, A, x)
         end
 
-        med_std = sort(t_standard)[div(n_trials, 2) + 1]
-        med_thr = sort(t_threaded)[div(n_trials, 2) + 1]
+        med_std = median(t_standard)
+        med_thr = median(t_threaded)
         speedup = med_std / med_thr
 
         println("Size: A=$(size(A)), x=$(length(x))")

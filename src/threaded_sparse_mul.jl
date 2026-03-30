@@ -106,6 +106,9 @@ function threaded_mul!(
         return Y
     end
 
+    # Zero Y before accumulation
+    fill!(Y, zero(eltype(Y)))
+
     # Parallelize over output columns — each column is independent
     Threads.@threads for k in 1:p
         @inbounds for col in 1:n
