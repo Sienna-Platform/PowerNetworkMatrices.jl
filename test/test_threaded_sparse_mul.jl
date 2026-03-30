@@ -12,7 +12,7 @@
             A_dense[i, i - 1] = -1.0
         end
         if i < n
-            A_dense[i - 1, i] = -1.0
+            A_dense[i, i + 1] = -1.0
         end
     end
     A_sparse = SparseArrays.sparse(A_dense)
@@ -117,6 +117,32 @@
         Y2 = zeros(Float64, nline, nline)
         PNM.threaded_sparse_dense_mul!(Y2, A_t, ptdf_mock)
         @test isapprox(Y2, Y_expected2; atol = 1e-12)
+    end
+
+    @testset "above-threshold matrices exercise threaded paths" begin
+        # Matrices above THREADED_MUL_MIN_SIZE (1000) will use the threaded
+        # branches when Threads.nthreads() > 1.  When CI runs single-threaded
+        # they fall back to the scalar loop, which uses identical arithmetic.
+        big_n = PNM.THREADED_MUL_MIN_SIZE + 1
+        A_big = SparseArrays.sprandn(Float64, big_n, big_n, 5.0 / big_n)
+        x_big = rand(Float64, big_n)
+
+        y_expected = Matrix(A_big) * x_big
+        y = zeros(Float64, big_n)
+        PNM.threaded_mul!(y, A_big, x_big)
+        @test isapprox(y, y_expected; atol = 1e-10)
+
+        yt_expected = Matrix(A_big)' * x_big
+        yt = zeros(Float64, big_n)
+        PNM.threaded_tmul!(yt, A_big, x_big)
+        @test isapprox(yt, yt_expected; atol = 1e-10)
+
+        p_big = PNM.THREADED_MUL_MIN_SIZE + 1
+        X_big = rand(Float64, big_n, p_big)
+        Y_expected = Matrix(A_big) * X_big
+        Y_big = zeros(Float64, big_n, p_big)
+        PNM.threaded_sparse_dense_mul!(Y_big, A_big, X_big)
+        @test isapprox(Y_big, Y_expected; atol = 1e-10)
     end
 
     @testset "dimension mismatch errors" begin
