@@ -124,25 +124,31 @@
         # branches when Threads.nthreads() > 1.  When CI runs single-threaded
         # they fall back to the scalar loop, which uses identical arithmetic.
         big_n = PNM.THREADED_MUL_MIN_SIZE + 1
-        A_big = SparseArrays.sprandn(Float64, big_n, big_n, 5.0 / big_n)
+        # Build a sparse tridiagonal matrix (avoids sprandn type dispatch issues)
+        I_big = vcat(1:big_n, 2:big_n, 1:(big_n - 1))
+        J_big = vcat(1:big_n, 1:(big_n - 1), 2:big_n)
+        V_big = vcat(fill(4.0, big_n), fill(-1.0, big_n - 1), fill(-1.0, big_n - 1))
+        A_big = SparseArrays.sparse(I_big, J_big, V_big, big_n, big_n)
         x_big = rand(Float64, big_n)
 
-        y_expected = Matrix(A_big) * x_big
+        # Use sparse multiply as reference instead of dense conversion
+        y_expected = A_big * x_big
         y = zeros(Float64, big_n)
         PNM.threaded_mul!(y, A_big, x_big)
-        @test isapprox(y, y_expected; atol = 1e-10)
+        @test isapprox(y, y_expected; atol = 1e-12)
 
-        yt_expected = Matrix(A_big)' * x_big
+        yt_expected = SparseArrays.sparse(A_big') * x_big
         yt = zeros(Float64, big_n)
         PNM.threaded_tmul!(yt, A_big, x_big)
-        @test isapprox(yt, yt_expected; atol = 1e-10)
+        @test isapprox(yt, yt_expected; atol = 1e-12)
 
-        p_big = PNM.THREADED_MUL_MIN_SIZE + 1
+        # Sparse × dense matrix test (smaller p to limit memory)
+        p_big = 100
         X_big = rand(Float64, big_n, p_big)
-        Y_expected = Matrix(A_big) * X_big
+        Y_expected = A_big * X_big
         Y_big = zeros(Float64, big_n, p_big)
         PNM.threaded_sparse_dense_mul!(Y_big, A_big, X_big)
-        @test isapprox(Y_big, Y_expected; atol = 1e-10)
+        @test isapprox(Y_big, Y_expected; atol = 1e-12)
     end
 
     @testset "dimension mismatch errors" begin
