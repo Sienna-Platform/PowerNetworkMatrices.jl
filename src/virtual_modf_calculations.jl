@@ -82,7 +82,9 @@ get_lookup(M::VirtualMODF) = M.lookup
 get_ref_bus(M::VirtualMODF) = sort!(collect(keys(M.subnetwork_axes)))
 get_network_reduction_data(M::VirtualMODF) = M.network_reduction_data
 get_arc_lookup(M::VirtualMODF) = M.lookup[1]
+get_bus_lookup(M::VirtualMODF) = M.lookup[2]
 get_arc_axis(mat::VirtualMODF) = mat.axes[1]
+get_bus_axis(mat::VirtualMODF) = mat.axes[2]
 get_tol(mat::VirtualMODF) = mat.tol[]
 
 """
@@ -300,15 +302,17 @@ function _compute_series_outage_delta_b(
     b_old = get_series_susceptance(series_chain)
     tripped_set = Set{PSY.ACTransmission}(tripped)
     remaining_inv_sum = 0.0
-    any_remaining = false
+    chain_broken = false
     for segment in series_chain
         b_seg = _segment_susceptance_after_outage(segment, tripped_set)
-        if b_seg > 0.0
-            remaining_inv_sum += inv(b_seg)
-            any_remaining = true
+        if b_seg == 0.0
+            chain_broken = true
+            continue
+        else
+            remaining_inv_sum += 1.0 / b_seg
         end
     end
-    if !any_remaining
+    if chain_broken
         return -b_old
     end
     b_new = 1.0 / remaining_inv_sum
