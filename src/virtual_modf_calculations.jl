@@ -236,35 +236,45 @@ function _register_outages!(vmodf::VirtualMODF, sys::PSY.System)
 end
 
 """
+    _segment_susceptance_after_outage(segment, tripped_set) -> Float64
+
+Compute the remaining susceptance of a series chain segment after removing
+tripped components. Dispatches on segment type to handle both single branches
+and parallel groups within a series chain.
+
+Returns 0.0 if the segment (or all branches in a parallel group) is fully tripped.
+"""
+function _segment_susceptance_after_outage(
+    segment::PSY.ACTransmission,
+    tripped_set::Set{<:PSY.ACTransmission},
+)::Float64
+    return segment ∈ tripped_set ? 0.0 : get_series_susceptance(segment)
+end
+
+function _segment_susceptance_after_outage(
+    segment::BranchesParallel,
+    tripped_set::Set{<:PSY.ACTransmission},
+)::Float64
+    b_remaining = 0.0
+    for branch in segment.branches
+        if branch ∉ tripped_set
+            b_remaining += get_series_susceptance(branch)
+        end
+    end
+    return b_remaining
+end
+
+"""
     _compute_series_outage_delta_b(series_chain::BranchesSeries, component::PSY.ACTransmission) -> Float64
 
 Compute the change in equivalent arc susceptance when `component` is tripped
-from `series_chain`.
-
-For a series chain with segments of susceptance b_1, b_2, ..., b_n:
-    b_eq = 1 / (1/b_1 + 1/b_2 + ... + 1/b_n)
-
-Removing one segment changes the equivalent. Returns delta_b = b_new - b_old.
-If only one segment exists (or all are removed), returns -b_old (full outage).
+from `series_chain`. Delegates to the vector version.
 """
 function _compute_series_outage_delta_b(
     series_chain::BranchesSeries,
     component::PSY.ACTransmission,
 )::Float64
-    b_old = get_series_susceptance(series_chain)
-    remaining_inv_sum = 0.0
-    any_remaining = false
-    for segment in series_chain
-        if segment !== component
-            remaining_inv_sum += inv(get_series_susceptance(segment))
-            any_remaining = true
-        end
-    end
-    if !any_remaining
-        return -b_old
-    end
-    b_new = 1.0 / remaining_inv_sum
-    return b_new - b_old
+    return _compute_series_outage_delta_b(series_chain, [component])
 end
 
 """
@@ -276,22 +286,25 @@ simultaneously tripped from a series chain.
 For a series chain with segments of susceptance b₁, b₂, ..., bₙ, the equivalent
 susceptance is: b_eq = 1 / (1/b₁ + 1/b₂ + ... + 1/bₙ).
 
-When one or more segments are removed, the remaining segments form the new equivalent.
-If all segments are removed, Δb = -b_eq (full arc outage, islands).
+Segments can be individual branches or `BranchesParallel` groups. When a tripped
+component is inside a parallel group, only that branch's susceptance is removed
+from the group — the rest of the parallel group remains in the series chain.
 
 Returns Δb = b_new - b_old (always negative for outages).
+If all segments are fully tripped, returns -b_eq (full arc outage).
 """
 function _compute_series_outage_delta_b(
     series_chain::BranchesSeries,
     tripped::Vector{<:PSY.ACTransmission},
 )::Float64
     b_old = get_series_susceptance(series_chain)
-    tripped_set = Set(tripped)
+    tripped_set = Set{PSY.ACTransmission}(tripped)
     remaining_inv_sum = 0.0
     any_remaining = false
     for segment in series_chain
-        if segment ∉ tripped_set
-            remaining_inv_sum += inv(get_series_susceptance(segment))
+        b_seg = _segment_susceptance_after_outage(segment, tripped_set)
+        if b_seg > 0.0
+            remaining_inv_sum += inv(b_seg)
             any_remaining = true
         end
     end
@@ -303,18 +316,75 @@ function _compute_series_outage_delta_b(
 end
 
 """
+    _classify_outage_component!(vmodf, component, ...) -> nothing
+
+Classify a single outage component into direct, parallel, or series modifications.
+Dispatches on component type to reject unsupported branch types.
+"""
+function _classify_outage_component!(
+    ::VirtualMODF,
+    component::PSY.PhaseShiftingTransformer,
+    ::NetworkReductionData,
+    ::Vector{ArcModification},
+    ::Vector{ArcModification},
+    ::Dict{Int, Vector{PSY.ACTransmission}},
+    ::Dict{Int, Tuple{Int, Int}},
+)
+    error(
+        "Contingencies on PhaseShiftingTransformer are not supported. " *
+        "Component: $(PSY.get_name(component)).",
+    )
+end
+
+function _classify_outage_component!(
+    vmodf::VirtualMODF,
+    component::PSY.ACTransmission,
+    nr::NetworkReductionData,
+    direct_mods::Vector{ArcModification},
+    parallel_mods::Vector{ArcModification},
+    series_components_by_arc::Dict{Int, Vector{PSY.ACTransmission}},
+    series_arc_tuples::Dict{Int, Tuple{Int, Int}},
+)
+    if haskey(nr.reverse_direct_branch_map, component)
+        arc_tuple = nr.reverse_direct_branch_map[component]
+        arc_idx = vmodf.lookup[1][arc_tuple]
+        b_arc = vmodf.arc_susceptances[arc_idx]
+        push!(direct_mods, ArcModification(arc_idx, -b_arc))
+
+    elseif haskey(nr.reverse_parallel_branch_map, component)
+        arc_tuple = nr.reverse_parallel_branch_map[component]
+        arc_idx = vmodf.lookup[1][arc_tuple]
+        b_circuit = PSY.get_series_susceptance(component)
+        push!(parallel_mods, ArcModification(arc_idx, -b_circuit))
+
+    elseif haskey(nr.reverse_series_branch_map, component)
+        arc_tuple = nr.reverse_series_branch_map[component]
+        arc_idx = vmodf.lookup[1][arc_tuple]
+        if !haskey(series_components_by_arc, arc_idx)
+            series_components_by_arc[arc_idx] = PSY.ACTransmission[]
+            series_arc_tuples[arc_idx] = arc_tuple
+        end
+        push!(series_components_by_arc[arc_idx], component)
+
+    else
+        @warn "Branch $(PSY.get_name(component)) not found in any reduction map. " *
+              "The component may have been eliminated by a radial reduction. " *
+              "Skipping registration for this component."
+    end
+    return
+end
+
+"""
     _register_outage!(vmodf, sys, outage) -> ContingencySpec
 
 Resolve an Outage supplemental attribute to a ContingencySpec and cache it.
 
 Resolution chain:
-1. Get ACTransmission components via `PSY.get_associated_components(sys, outage; component_type=PSY.ACTransmission)`
-2. Check direct branch map (most common: unreduced single circuit)
-3. Check parallel branch map (double circuit: Δb = -b_circuit)
-4. Check series branch map (degree-two chain: compute correct Δb)
-5. Warn and skip if component not found in any map
-6. Merge modifications on the same arc
-7. Store ContingencySpec keyed by outage UUID
+1. Get ACTransmission components and classify by reduction type
+   (direct, parallel, or series branch map)
+2. Warn and skip components not found in any map
+3. Merge modifications on the same arc
+4. Store ContingencySpec keyed by outage UUID
 """
 function _register_outage!(
     vmodf::VirtualMODF,
@@ -349,32 +419,11 @@ function _register_outage!(
 
     for component in associated_components
         push!(component_names, PSY.get_name(component))
-
-        if haskey(nr.reverse_direct_branch_map, component)
-            arc_tuple = nr.reverse_direct_branch_map[component]
-            arc_idx = vmodf.lookup[1][arc_tuple]
-            b_arc = vmodf.arc_susceptances[arc_idx]
-            push!(direct_mods, ArcModification(arc_idx, -b_arc))
-
-        elseif haskey(nr.reverse_parallel_branch_map, component)
-            arc_tuple = nr.reverse_parallel_branch_map[component]
-            arc_idx = vmodf.lookup[1][arc_tuple]
-            b_circuit = PSY.get_series_susceptance(component)
-            push!(parallel_mods, ArcModification(arc_idx, -b_circuit))
-
-        elseif haskey(nr.reverse_series_branch_map, component)
-            arc_tuple = nr.reverse_series_branch_map[component]
-            arc_idx = vmodf.lookup[1][arc_tuple]
-            if !haskey(series_components_by_arc, arc_idx)
-                series_components_by_arc[arc_idx] = PSY.ACTransmission[]
-                series_arc_tuples[arc_idx] = arc_tuple
-            end
-            push!(series_components_by_arc[arc_idx], component)
-
-        else
-            @warn "Branch $(PSY.get_name(component)) not found in any reduction map. " *
-                  "Skipping registration for this component."
-        end
+        _classify_outage_component!(
+            vmodf, component, nr,
+            direct_mods, parallel_mods,
+            series_components_by_arc, series_arc_tuples,
+        )
     end
 
     # --- Pass 2: Compute series Δb with all tripped components grouped ---
