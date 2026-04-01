@@ -209,3 +209,76 @@ end
     # Woodbury factors should be computed exactly once for this contingency
     @test length(vmodf.woodbury_cache) == 1
 end
+@testset "Compare MODF entries with and without degree-2 reduction" begin
+    sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
+    valid_outage_branches = get_available_components(
+        x -> !(
+            typeof(x) <: Union{
+                ThreeWindingTransformer,
+                DiscreteControlledACBranch,
+                PhaseShiftingTransformer,
+            }
+        ),
+        ACTransmission,
+        sys,
+    )
+    for branch in valid_outage_branches
+        outage = GeometricDistributionForcedOutage(;
+            mean_time_to_recovery = 0.0,
+            outage_transition_probability = 0.0,
+        )
+        add_supplemental_attribute!(sys, branch, outage)
+    end
+    vmodf = VirtualMODF(sys)
+    bus_lookup = PNM.get_bus_lookup(vmodf)
+    nrd = vmodf.network_reduction_data
+    vmodf_d2 = VirtualMODF(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    bus_lookup_d2 = PNM.get_bus_lookup(vmodf_d2)
+    nrd_d2 = vmodf_d2.network_reduction_data
+    # Compare results for arcs that are present in the reduced system.
+    arcs_to_compare = vcat(
+        collect(keys(nrd_d2.direct_branch_map)),
+        collect(keys(nrd_d2.parallel_branch_map)),
+    )
+    # Compare results for buses that are present in the reduced system 
+    buses_to_compare = collect(keys(nrd_d2.bus_reduction_map))
+    for branch in valid_outage_branches
+        outage = get_supplemental_attributes(branch)[1]
+        ctg_uuid = outage.internal.uuid
+        ctg = get_registered_contingencies(vmodf)[ctg_uuid]
+        ctg_d2 = get_registered_contingencies(vmodf_d2)[ctg_uuid]
+        for arc in arcs_to_compare
+            ix_arc = PNM.get_arc_lookup(vmodf)[arc]
+            ix_arc_d2 = PNM.get_arc_lookup(vmodf_d2)[arc]
+            row_d2 = vmodf_d2[ix_arc_d2, ctg_d2]
+            row = vmodf[ix_arc, ctg]
+            for bus in buses_to_compare
+                ix_bus = PNM.get_bus_index(bus, bus_lookup, nrd)
+                ix_bus_d2 = PNM.get_bus_index(bus, bus_lookup_d2, nrd_d2)
+                @test isapprox(row_d2[ix_bus_d2], row[ix_bus], atol = 1e-6)
+            end
+        end
+    end
+end
+
+@testset "test delta b positive for registered outages" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "test_RTS_GMLC_sys")
+    for branch in get_components(ACTransmission, sys)
+        typeof(branch) <: PhaseShiftingTransformer && continue
+        outage = GeometricDistributionForcedOutage(;
+            mean_time_to_recovery = 0.0,
+            outage_transition_probability = 0.0,
+        )
+        add_supplemental_attribute!(sys, branch, outage)
+    end
+    vmodf = VirtualMODF(sys; network_reductions = NetworkReduction[
+        DegreeTwoReduction()
+    ])
+    for branch in get_components(ACTransmission, sys)
+        !has_supplemental_attributes(branch) && continue
+        outage = get_supplemental_attributes(branch)[1]
+        ctg_uuid = outage.internal.uuid
+        ctg = get_registered_contingencies(vmodf)[ctg_uuid]
+        @test ctg.modifications[1].delta_b <= 0.0
+    end
+end
