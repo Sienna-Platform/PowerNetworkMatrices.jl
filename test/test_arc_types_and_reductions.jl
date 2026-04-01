@@ -29,7 +29,7 @@ end
 function test_all_subtypes(sys::System, network_reductions)
     for T in subtypes(PNM.PowerNetworkMatrix)
         # arc admittance matrix constructor has different args.
-        (T == PNM.Ybus || T == PNM.ArcAdmittanceMatrix) && continue
+        (T == PNM.Ybus || T == PNM.ArcAdmittanceMatrix || T == PNM.YbusSplit) && continue
         M = T(sys; network_reductions = deepcopy(network_reductions))
         # test that it runs without error
         @test M isa T
@@ -37,6 +37,8 @@ function test_all_subtypes(sys::System, network_reductions)
     # return Ybus so we can inspect the network reduction data.
     Y = Ybus(sys; network_reductions = deepcopy(network_reductions))
     @test Y isa PNM.Ybus
+    #Y_split = YbusSplit(sys)
+    #@test Y_split isa PNM.YbusSplit
     return Y
 end
 
