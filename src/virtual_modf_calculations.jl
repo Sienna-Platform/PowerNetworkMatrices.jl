@@ -624,14 +624,9 @@ function _compute_modf_row(
         zm_Z[j] = dot(view(vmodf.A, monitored_idx, :), view(wf.Z, :, j))
     end
 
-    # Woodbury correction: W⁻¹ · zm_Z, then subtract correction from temp_data in place
+    # Woodbury correction: temp_data -= Z · (W⁻¹ · zm_Z)
     correction_coeff = wf.W_inv * zm_Z
-    for j in 1:M
-        c = correction_coeff[j]
-        @inbounds for n in eachindex(vmodf.temp_data)
-            vmodf.temp_data[n] -= c * wf.Z[n, j]
-        end
-    end
+    LinearAlgebra.mul!(vmodf.temp_data, wf.Z, correction_coeff, -1.0, 1.0)
 
     # Post-contingency PTDF row = b_mon_post · (z_m - correction), now in temp_data
     vmodf.temp_data .*= b_mon
@@ -696,7 +691,7 @@ function Base.getindex(
     if get_tol(vmodf) > eps()
         cache[monitored_idx] = sparsify(row, get_tol(vmodf))
     else
-        cache[monitored_idx] = copy(row)
+        cache[monitored_idx] = row
     end
 
     return copy(cache[monitored_idx])
