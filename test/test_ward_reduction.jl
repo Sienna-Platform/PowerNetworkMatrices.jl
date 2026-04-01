@@ -178,3 +178,37 @@ end
         Ybus(sys; network_reductions = NetworkReduction[WardReduction([2, 3, 4])]),
     )
 end
+
+@testset "WardReduction with isolated buses" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    sys_with_isolated = deepcopy(sys)
+    bus6 = ACBus(;
+        number = 6,
+        name = "Bus 6",
+        available = true,
+        bustype = ACBusTypes.REF,
+        angle = 0.0,
+        magnitude = 1.0,
+        voltage_limits = (min = 0.9, max = 1.05),
+        base_voltage = 69.0,
+    )
+    add_component!(sys_with_isolated, bus6)
+    bus5 = get_component(ACBus, sys_with_isolated, "nodeD")
+    hvdc1 = TwoTerminalHVDCLine(;
+        name = "Line18",
+        available = true,
+        active_power_flow = 0.0,
+        arc = Arc(; from = bus5, to = bus6),
+        active_power_limits_from = (min = -100.0, max = 100.0),
+        active_power_limits_to = (min = -100.0, max = 100.0),
+        reactive_power_limits_from = (min = -100.0, max = 100.0),
+        reactive_power_limits_to = (min = -100.0, max = 100.0),
+    )
+    add_component!(sys_with_isolated, hvdc1)
+    ybus = Ybus(sys; network_reductions = NetworkReduction[WardReduction([1, 2, 3, 4])])
+    ybus_with_isolated = Ybus(
+        sys_with_isolated;
+        network_reductions = NetworkReduction[WardReduction([1, 2, 3, 4])],
+    )
+    @test ybus.data == ybus_with_isolated.data
+end

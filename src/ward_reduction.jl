@@ -58,7 +58,7 @@ function get_ward_reduction(
     else
         # Optimized: Only compute Z rows for external buses instead of full Z matrix
         # This reduces complexity from O(n³) to O(n_external * n²)
-        K = klu(data)
+        K = klu(data; allowsingular = true)
         boundary_bus_indices = [bus_lookup[x] for x in boundary_buses]
         boundary_bus_numbers = collect(boundary_buses)
         e = zeros(ComplexF64, n_buses)
@@ -100,7 +100,8 @@ function get_ward_reduction(
     end
 
     # Eq. (2.16) from  https://core.ac.uk/download/pdf/79564835.pdf
-    y_eq = y_be * KLU.solve!(klu(y_ee), Matrix{Complex{Float64}}(y_eb))
+    y_eq =
+        y_be * KLU.solve!(klu(y_ee; allowsingular = true), Matrix{Complex{Float64}}(y_eb))
     #Loop upper diagonal of Yeq
     for ix in 1:length(boundary_buses)
         for jx in ix:length(boundary_buses)
