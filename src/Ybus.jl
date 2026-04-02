@@ -1413,20 +1413,27 @@ function _make_subnetwork_axes(
 )
     subnetwork_axes = deepcopy(ybus.subnetwork_axes)
     arc_subnetwork_axis = deepcopy(ybus.arc_subnetwork_axis)
-    for (k, values) in subnetwork_axes
+    for k in keys(subnetwork_axes)
         if k in bus_numbers_to_remove
-            @warn "Reference bus removed during reduction; assigning arbitrary reference bus."
             axis_1, axis_2 = pop!(subnetwork_axes, k)
             new_ref_bus = pop!(axis_1)
             pop!(axis_2)
             subnetwork_axes[new_ref_bus] = (axis_1, axis_2)
             # If a reference bus key is reduced, change the arc subnetwork axis key as well:
             arc_subnetwork_axis[new_ref_bus] = pop!(arc_subnetwork_axis, k)
+            @warn "Original reference bus $k removed during reduction; assigning arbitrary reference bus to be $new_ref_bus."
         end
     end
+    empty_subnetwork_keys = Set{Int}()
     for (k, values) in subnetwork_axes
         new_values = setdiff(values[1], bus_numbers_to_remove)
         subnetwork_axes[k] = (new_values, new_values)
+        isempty(new_values) && push!(empty_subnetwork_keys, k)
+    end
+    for k in empty_subnetwork_keys
+        @warn "Subnetwork with reference bus $k has no remaining buses after reduction and will be removed from the Ybus."
+        delete!(subnetwork_axes, k)
+        delete!(arc_subnetwork_axis, k)
     end
     for (k, values) in arc_subnetwork_axis
         arc_subnetwork_axis[k] = union(setdiff(values, arcs_to_remove), arcs_to_add)

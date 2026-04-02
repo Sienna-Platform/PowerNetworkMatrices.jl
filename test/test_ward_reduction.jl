@@ -211,4 +211,6 @@ end
         network_reductions = NetworkReduction[WardReduction([1, 2, 3, 4])],
     )
     @test ybus.data == ybus_with_isolated.data
+    # Building PTDF tests handling of subnetwork_axes when an entire subnetwork is eliminated during reduction:
+    @test isa(PTDF(ybus_with_isolated), PTDF)
 end
