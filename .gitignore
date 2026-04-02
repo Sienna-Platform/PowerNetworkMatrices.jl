@@ -37,6 +37,11 @@ docs/site/
 *.pdf
 *.ipynb
 
+# Design/plan documents
+implementation_plan.md
+docs/superpowers/
+settings.json
+
 Manifest.toml
 LocalPreferences.toml
 .vscode

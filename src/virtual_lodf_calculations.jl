@@ -19,6 +19,18 @@ The VirtualLODF struct is indexed using branch names.
 - `inv_PTDF_A_diag::Vector{Float64}`:
         Vector contiaining the element-wise reciprocal of the diagonal elements
         coming from multuiplying the PTDF matrix with th Incidence matrix
+- `PTDF_A_diag::Vector{Float64}`:
+        Raw diagonal elements of the PTDF·A product (H[e,e] values), before
+        tolerance clamping. Used for partial susceptance change computations.
+- `arc_susceptances::Vector{Float64}`:
+        Effective susceptance for each arc, extracted from the BA matrix.
+        For arc j, this is the absolute value of the first nonzero in BA column j.
+        BA columns always have the structure [+b, -b] (from-bus and to-bus entries),
+        so both nonzeros have the same magnitude.
+- `branch_susceptances_by_arc::Vector{Vector{Float64}}`:
+        Per-branch susceptances for each arc. For single-branch arcs, contains
+        one element equal to the arc susceptance. For parallel branches, contains
+        one entry per branch in the parallel group.
 - `ref_bus_positions::Set{Int}`:
         Vector containing the indexes of the rows of the transposed BA matrix
         corresponding to the reference buses.
@@ -49,6 +61,9 @@ struct VirtualLODF{Ax, L <: NTuple{2, Dict}} <: PowerNetworkMatrix{Float64}
     BA::SparseArrays.SparseMatrixCSC{Float64, Int}
     A::SparseArrays.SparseMatrixCSC{Int8, Int}
     inv_PTDF_A_diag::Vector{Float64}
+    PTDF_A_diag::Vector{Float64}
+    arc_susceptances::Vector{Float64}
+    branch_susceptances_by_arc::Vector{Vector{Float64}}
     dist_slack::Vector{Float64}
     axes::Ax
     lookup::L
@@ -122,6 +137,67 @@ function _get_PTDF_A_diag(
 end
 
 """
+Extract the effective susceptance for each arc from the BA matrix.
+For arc j, the susceptance is the absolute value of the first nonzero in BA column j.
+BA columns always have the structure [+b, -b] (from-bus and to-bus entries),
+so both nonzeros have the same magnitude.
+"""
+function _extract_arc_susceptances(
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+)::Vector{Float64}
+    n_arcs = size(BA, 2)
+    b = Vector{Float64}(undef, n_arcs)
+    nzv = SparseArrays.nonzeros(BA)
+    for j in 1:n_arcs
+        rng = nzrange(BA, j)
+        b[j] = isempty(rng) ? 0.0 : abs(nzv[first(rng)])
+    end
+    return b
+end
+
+"""
+    _extract_branch_susceptances_by_arc(BA, arc_ax, nr_data) -> Vector{Vector{Float64}}
+
+Extract per-branch susceptances for each arc. For arcs with a single branch,
+returns a one-element vector equal to the arc susceptance. For arcs with
+parallel branches (double circuits), returns one entry per branch. For arcs
+with series-reduced branches (D2 reduction), returns one entry per segment.
+
+This enables single-branch contingencies on parallel and series-reduced arcs.
+"""
+function _extract_branch_susceptances_by_arc(
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    arc_ax::Vector{Tuple{Int, Int}},
+    nr_data::NetworkReductionData,
+)::Vector{Vector{Float64}}
+    n_arcs = size(BA, 2)
+    nzv = SparseArrays.nonzeros(BA)
+    result = Vector{Vector{Float64}}(undef, n_arcs)
+
+    for j in 1:n_arcs
+        arc = arc_ax[j]
+        rng = nzrange(BA, j)
+        arc_b = isempty(rng) ? 0.0 : abs(nzv[first(rng)])
+
+        if haskey(nr_data.parallel_branch_map, arc)
+            bp = nr_data.parallel_branch_map[arc]
+            result[j] = Float64[
+                get_series_susceptance(branch) for branch in bp.branches
+            ]
+        elseif haskey(nr_data.series_branch_map, arc)
+            bs = nr_data.series_branch_map[arc]
+            result[j] = Float64[
+                get_series_susceptance(segment) for segment in bs
+            ]
+        else
+            result[j] = [arc_b]
+        end
+    end
+
+    return result
+end
+
+"""
 Builds the Virtual LODF matrix from a system. The return is a VirtualLODF
 struct with an empty cache.
 
@@ -172,6 +248,10 @@ function VirtualLODF(
         A.data,
         Set(ref_bus_positions),
     )
+    PTDF_A_diag_raw = copy(PTDF_diag)
+    arc_susceptances = _extract_arc_susceptances(BA.data)
+    branch_susceptances_by_arc = _extract_branch_susceptances_by_arc(
+        BA.data, arc_ax, Ymatrix.network_reduction_data)
     PTDF_diag[PTDF_diag .> 1 - LODF_ENTRY_TOLERANCE] .= 0.0
 
     if isempty(persistent_arcs)
@@ -195,6 +275,9 @@ function VirtualLODF(
         BA.data,
         A.data,
         1.0 ./ (1.0 .- PTDF_diag),
+        PTDF_A_diag_raw,
+        arc_susceptances,
+        branch_susceptances_by_arc,
         dist_slack,
         axes,
         look_up,
@@ -329,4 +412,128 @@ end
 """ Gets the tolerance used for sparsifying the rows of the VirtualLODF matrix"""
 function get_tol(mat::VirtualLODF)
     return mat.tol[]
+end
+
+"""
+    _getindex_partial(vlodf, arc_idx, delta_b) -> Vector{Float64}
+
+Compute the partial LODF column for a susceptance change `delta_b` on arc `arc_idx`.
+
+!!! warning
+    This function is NOT thread-safe. It mutates `vlodf.work_ba_col` and
+    `vlodf.temp_data` on every call. Do not call concurrently on the same
+    `VirtualLODF` instance from multiple threads.
+
+Uses the Sherman-Morrison (matrix inversion lemma) formula derived from DC power flow
+sensitivity analysis. For a change Δb in the susceptance of arc e, the change in flow
+on monitoring arc ℓ per unit pre-change flow on arc e is:
+
+    partial_LODF[ℓ, e] = α · (b_ℓ / b_e) · H[ℓ,e] / (1 - α · H[e,e])
+
+where:
+- α = -Δb / b_e   (positive for outage/decrease, negative for increase)
+- H[ℓ, e] = (A · (ABA)⁻¹ · BA)[ℓ, e] = b_e · C[e, ℓ]  (computed via KLU solve)
+- b_ℓ = susceptance of monitoring arc ℓ
+- H[e,e] = PTDF_A_diag[e]
+
+When `delta_b = -b_e` (full outage), α = 1 and this reduces to the standard LODF column:
+    LODF[ℓ, e] = b_ℓ · C[e, ℓ] / (1 - H[e,e])
+When `delta_b = 0`, returns zeros (no change).
+The self-element (ℓ = e) is overridden to -1.0 for full outage per standard LODF convention.
+"""
+function _getindex_partial(
+    vlodf::VirtualLODF,
+    arc_idx::Int,
+    delta_b::Float64,
+)::Vector{Float64}
+    n_arcs = size(vlodf.BA, 2)
+
+    # Zero change means zero redistribution.
+    if abs(delta_b) < eps()
+        return zeros(n_arcs)
+    end
+
+    b_arc = vlodf.arc_susceptances[arc_idx]
+    if b_arc == 0.0
+        return zeros(n_arcs)
+    end
+
+    # Steps 1-2: Compute B⁻¹(b_e · ν_e) via KLU solve.
+    @inbounds for i in eachindex(vlodf.valid_ix)
+        vlodf.work_ba_col[i] = vlodf.BA[vlodf.valid_ix[i], arc_idx]
+    end
+    lin_solve = KLU.solve!(vlodf.K, vlodf.work_ba_col)
+
+    # Step 3: Map solution back to full bus space.
+    fill!(vlodf.temp_data, 0.0)
+    @inbounds for i in eachindex(vlodf.valid_ix)
+        vlodf.temp_data[vlodf.valid_ix[i]] = lin_solve[i]
+    end
+
+    # Step 4: H_col[ℓ] = b_e · C[e,ℓ] for all monitoring arcs ℓ.
+    H_col = vlodf.A * vlodf.temp_data
+
+    # Step 5: Scalar denominator: 1 - α · H[e,e].
+    # α = -Δb / b_e (positive for outage/decrease, negative for increase).
+    H_ee = vlodf.PTDF_A_diag[arc_idx]
+    alpha = -delta_b / b_arc
+    denom = 1.0 - alpha * H_ee
+
+    # Step 6: Partial LODF column: scale by b_ℓ/b_e to convert from C[e,ℓ] to b_ℓ·C[e,ℓ].
+    # partial_lodf[ℓ] = α · b_ℓ/b_e · H_col[ℓ] / denom
+    #                 = α · b_ℓ · C[e,ℓ] / (1 - α · H_ee)
+    partial_lodf =
+        (alpha / (denom * b_arc)) .* (vlodf.arc_susceptances .* H_col)
+
+    # By convention, the outaged arc's own redistribution factor is -1.0 for a full
+    # outage: the arc carries -100% of its own pre-contingency flow post-outage.
+    # The raw formula gives α·H[e,e]/denom for the self-element, which is
+    # b_e·C[e,e]/(1-b_e·C[e,e]) = H_ee/(1-H_ee) ≠ -1 in general.
+    if abs(delta_b + b_arc) < eps() * b_arc
+        partial_lodf[arc_idx] = -1.0
+    end
+
+    return partial_lodf
+end
+
+"""
+    get_partial_lodf_row(vlodf::VirtualLODF, arc_idx::Int, delta_b::Float64) -> Vector{Float64}
+
+Compute the LODF row for a partial susceptance change `delta_b` on arc `arc_idx`.
+
+For a full outage, set `delta_b = -arc_susceptance`. For a single circuit outage
+on a double-circuit arc with total susceptance `b_total`, set `delta_b = -b_circuit`.
+
+# Arguments
+- `vlodf::VirtualLODF`: VirtualLODF matrix
+- `arc_idx::Int`: Arc index (integer)
+- `delta_b::Float64`: Change in susceptance (negative for outage)
+
+# Returns
+- `Vector{Float64}`: LODF row of length n_arcs
+
+$(TYPEDSIGNATURES)
+"""
+function get_partial_lodf_row(
+    vlodf::VirtualLODF,
+    arc_idx::Int,
+    delta_b::Float64,
+)
+    return _getindex_partial(vlodf, arc_idx, delta_b)
+end
+
+"""
+    get_partial_lodf_row(vlodf::VirtualLODF, arc::Tuple{Int, Int}, delta_b::Float64) -> Vector{Float64}
+
+Arc-tuple indexed version of [`get_partial_lodf_row`](@ref).
+
+$(TYPEDSIGNATURES)
+"""
+function get_partial_lodf_row(
+    vlodf::VirtualLODF,
+    arc::Tuple{Int, Int},
+    delta_b::Float64,
+)
+    arc_idx = vlodf.lookup[1][arc]
+    return _getindex_partial(vlodf, arc_idx, delta_b)
 end
