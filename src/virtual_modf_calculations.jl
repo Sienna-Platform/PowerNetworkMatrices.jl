@@ -623,9 +623,17 @@ function _compute_modf_row(
     end
 
     # ν_m⊤ · Z  (1 × M vector — small, ok to allocate)
+    # Use BA[:,m]/b_mon_pre instead of A[m,:] to ensure consistent sign convention.
+    # For some branches BA[:,m] = -b_m * A[m,:], so using A directly would give
+    # the wrong orientation for the Woodbury correction term.
     zm_Z = zeros(M)
     for j in 1:M
-        zm_Z[j] = dot(view(vmodf.A, monitored_idx, :), view(wf.Z, :, j))
+        s = 0.0
+        @inbounds for i in eachindex(vmodf.valid_ix)
+            bus_idx = vmodf.valid_ix[i]
+            s += (vmodf.BA[bus_idx, monitored_idx] / b_mon_pre) * wf.Z[bus_idx, j]
+        end
+        zm_Z[j] = s
     end
 
     # Woodbury correction: temp_data -= Z · (W⁻¹ · zm_Z)
