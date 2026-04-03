@@ -264,14 +264,17 @@ end
 @testset "VirtualMODF: BA/A sign convention consistency (issue #278)" begin
     # Regression test for NREL-Sienna/PowerNetworkMatrices.jl#278.
     #
-    # When a branch has negative susceptance, BA[:,m]/|b| has opposite sign from
-    # A[m,:]. The old code used A[m,:] directly for the ν_m⊤·Z term in the
-    # Woodbury correction, producing incorrect post-contingency PTDF rows.
-    # The fix uses BA[:,m]/b instead of A[m,:], so A is no longer read.
+    # The issue is an inconsistent branch orientation between BA[:, m] and
+    # A[m, :]: BA[:, m] can correspond to -b_m * A[m, :] even when b_m itself
+    # is not negative. The old code used A[m, :] directly for the ν_m⊤·Z term
+    # in the Woodbury correction, producing incorrect post-contingency PTDF rows.
+    # The fix derives the orientation from BA[:, m] / b instead of A[m, :],
+    # so _compute_modf_row no longer depends on reading A.
     #
-    # To test: flip A[m,:] for a monitored arc. Since the fix only uses BA/b
-    # (not A) in _compute_modf_row, the result must still match the PTDF+LODF
-    # identity. If A were still used, this flip would cause errors.
+    # To test: flip A[m, :] for a monitored arc to simulate the opposite
+    # orientation. Since the fix only uses BA / b (not A) in
+    # _compute_modf_row, the result must still match the PTDF+LODF identity.
+    # If A were still used, this flip would cause errors.
     sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     ptdf_ref = PTDF(sys5)
     vlodf = VirtualLODF(sys5)

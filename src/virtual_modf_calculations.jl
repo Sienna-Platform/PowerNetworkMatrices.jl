@@ -626,14 +626,17 @@ function _compute_modf_row(
     # Use BA[:,m]/b_mon_pre instead of A[m,:] to ensure consistent sign convention.
     # For some branches BA[:,m] = -b_m * A[m,:], so using A directly would give
     # the wrong orientation for the Woodbury correction term.
+    # Iterate only over the nonzeros of BA[:,monitored_idx] (typically 2 entries)
+    # instead of all valid buses, since BA columns are very sparse.
     zm_Z = zeros(M)
-    for j in 1:M
-        s = 0.0
-        @inbounds for i in eachindex(vmodf.valid_ix)
-            bus_idx = vmodf.valid_ix[i]
-            s += (vmodf.BA[bus_idx, monitored_idx] / b_mon_pre) * wf.Z[bus_idx, j]
+    ba_nzv = SparseArrays.nonzeros(vmodf.BA)
+    ba_rv = SparseArrays.rowvals(vmodf.BA)
+    @inbounds for nz_idx in SparseArrays.nzrange(vmodf.BA, monitored_idx)
+        row = ba_rv[nz_idx]
+        coeff = ba_nzv[nz_idx] / b_mon_pre
+        for j in 1:M
+            zm_Z[j] += coeff * wf.Z[row, j]
         end
-        zm_Z[j] = s
     end
 
     # Woodbury correction: temp_data -= Z · (W⁻¹ · zm_Z)
