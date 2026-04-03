@@ -40,7 +40,8 @@ each row corresponds to a branch and each column corresponds to a bus. Elements 
 - Supports various network reduction techniques for computational efficiency
 - Essential building block for BA_Matrix and ABA_Matrix constructions
 """
-struct IncidenceMatrix{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <: PowerNetworkMatrix{Int8}
+struct IncidenceMatrix{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
+       PowerNetworkMatrix{Int8}
     data::SparseArrays.SparseMatrixCSC{Int8, Int}
     axes::Ax
     lookup::L

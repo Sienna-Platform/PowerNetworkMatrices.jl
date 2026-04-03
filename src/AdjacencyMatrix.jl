@@ -39,7 +39,8 @@ subnetworks = find_subnetworks(adj)
 
 See also: [`Ybus`](@ref), [`IncidenceMatrix`](@ref), [`PowerNetworkMatrix`](@ref)
 """
-struct AdjacencyMatrix{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <: PowerNetworkMatrix{Int8}
+struct AdjacencyMatrix{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
+       PowerNetworkMatrix{Int8}
     data::SparseArrays.SparseMatrixCSC{Int8, Int}
     axes::Ax
     lookup::L

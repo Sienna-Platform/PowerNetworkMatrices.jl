@@ -15,7 +15,8 @@ Arc admittance matrix
 - `direction::Symbol`:
         Direction of admittance (:FromTo or :ToFrom)
 """
-struct ArcAdmittanceMatrix{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <: PowerNetworkMatrix{YBUS_ELTYPE}
+struct ArcAdmittanceMatrix{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
+       PowerNetworkMatrix{YBUS_ELTYPE}
     data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int}
     axes::Ax
     lookup::L
