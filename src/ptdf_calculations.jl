@@ -458,10 +458,10 @@ function PTDF(
     linear_solver = "KLU",
     tol::Float64 = eps(),
 )
-    if !(isempty(dist_slack))
-        dist_slack = redistribute_dist_slack(dist_slack, A, A.network_reduction_data)
+    dist_slack_vector = if !(isempty(dist_slack))
+        redistribute_dist_slack(dist_slack, A, A.network_reduction_data)
     else
-        dist_slack = Float64[]
+        Float64[]
     end
     solver = resolve_linear_solver(linear_solver)
     if !isequal(A.network_reduction_data, BA.network_reduction_data)
@@ -476,7 +476,7 @@ function PTDF(
         A_matrix,
         BA.data,
         Set(ref_bus_positions),
-        dist_slack,
+        dist_slack_vector,
         solver,
     )
     if tol > eps()
