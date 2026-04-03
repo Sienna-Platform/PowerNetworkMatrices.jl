@@ -17,3 +17,23 @@ SKIP_PARALLEL_REDUCTION_TYPES = [
     PSY.PhaseShiftingTransformer,
     ThreeWindingTransformerWinding{PSY.PhaseShiftingTransformer3W},
 ]
+
+# Singleton types for linear solver dispatch, enabling compile-time method resolution.
+abstract type LinearSolverType end
+struct KLUSolver <: LinearSolverType end
+struct DenseSolver <: LinearSolverType end
+struct MKLPardisoSolver <: LinearSolverType end
+struct AppleAccelerateSolver <: LinearSolverType end
+
+const LINEAR_SOLVER_MAP = Dict{String, LinearSolverType}(
+    "KLU" => KLUSolver(),
+    "Dense" => DenseSolver(),
+    "MKLPardiso" => MKLPardisoSolver(),
+    "AppleAccelerate" => AppleAccelerateSolver(),
+)
+
+function resolve_linear_solver(s::String)
+    haskey(LINEAR_SOLVER_MAP, s) ||
+        error("Unsupported linear solver: $s. Supported: $(keys(LINEAR_SOLVER_MAP))")
+    return LINEAR_SOLVER_MAP[s]
+end

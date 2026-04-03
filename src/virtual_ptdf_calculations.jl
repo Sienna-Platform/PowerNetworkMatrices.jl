@@ -114,7 +114,6 @@ function VirtualPTDF(
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
     kwargs...,
 )
-    validate_linear_solver(linear_solver)
     Ymatrix = Ybus(
         sys;
         network_reductions = network_reductions,
@@ -130,9 +129,33 @@ function VirtualPTDF(
     )
 end
 
+# Factorization dispatch methods for VirtualPTDF solver selection.
+function _create_factorization(::KLUSolver, ABA::SparseArrays.SparseMatrixCSC{Float64, Int})
+    return klu(ABA)
+end
+
+function _create_factorization(
+    ::AppleAccelerateSolver,
+    ABA::SparseArrays.SparseMatrixCSC{Float64, Int},
+)
+    _has_apple_accelerate_ext() || error(
+        "AppleAccelerate extension is not available. This solver is only available on macOS. Install AppleAccelerate: using Pkg; Pkg.add(\"AppleAccelerate\")",
+    )
+    return _create_apple_accelerate_factorization(ABA)
+end
+
+function _create_factorization(
+    ::LinearSolverType,
+    ::SparseArrays.SparseMatrixCSC{Float64, Int},
+)
+    return error(
+        "Only KLU and AppleAccelerate solvers are supported for VirtualPTDF factorization.",
+    )
+end
+
 """
 Builds the Virtual PTDF matrix from a Ybus matrix. This constructor is more efficient when the prerequisite Ybus
-matrix is already available and provides direct control over the underlying matrix computations (including network reductions).  
+matrix is already available and provides direct control over the underlying matrix computations (including network reductions).
 The return is a VirtualPTDF struct with an empty cache. 
 
 # Arguments
@@ -159,7 +182,7 @@ function VirtualPTDF(
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}(),
 )
-    validate_linear_solver(linear_solver)
+    solver = resolve_linear_solver(linear_solver)
     ref_bus_positions = get_ref_bus_position(ybus)
     A = IncidenceMatrix(ybus)
     if !(isempty(dist_slack))
@@ -191,20 +214,8 @@ function VirtualPTDF(
             )
     end
 
-    # Create factorization based on solver choice
-    if linear_solver == "KLU"
-        K = klu(ABA)
-    elseif linear_solver == "AppleAccelerate"
-        if !_has_apple_accelerate_ext()
-            error(
-                "AppleAccelerate extension is not available. This solver is only available on macOS. Install AppleAccelerate: using Pkg; Pkg.add(\"AppleAccelerate\")",
-            )
-        end
-        # This will use the AAFactorization type from the extension
-        K = _create_apple_accelerate_factorization(ABA)
-    else
-        error("Unsupported linear solver: $linear_solver")
-    end
+    # Create factorization based on solver type dispatch.
+    K = _create_factorization(solver, ABA)
 
     # Pre-compute normalized distributed slack for efficiency
     if !isempty(dist_slack_vector)
