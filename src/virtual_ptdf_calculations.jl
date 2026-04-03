@@ -114,6 +114,7 @@ function VirtualPTDF(
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
     kwargs...,
 )
+    resolve_linear_solver(linear_solver)
     Ymatrix = Ybus(
         sys;
         network_reductions = network_reductions,

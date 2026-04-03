@@ -56,7 +56,8 @@ The VirtualLODF struct is indexed using branch names.
 - `network_reduction::NetworkReduction`:
         Structure containing the details of the network reduction applied when computing the matrix
 """
-struct VirtualLODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <: PowerNetworkMatrix{Float64}
+struct VirtualLODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
+       PowerNetworkMatrix{Float64}
     K::KLU.KLUFactorization{Float64, Int}
     BA::SparseArrays.SparseMatrixCSC{Float64, Int}
     A::SparseArrays.SparseMatrixCSC{Int8, Int}

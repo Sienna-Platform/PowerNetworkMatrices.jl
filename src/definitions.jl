@@ -1,7 +1,5 @@
 const YBUS_ELTYPE = ComplexF32
 
-const SUPPORTED_LINEAR_SOLVERS = ["KLU", "MKLPardiso", "AppleAccelerate", "Dense"]
-
 const KiB = 1024
 const MiB = KiB * KiB
 const GiB = MiB * KiB
@@ -25,15 +23,12 @@ struct DenseSolver <: LinearSolverType end
 struct MKLPardisoSolver <: LinearSolverType end
 struct AppleAccelerateSolver <: LinearSolverType end
 
-const LINEAR_SOLVER_MAP = Dict{String, LinearSolverType}(
-    "KLU" => KLUSolver(),
-    "Dense" => DenseSolver(),
-    "MKLPardiso" => MKLPardisoSolver(),
-    "AppleAccelerate" => AppleAccelerateSolver(),
-)
+const SUPPORTED_LINEAR_SOLVERS = ("KLU", "MKLPardiso", "AppleAccelerate", "Dense")
 
-function resolve_linear_solver(s::String)
-    haskey(LINEAR_SOLVER_MAP, s) ||
-        error("Unsupported linear solver: $s. Supported: $(keys(LINEAR_SOLVER_MAP))")
-    return LINEAR_SOLVER_MAP[s]
+@inline function resolve_linear_solver(s::String)
+    s == "KLU" && return KLUSolver()
+    s == "Dense" && return DenseSolver()
+    s == "MKLPardiso" && return MKLPardisoSolver()
+    s == "AppleAccelerate" && return AppleAccelerateSolver()
+    error("Unsupported linear solver: $s. Supported: $SUPPORTED_LINEAR_SOLVERS")
 end
