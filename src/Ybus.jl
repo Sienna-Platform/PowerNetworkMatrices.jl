@@ -47,7 +47,7 @@ ybus = Ybus(system; network_reductions=[RadialReduction(), DegreeTwoReduction()]
 - [`LODF`](@ref): Line Outage Distribution Factors
 - [`NetworkReduction`](@ref): Network reduction algorithms
 """
-struct Ybus{Ax, L <: NTuple{2, Dict}} <: PowerNetworkMatrix{YBUS_ELTYPE}
+struct Ybus{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <: PowerNetworkMatrix{YBUS_ELTYPE}
     data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int}
     adjacency_data::SparseArrays.SparseMatrixCSC{Int8, Int}
     axes::Ax
@@ -671,7 +671,7 @@ end
 function _buildybus!(
     network_reduction_data::NetworkReductionData,
     adj::SparseArrays.SparseMatrixCSC{Int8, Int},
-    branches,
+    branches::Vector{<:PSY.ACTransmission},
     transformer_3w::Vector{PSY.ThreeWindingTransformer},
     num_bus::Dict{Int, Int},
     fixed_admittances::Vector{PSY.FixedAdmittance},
@@ -864,20 +864,22 @@ function Ybus(
         bus_lookup[b] = ix
     end
     adj = SparseArrays.spdiagm(ones(Int8, busnumber))
-    branches = collect(
-        PSY.get_components(
-            x ->
-                PSY.get_available(x) &&
-                    typeof(x) ∉ [
-                        PSY.Transformer3W,
-                        PSY.PhaseShiftingTransformer3W,
-                        PSY.DiscreteControlledACBranch,
-                    ],
-            PSY.ACTransmission,
-            sys,
+    branches = Vector{PSY.ACTransmission}(
+        collect(
+            PSY.get_components(
+                x ->
+                    PSY.get_available(x) &&
+                        typeof(x) ∉ [
+                            PSY.Transformer3W,
+                            PSY.PhaseShiftingTransformer3W,
+                            PSY.DiscreteControlledACBranch,
+                        ],
+                PSY.ACTransmission,
+                sys,
+            ),
         ),
     )
-    branches = vcat(branches, breaker_switches)
+    branches = vcat(branches, Vector{PSY.ACTransmission}(breaker_switches))
     transformer_3W =
         collect(
             PSY.get_components(
