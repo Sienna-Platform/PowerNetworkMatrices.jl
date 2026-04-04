@@ -591,10 +591,10 @@ function _compute_modf_row(
 )::Vector{Float64}
     n_bus = length(vmodf.temp_data)
 
-    if wf.is_islanding
-        @warn "Contingency islands the network. Returning zeros."
-        return zeros(n_bus)
-    end
+    # if wf.is_islanding
+    #     @warn "Contingency islands the network. Returning zeros."
+    #     return zeros(n_bus)
+    # end
 
     M = length(wf.arc_indices)
 
@@ -663,7 +663,12 @@ function _compute_modf_entry(
     contingency::ContingencySpec,
 )::Vector{Float64}
     wf = _get_woodbury_factors(vmodf, contingency)
-    return _compute_modf_row(vmodf, monitored_idx, wf)
+
+    if !wf.is_islanding
+        return _compute_modf_row(vmodf, monitored_idx, wf)
+    end
+
+    return _compute_modf_row_islanding(vmodf, monitored_idx, contingency)
 end
 
 # --- Row cache management ---
@@ -805,4 +810,318 @@ function _merge_modifications(mods::Vector{ArcModification})
         by_arc[m.arc_index] = get(by_arc, m.arc_index, 0.0) + m.delta_b
     end
     return [ArcModification(idx, db) for (idx, db) in by_arc]
+end
+
+"""
+    _get_post_contingency_arc_susceptances(vmodf, contingency) -> Vector{Float64}
+
+Return post-contingency arc susceptances after applying the contingency modifications.
+"""
+function _get_post_contingency_arc_susceptances(
+    vmodf::VirtualMODF,
+    contingency::ContingencySpec,
+)::Vector{Float64}
+    post_b = copy(vmodf.arc_susceptances)
+    for mod in contingency.modifications
+        post_b[mod.arc_index] += mod.delta_b
+    end
+    return post_b
+end
+
+"""
+    _get_post_contingency_bus_components(vmodf, post_b; tol = sqrt(eps())) -> Vector{Int}
+
+Return connected-component labels for buses in the post-contingency network.
+Arcs with |b_post| <= tol are treated as removed.
+"""
+function _get_post_contingency_bus_components(
+    vmodf::VirtualMODF,
+    post_b::Vector{Float64};
+    tol::Float64 = sqrt(eps()),
+)::Vector{Int}
+    arc_ax = vmodf.axes[1]
+    bus_ax = vmodf.axes[2]
+    bus_lookup = vmodf.lookup[2]
+
+    n_bus = length(bus_ax)
+    n_arc = length(arc_ax)
+
+    adj = [Int[] for _ in 1:n_bus]
+
+    for e in 1:n_arc
+        if abs(post_b[e]) > tol
+            fb, tb = arc_ax[e]
+            i = bus_lookup[fb]
+            j = bus_lookup[tb]
+            push!(adj[i], j)
+            push!(adj[j], i)
+        end
+    end
+
+    comp = zeros(Int, n_bus)
+    stack = Int[]
+    comp_id = 0
+
+    for i in 1:n_bus
+        if comp[i] != 0
+            continue
+        end
+        comp_id += 1
+        comp[i] = comp_id
+        push!(stack, i)
+
+        while !isempty(stack)
+            u = pop!(stack)
+            for v in adj[u]
+                if comp[v] == 0
+                    comp[v] = comp_id
+                    push!(stack, v)
+                end
+            end
+        end
+    end
+
+    return comp
+end
+
+"""
+    _get_monitored_subnetwork(vmodf, monitored_idx, contingency; tol = sqrt(eps()))
+
+Build the pre-contingency subnetwork associated with the post-contingency connected
+component containing the monitored arc. Returns `nothing` if the monitored arc is removed.
+"""
+function _get_monitored_subnetwork(
+    vmodf::VirtualMODF,
+    monitored_idx::Int,
+    contingency::ContingencySpec;
+    tol::Float64 = sqrt(eps()),
+)
+    post_b = _get_post_contingency_arc_susceptances(vmodf, contingency)
+
+    if abs(post_b[monitored_idx]) <= tol
+        return nothing
+    end
+
+    arc_ax = vmodf.axes[1]
+    bus_ax = vmodf.axes[2]
+    bus_lookup = vmodf.lookup[2]
+
+    fb, tb = arc_ax[monitored_idx]
+    fb_idx = bus_lookup[fb]
+    tb_idx = bus_lookup[tb]
+
+    comp = _get_post_contingency_bus_components(vmodf, post_b; tol = tol)
+    comp_id = comp[fb_idx]
+
+    if comp_id == 0 || comp[tb_idx] != comp_id
+        return nothing
+    end
+
+    # Keep buses in the monitored post-contingency connected component
+    bus_keep = findall(c -> c == comp_id, comp)
+    bus_keep_set = Set(bus_keep)
+
+    # Keep all pre-contingency arcs whose endpoints are inside the kept bus set
+    # so that Woodbury modifications can still be applied locally
+    arc_keep = Int[]
+    for e in eachindex(arc_ax)
+        efb, etb = arc_ax[e]
+        i = bus_lookup[efb]
+        j = bus_lookup[etb]
+        if (i in bus_keep_set) && (j in bus_keep_set)
+            push!(arc_keep, e)
+        end
+    end
+
+    local_arc_lookup = Dict{Int, Int}()
+    for (local_idx, global_idx) in enumerate(arc_keep)
+        local_arc_lookup[global_idx] = local_idx
+    end
+
+    monitored_idx_sub = local_arc_lookup[monitored_idx]
+
+    # Restrict contingency modifications to the local subnetwork
+    local_mods = ArcModification[]
+    for mod in contingency.modifications
+        if haskey(local_arc_lookup, mod.arc_index)
+            push!(
+                local_mods,
+                ArcModification(local_arc_lookup[mod.arc_index], mod.delta_b),
+            )
+        end
+    end
+
+    # Local matrices (pre-contingency subnetwork)
+    A_sub = SparseArrays.sparse(vmodf.A[arc_keep, bus_keep])
+    BA_sub = SparseArrays.sparse(vmodf.BA[bus_keep, arc_keep])
+    arc_susceptances_sub = vmodf.arc_susceptances[arc_keep]
+
+    # Local bus lookup
+    bus_ax_sub = bus_ax[bus_keep]
+    bus_lookup_sub = Dict{Int, Int}()
+    for (i, bus_num) in enumerate(bus_ax_sub)
+        bus_lookup_sub[bus_num] = i
+    end
+
+    # Local reference bus positions
+    local_ref_positions = Int[]
+    for ref_bus in keys(vmodf.subnetwork_axes)
+        if haskey(bus_lookup_sub, ref_bus)
+            push!(local_ref_positions, bus_lookup_sub[ref_bus])
+        end
+    end
+    if isempty(local_ref_positions)
+        push!(local_ref_positions, 1)
+    end
+
+    valid_ix_sub = setdiff(1:length(bus_ax_sub), local_ref_positions)
+    ABA_sub = calculate_ABA_matrix(A_sub, BA_sub, Set(local_ref_positions))
+    K_sub = klu(ABA_sub)
+
+    return (
+        K = K_sub,
+        A = A_sub,
+        BA = BA_sub,
+        arc_susceptances = arc_susceptances_sub,
+        valid_ix = valid_ix_sub,
+        monitored_idx = monitored_idx_sub,
+        modifications = local_mods,
+        bus_keep = bus_keep,
+        n_bus_full = length(vmodf.axes[2]),
+    )
+end
+
+"""
+    _compute_modf_row_islanding(vmodf, monitored_idx, contingency) -> Vector{Float64}
+
+When the contingency islands the original network, rebuild the monitored connected
+subnetwork and compute the post-contingency PTDF row on that subnetwork using the
+same Woodbury/MODF formulation.
+"""
+function _compute_modf_row_islanding(
+    vmodf::VirtualMODF,
+    monitored_idx::Int,
+    contingency::ContingencySpec,
+)::Vector{Float64}
+    sub = _get_monitored_subnetwork(vmodf, monitored_idx, contingency)
+    sub === nothing && return zeros(length(vmodf.axes[2]))
+
+    K_sub = sub.K
+    A_sub = sub.A
+    BA_sub = sub.BA
+    arc_susceptances_sub = sub.arc_susceptances
+    valid_ix_sub = sub.valid_ix
+    monitored_idx_sub = sub.monitored_idx
+    local_mods = sub.modifications
+    bus_keep = sub.bus_keep
+    n_bus_full = sub.n_bus_full
+
+    n_bus_sub = size(BA_sub, 1)
+    temp_data_sub = zeros(n_bus_sub)
+    work_ba_col_sub = zeros(length(valid_ix_sub))
+
+    # If no local modifications remain inside this subnetwork,
+    # the post-contingency row is just the PTDF row of the local subnetwork.
+    if isempty(local_mods)
+        b_mon_pre = arc_susceptances_sub[monitored_idx_sub]
+
+        @inbounds for i in eachindex(valid_ix_sub)
+            work_ba_col_sub[i] = BA_sub[valid_ix_sub[i], monitored_idx_sub]
+        end
+        lin_solve = KLU.solve!(K_sub, work_ba_col_sub)
+
+        fill!(temp_data_sub, 0.0)
+        @inbounds for i in eachindex(valid_ix_sub)
+            temp_data_sub[valid_ix_sub[i]] = lin_solve[i] / b_mon_pre
+        end
+
+        temp_data_sub .*= b_mon_pre
+
+        full_row = zeros(n_bus_full)
+        @inbounds for (local_i, global_i) in enumerate(bus_keep)
+            full_row[global_i] = temp_data_sub[local_i]
+        end
+        return full_row
+    end
+
+    # --- Local Woodbury factors ---
+    M = length(local_mods)
+
+    arc_indices_sub = [mod.arc_index for mod in local_mods]
+    delta_b_vec_sub = [mod.delta_b for mod in local_mods]
+
+    Z_sub = Matrix{Float64}(undef, n_bus_sub, M)
+
+    for (j, mod) in enumerate(local_mods)
+        e = mod.arc_index
+        b_e = arc_susceptances_sub[e]
+
+        @inbounds for i in eachindex(valid_ix_sub)
+            work_ba_col_sub[i] = BA_sub[valid_ix_sub[i], e]
+        end
+        lin_solve = KLU.solve!(K_sub, work_ba_col_sub)
+
+        fill!(view(Z_sub, :, j), 0.0)
+        @inbounds for i in eachindex(valid_ix_sub)
+            Z_sub[valid_ix_sub[i], j] = lin_solve[i] / b_e
+        end
+    end
+
+    AZ_sub = A_sub * Z_sub
+    K_mat_sub = zeros(M, M)
+    for j in 1:M, i in 1:M
+        K_mat_sub[i, j] = AZ_sub[arc_indices_sub[i], j]
+    end
+
+    W_mat_sub = LinearAlgebra.diagm(1.0 ./ delta_b_vec_sub) + K_mat_sub
+    W_inv_sub, is_island_sub = _invert_woodbury_W(W_mat_sub, M)
+
+    if is_island_sub
+        error("Subnetwork Woodbury system is still islanding after restriction.")
+    end
+
+    # --- Same row computation as _compute_modf_row, but on local matrices ---
+    b_mon = arc_susceptances_sub[monitored_idx_sub]
+    for (j, idx) in enumerate(arc_indices_sub)
+        if idx == monitored_idx_sub
+            b_mon += delta_b_vec_sub[j]
+        end
+    end
+    if abs(b_mon) < eps()
+        return zeros(n_bus_full)
+    end
+
+    b_mon_pre = arc_susceptances_sub[monitored_idx_sub]
+    @inbounds for i in eachindex(valid_ix_sub)
+        work_ba_col_sub[i] = BA_sub[valid_ix_sub[i], monitored_idx_sub]
+    end
+    lin_solve = KLU.solve!(K_sub, work_ba_col_sub)
+
+    fill!(temp_data_sub, 0.0)
+    @inbounds for i in eachindex(valid_ix_sub)
+        temp_data_sub[valid_ix_sub[i]] = lin_solve[i] / b_mon_pre
+    end
+
+    zm_Z = zeros(M)
+    ba_nzv = SparseArrays.nonzeros(BA_sub)
+    ba_rv = SparseArrays.rowvals(BA_sub)
+    @inbounds for nz_idx in SparseArrays.nzrange(BA_sub, monitored_idx_sub)
+        row = ba_rv[nz_idx]
+        coeff = ba_nzv[nz_idx] / b_mon_pre
+        for j in 1:M
+            zm_Z[j] += coeff * Z_sub[row, j]
+        end
+    end
+
+    correction_coeff = W_inv_sub * zm_Z
+    LinearAlgebra.mul!(temp_data_sub, Z_sub, correction_coeff, -1.0, 1.0)
+
+    temp_data_sub .*= b_mon
+
+    full_row = zeros(n_bus_full)
+    @inbounds for (local_i, global_i) in enumerate(bus_keep)
+        full_row[global_i] = temp_data_sub[local_i]
+    end
+
+    return full_row
 end
