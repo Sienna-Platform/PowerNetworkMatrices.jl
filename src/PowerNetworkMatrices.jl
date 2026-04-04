@@ -6,6 +6,7 @@ export ArcAdmittanceMatrix
 export BA_Matrix
 export ArcModification
 export ContingencySpec
+export NetworkModification
 export DegreeTwoReduction
 export IncidenceMatrix
 export LODF
@@ -26,9 +27,12 @@ export DC_BA_Matrix
 export AC_Ybus_Matrix
 export YBUS_ELTYPE
 
+export apply_woodbury_correction
 export clear_all_caches!
 export clear_caches!
+export compute_woodbury_factors
 export factorize
+export get_post_modification_ptdf_row
 export is_factorized
 
 export depth_first_search
@@ -103,6 +107,9 @@ include("PowerflowMatrixTypes.jl")
 include("lodf_calculations.jl")
 include("virtual_lodf_calculations.jl")
 include("modf_definitions.jl")
+include("network_modification.jl")
+include("woodbury_kernel.jl")
+include("virtual_ptdf_modification.jl")
 include("virtual_modf_calculations.jl")
 include("system_utils.jl")
 include("serialization.jl")

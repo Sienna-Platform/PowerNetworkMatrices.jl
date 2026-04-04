@@ -52,3 +52,14 @@ struct WoodburyFactors
     delta_b::Vector{Float64}
     is_islanding::Bool
 end
+
+"""
+Merge ArcModifications that target the same arc index.
+"""
+function _merge_modifications(mods::Vector{ArcModification})
+    by_arc = Dict{Int, Float64}()
+    for m in mods
+        by_arc[m.arc_index] = get(by_arc, m.arc_index, 0.0) + m.delta_b
+    end
+    return [ArcModification(idx, db) for (idx, db) in sort!(collect(by_arc); by = first)]
+end
