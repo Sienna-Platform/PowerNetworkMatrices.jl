@@ -49,6 +49,8 @@ struct VirtualPTDF{Ax, L <: NTuple{2, Dict}, K <: LinearAlgebra.Factorization} <
        PowerNetworkMatrix{Float64}
     K::K
     BA::SparseArrays.SparseMatrixCSC{Float64, Int}
+    A::SparseArrays.SparseMatrixCSC{Int8, Int}
+    arc_susceptances::Vector{Float64}
     dist_slack::Vector{Float64}
     dist_slack_normalized::Vector{Float64}
     axes::Ax
@@ -217,9 +219,13 @@ function VirtualPTDF(
     valid_ix = setdiff(1:length(temp_data), ref_bus_positions)
     work_ba_col = zeros(length(valid_ix))
 
+    arc_susceptances = _extract_arc_susceptances(BA.data)
+
     return VirtualPTDF(
         K,
         BA.data,
+        A.data,
+        arc_susceptances,
         dist_slack_vector,
         dist_slack_normalized,
         axes,
