@@ -11,7 +11,6 @@ Implements van Dijk et al. Eq. 29:
 
 _get_K(m::VirtualPTDF) = m.K
 _get_BA(m::VirtualPTDF) = m.BA
-_get_A(m::VirtualPTDF) = m.A
 _get_arc_susceptances(m::VirtualPTDF) = m.arc_susceptances
 _get_valid_ix(m::VirtualPTDF) = m.valid_ix
 _get_temp_data(m::VirtualPTDF) = m.temp_data
@@ -40,7 +39,6 @@ function _compute_woodbury_factors(
     M = length(modifications)
     K = _get_K(mat)
     BA = _get_BA(mat)
-    A = _get_A(mat)
     arc_sus = _get_arc_susceptances(mat)
     valid_ix = _get_valid_ix(mat)
     temp_data = _get_temp_data(mat)
@@ -72,11 +70,23 @@ function _compute_woodbury_factors(
         end
     end
 
-    # K_mat[i,j] = ν_i⊤ B⁻¹ ν_j — compute only needed rows via sparse dot products
-    # instead of full A * Z (avoids allocating n_arcs × M dense matrix)
+    # K_mat[i,j] = ν_i⊤ B⁻¹ ν_j
+    # Use BA[:,arc]/b instead of A[arc,:] for consistent sign convention (issue #278).
+    # Iterate sparse BA columns (typically 2 nonzeros per arc).
+    ba_nzv = SparseArrays.nonzeros(BA)
+    ba_rv = SparseArrays.rowvals(BA)
     K_mat = zeros(M, M)
-    for j in 1:M, i in 1:M
-        K_mat[i, j] = dot(view(A, arc_indices[i], :), view(Z, :, j))
+    for i in 1:M
+        e_i = arc_indices[i]
+        b_i = arc_sus[e_i]
+        for j in 1:M
+            val = 0.0
+            @inbounds for nz_idx in nzrange(BA, e_i)
+                row = ba_rv[nz_idx]
+                val += (ba_nzv[nz_idx] / b_i) * Z[row, j]
+            end
+            K_mat[i, j] = val
+        end
     end
 
     # W = diag(1/Δb) + K_mat
@@ -108,7 +118,6 @@ function _apply_woodbury_correction(
 )::Vector{Float64}
     K = _get_K(mat)
     BA = _get_BA(mat)
-    A = _get_A(mat)
     arc_sus = _get_arc_susceptances(mat)
     valid_ix = _get_valid_ix(mat)
     temp_data = _get_temp_data(mat)
@@ -147,9 +156,16 @@ function _apply_woodbury_correction(
     end
 
     # ν_m⊤ · Z  (1 × M vector)
+    # Use BA[:,m]/b instead of A[m,:] for consistent sign convention (issue #278).
+    ba_nzv = SparseArrays.nonzeros(BA)
+    ba_rv = SparseArrays.rowvals(BA)
     zm_Z = zeros(M)
-    for j in 1:M
-        zm_Z[j] = dot(view(A, monitored_idx, :), view(wf.Z, :, j))
+    @inbounds for nz_idx in nzrange(BA, monitored_idx)
+        row = ba_rv[nz_idx]
+        coeff = ba_nzv[nz_idx] / b_mon_pre
+        for j in 1:M
+            zm_Z[j] += coeff * wf.Z[row, j]
+        end
     end
 
     # Woodbury correction: temp_data -= Z · (W⁻¹ · zm_Z)

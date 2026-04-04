@@ -108,3 +108,34 @@ function Base.getindex(
 )
     return get_post_modification_ptdf_row(vptdf, monitored, mod)
 end
+
+# --- PSY.Outage convenience API ---
+
+"""
+    get_post_modification_ptdf_row(vptdf, monitored_arc, sys, outage) -> Vector{Float64}
+
+Compute the post-contingency PTDF row for a monitored arc when the given
+`PSY.Outage` trips. Resolves the outage's associated branches through
+the system and builds the modification automatically.
+
+$(TYPEDSIGNATURES)
+"""
+function get_post_modification_ptdf_row(
+    vptdf::VirtualPTDF,
+    monitored_arc::Int,
+    sys::PSY.System,
+    outage::PSY.Outage,
+)::Vector{Float64}
+    mod = NetworkModification(vptdf, sys, outage)
+    return get_post_modification_ptdf_row(vptdf, monitored_arc, mod)
+end
+
+function get_post_modification_ptdf_row(
+    vptdf::VirtualPTDF,
+    monitored_arc::Tuple{Int, Int},
+    sys::PSY.System,
+    outage::PSY.Outage,
+)::Vector{Float64}
+    mod = NetworkModification(vptdf, sys, outage)
+    return get_post_modification_ptdf_row(vptdf, monitored_arc, mod)
+end
