@@ -587,4 +587,3 @@ function clear_all_caches!(vmodf::VirtualMODF)
     empty!(vmodf.row_caches)
     return
 end
-

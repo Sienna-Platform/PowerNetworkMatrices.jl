@@ -25,7 +25,10 @@ end
     for e in 1:n_arcs
         b_e = vmodf.arc_susceptances[e]
         ctg_uuid = Base.UUID(UInt128(e))
-        ctg = ContingencySpec(ctg_uuid, NetworkModification("outage_arc_$e", [ArcModification(e, -b_e)]))
+        ctg = ContingencySpec(
+            ctg_uuid,
+            NetworkModification("outage_arc_$e", [ArcModification(e, -b_e)]),
+        )
         vmodf.contingency_cache[ctg_uuid] = ctg
 
         for m in 1:n_arcs
@@ -49,7 +52,10 @@ end
     e = 1
     b_e = vmodf.arc_susceptances[e]
     ctg_uuid = Base.UUID(UInt128(999))
-    ctg = ContingencySpec(ctg_uuid, NetworkModification("test_outage", [ArcModification(e, -b_e)]))
+    ctg = ContingencySpec(
+        ctg_uuid,
+        NetworkModification("test_outage", [ArcModification(e, -b_e)]),
+    )
     vmodf.contingency_cache[ctg_uuid] = ctg
 
     # Query by integer monitored index + ContingencySpec
@@ -75,7 +81,10 @@ end
     e = 1
     b_e = vmodf.arc_susceptances[e]
     ctg_uuid = Base.UUID(UInt128(998))
-    ctg = ContingencySpec(ctg_uuid, NetworkModification("test_outage_tuple", [ArcModification(e, -b_e)]))
+    ctg = ContingencySpec(
+        ctg_uuid,
+        NetworkModification("test_outage_tuple", [ArcModification(e, -b_e)]),
+    )
     vmodf.contingency_cache[ctg_uuid] = ctg
 
     # Query using arc tuple
@@ -101,7 +110,10 @@ end
     e = 1
     b_e = vmodf.arc_susceptances[e]
     ctg_uuid = Base.UUID(UInt128(500))
-    ctg = ContingencySpec(ctg_uuid, NetworkModification("cache_test", [ArcModification(e, -b_e)]))
+    ctg = ContingencySpec(
+        ctg_uuid,
+        NetworkModification("cache_test", [ArcModification(e, -b_e)]),
+    )
     vmodf.contingency_cache[ctg_uuid] = ctg
 
     _ = vmodf[1, ctg]  # Triggers computation + caching
@@ -137,7 +149,10 @@ end
     e = 1
     b_e = vmodf.arc_susceptances[e]
     ctg_uuid_show = Base.UUID(UInt128(9999))
-    ctg_show = ContingencySpec(ctg_uuid_show, NetworkModification("show_test", [ArcModification(e, -b_e)]))
+    ctg_show = ContingencySpec(
+        ctg_uuid_show,
+        NetworkModification("show_test", [ArcModification(e, -b_e)]),
+    )
     vmodf.contingency_cache[ctg_uuid_show] = ctg_show
     io2 = IOBuffer()
     show(io2, MIME"text/plain"(), vmodf)
@@ -167,7 +182,10 @@ end
     e = 1
     b_e = vmodf.arc_susceptances[e]
     ctg_uuid = Base.UUID(UInt128(8888))
-    ctg = ContingencySpec(ctg_uuid, NetworkModification("public_api_test", [ArcModification(e, -b_e)]))
+    ctg = ContingencySpec(
+        ctg_uuid,
+        NetworkModification("public_api_test", [ArcModification(e, -b_e)]),
+    )
     vmodf.contingency_cache[ctg_uuid] = ctg
 
     # Verify all monitored arcs through the public getindex API
@@ -191,7 +209,10 @@ end
     e = 1
     b_e = vmodf.arc_susceptances[e]
     ctg_uuid = Base.UUID(UInt128(700))
-    ctg = ContingencySpec(ctg_uuid, NetworkModification("reuse_test", [ArcModification(e, -b_e)]))
+    ctg = ContingencySpec(
+        ctg_uuid,
+        NetworkModification("reuse_test", [ArcModification(e, -b_e)]),
+    )
     vmodf.contingency_cache[ctg_uuid] = ctg
 
     # First query: computes Woodbury factors + row
@@ -314,7 +335,10 @@ end
         e == flip_arc && continue
         b_e = vmodf.arc_susceptances[e]
         ctg_uuid = Base.UUID(UInt128(30000 + e))
-        ctg = ContingencySpec(ctg_uuid, NetworkModification("sign_ctg_$e", [ArcModification(e, -b_e)]))
+        ctg = ContingencySpec(
+            ctg_uuid,
+            NetworkModification("sign_ctg_$e", [ArcModification(e, -b_e)]),
+        )
         vmodf.contingency_cache[ctg_uuid] = ctg
 
         modf_row = PNM._compute_modf_entry(vmodf, flip_arc, ctg.modification)
