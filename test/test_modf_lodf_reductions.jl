@@ -31,8 +31,7 @@ function verify_modf_lodf_identity(
     ctg_uuid = Base.UUID(UInt128(hash((arc_idx, delta_b))))
     ctg = ContingencySpec(
         ctg_uuid,
-        "test_arc_$(arc_idx)",
-        [ArcModification(arc_idx, delta_b)],
+        NetworkModification("test_arc_$(arc_idx)", [ArcModification(arc_idx, delta_b)]),
     )
     vmodf.contingency_cache[ctg_uuid] = ctg
 
