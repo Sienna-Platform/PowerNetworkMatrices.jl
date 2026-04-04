@@ -548,6 +548,63 @@ function _compute_modf_row(
     wf::WoodburyFactors,
 )::Vector{Float64}
     return _apply_woodbury_correction(vmodf, monitored_idx, wf)
+    n_bus = length(vmodf.temp_data)
+
+    if wf.is_islanding
+        @warn "Contingency islands the network. Returning zeros."
+        return zeros(n_bus)
+    end
+
+    M = length(wf.arc_indices)
+
+    # Effective susceptance of monitored arc after modifications
+    b_mon = vmodf.arc_susceptances[monitored_idx]
+    for (j, idx) in enumerate(wf.arc_indices)
+        if idx == monitored_idx
+            b_mon += wf.delta_b[j]
+        end
+    end
+    if abs(b_mon) < eps()
+        return zeros(n_bus)
+    end
+
+    # z_m = B⁻¹ν_m / b_mon_pre via KLU solve on BA column
+    b_mon_pre = vmodf.arc_susceptances[monitored_idx]
+    @inbounds for i in eachindex(vmodf.valid_ix)
+        vmodf.work_ba_col[i] = vmodf.BA[vmodf.valid_ix[i], monitored_idx]
+    end
+    lin_solve = KLU.solve!(vmodf.K, vmodf.work_ba_col)
+
+    # Build z_m directly into vmodf.temp_data to avoid allocation
+    fill!(vmodf.temp_data, 0.0)
+    @inbounds for i in eachindex(vmodf.valid_ix)
+        vmodf.temp_data[vmodf.valid_ix[i]] = lin_solve[i] / b_mon_pre
+    end
+
+    # ν_m⊤ · Z  (1 × M vector — small, ok to allocate)
+    # Use BA[:,m]/b_mon_pre instead of A[m,:] to ensure consistent sign convention.
+    # For some branches BA[:,m] = -b_m * A[m,:], so using A directly would give
+    # the wrong orientation for the Woodbury correction term.
+    # Iterate only over the nonzeros of BA[:,monitored_idx] (typically 2 entries)
+    # instead of all valid buses, since BA columns are very sparse.
+    zm_Z = zeros(M)
+    ba_nzv = SparseArrays.nonzeros(vmodf.BA)
+    ba_rv = SparseArrays.rowvals(vmodf.BA)
+    @inbounds for nz_idx in SparseArrays.nzrange(vmodf.BA, monitored_idx)
+        row = ba_rv[nz_idx]
+        coeff = ba_nzv[nz_idx] / b_mon_pre
+        for j in 1:M
+            zm_Z[j] += coeff * wf.Z[row, j]
+        end
+    end
+
+    # Woodbury correction: temp_data -= Z · (W⁻¹ · zm_Z)
+    correction_coeff = wf.W_inv * zm_Z
+    LinearAlgebra.mul!(vmodf.temp_data, wf.Z, correction_coeff, -1.0, 1.0)
+
+    # Post-contingency PTDF row = b_mon_post · (z_m - correction), now in temp_data
+    vmodf.temp_data .*= b_mon
+    return copy(vmodf.temp_data)
 end
 
 """

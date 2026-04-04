@@ -261,6 +261,68 @@ end
     end
 end
 
+@testset "VirtualMODF: BA/A sign convention consistency (issue #278)" begin
+    # Regression test for NREL-Sienna/PowerNetworkMatrices.jl#278.
+    #
+    # The issue is an inconsistent branch orientation between BA[:, m] and
+    # A[m, :]: BA[:, m] can correspond to -b_m * A[m, :] even when b_m itself
+    # is not negative. The old code used A[m, :] directly for the ν_m⊤·Z term
+    # in the Woodbury correction, producing incorrect post-contingency PTDF rows.
+    # The fix derives the orientation from BA[:, m] / b instead of A[m, :],
+    # so _compute_modf_row no longer depends on reading A.
+    #
+    # To test: flip A[m, :] for a monitored arc to simulate the opposite
+    # orientation. Since the fix only uses BA / b (not A) in
+    # _compute_modf_row, the result must still match the PTDF+LODF identity.
+    # If A were still used, this flip would cause errors.
+    sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    ptdf_ref = PTDF(sys5)
+    vlodf = VirtualLODF(sys5)
+    vmodf = VirtualMODF(sys5)
+    n_arcs = size(vlodf, 1)
+
+    # Flip A[flip_arc, :] to simulate the opposite sign convention.
+    # A is CSC (arcs × buses), so iterate over columns to find entries in the row.
+    flip_arc = 2
+    A_rows = SparseArrays.rowvals(vmodf.A)
+    A_vals = SparseArrays.nonzeros(vmodf.A)
+    for col in 1:size(vmodf.A, 2)
+        for idx in SparseArrays.nzrange(vmodf.A, col)
+            if A_rows[idx] == flip_arc
+                A_vals[idx] *= Int8(-1)
+            end
+        end
+    end
+
+    # Confirm A[flip_arc,:] now has opposite sign from BA[:,flip_arc]/b
+    b_flip = vmodf.arc_susceptances[flip_arc]
+    for bus_idx in vmodf.valid_ix
+        ba_val = vmodf.BA[bus_idx, flip_arc] / b_flip
+        a_val = Float64(vmodf.A[flip_arc, bus_idx])
+        if a_val != 0
+            @test sign(ba_val) != sign(a_val)
+        end
+    end
+
+    # Trip a different arc as contingency and monitor the flipped arc.
+    # The Woodbury factors for the contingency arc are unaffected by the A flip
+    # (K_mat only reads AZ at contingency arc indices, not at flip_arc).
+    # With the fix, _compute_modf_row uses BA/b for zm_Z, so the flipped A
+    # is never read → result must match the PTDF+LODF identity.
+    for e in 1:n_arcs
+        e == flip_arc && continue
+        b_e = vmodf.arc_susceptances[e]
+        ctg_uuid = Base.UUID(UInt128(30000 + e))
+        ctg = ContingencySpec(ctg_uuid, "sign_ctg_$e", [ArcModification(e, -b_e)])
+        vmodf.contingency_cache[ctg_uuid] = ctg
+
+        modf_row = PNM._compute_modf_entry(vmodf, flip_arc, ctg)
+        expected = ptdf_ref[flip_arc, :] .+ vlodf[flip_arc, e] .* ptdf_ref[e, :]
+        @test isapprox(modf_row, expected, atol = 1e-6)
+        empty!(vmodf.woodbury_cache)
+    end
+end
+
 @testset "test delta b positive for registered outages" begin
     sys = PSB.build_system(PSB.PSITestSystems, "test_RTS_GMLC_sys")
     for branch in get_components(ACTransmission, sys)
