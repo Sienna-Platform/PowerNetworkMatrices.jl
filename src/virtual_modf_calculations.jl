@@ -87,6 +87,15 @@ get_arc_axis(mat::VirtualMODF) = mat.axes[1]
 get_bus_axis(mat::VirtualMODF) = mat.axes[2]
 get_tol(mat::VirtualMODF) = mat.tol[]
 
+# Woodbury kernel accessors
+_get_K(m::VirtualMODF) = m.K
+_get_BA(m::VirtualMODF) = m.BA
+_get_A(m::VirtualMODF) = m.A
+_get_arc_susceptances(m::VirtualMODF) = m.arc_susceptances
+_get_valid_ix(m::VirtualMODF) = m.valid_ix
+_get_temp_data(m::VirtualMODF) = m.temp_data
+_get_work_ba_col(m::VirtualMODF) = m.work_ba_col
+
 """
     get_registered_contingencies(vmodf::VirtualMODF) -> Dict{Base.UUID, ContingencySpec}
 
@@ -505,13 +514,7 @@ end
     _get_woodbury_factors(vmodf, contingency) -> WoodburyFactors
 
 Compute and cache the Woodbury factors for a contingency.
-Implements van Dijk et al. Eq. 29:
-    B_m⁻¹ = B_r⁻¹ - B_r⁻¹U (A⁻¹ + U⊤B_r⁻¹U)⁻¹ U⊤B_r⁻¹
-
-where U = [ν_{e1} ... ν_{eM}] and A = diag(Δb₁, ..., Δb_M).
-
-The expensive part (M KLU solves + M×M factorization) is shared
-across all monitored arcs for this contingency.
+Delegates to the shared Woodbury kernel `_compute_woodbury_factors`.
 
 !!! warning
     This function is NOT thread-safe. It mutates `vmodf.work_ba_col` on
@@ -524,49 +527,7 @@ function _get_woodbury_factors(
     if haskey(vmodf.woodbury_cache, contingency.uuid)
         return vmodf.woodbury_cache[contingency.uuid]
     end
-
-    mods = contingency.modifications
-    M = length(mods)
-    n_bus = length(vmodf.temp_data)
-
-    arc_indices = [mod.arc_index for mod in mods]
-    delta_b_vec = [mod.delta_b for mod in mods]
-
-    # Compute Z[:,j] = B⁻¹ν_j for each modified arc, where ν_j = BA[:,e] / b_e
-    # is the unscaled incidence direction; Z[:,j] = B⁻¹ A[e,:]⊤
-    Z = Matrix{Float64}(undef, n_bus, M)
-
-    for (j, mod) in enumerate(mods)
-        e = mod.arc_index
-        b_e = vmodf.arc_susceptances[e]
-
-        @inbounds for i in eachindex(vmodf.valid_ix)
-            vmodf.work_ba_col[i] = vmodf.BA[vmodf.valid_ix[i], e]
-        end
-        lin_solve = KLU.solve!(vmodf.K, vmodf.work_ba_col)
-
-        fill!(view(Z, :, j), 0.0)
-        @inbounds for i in eachindex(vmodf.valid_ix)
-            Z[vmodf.valid_ix[i], j] = lin_solve[i] / b_e
-        end
-    end
-
-    # K_mat[i,j] = ν_i⊤ B⁻¹ ν_j  (using A * Z to compute all rows efficiently)
-    # A is (n_arcs × n_bus), so (A * Z) is (n_arcs × M).
-    AZ = vmodf.A * Z  # sparse-dense product: n_arcs × M
-    K_mat = zeros(M, M)
-    for j in 1:M, i in 1:M
-        K_mat[i, j] = AZ[arc_indices[i], j]
-    end
-
-    # W = diag(1/Δb) + K_mat = A⁻¹ + U⊤B⁻¹U
-    W_mat = LinearAlgebra.diagm(1.0 ./ delta_b_vec) + K_mat
-
-    # Pre-invert W: analytical for M ≤ 2 (avoids LU overhead for the common N-1/N-2 cases),
-    # LU-based for M > 2.
-    W_inv, is_island = _invert_woodbury_W(W_mat, M)
-
-    wf = WoodburyFactors(Z, W_inv, arc_indices, delta_b_vec, is_island)
+    wf = _compute_woodbury_factors(vmodf, contingency.modifications)
     vmodf.woodbury_cache[contingency.uuid] = wf
     return wf
 end
@@ -575,10 +536,7 @@ end
     _compute_modf_row(vmodf, monitored_idx, wf) -> Vector{Float64}
 
 Compute the post-contingency PTDF row for a monitored arc.
-Uses Woodbury correction: PTDF_m[mon,:] = b_mon_post · ν_mon⊤ · B_m⁻¹
-
-The row is computed as: b_mon_post · (z_m - Z · W⁻¹ · (ν_mon⊤ · Z))
-where z_m = B⁻¹ν_mon / b_mon_pre (one additional KLU solve).
+Delegates to the shared Woodbury kernel `_apply_woodbury_correction`.
 
 !!! warning
     This function is NOT thread-safe. It mutates `vmodf.work_ba_col` on
@@ -589,52 +547,7 @@ function _compute_modf_row(
     monitored_idx::Int,
     wf::WoodburyFactors,
 )::Vector{Float64}
-    n_bus = length(vmodf.temp_data)
-
-    if wf.is_islanding
-        @warn "Contingency islands the network. Returning zeros."
-        return zeros(n_bus)
-    end
-
-    M = length(wf.arc_indices)
-
-    # Effective susceptance of monitored arc after modifications
-    b_mon = vmodf.arc_susceptances[monitored_idx]
-    for (j, idx) in enumerate(wf.arc_indices)
-        if idx == monitored_idx
-            b_mon += wf.delta_b[j]
-        end
-    end
-    if abs(b_mon) < eps()
-        return zeros(n_bus)
-    end
-
-    # z_m = B⁻¹ν_m / b_mon_pre via KLU solve on BA column
-    b_mon_pre = vmodf.arc_susceptances[monitored_idx]
-    @inbounds for i in eachindex(vmodf.valid_ix)
-        vmodf.work_ba_col[i] = vmodf.BA[vmodf.valid_ix[i], monitored_idx]
-    end
-    lin_solve = KLU.solve!(vmodf.K, vmodf.work_ba_col)
-
-    # Build z_m directly into vmodf.temp_data to avoid allocation
-    fill!(vmodf.temp_data, 0.0)
-    @inbounds for i in eachindex(vmodf.valid_ix)
-        vmodf.temp_data[vmodf.valid_ix[i]] = lin_solve[i] / b_mon_pre
-    end
-
-    # ν_m⊤ · Z  (1 × M vector — small, ok to allocate)
-    zm_Z = zeros(M)
-    for j in 1:M
-        zm_Z[j] = dot(view(vmodf.A, monitored_idx, :), view(wf.Z, :, j))
-    end
-
-    # Woodbury correction: temp_data -= Z · (W⁻¹ · zm_Z)
-    correction_coeff = wf.W_inv * zm_Z
-    LinearAlgebra.mul!(vmodf.temp_data, wf.Z, correction_coeff, -1.0, 1.0)
-
-    # Post-contingency PTDF row = b_mon_post · (z_m - correction), now in temp_data
-    vmodf.temp_data .*= b_mon
-    return copy(vmodf.temp_data)
+    return _apply_woodbury_correction(vmodf, monitored_idx, wf)
 end
 
 """
@@ -785,13 +698,3 @@ function clear_all_caches!(vmodf::VirtualMODF)
     return
 end
 
-"""
-Merge ArcModifications that target the same arc index.
-"""
-function _merge_modifications(mods::Vector{ArcModification})
-    by_arc = Dict{Int, Float64}()
-    for m in mods
-        by_arc[m.arc_index] = get(by_arc, m.arc_index, 0.0) + m.delta_b
-    end
-    return [ArcModification(idx, db) for (idx, db) in by_arc]
-end
