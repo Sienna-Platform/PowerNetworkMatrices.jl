@@ -1,7 +1,5 @@
 const YBUS_ELTYPE = ComplexF32
 
-const SUPPORTED_LINEAR_SOLVERS = ["KLU", "MKLPardiso", "AppleAccelerate", "Dense"]
-
 const KiB = 1024
 const MiB = KiB * KiB
 const GiB = MiB * KiB
@@ -17,3 +15,20 @@ SKIP_PARALLEL_REDUCTION_TYPES = [
     PSY.PhaseShiftingTransformer,
     ThreeWindingTransformerWinding{PSY.PhaseShiftingTransformer3W},
 ]
+
+# Singleton types for linear solver dispatch, enabling compile-time method resolution.
+abstract type LinearSolverType end
+struct KLUSolver <: LinearSolverType end
+struct DenseSolver <: LinearSolverType end
+struct MKLPardisoSolver <: LinearSolverType end
+struct AppleAccelerateSolver <: LinearSolverType end
+
+const SUPPORTED_LINEAR_SOLVERS = ("KLU", "MKLPardiso", "AppleAccelerate", "Dense")
+
+@inline function resolve_linear_solver(s::String)
+    s == "KLU" && return KLUSolver()
+    s == "Dense" && return DenseSolver()
+    s == "MKLPardiso" && return MKLPardisoSolver()
+    s == "AppleAccelerate" && return AppleAccelerateSolver()
+    error("Unsupported linear solver: $s. Supported: $SUPPORTED_LINEAR_SOLVERS")
+end

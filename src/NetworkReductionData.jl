@@ -23,13 +23,112 @@ network reduction algorithms.
 - `boundary_bus_to_removed_arcs::Dict{Int, Set{Tuple{Int, Int}}}`: Maps boundary buses to the set of removed arcs connected to them
 - `added_admittance_map::Dict{Int, PSY.FixedAdmittance}`: Admittances added to buses during reduction
 - `added_arc_impedance_map::Dict{Tuple{Int, Int}, PSY.GenericArcImpedance}`: New arcs created during reduction
-- `all_branch_maps_by_type::Dict{String, Any}`: Branch mappings organized by component type
+- `all_branch_maps_by_type::BranchMapsByType`: Branch mappings organized by component type
 - `reductions::ReductionContainer`: Container tracking applied reduction algorithms
 - `name_to_arc_map::Dict{Type, DataStructures.SortedDict{String, Tuple{Tuple{Int, Int}, String}}}`: Lazily filled with the call to [`populate_branch_maps_by_type!`](@ref), maps string names to their corresponding arcs and the map where the arc can be found. Used in optimization models or power flow reporting after reductions are applied. It is possible to have repeated arcs for some names if case of serial or parallel combinations.
 - `component_to_reduction_name_map::Dict{Type, Dict{String, String}}`: Lazily filled with the call to [`populate_branch_maps_by_type!`](@ref), maps component names to the names of the reduction entries used in name_to_arc_map. Used in optimization models for connecting component attributes (e.g. outages) to network reduction entries.
 - `filters_applied::Dict{Type, Function}`: Filters applied when populating branch maps by type
 - `direct_branch_name_map::Dict{String, Tuple{Int, Int}}`: Lazily filled, maps branch names to their corresponding arc tuples for direct branches
 """
+@kwdef mutable struct BranchMapsByType
+    direct_branch_map::Dict{DataType, Any} = Dict{DataType, Any}()
+    reverse_direct_branch_map::Dict{DataType, Any} = Dict{DataType, Any}()
+    parallel_branch_map::Dict{DataType, Any} = Dict{DataType, Any}()
+    reverse_parallel_branch_map::Dict{DataType, Any} = Dict{DataType, Any}()
+    series_branch_map::Dict{DataType, Any} = Dict{DataType, Any}()
+    reverse_series_branch_map::Dict{DataType, Any} = Dict{DataType, Any}()
+    transformer3W_map::Dict{DataType, Any} = Dict{DataType, Any}()
+    reverse_transformer3W_map::Dict{DataType, Any} = Dict{DataType, Any}()
+end
+
+const _BRANCH_MAPS_BY_TYPE_FIELDS = fieldnames(BranchMapsByType)
+
+function Base.iterate(b::BranchMapsByType, state = 1)
+    state > length(_BRANCH_MAPS_BY_TYPE_FIELDS) && return nothing
+    f = _BRANCH_MAPS_BY_TYPE_FIELDS[state]
+    return (String(f) => getfield(b, f), state + 1)
+end
+
+Base.length(::BranchMapsByType) = length(_BRANCH_MAPS_BY_TYPE_FIELDS)
+
+function Base.getindex(b::BranchMapsByType, key::String)
+    return getfield(b, Symbol(key))
+end
+
+function Base.isempty(b::BranchMapsByType)
+    for f in _BRANCH_MAPS_BY_TYPE_FIELDS
+        isempty(getfield(b, f)) || return false
+    end
+    return true
+end
+
+function Base.empty!(b::BranchMapsByType)
+    for f in _BRANCH_MAPS_BY_TYPE_FIELDS
+        empty!(getfield(b, f))
+    end
+    return
+end
+
+function Base.:(==)(a::BranchMapsByType, b::BranchMapsByType)
+    for f in _BRANCH_MAPS_BY_TYPE_FIELDS
+        getfield(a, f) == getfield(b, f) || return false
+    end
+    return true
+end
+
+# Typed accessors for BranchMapsByType — function barriers that recover concrete types.
+function get_typed_direct_branch_map(
+    b::BranchMapsByType,
+    ::Type{T},
+) where {T <: PSY.ACTransmission}
+    return b.direct_branch_map[T]::Dict{Tuple{Int, Int}, T}
+end
+
+function get_typed_reverse_direct_branch_map(
+    b::BranchMapsByType,
+    ::Type{T},
+) where {T <: PSY.ACTransmission}
+    return b.reverse_direct_branch_map[T]::Dict{T, Tuple{Int, Int}}
+end
+
+function get_typed_parallel_branch_map(
+    b::BranchMapsByType,
+    ::Type{T},
+) where {T <: PSY.ACTransmission}
+    return b.parallel_branch_map[T]::Dict{Tuple{Int, Int}, BranchesParallel{T}}
+end
+
+function get_typed_reverse_parallel_branch_map(
+    b::BranchMapsByType,
+    ::Type{T},
+) where {T <: PSY.ACTransmission}
+    return b.reverse_parallel_branch_map[T]::Dict{T, Tuple{Int, Int}}
+end
+
+function get_typed_series_branch_map(
+    b::BranchMapsByType,
+    ::Type{T},
+) where {T <: PSY.ACTransmission}
+    return b.series_branch_map[T]::Dict{Tuple{Int, Int}, BranchesSeries}
+end
+
+function get_typed_transformer3W_map(
+    b::BranchMapsByType,
+    ::Type{T},
+) where {T <: PSY.ThreeWindingTransformer}
+    return b.transformer3W_map[T]::Dict{Tuple{Int, Int}, ThreeWindingTransformerWinding{T}}
+end
+
+function get_typed_reverse_transformer3W_map(
+    b::BranchMapsByType,
+    ::Type{T},
+) where {T <: PSY.ThreeWindingTransformer}
+    return b.reverse_transformer3W_map[T]::Dict{
+        ThreeWindingTransformerWinding{T},
+        Tuple{Int, Int},
+    }
+end
+
 @kwdef mutable struct NetworkReductionData
     irreducible_buses::Set{Int} = Set{Int}() # Buses that are not reduced in the network reduction
     bus_reduction_map::Dict{Int, Set{Int}} = Dict{Int, Set{Int}}() # Maps reduced bus to the set of buses it was reduced to
@@ -62,7 +161,7 @@ network reduction algorithms.
     added_admittance_map::Dict{Int, PSY.FixedAdmittance} = Dict{Int, PSY.FixedAdmittance}()
     added_arc_impedance_map::Dict{Tuple{Int, Int}, PSY.GenericArcImpedance} =
         Dict{Tuple{Int, Int}, PSY.GenericArcImpedance}()
-    all_branch_maps_by_type::Dict{String, Any} = Dict{String, Any}()
+    all_branch_maps_by_type::BranchMapsByType = BranchMapsByType()
     reductions::ReductionContainer = ReductionContainer()
     name_to_arc_map::Dict{
         Type,
@@ -131,41 +230,12 @@ and stores the applied filters in `nrd.filters_applied`.
 - `nothing`: This function modifies the input structure in-place
 """
 function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict())
-    all_branch_maps_by_type = Dict(
-        "direct_branch_map" =>
-            Dict{Type{<:PSY.ACTransmission}, Dict{Tuple{Int, Int}, PSY.ACTransmission}}(),
-        "reverse_direct_branch_map" =>
-            Dict{Type{<:PSY.ACTransmission}, Dict{PSY.ACTransmission, Tuple{Int, Int}}}(),
-        "parallel_branch_map" =>
-            Dict{
-                Type{<:PSY.ACTransmission},
-                Dict{Tuple{Int, Int}, BranchesParallel},
-            }(),
-        "reverse_parallel_branch_map" =>
-            Dict{Type{<:PSY.ACTransmission}, Dict{PSY.ACTransmission, Tuple{Int, Int}}}(),
-        "series_branch_map" =>
-            Dict{Type{<:PSY.ACTransmission}, Dict{Tuple{Int, Int}, BranchesSeries}}(),
-        "reverse_series_branch_map" =>
-            Dict{Type{<:PSY.ACTransmission}, Dict{PSY.ACTransmission, Tuple{Int, Int}}}(),
-        "transformer3W_map" => Dict{
-            Type{<:PSY.ThreeWindingTransformer},
-            Dict{
-                Tuple{Int, Int},
-                ThreeWindingTransformerWinding,
-            },
-        }(),
-        "reverse_transformer3W_map" => Dict{
-            Type{<:PSY.ThreeWindingTransformer},
-            Dict{
-                ThreeWindingTransformerWinding,
-                Tuple{Int, Int},
-            },
-        }())
+    all_branch_maps_by_type = BranchMapsByType()
 
     for (k, v) in nrd.direct_branch_map
         if add_to_map(v, filters)
             map_by_type = get!(
-                all_branch_maps_by_type["direct_branch_map"],
+                all_branch_maps_by_type.direct_branch_map,
                 _get_segment_type(v),
                 Dict{Tuple{Int, Int}, _get_segment_type(v)}(),
             )
@@ -181,7 +251,7 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
     for (k, v) in nrd.reverse_direct_branch_map
         if add_to_map(k, filters)
             map_by_type = get!(
-                all_branch_maps_by_type["reverse_direct_branch_map"],
+                all_branch_maps_by_type.reverse_direct_branch_map,
                 _get_segment_type(k),
                 Dict{_get_segment_type(k), Tuple{Int, Int}}(),
             )
@@ -198,7 +268,7 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
         if add_to_map(v, filters)
             for concrete_type in _get_concrete_types(v)
                 map_by_type = get!(
-                    all_branch_maps_by_type["parallel_branch_map"],
+                    all_branch_maps_by_type.parallel_branch_map,
                     concrete_type,
                     Dict{Tuple{Int, Int}, BranchesParallel{_get_segment_type(v)}}(),
                 )
@@ -215,9 +285,9 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
     for (k, v) in nrd.reverse_parallel_branch_map
         if add_to_map(k, filters)
             map_by_type = get!(
-                all_branch_maps_by_type["reverse_parallel_branch_map"],
+                all_branch_maps_by_type.reverse_parallel_branch_map,
                 _get_segment_type(k),
-                Dict{BranchesParallel{_get_segment_type(k)}, Tuple{Int, Int}}(),
+                Dict{_get_segment_type(k), Tuple{Int, Int}}(),
             )
             map_by_type[k] = v
             component_name_map = get!(
@@ -234,7 +304,7 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
             for segment in v
                 for concrete_type in _get_concrete_types(segment)
                     map_by_type = get!(
-                        all_branch_maps_by_type["series_branch_map"],
+                        all_branch_maps_by_type.series_branch_map,
                         concrete_type,
                         Dict{Tuple{Int, Int}, BranchesSeries}(),
                     )
@@ -261,7 +331,7 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
     for (k, v) in nrd.reverse_series_branch_map
         if add_to_map(k, filters)
             map_by_type = get!(
-                all_branch_maps_by_type["reverse_series_branch_map"],
+                all_branch_maps_by_type.reverse_series_branch_map,
                 _get_segment_type(k),
                 # Dict can be indexed by individual branches or BranchesParallel
                 Dict{PSY.ACTransmission, Tuple{Int, Int}}(),
@@ -272,9 +342,12 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
     for (k, v) in nrd.transformer3W_map
         if add_to_map(v, filters)
             map_by_type = get!(
-                all_branch_maps_by_type["transformer3W_map"],
+                all_branch_maps_by_type.transformer3W_map,
                 _get_segment_type(v),
-                Dict{Tuple{Int, Int}, Vector{eltype(v)}}(),
+                Dict{
+                    Tuple{Int, Int},
+                    ThreeWindingTransformerWinding{_get_segment_type(v)},
+                }(),
             )
             map_by_type[k] = v
 
@@ -289,9 +362,12 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
     for (k, v) in nrd.reverse_transformer3W_map
         if add_to_map(k, filters)
             map_by_type = get!(
-                all_branch_maps_by_type["reverse_transformer3W_map"],
+                all_branch_maps_by_type.reverse_transformer3W_map,
                 _get_segment_type(k),
-                Dict{Tuple{Int, Int}, Vector{eltype(v)}}(),
+                Dict{
+                    ThreeWindingTransformerWinding{_get_segment_type(k)},
+                    Tuple{Int, Int},
+                }(),
             )
             map_by_type[k] = v
             component_name_map = get!(

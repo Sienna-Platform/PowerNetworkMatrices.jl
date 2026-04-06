@@ -82,32 +82,37 @@ function _buildptdf_from_matrices(
     BA::SparseArrays.SparseMatrixCSC{T, Int} where {T <: Union{Float32, Float64}},
     ref_bus_positions::Set{Int},
     dist_slack::Vector{Float64},
-    linear_solver::String)
-    if linear_solver == "KLU"
-        PTDFm = _calculate_PTDF_matrix_KLU(A, BA, ref_bus_positions, dist_slack)
-    elseif linear_solver == "Dense"
-        # Convert SparseMatrices to Dense
-        PTDFm = _calculate_PTDF_matrix_DENSE(
-            A,
-            BA,
-            ref_bus_positions,
-            dist_slack,
-        )
-    elseif linear_solver == "MKLPardiso"
-        if !_has_mkl_pardiso_ext()
-            error(_mkl_pardiso_install_error())
-        end
-        PTDFm =
-            _calculate_PTDF_matrix_MKLPardiso(A, BA, ref_bus_positions, dist_slack)
-    elseif linear_solver == "AppleAccelerate"
-        if !_has_apple_accelerate_ext()
-            error(_apple_accelerate_install_error())
-        end
-        PTDFm =
-            _calculate_PTDF_matrix_AppleAccelerate(A, BA, ref_bus_positions, dist_slack)
-    end
+    ::KLUSolver)
+    return _calculate_PTDF_matrix_KLU(A, BA, ref_bus_positions, dist_slack)
+end
 
-    return PTDFm
+function _buildptdf_from_matrices(
+    A::SparseArrays.SparseMatrixCSC{Int8, Int},
+    BA::SparseArrays.SparseMatrixCSC{T, Int} where {T <: Union{Float32, Float64}},
+    ref_bus_positions::Set{Int},
+    dist_slack::Vector{Float64},
+    ::DenseSolver)
+    return _calculate_PTDF_matrix_DENSE(A, BA, ref_bus_positions, dist_slack)
+end
+
+function _buildptdf_from_matrices(
+    A::SparseArrays.SparseMatrixCSC{Int8, Int},
+    BA::SparseArrays.SparseMatrixCSC{T, Int} where {T <: Union{Float32, Float64}},
+    ref_bus_positions::Set{Int},
+    dist_slack::Vector{Float64},
+    ::MKLPardisoSolver)
+    _has_mkl_pardiso_ext() || error(_mkl_pardiso_install_error())
+    return _calculate_PTDF_matrix_MKLPardiso(A, BA, ref_bus_positions, dist_slack)
+end
+
+function _buildptdf_from_matrices(
+    A::SparseArrays.SparseMatrixCSC{Int8, Int},
+    BA::SparseArrays.SparseMatrixCSC{T, Int} where {T <: Union{Float32, Float64}},
+    ref_bus_positions::Set{Int},
+    dist_slack::Vector{Float64},
+    ::AppleAccelerateSolver)
+    _has_apple_accelerate_ext() || error(_apple_accelerate_install_error())
+    return _calculate_PTDF_matrix_AppleAccelerate(A, BA, ref_bus_positions, dist_slack)
 end
 
 """
@@ -453,12 +458,12 @@ function PTDF(
     linear_solver = "KLU",
     tol::Float64 = eps(),
 )
-    if !(isempty(dist_slack))
-        dist_slack = redistribute_dist_slack(dist_slack, A, A.network_reduction_data)
+    dist_slack_vector = if !(isempty(dist_slack))
+        redistribute_dist_slack(dist_slack, A, A.network_reduction_data)
     else
-        dist_slack = Float64[]
+        Float64[]
     end
-    validate_linear_solver(linear_solver)
+    solver = resolve_linear_solver(linear_solver)
     if !isequal(A.network_reduction_data, BA.network_reduction_data)
         error("A and BA matrices have non-equivalent network reductions.")
     end
@@ -471,8 +476,8 @@ function PTDF(
         A_matrix,
         BA.data,
         Set(ref_bus_positions),
-        dist_slack,
-        linear_solver,
+        dist_slack_vector,
+        solver,
     )
     if tol > eps()
         return PTDF(

@@ -67,24 +67,35 @@ stores_transpose(::LODF) = true
 function _buildlodf(
     a::SparseArrays.SparseMatrixCSC{Int8, Int},
     ptdf::Matrix{Float64},
-    linear_solver::String = "KLU",
+    ::KLUSolver,
 )
-    if linear_solver == "KLU"
-        lodf_t = _calculate_LODF_matrix_KLU(a, ptdf)
-    elseif linear_solver == "Dense"
-        lodf_t = _calculate_LODF_matrix_DENSE(a, ptdf)
-    elseif linear_solver == "MKLPardiso"
-        if !_has_mkl_pardiso_ext()
-            error(_mkl_pardiso_install_error())
-        end
-        lodf_t = _calculate_LODF_matrix_MKLPardiso(a, ptdf)
-    elseif linear_solver == "AppleAccelerate"
-        if !_has_apple_accelerate_ext()
-            error(_apple_accelerate_install_error())
-        end
-        lodf_t = _calculate_LODF_matrix_AppleAccelerate(a, ptdf)
-    end
-    return lodf_t
+    return _calculate_LODF_matrix_KLU(a, ptdf)
+end
+
+function _buildlodf(
+    a::SparseArrays.SparseMatrixCSC{Int8, Int},
+    ptdf::Matrix{Float64},
+    ::DenseSolver,
+)
+    return _calculate_LODF_matrix_DENSE(a, ptdf)
+end
+
+function _buildlodf(
+    a::SparseArrays.SparseMatrixCSC{Int8, Int},
+    ptdf::Matrix{Float64},
+    ::MKLPardisoSolver,
+)
+    _has_mkl_pardiso_ext() || error(_mkl_pardiso_install_error())
+    return _calculate_LODF_matrix_MKLPardiso(a, ptdf)
+end
+
+function _buildlodf(
+    a::SparseArrays.SparseMatrixCSC{Int8, Int},
+    ptdf::Matrix{Float64},
+    ::AppleAccelerateSolver,
+)
+    _has_apple_accelerate_ext() || error(_apple_accelerate_install_error())
+    return _calculate_LODF_matrix_AppleAccelerate(a, ptdf)
 end
 
 function _buildlodf(
@@ -92,14 +103,19 @@ function _buildlodf(
     k::KLU.KLUFactorization{Float64, Int},
     ba::SparseArrays.SparseMatrixCSC{Float64, Int},
     ref_bus_positions::Set{Int},
-    linear_solver::String,
+    ::KLUSolver,
 )
-    if linear_solver == "KLU"
-        lodf_t = _calculate_LODF_matrix_KLU(a, k, ba, ref_bus_positions)
-    else
-        error("Other linear solvers are not implemented.")
-    end
-    return lodf_t
+    return _calculate_LODF_matrix_KLU(a, k, ba, ref_bus_positions)
+end
+
+function _buildlodf(
+    a::SparseArrays.SparseMatrixCSC{Int8, Int},
+    k::KLU.KLUFactorization{Float64, Int},
+    ba::SparseArrays.SparseMatrixCSC{Float64, Int},
+    ref_bus_positions::Set{Int},
+    ::LinearSolverType,
+)
+    return error("Only KLU solver is implemented for this LODF construction path.")
 end
 
 function _calculate_LODF_matrix_KLU(
@@ -315,7 +331,7 @@ function LODF(
     linear_solver::String = "KLU",
     tol::Float64 = eps(),
 )
-    validate_linear_solver(linear_solver)
+    solver = resolve_linear_solver(linear_solver)
     subnetwork_axes = make_arc_arc_subnetwork_axes(A)
 
     if PTDFm.tol.x > 1e-15
@@ -335,7 +351,7 @@ function LODF(
     ax_ref = make_ax_ref(get_arc_axis(A))
 
     if tol > eps()
-        lodf_t = _buildlodf(A.data, PTDFm_data, linear_solver)
+        lodf_t = _buildlodf(A.data, PTDFm_data, solver)
         return LODF(
             sparsify(lodf_t, tol),
             (get_arc_axis(A), get_arc_axis(A)),
@@ -346,7 +362,7 @@ function LODF(
         )
     end
     return LODF(
-        _buildlodf(A.data, PTDFm_data, linear_solver),
+        _buildlodf(A.data, PTDFm_data, solver),
         (get_arc_axis(A), get_arc_axis(A)),
         (ax_ref, ax_ref),
         subnetwork_axes,
@@ -424,12 +440,12 @@ function LODF(
             "Mismatch in `NetworkReduction`, A, BA, and ABA matrices must be computed with the same network reduction.",
         )
     end
-    validate_linear_solver(linear_solver)
+    solver = resolve_linear_solver(linear_solver)
     subnetwork_axes = make_arc_arc_subnetwork_axes(A)
     ax_ref = make_ax_ref(get_arc_axis(A))
     if tol > eps()
         lodf_t =
-            _buildlodf(A.data, ABA.K, BA.data, Set(get_ref_bus_position(A)), linear_solver)
+            _buildlodf(A.data, ABA.K, BA.data, Set(get_ref_bus_position(A)), solver)
         return LODF(
             sparsify(lodf_t, tol),
             (get_arc_axis(A), get_arc_axis(A)),
@@ -440,7 +456,7 @@ function LODF(
         )
     end
     return LODF(
-        _buildlodf(A.data, ABA.K, BA.data, Set(get_ref_bus_position(A)), linear_solver),
+        _buildlodf(A.data, ABA.K, BA.data, Set(get_ref_bus_position(A)), solver),
         (get_arc_axis(A), get_arc_axis(A)),
         (ax_ref, ax_ref),
         subnetwork_axes,

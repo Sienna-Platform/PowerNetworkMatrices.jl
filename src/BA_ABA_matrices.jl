@@ -22,7 +22,8 @@ computed as the product of the incidence matrix A and the susceptance matrix B.
 - Reference buses are identified through `subnetwork_axes` keys
 - Supports various network reduction techniques for computational efficiency
 """
-struct BA_Matrix{Ax, L <: NTuple{2, Dict}} <: PowerNetworkMatrix{Float64}
+struct BA_Matrix{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
+       PowerNetworkMatrix{Float64}
     data::SparseArrays.SparseMatrixCSC{Float64, Int}
     axes::Ax
     lookup::L
@@ -176,7 +177,7 @@ power flow analysis, sensitivity calculations, and linear power system studies.
 - Supports various network reduction techniques for computational efficiency
 """
 struct ABA_Matrix{
-    Ax,
+    Ax <: NTuple{2, Vector},
     L <: NTuple{2, Dict},
     F <: Union{Nothing, KLU.KLUFactorization{Float64, Int}},
 } <: PowerNetworkMatrix{Float64}

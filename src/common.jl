@@ -191,18 +191,6 @@ function find_slack_positions(buses, bus_lookup::Dict{Int, Int})::Set{Int}
 end
 
 """
-Validates if the selected linear solver is supported.
-"""
-function validate_linear_solver(linear_solver::String)
-    if linear_solver ∉ SUPPORTED_LINEAR_SOLVERS
-        error(
-            "Invalid linear solver. Supported linear solvers are: $(SUPPORTED_LINEAR_SOLVERS)",
-        )
-    end
-    return
-end
-
-"""
 Validates that the user bus input is consistent with the ybus axes and the prior reductions.
 Is used to check `irreducible_buses` for `Radial` and `DegreeTwo` reductions and `study_buses` for `WardReduction`.
 """

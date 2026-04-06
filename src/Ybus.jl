@@ -47,7 +47,8 @@ ybus = Ybus(system; network_reductions=[RadialReduction(), DegreeTwoReduction()]
 - [`LODF`](@ref): Line Outage Distribution Factors
 - [`NetworkReduction`](@ref): Network reduction algorithms
 """
-struct Ybus{Ax, L <: NTuple{2, Dict}} <: PowerNetworkMatrix{YBUS_ELTYPE}
+struct Ybus{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
+       PowerNetworkMatrix{YBUS_ELTYPE}
     data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int}
     adjacency_data::SparseArrays.SparseMatrixCSC{Int8, Int}
     axes::Ax
@@ -671,7 +672,7 @@ end
 function _buildybus!(
     network_reduction_data::NetworkReductionData,
     adj::SparseArrays.SparseMatrixCSC{Int8, Int},
-    branches,
+    branches::YbusACBranches,
     transformer_3w::Vector{PSY.ThreeWindingTransformer},
     num_bus::Dict{Int, Int},
     fixed_admittances::Vector{PSY.FixedAdmittance},
@@ -680,11 +681,10 @@ function _buildybus!(
 )
     branch_entries_transformer_3w = 0
     for br in transformer_3w
-        branch_entries_transformer_3w += count([
-            PSY.get_available_primary(br),
-            PSY.get_available_secondary(br),
-            PSY.get_available_tertiary(br),
-        ])
+        branch_entries_transformer_3w +=
+            PSY.get_available_primary(br) +
+            PSY.get_available_secondary(br) +
+            PSY.get_available_tertiary(br)
     end
     branchcount = length(branches) + branch_entries_transformer_3w
     branchcount_no_3w = length(branches)
@@ -701,7 +701,7 @@ function _buildybus!(
     y22 = zeros(YBUS_ELTYPE, branchcount)
     ysh = zeros(YBUS_ELTYPE, fa_count + sa_count + sl_count)
 
-    for (ix, b) in enumerate(branches)
+    _foreach_ybus_branch(branches) do b, ix
         if PSY.get_name(b) == "init"
             throw(DataFormatError("The data in Branch is invalid"))
         end
@@ -729,8 +729,18 @@ function _buildybus!(
         )
         ix += n_entries
     end
-    for (ix, fa) in enumerate([fixed_admittances; switched_admittances; standard_loads])
-        _ybus!(ysh, fa, num_bus, ix, sb, network_reduction_data)
+    shunt_ix = 0
+    for fa in fixed_admittances
+        shunt_ix += 1
+        _ybus!(ysh, fa, num_bus, shunt_ix, sb, network_reduction_data)
+    end
+    for sa in switched_admittances
+        shunt_ix += 1
+        _ybus!(ysh, sa, num_bus, shunt_ix, sb, network_reduction_data)
+    end
+    for sl in standard_loads
+        shunt_ix += 1
+        _ybus!(ysh, sl, num_bus, shunt_ix, sb, network_reduction_data)
     end
     return (
         y11,
@@ -742,6 +752,24 @@ function _buildybus!(
         tb,
         sb,
     )
+end
+
+function _is_available_shunt(x::PSY.StaticInjection)::Bool
+    return PSY.get_available(x) &&
+           PSY.get_bustype(PSY.get_bus(x)) != ACBusTypes.ISOLATED
+end
+
+function _get_filtered_components(
+    ::Type{T},
+    sys::PSY.System,
+    predicate::F,
+)::Vector{T} where {T <: PSY.Component, F <: Function}
+    iter = PSY.get_components(T, sys)
+    components = sizehint!(Vector{T}(), length(iter))
+    for comp in iter
+        predicate(comp) && push!(components, comp)
+    end
+    return components
 end
 
 """
@@ -855,7 +883,7 @@ function Ybus(
         end
     end
 
-    bus_ax = sort!([x for x in keys(bus_reduction_map)])
+    bus_ax = sort!(collect(keys(bus_reduction_map)))
     axes = (bus_ax, bus_ax)
     bus_lookup = Dict{Int, Int}()
     lookup = (bus_lookup, bus_lookup)
@@ -864,57 +892,16 @@ function Ybus(
         bus_lookup[b] = ix
     end
     adj = SparseArrays.spdiagm(ones(Int8, busnumber))
-    branches = collect(
-        PSY.get_components(
-            x ->
-                PSY.get_available(x) &&
-                    typeof(x) ∉ [
-                        PSY.Transformer3W,
-                        PSY.PhaseShiftingTransformer3W,
-                        PSY.DiscreteControlledACBranch,
-                    ],
-            PSY.ACTransmission,
-            sys,
-        ),
-    )
-    branches = vcat(branches, breaker_switches)
+    branches = _get_ybus_two_terminal_ac_branches(sys)
+    append!(branches.breaker_switches, breaker_switches)
     transformer_3W =
-        collect(
-            PSY.get_components(
-                x -> PSY.get_available(x),
-                PSY.ThreeWindingTransformer,
-                sys,
-            ),
-        )
-    fixed_admittances = collect(
-        PSY.get_components(
-            x ->
-                PSY.get_available(x) &&
-                    PSY.get_bustype(PSY.get_bus(x)) != ACBusTypes.ISOLATED,
-            PSY.FixedAdmittance,
-            sys,
-        ),
-    )
+        _get_filtered_components(PSY.ThreeWindingTransformer, sys, PSY.get_available)
+    fixed_admittances =
+        _get_filtered_components(PSY.FixedAdmittance, sys, _is_available_shunt)
     switched_admittances =
-        collect(
-            PSY.get_components(
-                x ->
-                    PSY.get_available(x) &&
-                        PSY.get_bustype(PSY.get_bus(x)) != ACBusTypes.ISOLATED,
-                PSY.SwitchedAdmittance,
-                sys,
-            ),
-        )
+        _get_filtered_components(PSY.SwitchedAdmittance, sys, _is_available_shunt)
     standard_loads = if include_constant_impedance_loads
-        collect(
-            PSY.get_components(
-                x ->
-                    PSY.get_available(x) &&
-                        PSY.get_bustype(PSY.get_bus(x)) != ACBusTypes.ISOLATED,
-                PSY.StandardLoad,
-                sys,
-            ),
-        )
+        _get_filtered_components(PSY.StandardLoad, sys, _is_available_shunt)
     else
         PSY.StandardLoad[]
     end
@@ -1196,6 +1183,55 @@ function build_reduced_ybus(
     return _apply_reduction(ybus, network_reduction_data)
 end
 
+function _resolve_arc_admittance(
+    new_y_ft::ArcAdmittanceMatrix,
+    new_y_tf::ArcAdmittanceMatrix,
+    existing_ft,
+    existing_tf,
+    removed_arcs,
+    bus_ax,
+    bus_lookup,
+    bus_ix,
+    nr,
+)
+    arc_ax = setdiff(get_arc_axis(new_y_ft), removed_arcs)
+    arc_remove_ixs = indexin(removed_arcs, get_arc_axis(new_y_ft))
+    arc_keep_ixs = setdiff(collect(1:length(get_arc_axis(new_y_ft))), arc_remove_ixs)
+    arc_lookup = make_ax_ref(arc_ax)
+    yft_data = new_y_ft.data[arc_keep_ixs, bus_ix]
+    ytf_data = new_y_tf.data[arc_keep_ixs, bus_ix]
+
+    arc_admittance_from_to = ArcAdmittanceMatrix(
+        yft_data,
+        (arc_ax, bus_ax),
+        (arc_lookup, bus_lookup),
+        nr,
+        :FromTo,
+    )
+    arc_admittance_to_from = ArcAdmittanceMatrix(
+        ytf_data,
+        (arc_ax, bus_ax),
+        (arc_lookup, bus_lookup),
+        nr,
+        :ToFrom,
+    )
+    return arc_admittance_from_to, arc_admittance_to_from
+end
+
+function _resolve_arc_admittance(
+    ::Nothing,
+    ::Nothing,
+    existing_ft,
+    existing_tf,
+    removed_arcs,
+    bus_ax,
+    bus_lookup,
+    bus_ix,
+    nr,
+)
+    return existing_ft, existing_tf
+end
+
 function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     # These quantities are modified and used to construct the new Ybus
     data = get_data(ybus)
@@ -1242,32 +1278,17 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
             Set(keys(nr_new.added_arc_impedance_map)),
         )
 
-    if new_y_ft !== nothing
-        arc_ax = setdiff(get_arc_axis(new_y_ft), nr_new.removed_arcs)
-        arc_remove_ixs = indexin(nr_new.removed_arcs, get_arc_axis(new_y_ft))
-        arc_keep_ixs = setdiff(collect(1:length(get_arc_axis(new_y_ft))), arc_remove_ixs)
-        arc_lookup = make_ax_ref(arc_ax)
-        yft_data = new_y_ft.data[arc_keep_ixs, bus_ix]
-        ytf_data = new_y_tf.data[arc_keep_ixs, bus_ix]
-
-        arc_admittance_from_to = ArcAdmittanceMatrix(
-            yft_data,
-            (arc_ax, bus_ax),
-            (arc_lookup, bus_lookup),
-            nr,
-            :FromTo,
-        )
-        arc_admittance_to_from = ArcAdmittanceMatrix(
-            ytf_data,
-            (arc_ax, bus_ax),
-            (arc_lookup, bus_lookup),
-            nr,
-            :ToFrom,
-        )
-    else
-        arc_admittance_from_to = ybus.arc_admittance_from_to
-        arc_admittance_to_from = ybus.arc_admittance_to_from
-    end
+    arc_admittance_from_to, arc_admittance_to_from = _resolve_arc_admittance(
+        new_y_ft,
+        new_y_tf,
+        ybus.arc_admittance_from_to,
+        ybus.arc_admittance_to_from,
+        nr_new.removed_arcs,
+        bus_ax,
+        bus_lookup,
+        bus_ix,
+        nr,
+    )
     nr.boundary_bus_to_removed_arcs = nr_new.boundary_bus_to_removed_arcs
     return Ybus(
         data,
