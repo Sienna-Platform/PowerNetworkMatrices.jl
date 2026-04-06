@@ -139,9 +139,7 @@ function _create_factorization(
     ::AppleAccelerateSolver,
     ABA::SparseArrays.SparseMatrixCSC{Float64, Int},
 )
-    _has_apple_accelerate_ext() || error(
-        "AppleAccelerate extension is not available. This solver is only available on macOS. Install AppleAccelerate: using Pkg; Pkg.add(\"AppleAccelerate\")",
-    )
+    _has_apple_accelerate_ext() || error(_apple_accelerate_install_error())
     return _create_apple_accelerate_factorization(ABA)
 end
 
