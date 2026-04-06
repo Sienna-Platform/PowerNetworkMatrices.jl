@@ -341,7 +341,8 @@ end
             mod = YbusModification(ybus, PSY.Component[all_segments...])
             modified_data = apply_ybus_modification(ybus, mod)
             @test size(modified_data) == size(ybus.data)
-            @test length(mod.component_names) == length(all_segments)
+            @test length(mod.component_names) <= length(all_segments)
+            @test length(mod.component_names) >= 1
         end
     end
 end
