@@ -25,7 +25,7 @@ power system modeling, simulation, and optimization. The Sienna ecosystem can be
 
   - [Sienna\Data](https://nrel-sienna.github.io/Sienna/pages/applications/sienna_data.html) enables
     efficient data input, analysis, and transformation
-  - [Sienna\Ops](https://nrel-sienna.github.io/Sienna/pages/applications/sienna_ops.html) enables
+  - [Sienna\Ops](https://nrel-sienna.github.io/Sienna/pages/applications/sienna_ops.html)
     enables system scheduling simulations by formulating and solving optimization problems
   - [Sienna\Dyn](https://nrel-sienna.github.io/Sienna/pages/applications/sienna_dyn.html) enables
     system transient analysis including small signal stability and full system dynamic
