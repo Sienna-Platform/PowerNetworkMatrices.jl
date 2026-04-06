@@ -31,44 +31,14 @@ network reduction algorithms.
 - `direct_branch_name_map::Dict{String, Tuple{Int, Int}}`: Lazily filled, maps branch names to their corresponding arc tuples for direct branches
 """
 @kwdef mutable struct BranchMapsByType
-    direct_branch_map::Dict{
-        Type{<:PSY.ACTransmission},
-        Dict{Tuple{Int, Int}, PSY.ACTransmission},
-    } = Dict{Type{<:PSY.ACTransmission}, Dict{Tuple{Int, Int}, PSY.ACTransmission}}()
-    reverse_direct_branch_map::Dict{
-        Type{<:PSY.ACTransmission},
-        Dict{PSY.ACTransmission, Tuple{Int, Int}},
-    } = Dict{Type{<:PSY.ACTransmission}, Dict{PSY.ACTransmission, Tuple{Int, Int}}}()
-    parallel_branch_map::Dict{
-        Type{<:PSY.ACTransmission},
-        Dict{Tuple{Int, Int}, BranchesParallel},
-    } = Dict{Type{<:PSY.ACTransmission}, Dict{Tuple{Int, Int}, BranchesParallel}}()
-    reverse_parallel_branch_map::Dict{
-        Type{<:PSY.ACTransmission},
-        Dict{PSY.ACTransmission, Tuple{Int, Int}},
-    } = Dict{Type{<:PSY.ACTransmission}, Dict{PSY.ACTransmission, Tuple{Int, Int}}}()
-    series_branch_map::Dict{
-        Type{<:PSY.ACTransmission},
-        Dict{Tuple{Int, Int}, BranchesSeries},
-    } = Dict{Type{<:PSY.ACTransmission}, Dict{Tuple{Int, Int}, BranchesSeries}}()
-    reverse_series_branch_map::Dict{
-        Type{<:PSY.ACTransmission},
-        Dict{PSY.ACTransmission, Tuple{Int, Int}},
-    } = Dict{Type{<:PSY.ACTransmission}, Dict{PSY.ACTransmission, Tuple{Int, Int}}}()
-    transformer3W_map::Dict{
-        Type{<:PSY.ThreeWindingTransformer},
-        Dict{Tuple{Int, Int}, ThreeWindingTransformerWinding},
-    } = Dict{
-        Type{<:PSY.ThreeWindingTransformer},
-        Dict{Tuple{Int, Int}, ThreeWindingTransformerWinding},
-    }()
-    reverse_transformer3W_map::Dict{
-        Type{<:PSY.ThreeWindingTransformer},
-        Dict{ThreeWindingTransformerWinding, Tuple{Int, Int}},
-    } = Dict{
-        Type{<:PSY.ThreeWindingTransformer},
-        Dict{ThreeWindingTransformerWinding, Tuple{Int, Int}},
-    }()
+    direct_branch_map::Dict{DataType, Any} = Dict{DataType, Any}()
+    reverse_direct_branch_map::Dict{DataType, Any} = Dict{DataType, Any}()
+    parallel_branch_map::Dict{DataType, Any} = Dict{DataType, Any}()
+    reverse_parallel_branch_map::Dict{DataType, Any} = Dict{DataType, Any}()
+    series_branch_map::Dict{DataType, Any} = Dict{DataType, Any}()
+    reverse_series_branch_map::Dict{DataType, Any} = Dict{DataType, Any}()
+    transformer3W_map::Dict{DataType, Any} = Dict{DataType, Any}()
+    reverse_transformer3W_map::Dict{DataType, Any} = Dict{DataType, Any}()
 end
 
 const _BRANCH_MAPS_BY_TYPE_FIELDS = fieldnames(BranchMapsByType)
@@ -80,6 +50,10 @@ function Base.iterate(b::BranchMapsByType, state = 1)
 end
 
 Base.length(::BranchMapsByType) = length(_BRANCH_MAPS_BY_TYPE_FIELDS)
+
+function Base.getindex(b::BranchMapsByType, key::String)
+    return getfield(b, Symbol(key))
+end
 
 function Base.isempty(b::BranchMapsByType)
     for f in _BRANCH_MAPS_BY_TYPE_FIELDS
@@ -100,6 +74,59 @@ function Base.:(==)(a::BranchMapsByType, b::BranchMapsByType)
         getfield(a, f) == getfield(b, f) || return false
     end
     return true
+end
+
+# Typed accessors for BranchMapsByType — function barriers that recover concrete types.
+function get_typed_direct_branch_map(
+    b::BranchMapsByType,
+    ::Type{T},
+) where {T <: PSY.ACTransmission}
+    return b.direct_branch_map[T]::Dict{Tuple{Int, Int}, T}
+end
+
+function get_typed_reverse_direct_branch_map(
+    b::BranchMapsByType,
+    ::Type{T},
+) where {T <: PSY.ACTransmission}
+    return b.reverse_direct_branch_map[T]::Dict{T, Tuple{Int, Int}}
+end
+
+function get_typed_parallel_branch_map(
+    b::BranchMapsByType,
+    ::Type{T},
+) where {T <: PSY.ACTransmission}
+    return b.parallel_branch_map[T]::Dict{Tuple{Int, Int}, BranchesParallel{T}}
+end
+
+function get_typed_reverse_parallel_branch_map(
+    b::BranchMapsByType,
+    ::Type{T},
+) where {T <: PSY.ACTransmission}
+    return b.reverse_parallel_branch_map[T]::Dict{T, Tuple{Int, Int}}
+end
+
+function get_typed_series_branch_map(
+    b::BranchMapsByType,
+    ::Type{T},
+) where {T <: PSY.ACTransmission}
+    return b.series_branch_map[T]::Dict{Tuple{Int, Int}, BranchesSeries}
+end
+
+function get_typed_transformer3W_map(
+    b::BranchMapsByType,
+    ::Type{T},
+) where {T <: PSY.ThreeWindingTransformer}
+    return b.transformer3W_map[T]::Dict{Tuple{Int, Int}, ThreeWindingTransformerWinding{T}}
+end
+
+function get_typed_reverse_transformer3W_map(
+    b::BranchMapsByType,
+    ::Type{T},
+) where {T <: PSY.ThreeWindingTransformer}
+    return b.reverse_transformer3W_map[T]::Dict{
+        ThreeWindingTransformerWinding{T},
+        Tuple{Int, Int},
+    }
 end
 
 @kwdef mutable struct NetworkReductionData
@@ -260,7 +287,7 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
             map_by_type = get!(
                 all_branch_maps_by_type.reverse_parallel_branch_map,
                 _get_segment_type(k),
-                Dict{BranchesParallel{_get_segment_type(k)}, Tuple{Int, Int}}(),
+                Dict{_get_segment_type(k), Tuple{Int, Int}}(),
             )
             map_by_type[k] = v
             component_name_map = get!(
@@ -317,7 +344,10 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
             map_by_type = get!(
                 all_branch_maps_by_type.transformer3W_map,
                 _get_segment_type(v),
-                Dict{Tuple{Int, Int}, ThreeWindingTransformerWinding}(),
+                Dict{
+                    Tuple{Int, Int},
+                    ThreeWindingTransformerWinding{_get_segment_type(v)},
+                }(),
             )
             map_by_type[k] = v
 
@@ -334,7 +364,10 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
             map_by_type = get!(
                 all_branch_maps_by_type.reverse_transformer3W_map,
                 _get_segment_type(k),
-                Dict{ThreeWindingTransformerWinding, Tuple{Int, Int}}(),
+                Dict{
+                    ThreeWindingTransformerWinding{_get_segment_type(k)},
+                    Tuple{Int, Int},
+                }(),
             )
             map_by_type[k] = v
             component_name_map = get!(
