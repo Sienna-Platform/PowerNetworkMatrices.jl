@@ -311,6 +311,33 @@ Base.to_index(b::PSY.Arc) = get_arc_tuple(b)
 get_data(mat::PowerNetworkMatrix) = mat.data
 
 """
+    get_system_uuid(mat::PowerNetworkMatrix) -> Union{Base.UUID, Nothing}
+
+Return the UUID of the system used to construct the matrix, or `nothing`
+if the matrix type does not track system origin.
+"""
+get_system_uuid(::PowerNetworkMatrix) = nothing
+
+"""
+    _validate_system_uuid(mat::PowerNetworkMatrix, sys::PSY.System)
+
+Validate that the matrix was constructed from the same system. Throws an
+`ErrorException` if the matrix stores a system UUID that does not match
+the UUID of `sys`. No-op when the matrix does not track system origin.
+"""
+function _validate_system_uuid(mat::PowerNetworkMatrix, sys::PSY.System)
+    mat_uuid = get_system_uuid(mat)
+    if mat_uuid !== nothing && mat_uuid != IS.get_uuid(sys)
+        error(
+            "System UUID mismatch: the matrix was constructed from a system with " *
+            "UUID $mat_uuid, but the provided system has UUID $(IS.get_uuid(sys)). " *
+            "Ensure the matrix and system originate from the same source.",
+        )
+    end
+    return
+end
+
+"""
     returns the lookup tuple of the `PowerNetworkMatrix`. The first entry corresponds
     to the first dimension and the second entry corresponds to the second dimension. For
     instance in Ybus the first dimension is buses and second dimension is buses too, and in

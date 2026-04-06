@@ -53,6 +53,8 @@ function NetworkModification(
     sys::PSY.System,
     outage::PSY.Outage,
 )
+    _validate_system_uuid(mat, sys)
+
     associated_components = collect(
         PSY.get_associated_components(sys, outage;
             component_type = PSY.ACTransmission),
