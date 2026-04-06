@@ -681,9 +681,10 @@ function _buildybus!(
 )
     branch_entries_transformer_3w = 0
     for br in transformer_3w
-        branch_entries_transformer_3w += PSY.get_available_primary(br) +
-                                         PSY.get_available_secondary(br) +
-                                         PSY.get_available_tertiary(br)
+        branch_entries_transformer_3w +=
+            PSY.get_available_primary(br) +
+            PSY.get_available_secondary(br) +
+            PSY.get_available_tertiary(br)
     end
     branchcount = length(branches) + branch_entries_transformer_3w
     branchcount_no_3w = length(branches)
@@ -753,47 +754,22 @@ function _buildybus!(
     )
 end
 
-function _get_available_3w_transformers(sys::PSY.System)::Vector{PSY.ThreeWindingTransformer}
-    iter = PSY.get_components(PSY.ThreeWindingTransformer, sys)
-    transformers = sizehint!(Vector{PSY.ThreeWindingTransformer}(), size(iter))
-    for br in iter
-        PSY.get_available(br) && push!(transformers, br)
-    end
-    return transformers
-end
-
 function _is_available_shunt(x::PSY.StaticInjection)::Bool
     return PSY.get_available(x) &&
            PSY.get_bustype(PSY.get_bus(x)) != ACBusTypes.ISOLATED
 end
 
-function _get_available_fixed_admittances(sys::PSY.System)::Vector{PSY.FixedAdmittance}
-    iter = PSY.get_components(PSY.FixedAdmittance, sys)
-    admittances = sizehint!(Vector{PSY.FixedAdmittance}(), size(iter))
-    for fa in iter
-        _is_available_shunt(fa) && push!(admittances, fa)
-    end
-    return admittances
-end
-
-function _get_available_switched_admittances(
+function _get_filtered_components(
+    ::Type{T},
     sys::PSY.System,
-)::Vector{PSY.SwitchedAdmittance}
-    iter = PSY.get_components(PSY.SwitchedAdmittance, sys)
-    admittances = sizehint!(Vector{PSY.SwitchedAdmittance}(), size(iter))
-    for sa in iter
-        _is_available_shunt(sa) && push!(admittances, sa)
+    predicate::F,
+)::Vector{T} where {T <: PSY.Component, F <: Function}
+    iter = PSY.get_components(T, sys)
+    components = sizehint!(Vector{T}(), length(iter))
+    for comp in iter
+        predicate(comp) && push!(components, comp)
     end
-    return admittances
-end
-
-function _get_available_standard_loads(sys::PSY.System)::Vector{PSY.StandardLoad}
-    iter = PSY.get_components(PSY.StandardLoad, sys)
-    loads = sizehint!(Vector{PSY.StandardLoad}(), size(iter))
-    for sl in iter
-        _is_available_shunt(sl) && push!(loads, sl)
-    end
-    return loads
+    return components
 end
 
 """
@@ -916,13 +892,16 @@ function Ybus(
         bus_lookup[b] = ix
     end
     adj = SparseArrays.spdiagm(ones(Int8, busnumber))
-    branches = _get_ybus_ac_branches(sys)
+    branches = _get_ybus_two_terminal_ac_branches(sys)
     append!(branches.breaker_switches, breaker_switches)
-    transformer_3W = _get_available_3w_transformers(sys)
-    fixed_admittances = _get_available_fixed_admittances(sys)
-    switched_admittances = _get_available_switched_admittances(sys)
+    transformer_3W =
+        _get_filtered_components(PSY.ThreeWindingTransformer, sys, PSY.get_available)
+    fixed_admittances =
+        _get_filtered_components(PSY.FixedAdmittance, sys, _is_available_shunt)
+    switched_admittances =
+        _get_filtered_components(PSY.SwitchedAdmittance, sys, _is_available_shunt)
     standard_loads = if include_constant_impedance_loads
-        _get_available_standard_loads(sys)
+        _get_filtered_components(PSY.StandardLoad, sys, _is_available_shunt)
     else
         PSY.StandardLoad[]
     end

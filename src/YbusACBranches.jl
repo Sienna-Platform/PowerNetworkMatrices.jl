@@ -25,14 +25,14 @@ function _populate_ybus_branch_vector!(
     sys::PSY.System,
 ) where {T <: PSY.ACTransmission}
     iter = PSY.get_components(T, sys)
-    sizehint!(vec, size(iter))
+    sizehint!(vec, length(iter))
     for br in iter
         PSY.get_available(br) && push!(vec, br)
     end
     return
 end
 
-function _get_ybus_ac_branches(sys::PSY.System)::YbusACBranches
+function _get_ybus_two_terminal_ac_branches(sys::PSY.System)::YbusACBranches
     branches = YbusACBranches(
         Vector{PSY.Line}(),
         Vector{PSY.MonitoredLine}(),
