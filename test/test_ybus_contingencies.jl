@@ -16,6 +16,7 @@
         # Reference: disable branch and rebuild
         set_available!(branch, false)
         ybus_ref = Ybus(sys)
+        set_available!(branch, true)
 
         @test isapprox(modified_data, ybus_ref.data, atol = 1e-4)
     end
