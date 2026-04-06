@@ -52,6 +52,9 @@ Caching is two-tiered:
         Scratch vector of size n_buses.
 - `work_ba_col::Vector{Float64}`:
         Pre-allocated work array for BA column extraction.
+- `system_uuid::Union{Base.UUID, Nothing}`:
+        UUID of the system used to construct the matrix, used to validate that
+        modification operations are applied to the correct system.
 """
 struct VirtualMODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
        PowerNetworkMatrix{Float64}
@@ -74,6 +77,7 @@ struct VirtualMODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
     network_reduction_data::NetworkReductionData
     temp_data::Vector{Float64}
     work_ba_col::Vector{Float64}
+    system_uuid::Union{Base.UUID, Nothing}
 end
 
 # --- Accessors ---
@@ -87,6 +91,7 @@ get_bus_lookup(M::VirtualMODF) = M.lookup[2]
 get_arc_axis(mat::VirtualMODF) = mat.axes[1]
 get_bus_axis(mat::VirtualMODF) = mat.axes[2]
 get_tol(mat::VirtualMODF) = mat.tol[]
+get_system_uuid(M::VirtualMODF) = M.system_uuid
 
 # Woodbury kernel accessors
 _get_K(m::VirtualMODF) = m.K
@@ -205,6 +210,7 @@ function VirtualMODF(
         Ymatrix.network_reduction_data,
         temp_data,
         work_ba_col,
+        IS.get_uuid(sys),
     )
 
     # Auto-register all outage attributes from the system

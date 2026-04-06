@@ -44,6 +44,10 @@ matrix.
         Tolerance related to scarification and values to drop.
 - `network_reduction::NetworkReduction`:
         Structure containing the details of the network reduction applied when computing the matrix
+- `system_uuid::Union{Base.UUID, Nothing}`:
+        UUID of the system used to construct the matrix, used to validate that
+        modification operations are applied to the correct system. `nothing` when
+        constructed from a Ybus without an associated system.
 """
 struct VirtualPTDF{Ax, L <: NTuple{2, Dict}, K <: LinearAlgebra.Factorization} <:
        PowerNetworkMatrix{Float64}
@@ -62,6 +66,7 @@ struct VirtualPTDF{Ax, L <: NTuple{2, Dict}, K <: LinearAlgebra.Factorization} <
     tol::Base.RefValue{Float64}
     network_reduction_data::NetworkReductionData
     work_ba_col::Vector{Float64}
+    system_uuid::Union{Base.UUID, Nothing}
 end
 
 get_axes(M::VirtualPTDF) = M.axes
@@ -72,6 +77,7 @@ get_ref_bus_position(M::VirtualPTDF) =
 get_network_reduction_data(M::VirtualPTDF) = M.network_reduction_data
 get_bus_lookup(M::VirtualPTDF) = M.lookup[2]
 get_arc_lookup(M::VirtualPTDF) = M.lookup[1]
+get_system_uuid(M::VirtualPTDF) = M.system_uuid
 
 function Base.show(io::IO, ::MIME{Symbol("text/plain")}, array::VirtualPTDF)
     summary(io, array)
@@ -129,6 +135,7 @@ function VirtualPTDF(
         tol = tol,
         max_cache_size = max_cache_size,
         persistent_arcs = persistent_arcs,
+        system_uuid = IS.get_uuid(sys),
     )
 end
 
@@ -182,6 +189,7 @@ function VirtualPTDF(
     tol::Float64 = eps(),
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}(),
+    system_uuid::Union{Base.UUID, Nothing} = nothing,
 )
     solver = resolve_linear_solver(linear_solver)
     ref_bus_positions = get_ref_bus_position(ybus)
@@ -247,6 +255,7 @@ function VirtualPTDF(
         Ref(tol),
         ybus.network_reduction_data,
         work_ba_col,
+        system_uuid,
     )
 end
 
