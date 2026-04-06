@@ -431,25 +431,6 @@ function _process_outage_component!(
     return
 end
 
-# --- Arc lookup helper ---
-
-"""
-Find the arc tuple for a branch in the network reduction maps.
-Checks direct, parallel, and series maps in order.
-"""
-function _find_branch_arc(
-    nr::NetworkReductionData,
-    branch::PSY.ACTransmission,
-)
-    val = get(nr.reverse_direct_branch_map, branch, nothing)
-    val !== nothing && return val
-    val = get(nr.reverse_parallel_branch_map, branch, nothing)
-    val !== nothing && return val
-    val = get(nr.reverse_series_branch_map, branch, nothing)
-    val !== nothing && return val
-    error("Branch $(PSY.get_name(branch)) not found in any reduction map.")
-end
-
 # --- Constructors ---
 
 """
@@ -468,7 +449,6 @@ Uses a two-pass approach mirroring VirtualMODF's `_register_outage!`:
 
 # See Also
 - [`YbusModification(::Ybus, ::PSY.System, ::PSY.Contingency)`](@ref): Construct from contingency
-- [`YbusModification(::Ybus, ::PSY.ACTransmission, ::PSY.ACTransmission)`](@ref): Construct from impedance change
 """
 function YbusModification(
     ybus::Ybus,
@@ -582,89 +562,44 @@ function YbusModification(
     return YbusModification(ybus, all_components)
 end
 
+# --- Impedance change helpers ---
+
 """
-    $(TYPEDSIGNATURES)
-
-Compute a ΔYbus for a branch impedance change (ΔY = new_contribution - old_contribution).
-
-Handles the three reduction map cases:
-- Direct: delta from individual branch parameter change
-- Parallel: delta from individual branch change within the parallel set
-- Series: recomputes the series chain equivalent with the modified branch
-
-# Arguments
-- `ybus::Ybus`: Base Ybus matrix
-- `old_branch::T`: Branch with original parameters
-- `new_branch::T`: Branch with updated parameters
-
-# See Also
-- [`YbusModification(::Ybus, ::Vector{<:PSY.Component})`](@ref): Construct from outaged components
+Compute the ΔY Pi-model entries for a standard AC branch when the series
+admittance changes by `delta_Y_l`.
+Shunt admittances are unaffected by a series impedance change.
 """
-function YbusModification(
-    ybus::Ybus,
-    old_branch::T,
-    new_branch::T,
-) where {T <: PSY.ACTransmission}
-    bus_lookup = get_bus_lookup(ybus)
-    nr = get_network_reduction_data(ybus)
-    n = length(bus_lookup)
+function _impedance_delta_entries(::PSY.ACTransmission, delta_Y_l)
+    return (delta_Y_l, -delta_Y_l, -delta_Y_l, delta_Y_l)
+end
 
-    I = Vector{Int}()
-    J = Vector{Int}()
-    V = Vector{YBUS_ELTYPE}()
-    sizehint!(I, 4)
-    sizehint!(J, 4)
-    sizehint!(V, 4)
+function _impedance_delta_entries(::PSY.GenericArcImpedance, delta_Y_l)
+    return (delta_Y_l, -delta_Y_l, -delta_Y_l, delta_Y_l)
+end
 
-    if haskey(nr.reverse_series_branch_map, old_branch)
-        arc_tuple = nr.reverse_series_branch_map[old_branch]
-        series_chain = nr.series_branch_map[arc_tuple]
-        fb_ix = bus_lookup[arc_tuple[1]]
-        tb_ix = bus_lookup[arc_tuple[2]]
-
-        Y11_old, Y12_old, Y21_old, Y22_old = ybus_branch_entries(series_chain)
-        modified_chain_ybus = _build_impedance_changed_chain_ybus(
-            series_chain, old_branch, new_branch,
-        )
-        reduced = _reduce_internal_nodes(modified_chain_ybus)
-
-        _accumulate_arc_delta!(
-            I, J, V, fb_ix, tb_ix,
-            YBUS_ELTYPE(reduced[1, 1] - Y11_old),
-            YBUS_ELTYPE(reduced[1, 2] - Y12_old),
-            YBUS_ELTYPE(reduced[2, 1] - Y21_old),
-            YBUS_ELTYPE(reduced[2, 2] - Y22_old),
-        )
-    else
-        # Direct and parallel branches use the same delta computation
-        arc_tuple = _find_branch_arc(nr, old_branch)
-        fb_ix = bus_lookup[arc_tuple[1]]
-        tb_ix = bus_lookup[arc_tuple[2]]
-        Y11_old, Y12_old, Y21_old, Y22_old = ybus_branch_entries(old_branch)
-        Y11_new, Y12_new, Y21_new, Y22_new = ybus_branch_entries(new_branch)
-        _accumulate_arc_delta!(
-            I, J, V, fb_ix, tb_ix,
-            YBUS_ELTYPE(Y11_new - Y11_old), YBUS_ELTYPE(Y12_new - Y12_old),
-            YBUS_ELTYPE(Y21_new - Y21_old), YBUS_ELTYPE(Y22_new - Y22_old),
-        )
-    end
-
-    data = SparseArrays.sparse(I, J, V, n, n)
-    return YbusModification(
-        data,
-        [PSY.get_name(old_branch)],
-        [typeof(old_branch)],
-        false,
+"""
+Compute the ΔY Pi-model entries for a two-winding transformer when the series
+admittance changes by `delta_Y_l`. Tap ratio factors are preserved.
+"""
+function _impedance_delta_entries(br::PSY.TwoWindingTransformer, delta_Y_l)
+    tap = _get_tap(br) * exp(PSY.get_α(br) * 1im)
+    c_tap = _get_tap(br) * exp(-1 * PSY.get_α(br) * 1im)
+    return (
+        delta_Y_l / abs2(tap),
+        -delta_Y_l / c_tap,
+        -delta_Y_l / tap,
+        delta_Y_l,
     )
 end
 
 """
-Build a Ybus for a series chain with one branch replaced by a new version (for impedance changes).
+Build a chain Ybus with one branch's impedance modified by `delta_impedance`.
+The branch must be from the same system used to build the Ybus.
 """
 function _build_impedance_changed_chain_ybus(
     series_chain::BranchesSeries,
-    old_branch::PSY.ACTransmission,
-    new_branch::PSY.ACTransmission,
+    branch::PSY.ACTransmission,
+    delta_impedance::Number,
 )
     segment_orientations = series_chain.segment_orientations
     n_segments = length(series_chain)
@@ -681,24 +616,38 @@ function _build_impedance_changed_chain_ybus(
     sizehint!(y21, n_segments)
     sizehint!(y22, n_segments)
     for (ix, segment) in enumerate(series_chain)
-        if segment === old_branch
+        if segment === branch
+            # Add the original segment entries plus the impedance delta
             add_segment_to_ybus!(
-                new_branch,
+                segment,
                 y11, y12, y21, y22, fb, tb,
                 ix, segment_orientations[ix],
             )
+            z_old = PSY.get_r(branch) + PSY.get_x(branch) * 1im
+            delta_Y_l = 1 / (z_old + delta_impedance) - 1 / z_old
+            dY11, dY12, dY21, dY22 =
+                _impedance_delta_entries(branch, delta_Y_l)
+            y11[end] += YBUS_ELTYPE(dY11)
+            y12[end] += YBUS_ELTYPE(dY12)
+            y21[end] += YBUS_ELTYPE(dY21)
+            y22[end] += YBUS_ELTYPE(dY22)
         elseif segment isa BranchesParallel
-            found_in_parallel = any(b === old_branch for b in segment)
+            found_in_parallel = any(b === branch for b in segment)
             if found_in_parallel
-                modified_branches = PSY.ACTransmission[
-                    b === old_branch ? new_branch : b for b in segment
-                ]
-                modified_parallel = BranchesParallel(modified_branches)
+                # Add the full parallel group, then apply delta to the one branch
                 add_segment_to_ybus!(
-                    modified_parallel,
+                    segment,
                     y11, y12, y21, y22, fb, tb,
                     ix, segment_orientations[ix],
                 )
+                z_old = PSY.get_r(branch) + PSY.get_x(branch) * 1im
+                delta_Y_l = 1 / (z_old + delta_impedance) - 1 / z_old
+                dY11, dY12, dY21, dY22 =
+                    _impedance_delta_entries(branch, delta_Y_l)
+                y11[end] += YBUS_ELTYPE(dY11)
+                y12[end] += YBUS_ELTYPE(dY12)
+                y21[end] += YBUS_ELTYPE(dY21)
+                y22[end] += YBUS_ELTYPE(dY22)
             else
                 add_segment_to_ybus!(
                     segment,
@@ -720,6 +669,105 @@ function _build_impedance_changed_chain_ybus(
             [fb; tb; fb; tb],
             [y11; y12; y21; y22],
         ),
+    )
+end
+
+"""
+    $(TYPEDSIGNATURES)
+
+Compute a ΔYbus for a branch impedance change.
+
+The branch must belong to the system used to build the Ybus. The
+`delta_impedance` is added to the branch's series impedance
+(``z_{\\text{new}} = z_{\\text{old}} + \\Delta z``), and the resulting
+change in the Pi-model entries is returned as a sparse delta matrix.
+
+# Arguments
+- `ybus::Ybus`: Base Ybus matrix
+- `branch::PSY.ACTransmission`: Branch whose impedance changes (must be from the Ybus system)
+- `delta_impedance::Number`: Change in series impedance (e.g., `0.05im` for a reactance increase)
+
+# See Also
+- [`YbusModification(::Ybus, ::Vector{<:PSY.Component})`](@ref): Construct from outaged components
+"""
+function YbusModification(
+    ybus::Ybus,
+    branch::PSY.ACTransmission,
+    delta_impedance::Number,
+)
+    z_old = PSY.get_r(branch) + PSY.get_x(branch) * 1im
+    if abs(delta_impedance) >= abs(z_old)
+        error(
+            "delta_impedance magnitude ($(abs(delta_impedance))) must be smaller " *
+            "than the branch impedance magnitude ($(abs(z_old))) for " *
+            "$(PSY.get_name(branch)). Use an outage constructor to remove the branch.",
+        )
+    end
+
+    bus_lookup = get_bus_lookup(ybus)
+    nr = get_network_reduction_data(ybus)
+    n = length(bus_lookup)
+
+    I = Vector{Int}()
+    J = Vector{Int}()
+    V = Vector{YBUS_ELTYPE}()
+    sizehint!(I, 4)
+    sizehint!(J, 4)
+    sizehint!(V, 4)
+
+    delta_Y_l = 1 / (z_old + delta_impedance) - 1 / z_old
+
+    if haskey(nr.reverse_series_branch_map, branch)
+        arc_tuple = nr.reverse_series_branch_map[branch]
+        series_chain = nr.series_branch_map[arc_tuple]
+        fb_ix = bus_lookup[arc_tuple[1]]
+        tb_ix = bus_lookup[arc_tuple[2]]
+
+        Y11_old, Y12_old, Y21_old, Y22_old = ybus_branch_entries(series_chain)
+        modified_chain_ybus = _build_impedance_changed_chain_ybus(
+            series_chain, branch, delta_impedance,
+        )
+        reduced = _reduce_internal_nodes(modified_chain_ybus)
+
+        _accumulate_arc_delta!(
+            I, J, V, fb_ix, tb_ix,
+            YBUS_ELTYPE(reduced[1, 1] - Y11_old),
+            YBUS_ELTYPE(reduced[1, 2] - Y12_old),
+            YBUS_ELTYPE(reduced[2, 1] - Y21_old),
+            YBUS_ELTYPE(reduced[2, 2] - Y22_old),
+        )
+    elseif haskey(nr.reverse_direct_branch_map, branch)
+        arc_tuple = nr.reverse_direct_branch_map[branch]
+        fb_ix = bus_lookup[arc_tuple[1]]
+        tb_ix = bus_lookup[arc_tuple[2]]
+        dY11, dY12, dY21, dY22 = _impedance_delta_entries(branch, delta_Y_l)
+        _accumulate_arc_delta!(
+            I, J, V, fb_ix, tb_ix,
+            YBUS_ELTYPE(dY11), YBUS_ELTYPE(dY12),
+            YBUS_ELTYPE(dY21), YBUS_ELTYPE(dY22),
+        )
+    elseif haskey(nr.reverse_parallel_branch_map, branch)
+        arc_tuple = nr.reverse_parallel_branch_map[branch]
+        fb_ix = bus_lookup[arc_tuple[1]]
+        tb_ix = bus_lookup[arc_tuple[2]]
+        dY11, dY12, dY21, dY22 = _impedance_delta_entries(branch, delta_Y_l)
+        _accumulate_arc_delta!(
+            I, J, V, fb_ix, tb_ix,
+            YBUS_ELTYPE(dY11), YBUS_ELTYPE(dY12),
+            YBUS_ELTYPE(dY21), YBUS_ELTYPE(dY22),
+        )
+    else
+        error(
+            "Branch $(PSY.get_name(branch)) not found in any reduction map.",
+        )
+    end
+
+    data = SparseArrays.sparse(I, J, V, n, n)
+    return YbusModification(
+        data,
+        [PSY.get_name(branch)],
+        [typeof(branch)],
+        false,
     )
 end
 

@@ -201,30 +201,65 @@ end
     )
 end
 
-@testset "YbusModification: impedance change constructor" begin
-    sys_old = PSB.build_system(PSB.PSITestSystems, "c_sys5")
-    sys_new = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+@testset "YbusModification: impedance change with delta" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    ybus = Ybus(sys)
 
-    old_line = get_component(Line, sys_old, "1")
-    new_line = get_component(Line, sys_new, "1")
-    original_x = get_x(old_line)
+    line = get_component(Line, sys, "1")
+    original_x = get_x(line)
 
-    # Modify only the branch in the "new" system so old/new states are distinct
-    set_x!(new_line, original_x * 2.0)
+    # Apply a reactance increase via delta impedance
+    delta_z = original_x * 1.0im
+    mod = YbusModification(ybus, line, delta_z)
 
-    ybus_old = Ybus(sys_old)
-    ybus_new = Ybus(sys_new)
+    # Reference: modify the branch in the system and rebuild Ybus
+    set_x!(line, original_x * 2.0)
+    ybus_ref = Ybus(sys)
+    set_x!(line, original_x)
 
-    # Use the 3-arg impedance change constructor with distinct branch states
-    mod = YbusModification(ybus_old, old_line, new_line)
-
-    # The modification should equal the difference between rebuilt Ybus matrices
-    @test isapprox(mod.data, ybus_new.data - ybus_old.data, atol = 1e-4)
+    # The modification applied to original Ybus should match the rebuilt Ybus
+    modified_data = apply_ybus_modification(ybus, mod)
+    @test isapprox(modified_data, ybus_ref.data, atol = 1e-4)
     @test length(mod.component_names) == 1
+    @test mod.is_islanding == false
 
-    # Applying the modification to the original Ybus should reproduce the modified Ybus
-    modified_data = apply_ybus_modification(ybus_old, mod)
-    @test isapprox(modified_data, ybus_new.data, atol = 1e-4)
+    # Delta larger than branch impedance should error
+    z_mag = abs(get_r(line) + get_x(line) * im)
+    @test_throws ErrorException YbusModification(ybus, line, z_mag * 2.0im)
+end
+
+@testset "YbusModification: impedance change on series chain with DegreeTwoReduction" begin
+    sys = PSB.build_system(
+        PSSEParsingTestSystems,
+        "psse_14_network_reduction_test_system",
+    )
+    reductions = NetworkReduction[DegreeTwoReduction()]
+    ybus = Ybus(sys; network_reductions = reductions)
+    nr = PNM.get_network_reduction_data(ybus)
+
+    series_branch = nothing
+    for (br, arc) in nr.reverse_series_branch_map
+        if br isa PSY.ACTransmission && !(br isa PNM.ThreeWindingTransformerWinding)
+            series_branch = br
+            break
+        end
+    end
+
+    if series_branch !== nothing
+        original_x = get_x(series_branch)
+        delta_z = original_x * 0.5im
+
+        mod = YbusModification(ybus, series_branch, delta_z)
+
+        # Reference: modify the branch and rebuild
+        set_x!(series_branch, original_x * 1.5)
+        ybus_ref = Ybus(sys; network_reductions = reductions)
+        set_x!(series_branch, original_x)
+
+        # Series chain reduction compounds Float32 rounding across platforms
+        modified_data = apply_ybus_modification(ybus, mod)
+        @test isapprox(modified_data, ybus_ref.data, atol = 1e-3)
+    end
 end
 
 @testset "YbusModification: parallel branch outage on RTS_GMLC" begin
@@ -344,47 +379,6 @@ end
             @test length(mod.component_names) <= length(all_segments)
             @test length(mod.component_names) >= 1
         end
-    end
-end
-
-@testset "YbusModification: impedance change on series chain with DegreeTwoReduction" begin
-    sys_old = PSB.build_system(
-        PSSEParsingTestSystems,
-        "psse_14_network_reduction_test_system",
-    )
-    sys_new = PSB.build_system(
-        PSSEParsingTestSystems,
-        "psse_14_network_reduction_test_system",
-    )
-    reductions = NetworkReduction[DegreeTwoReduction()]
-    ybus_old = Ybus(sys_old; network_reductions = reductions)
-    nr = PNM.get_network_reduction_data(ybus_old)
-
-    # Find an ACBranch in the series map
-    series_branch_old = nothing
-    series_branch_new = nothing
-    for (br, arc) in nr.reverse_series_branch_map
-        if br isa PSY.ACTransmission && !(br isa PNM.ThreeWindingTransformerWinding)
-            series_branch_old = br
-            branch_name = PSY.get_name(br)
-            series_branch_new = get_component(typeof(br), sys_new, branch_name)
-            break
-        end
-    end
-
-    if series_branch_old !== nothing && series_branch_new !== nothing
-        # Modify reactance in the new system
-        original_x = get_x(series_branch_new)
-        set_x!(series_branch_new, original_x * 1.5)
-
-        ybus_new = Ybus(sys_new; network_reductions = reductions)
-        mod = YbusModification(ybus_old, series_branch_old, series_branch_new)
-
-        # The modification applied to old Ybus should reproduce the new Ybus.
-        # Series chain reduction compounds Float32 rounding across platforms,
-        # so we use a looser tolerance here than for direct/parallel branches.
-        modified_data = apply_ybus_modification(ybus_old, mod)
-        @test isapprox(modified_data, ybus_new.data, atol = 1e-3)
     end
 end
 

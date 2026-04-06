@@ -87,12 +87,12 @@ If tripping the branch breaks the chain entirely (a segment has no surviving bra
 `SwitchedAdmittance` contribute only to the diagonal of Ybus. Their delta is a single
 diagonal entry: ``\Delta Y_{ii} = -Y_{\text{shunt}}``.
 
-**Impedance changes.** Rather than a full outage, a branch's impedance can be changed. The
-delta is the difference between the new and old Pi-model contributions:
-
-```math
-\Delta Y = Y^{\pi}_{\text{new}} - Y^{\pi}_{\text{old}}
-```
+**Impedance changes.** Rather than a full outage, a branch's series impedance can be
+changed by a delta ``\Delta z``. The series admittance changes from
+``Y_l = 1/z`` to ``Y_{l,\text{new}} = 1/(z + \Delta z)``, and the Pi-model entries
+change proportionally. Tap ratio factors for transformers are preserved. For branches
+inside series chains, the chain equivalent is recomputed with the modified impedance
+and the delta is the difference of the reduced equivalents.
 
 ### Island Detection
 
@@ -105,13 +105,15 @@ The algorithm determines which arcs are **fully severed** by the contingency:
 - A series chain outage severs the equivalent arc if any segment of the chain is fully tripped (breaking the chain).
 - Shunt outages and impedance changes never sever arcs.
 
-Once the set of severed arcs is known, the algorithm modifies a copy of the network's
-adjacency matrix by zeroing out the severed edges and runs a union-find connected components
-algorithm. If the post-contingency network has more connected components than the base
-network, the contingency is flagged as islanding (``\texttt{is\_islanding} = \text{true}``).
+Once the set of severed arcs is known, the algorithm runs a union-find connected components
+check on the adjacency structure, skipping severed edges inline. If the post-contingency
+network has more connected components than the base network, the contingency is flagged as
+islanding (``\texttt{is\_islanding} = \text{true}``).
 
-The computational cost is ``O(N)`` per contingency, where ``N`` is the number of buses, making
-it suitable for screening large contingency lists.
+The computational cost is ``O(N + E)`` per contingency, where ``N`` is the number of buses
+and ``E`` is the number of edges in the adjacency matrix. For sparse power networks where
+``E \sim O(N)``, this reduces to effectively ``O(N)``, making it suitable for screening
+large contingency lists.
 
 ## Usage
 
@@ -169,16 +171,16 @@ modified_data_nk = apply_ybus_modification(ybus, mod_nk);
 
 ### Impedance Change
 
-To model a change in branch impedance rather than a full outage, use the two-branch
-constructor with the old and new branch states:
+To model a change in branch impedance rather than a full outage, pass the branch from the
+system and a delta impedance value. The branch must belong to the system used to build the
+Ybus:
 
 ``` @repl tutorial_YbusModification
-sys_new = PSB.build_system(PSB.PSITestSystems, "c_sys5");
-old_line = PSY.get_component(PSY.Line, sys, "1")
-new_line = PSY.get_component(PSY.Line, sys_new, "1")
-PSY.set_x!(new_line, PSY.get_x(old_line) * 2.0)
+line = PSY.get_component(PSY.Line, sys, "1")
 
-mod_impedance = YbusModification(ybus, old_line, new_line)
+# Increase reactance by 50%
+delta_z = PSY.get_x(line) * 0.5im
+mod_impedance = YbusModification(ybus, line, delta_z)
 ```
 
 ### Contingency via Supplemental Attributes
@@ -243,7 +245,7 @@ with the remaining branches and produces the correct delta.
 - **Performance.** Constructing a `YbusModification` is dominated by the branch Pi-model
   lookups and sparse COO assembly, both ``O(k)`` where ``k`` is the number of tripped
   components. Applying the modification is a single `SparseMatrixCSC` addition, ``O(\text{nnz})``.
-  Island detection adds ``O(N)`` via union-find.
+  Island detection adds ``O(N + E)`` via union-find over the adjacency structure.
 - **Combining with `+`.** The `+` operator uses a conservative OR for `is_islanding`:
   if either operand is islanding, the result is flagged as islanding. For exact island
   detection on combined modifications, construct a single `YbusModification` with all
