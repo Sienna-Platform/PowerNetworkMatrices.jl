@@ -168,4 +168,4 @@ dense_row = [v_lodf_dense[(1, 2), j] for j in v_lodf_dense.axes[2]]
 
   - See the [Network Matrices](@ref) tutorial for building full matrices
   - See the [Network Reduction](@ref) tutorial for simplifying large systems
-  - Consult the [Public API](@ref) reference for full function signatures
+  - Consult the [Public API Reference](@ref) for full function signatures

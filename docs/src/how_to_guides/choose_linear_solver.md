@@ -101,5 +101,5 @@ Fall back to KLU if MKLPardiso is unavailable.
 
 ## Related Topics
 
-  - [How to Reduce Repeated Operations](@ref) — Avoid recomputing intermediate matrices
+  - [How to Reduce Repeated Operations](@ref "How to Reduce Repeated Operations When Building Multiple Matrices") — Avoid recomputing intermediate matrices
   - [Network Matrices](@ref) — Tutorial covering matrix construction

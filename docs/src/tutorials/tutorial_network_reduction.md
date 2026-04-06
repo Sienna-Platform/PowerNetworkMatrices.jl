@@ -45,7 +45,7 @@ radial buses and their branches.
 
 ### Inspecting reduction results
 
-Use [`get_network_reduction_data`](@ref) and its accessors to see what was
+Use `get_network_reduction_data` and its accessors to see what was
 removed:
 
 ```@repl tutorial_network_reduction
@@ -103,7 +103,7 @@ get_removed_arcs(rd_d2)
 get_series_branch_map(rd_d2)
 ```
 
-[`get_series_branch_map`](@ref) shows how pairs of branches were merged into
+`get_series_branch_map` shows how pairs of branches were merged into
 equivalent branches.
 
 ### Protecting buses and reactive injectors
@@ -172,7 +172,7 @@ ptdf_opts = PTDF(sys;
   - **Order matters**: Reductions are applied in the order given. Radial first
     is usually best.
   - **Mapping information**: The reduction data includes maps
-    ([`get_bus_reduction_map`](@ref), [`get_reverse_bus_search_map`](@ref)) for
+    ([`get_bus_reduction_map`](@ref), `get_reverse_bus_search_map`) for
     interpreting results in terms of the original network.
   - **Electrical equivalence**: Reduced networks maintain the same electrical
     behavior at all retained buses.
@@ -181,4 +181,4 @@ ptdf_opts = PTDF(sys;
 
   - See the [Network Matrices](@ref) tutorial for building matrices without reductions
   - Read [Network Reduction Theory](@ref) for the mathematical background
-  - Consult the [Public API](@ref) reference for full function signatures
+  - Consult the [Public API Reference](@ref) for full function signatures

@@ -39,7 +39,7 @@ get_data(incidence_matrix)
 ```
 
 Note that the column for the reference bus is omitted. The position of that
-column is available via [`get_ref_bus_position`](@ref):
+column is available via `get_ref_bus_position`:
 
 ```@repl tutorial_network_matrices
 get_ref_bus_position(incidence_matrix)
@@ -177,4 +177,4 @@ get_lodf_data(lodf_sparse)
 
   - Learn about lazy, on-demand evaluation in the [Virtual Matrices](@ref) tutorial
   - See how to simplify large networks in the [Network Reduction](@ref) tutorial
-  - Consult the [Public API](@ref) reference for full function signatures
+  - Consult the [Public API Reference](@ref) for full function signatures
