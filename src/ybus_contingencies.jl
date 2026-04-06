@@ -77,7 +77,7 @@ function _accumulate_shunt_outage!(
     I::Vector{Int},
     J::Vector{Int},
     V::Vector{YBUS_ELTYPE},
-    component::PSY.FixedAdmittance,
+    component::Union{PSY.FixedAdmittance, PSY.SwitchedAdmittance},
     bus_lookup::Dict{Int, Int},
     nr::NetworkReductionData,
 )
@@ -107,27 +107,11 @@ function _accumulate_shunt_outage!(
     return
 end
 
-function _accumulate_shunt_outage!(
-    I::Vector{Int},
-    J::Vector{Int},
-    V::Vector{YBUS_ELTYPE},
-    component::PSY.SwitchedAdmittance,
-    bus_lookup::Dict{Int, Int},
-    nr::NetworkReductionData,
-)
-    bus_ix = get_bus_index(component, bus_lookup, nr)
-    Y = PSY.get_Y(component)
-    push!(I, bus_ix)
-    push!(J, bus_ix)
-    push!(V, YBUS_ELTYPE(-Y))
-    return
-end
-
 # --- Island detection ---
 
 """
 Check whether severing the given arcs disconnects the network.
-Uses a lightweight union-find on a modified copy of the adjacency matrix.
+Uses a lightweight union-find on the adjacency matrix, skipping severed edges inline.
 Returns `true` if the modified network has more connected components than the base.
 """
 function _check_islanding(
@@ -137,27 +121,30 @@ function _check_islanding(
     base_num_components::Int,
 )::Bool
     isempty(severed_arcs) && return false
-    adj = copy(adjacency_data)
+    severed_ix = Set{Tuple{Int, Int}}()
     for (fb, tb) in severed_arcs
         fb_ix = bus_lookup[fb]
         tb_ix = bus_lookup[tb]
-        adj[fb_ix, tb_ix] = 0
-        adj[tb_ix, fb_ix] = 0
+        push!(severed_ix, (fb_ix, tb_ix))
+        push!(severed_ix, (tb_ix, fb_ix))
     end
-    SparseArrays.dropzeros!(adj)
-    n = size(adj, 1)
+    n = size(adjacency_data, 1)
     n <= 1 && return false
-    rows = SparseArrays.rowvals(adj)
+    rows = SparseArrays.rowvals(adjacency_data)
     uf = collect(1:n)
-    for ix in 1:n
-        for j in SparseArrays.nzrange(adj, ix)
-            union_sets!(uf, ix, rows[j])
+    for col in 1:n
+        for j in SparseArrays.nzrange(adjacency_data, col)
+            row = rows[j]
+            (col, row) in severed_ix && continue
+            union_sets!(uf, col, row)
         end
     end
+    num_components = 0
     for i in 1:n
-        uf[i] = get_representative(uf, i)
+        if get_representative(uf, i) == i
+            num_components += 1
+        end
     end
-    num_components = length(unique(uf))
     return num_components > base_num_components
 end
 
@@ -372,13 +359,12 @@ function _find_branch_arc(
     nr::NetworkReductionData,
     branch::PSY.ACTransmission,
 )
-    if haskey(nr.reverse_direct_branch_map, branch)
-        return nr.reverse_direct_branch_map[branch]
-    elseif haskey(nr.reverse_parallel_branch_map, branch)
-        return nr.reverse_parallel_branch_map[branch]
-    elseif haskey(nr.reverse_series_branch_map, branch)
-        return nr.reverse_series_branch_map[branch]
-    end
+    val = get(nr.reverse_direct_branch_map, branch, nothing)
+    val !== nothing && return val
+    val = get(nr.reverse_parallel_branch_map, branch, nothing)
+    val !== nothing && return val
+    val = get(nr.reverse_series_branch_map, branch, nothing)
+    val !== nothing && return val
     error("Branch $(PSY.get_name(branch)) not found in any reduction map.")
 end
 
@@ -519,26 +505,10 @@ function YbusModification(
     )
 
     shunt_components = PSY.Component[]
-    for fa in PSY.get_associated_components(
-        sys,
-        contingency;
-        component_type = PSY.FixedAdmittance,
-    )
-        push!(shunt_components, fa)
-    end
-    for sl in PSY.get_associated_components(
-        sys,
-        contingency;
-        component_type = PSY.StandardLoad,
-    )
-        push!(shunt_components, sl)
-    end
-    for sa in PSY.get_associated_components(
-        sys,
-        contingency;
-        component_type = PSY.SwitchedAdmittance,
-    )
-        push!(shunt_components, sa)
+    for T in (PSY.FixedAdmittance, PSY.StandardLoad, PSY.SwitchedAdmittance)
+        for c in PSY.get_associated_components(sys, contingency; component_type = T)
+            push!(shunt_components, c)
+        end
     end
 
     all_components = PSY.Component[associated; shunt_components]
