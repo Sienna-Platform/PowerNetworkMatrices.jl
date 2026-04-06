@@ -36,10 +36,10 @@ Caching is two-tiered:
         Indices of non-reference buses.
 - `contingency_cache::Dict{Base.UUID, ContingencySpec}`:
         Resolved contingencies keyed by outage UUID.
-- `woodbury_cache::Dict{Base.UUID, WoodburyFactors}`:
-        Precomputed Woodbury factors keyed by outage UUID.
-- `row_caches::Dict{Base.UUID, RowCache}`:
-        One RowCache per contingency, keyed by outage UUID.
+- `woodbury_cache::Dict{UInt64, WoodburyFactors}`:
+        Precomputed Woodbury factors keyed by modification content hash.
+- `row_caches::Dict{UInt64, RowCache}`:
+        One RowCache per modification, keyed by modification content hash.
 - `subnetwork_axes::Dict{Int, Ax}`:
         Maps reference bus indices to subnetwork axes.
 - `tol::Base.RefValue{Float64}`:
@@ -66,8 +66,8 @@ struct VirtualMODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
     lookup::L
     valid_ix::Vector{Int}
     contingency_cache::Dict{Base.UUID, ContingencySpec}
-    woodbury_cache::Dict{Base.UUID, WoodburyFactors}
-    row_caches::Dict{Base.UUID, RowCache}
+    woodbury_cache::Dict{UInt64, WoodburyFactors}
+    row_caches::Dict{UInt64, RowCache}
     subnetwork_axes::Dict{Int, Ax}
     tol::Base.RefValue{Float64}
     max_cache_size_bytes::Int
@@ -87,6 +87,14 @@ get_bus_lookup(M::VirtualMODF) = M.lookup[2]
 get_arc_axis(mat::VirtualMODF) = mat.axes[1]
 get_bus_axis(mat::VirtualMODF) = mat.axes[2]
 get_tol(mat::VirtualMODF) = mat.tol[]
+
+# Woodbury kernel accessors
+_get_K(m::VirtualMODF) = m.K
+_get_BA(m::VirtualMODF) = m.BA
+_get_arc_susceptances(m::VirtualMODF) = m.arc_susceptances
+_get_valid_ix(m::VirtualMODF) = m.valid_ix
+_get_temp_data(m::VirtualMODF) = m.temp_data
+_get_work_ba_col(m::VirtualMODF) = m.work_ba_col
 
 """
     get_registered_contingencies(vmodf::VirtualMODF) -> Dict{Base.UUID, ContingencySpec}
@@ -189,8 +197,8 @@ function VirtualMODF(
         look_up,
         valid_ix,
         Dict{Base.UUID, ContingencySpec}(),
-        Dict{Base.UUID, WoodburyFactors}(),
-        Dict{Base.UUID, RowCache}(),
+        Dict{UInt64, WoodburyFactors}(),
+        Dict{UInt64, RowCache}(),
         subnetwork_axes,
         Ref(tol),
         max_cache_bytes,
@@ -321,141 +329,22 @@ function _compute_series_outage_delta_b(
 end
 
 """
-    _classify_outage_component!(vmodf, component, ...) -> nothing
-
-Classify a single outage component into direct, parallel, or series modifications.
-Dispatches on component type to reject unsupported branch types.
-"""
-function _classify_outage_component!(
-    ::VirtualMODF,
-    component::PSY.PhaseShiftingTransformer,
-    ::NetworkReductionData,
-    ::Vector{ArcModification},
-    ::Vector{ArcModification},
-    ::Dict{Int, Vector{PSY.ACTransmission}},
-    ::Dict{Int, Tuple{Int, Int}},
-)
-    error(
-        "Contingencies on PhaseShiftingTransformer are not supported. " *
-        "Component: $(PSY.get_name(component)).",
-    )
-end
-
-function _classify_outage_component!(
-    vmodf::VirtualMODF,
-    component::PSY.ACTransmission,
-    nr::NetworkReductionData,
-    direct_mods::Vector{ArcModification},
-    parallel_mods::Vector{ArcModification},
-    series_components_by_arc::Dict{Int, Vector{PSY.ACTransmission}},
-    series_arc_tuples::Dict{Int, Tuple{Int, Int}},
-)
-    if haskey(nr.reverse_direct_branch_map, component)
-        arc_tuple = nr.reverse_direct_branch_map[component]
-        arc_idx = vmodf.lookup[1][arc_tuple]
-        b_arc = vmodf.arc_susceptances[arc_idx]
-        push!(direct_mods, ArcModification(arc_idx, -b_arc))
-
-    elseif haskey(nr.reverse_parallel_branch_map, component)
-        arc_tuple = nr.reverse_parallel_branch_map[component]
-        arc_idx = vmodf.lookup[1][arc_tuple]
-        b_circuit = PSY.get_series_susceptance(component)
-        push!(parallel_mods, ArcModification(arc_idx, -b_circuit))
-
-    elseif haskey(nr.reverse_series_branch_map, component)
-        arc_tuple = nr.reverse_series_branch_map[component]
-        arc_idx = vmodf.lookup[1][arc_tuple]
-        if !haskey(series_components_by_arc, arc_idx)
-            series_components_by_arc[arc_idx] = PSY.ACTransmission[]
-            series_arc_tuples[arc_idx] = arc_tuple
-        end
-        push!(series_components_by_arc[arc_idx], component)
-
-    else
-        @warn "Branch $(PSY.get_name(component)) not found in any reduction map. " *
-              "The component may have been eliminated by a radial reduction. " *
-              "Skipping registration for this component."
-    end
-    return
-end
-
-"""
     _register_outage!(vmodf, sys, outage) -> ContingencySpec
 
 Resolve an Outage supplemental attribute to a ContingencySpec and cache it.
-
-Resolution chain:
-1. Get ACTransmission components and classify by reduction type
-   (direct, parallel, or series branch map)
-2. Warn and skip components not found in any map
-3. Merge modifications on the same arc
-4. Store ContingencySpec keyed by outage UUID
+Delegates to `NetworkModification(mat, sys, outage)` for the resolution logic.
 """
 function _register_outage!(
     vmodf::VirtualMODF,
     sys::PSY.System,
     outage::PSY.Outage,
 )
-    nr = vmodf.network_reduction_data
     outage_uuid = IS.get_uuid(outage)
-
-    # Already registered?
     if haskey(vmodf.contingency_cache, outage_uuid)
         return vmodf.contingency_cache[outage_uuid]
     end
-
-    # Get associated components directly (returns component objects, not UUIDs)
-    associated_components = collect(
-        PSY.get_associated_components(sys, outage;
-            component_type = PSY.ACTransmission),
-    )
-
-    if isempty(associated_components)
-        error("Outage has no associated ACTransmission components.")
-    end
-
-    # --- Pass 1: Classify components by arc and reduction type ---
-    # For series arcs, collect ALL tripped components before computing Δb.
-    direct_mods = ArcModification[]
-    parallel_mods = ArcModification[]
-    series_components_by_arc = Dict{Int, Vector{PSY.ACTransmission}}()
-    series_arc_tuples = Dict{Int, Tuple{Int, Int}}()
-    component_names = String[]
-
-    for component in associated_components
-        push!(component_names, PSY.get_name(component))
-        _classify_outage_component!(
-            vmodf, component, nr,
-            direct_mods, parallel_mods,
-            series_components_by_arc, series_arc_tuples,
-        )
-    end
-
-    # --- Pass 2: Compute series Δb with all tripped components grouped ---
-    series_mods = ArcModification[]
-    for (arc_idx, tripped) in series_components_by_arc
-        arc_tuple = series_arc_tuples[arc_idx]
-        series_chain = nr.series_branch_map[arc_tuple]
-        delta_b = _compute_series_outage_delta_b(series_chain, tripped)
-        push!(series_mods, ArcModification(arc_idx, delta_b))
-    end
-
-    # Combine all modifications. Series mods already have correct combined Δb,
-    # so merging only needs to handle direct+parallel overlaps on the same arc.
-    mods = vcat(direct_mods, parallel_mods, series_mods)
-
-    if isempty(mods)
-        error("No valid arc modifications found for outage.")
-    end
-
-    # Merge modifications on the same arc (handles parallel circuits on the same arc)
-    merged = _merge_modifications(mods)
-
-    ctg_name = isempty(component_names) ? string(outage_uuid) :
-               join(component_names, "+")
-    ctg = ContingencySpec(outage_uuid, ctg_name, merged)
-
-    # Cache the result
+    mod = NetworkModification(vmodf, sys, outage)
+    ctg = ContingencySpec(outage_uuid, mod)
     vmodf.contingency_cache[outage_uuid] = ctg
     return ctg
 end
@@ -503,16 +392,11 @@ function _invert_woodbury_W(
 end
 
 """
-    _get_woodbury_factors(vmodf, contingency) -> WoodburyFactors
+    _get_woodbury_factors(vmodf, mod) -> WoodburyFactors
 
-Compute and cache the Woodbury factors for a contingency.
-Implements van Dijk et al. Eq. 29:
-    B_m⁻¹ = B_r⁻¹ - B_r⁻¹U (A⁻¹ + U⊤B_r⁻¹U)⁻¹ U⊤B_r⁻¹
-
-where U = [ν_{e1} ... ν_{eM}] and A = diag(Δb₁, ..., Δb_M).
-
-The expensive part (M KLU solves + M×M factorization) is shared
-across all monitored arcs for this contingency.
+Compute and cache the Woodbury factors for a network modification.
+Delegates to the shared Woodbury kernel `_compute_woodbury_factors`.
+Caches by content hash of the modification.
 
 !!! warning
     This function is NOT thread-safe. It mutates `vmodf.work_ba_col` on
@@ -520,178 +404,75 @@ across all monitored arcs for this contingency.
 """
 function _get_woodbury_factors(
     vmodf::VirtualMODF,
-    contingency::ContingencySpec,
+    mod::NetworkModification,
 )
-    if haskey(vmodf.woodbury_cache, contingency.uuid)
-        return vmodf.woodbury_cache[contingency.uuid]
+    key = hash(mod) % UInt64
+    if haskey(vmodf.woodbury_cache, key)
+        return vmodf.woodbury_cache[key]
     end
-
-    mods = contingency.modifications
-    M = length(mods)
-    n_bus = length(vmodf.temp_data)
-
-    arc_indices = [mod.arc_index for mod in mods]
-    delta_b_vec = [mod.delta_b for mod in mods]
-
-    # Compute Z[:,j] = B⁻¹ν_j for each modified arc, where ν_j = BA[:,e] / b_e
-    # is the unscaled incidence direction; Z[:,j] = B⁻¹ A[e,:]⊤
-    Z = Matrix{Float64}(undef, n_bus, M)
-
-    for (j, mod) in enumerate(mods)
-        e = mod.arc_index
-        b_e = vmodf.arc_susceptances[e]
-
-        @inbounds for i in eachindex(vmodf.valid_ix)
-            vmodf.work_ba_col[i] = vmodf.BA[vmodf.valid_ix[i], e]
-        end
-        lin_solve = KLU.solve!(vmodf.K, vmodf.work_ba_col)
-
-        fill!(view(Z, :, j), 0.0)
-        @inbounds for i in eachindex(vmodf.valid_ix)
-            Z[vmodf.valid_ix[i], j] = lin_solve[i] / b_e
-        end
-    end
-
-    # K_mat[i,j] = ν_i⊤ B⁻¹ ν_j  (using A * Z to compute all rows efficiently)
-    # A is (n_arcs × n_bus), so (A * Z) is (n_arcs × M).
-    AZ = vmodf.A * Z  # sparse-dense product: n_arcs × M
-    K_mat = zeros(M, M)
-    for j in 1:M, i in 1:M
-        K_mat[i, j] = AZ[arc_indices[i], j]
-    end
-
-    # W = diag(1/Δb) + K_mat = A⁻¹ + U⊤B⁻¹U
-    W_mat = LinearAlgebra.diagm(1.0 ./ delta_b_vec) + K_mat
-
-    # Pre-invert W: analytical for M ≤ 2 (avoids LU overhead for the common N-1/N-2 cases),
-    # LU-based for M > 2.
-    W_inv, is_island = _invert_woodbury_W(W_mat, M)
-
-    wf = WoodburyFactors(Z, W_inv, arc_indices, delta_b_vec, is_island)
-    vmodf.woodbury_cache[contingency.uuid] = wf
+    wf = _compute_woodbury_factors(vmodf, mod.modifications)
+    vmodf.woodbury_cache[key] = wf
     return wf
 end
 
 """
-    _compute_modf_row(vmodf, monitored_idx, wf) -> Vector{Float64}
+    _compute_modf_entry(vmodf, monitored_idx, mod) -> Vector{Float64}
 
-Compute the post-contingency PTDF row for a monitored arc.
-Uses Woodbury correction: PTDF_m[mon,:] = b_mon_post · ν_mon⊤ · B_m⁻¹
-
-The row is computed as: b_mon_post · (z_m - Z · W⁻¹ · (ν_mon⊤ · Z))
-where z_m = B⁻¹ν_mon / b_mon_pre (one additional KLU solve).
-
-!!! warning
-    This function is NOT thread-safe. It mutates `vmodf.work_ba_col` on
-    every call. Do not call concurrently on the same `VirtualMODF` instance.
-"""
-function _compute_modf_row(
-    vmodf::VirtualMODF,
-    monitored_idx::Int,
-    wf::WoodburyFactors,
-)::Vector{Float64}
-    n_bus = length(vmodf.temp_data)
-
-    if wf.is_islanding
-        @warn "Contingency islands the network. Returning zeros."
-        return zeros(n_bus)
-    end
-
-    M = length(wf.arc_indices)
-
-    # Effective susceptance of monitored arc after modifications
-    b_mon = vmodf.arc_susceptances[monitored_idx]
-    for (j, idx) in enumerate(wf.arc_indices)
-        if idx == monitored_idx
-            b_mon += wf.delta_b[j]
-        end
-    end
-    if abs(b_mon) < eps()
-        return zeros(n_bus)
-    end
-
-    # z_m = B⁻¹ν_m / b_mon_pre via KLU solve on BA column
-    b_mon_pre = vmodf.arc_susceptances[monitored_idx]
-    @inbounds for i in eachindex(vmodf.valid_ix)
-        vmodf.work_ba_col[i] = vmodf.BA[vmodf.valid_ix[i], monitored_idx]
-    end
-    lin_solve = KLU.solve!(vmodf.K, vmodf.work_ba_col)
-
-    # Build z_m directly into vmodf.temp_data to avoid allocation
-    fill!(vmodf.temp_data, 0.0)
-    @inbounds for i in eachindex(vmodf.valid_ix)
-        vmodf.temp_data[vmodf.valid_ix[i]] = lin_solve[i] / b_mon_pre
-    end
-
-    # ν_m⊤ · Z  (1 × M vector — small, ok to allocate)
-    zm_Z = zeros(M)
-    for j in 1:M
-        zm_Z[j] = dot(view(vmodf.A, monitored_idx, :), view(wf.Z, :, j))
-    end
-
-    # Woodbury correction: temp_data -= Z · (W⁻¹ · zm_Z)
-    correction_coeff = wf.W_inv * zm_Z
-    LinearAlgebra.mul!(vmodf.temp_data, wf.Z, correction_coeff, -1.0, 1.0)
-
-    # Post-contingency PTDF row = b_mon_post · (z_m - correction), now in temp_data
-    vmodf.temp_data .*= b_mon
-    return copy(vmodf.temp_data)
-end
-
-"""
-    _compute_modf_entry(vmodf, monitored_idx, contingency) -> Vector{Float64}
-
-Compute the post-contingency PTDF row for a monitored arc under the given contingency.
-Gets or computes Woodbury factors, then computes the post-contingency PTDF row.
+Compute the post-modification PTDF row for a monitored arc under the given modification.
+Gets or computes Woodbury factors, then applies the Woodbury correction.
 
 For N-1 contingencies, the result satisfies:
     post_ptdf[mon, :] = pre_ptdf[mon, :] + LODF[mon, e] * pre_ptdf[e, :]
+
+!!! warning
+    Not thread-safe. Mutates scratch vectors in `vmodf`.
 """
 function _compute_modf_entry(
     vmodf::VirtualMODF,
     monitored_idx::Int,
-    contingency::ContingencySpec,
+    mod::NetworkModification,
 )::Vector{Float64}
-    wf = _get_woodbury_factors(vmodf, contingency)
-    return _compute_modf_row(vmodf, monitored_idx, wf)
+    wf = _get_woodbury_factors(vmodf, mod)
+    return _apply_woodbury_correction(vmodf, monitored_idx, wf)
 end
 
 # --- Row cache management ---
 
 """
-    _get_or_create_row_cache(vmodf, ctg_uuid) -> RowCache
+    _get_or_create_row_cache(vmodf, key) -> RowCache
 
-Get or create the per-contingency RowCache for the given UUID.
+Get or create the per-modification RowCache for the given label key.
 """
-function _get_or_create_row_cache(vmodf::VirtualMODF, ctg_uuid::Base.UUID)
-    if !haskey(vmodf.row_caches, ctg_uuid)
+function _get_or_create_row_cache(vmodf::VirtualMODF, key::UInt64)
+    if !haskey(vmodf.row_caches, key)
         row_size = length(vmodf.temp_data) * sizeof(Float64)
-        vmodf.row_caches[ctg_uuid] =
+        vmodf.row_caches[key] =
             RowCache(vmodf.max_cache_size_bytes, Set{Int}(), row_size)
     end
-    return vmodf.row_caches[ctg_uuid]
+    return vmodf.row_caches[key]
 end
 
-# --- getindex: by integer monitored index + ContingencySpec ---
+# --- getindex: by integer monitored index + NetworkModification ---
 
 """
-Get the post-contingency PTDF row for monitored arc `monitored_idx` under `contingency`.
-Uses per-contingency RowCache for LRU-eviction caching.
+Get the post-modification PTDF row for monitored arc `monitored_idx` under `mod`.
+Uses per-modification RowCache for LRU-eviction caching.
 
 $(TYPEDSIGNATURES)
 """
 function Base.getindex(
     vmodf::VirtualMODF,
     monitored_idx::Int,
-    contingency::ContingencySpec,
+    mod::NetworkModification,
 )
-    cache = _get_or_create_row_cache(vmodf, contingency.uuid)
+    key = hash(mod) % UInt64
+    cache = _get_or_create_row_cache(vmodf, key)
 
     if haskey(cache, monitored_idx)
         return copy(cache[monitored_idx])
     end
 
-    row = _compute_modf_entry(vmodf, monitored_idx, contingency)
+    row = _compute_modf_entry(vmodf, monitored_idx, mod)
 
     if get_tol(vmodf) > eps()
         cache[monitored_idx] = sparsify(row, get_tol(vmodf))
@@ -702,23 +483,45 @@ function Base.getindex(
     return copy(cache[monitored_idx])
 end
 
-# --- getindex: by arc tuple + ContingencySpec ---
-
 """
-Arc-tuple indexed version of getindex for VirtualMODF.
+Arc-tuple indexed version of getindex for VirtualMODF with NetworkModification.
 
 $(TYPEDSIGNATURES)
 """
 function Base.getindex(
     vmodf::VirtualMODF,
     monitored::Tuple{Int, Int},
-    contingency::ContingencySpec,
+    mod::NetworkModification,
 )
     m_idx = vmodf.lookup[1][monitored]
-    return vmodf[m_idx, contingency]
+    return vmodf[m_idx, mod]
 end
 
-# --- getindex: by Int + PSY.Outage (UUID lookup) ---
+# --- getindex: by ContingencySpec (delegates to NetworkModification) ---
+
+"""
+Get the post-contingency PTDF row for monitored arc under a ContingencySpec.
+Delegates to the NetworkModification-based getindex.
+
+$(TYPEDSIGNATURES)
+"""
+function Base.getindex(
+    vmodf::VirtualMODF,
+    monitored_idx::Int,
+    contingency::ContingencySpec,
+)
+    return vmodf[monitored_idx, contingency.modification]
+end
+
+function Base.getindex(
+    vmodf::VirtualMODF,
+    monitored::Tuple{Int, Int},
+    contingency::ContingencySpec,
+)
+    return vmodf[monitored, contingency.modification]
+end
+
+# --- getindex: by PSY.Outage (UUID lookup → ContingencySpec → NetworkModification) ---
 
 """
 Get the post-contingency PTDF row for monitored arc `monitored` when outage `outage` trips.
@@ -739,7 +542,7 @@ function Base.getindex(
         )
     end
     ctg = vmodf.contingency_cache[outage_uuid]
-    return vmodf[monitored, ctg]
+    return vmodf[monitored, ctg.modification]
 end
 
 """
@@ -784,15 +587,4 @@ function clear_all_caches!(vmodf::VirtualMODF)
     empty!(vmodf.woodbury_cache)
     empty!(vmodf.row_caches)
     return
-end
-
-"""
-Merge ArcModifications that target the same arc index.
-"""
-function _merge_modifications(mods::Vector{ArcModification})
-    by_arc = Dict{Int, Float64}()
-    for m in mods
-        by_arc[m.arc_index] = get(by_arc, m.arc_index, 0.0) + m.delta_b
-    end
-    return [ArcModification(idx, db) for (idx, db) in by_arc]
 end

@@ -68,6 +68,59 @@ for (group, name) in systems
             record_failure("$(name)-Build LODF")
         end
     end
+    if build_ptdf
+        try
+            # Add outages to all eligible branches for VirtualMODF construction
+            modf_sys = deepcopy(sys)
+            for branch in get_components(ACTransmission, modf_sys)
+                typeof(branch) <: PhaseShiftingTransformer && continue
+                outage = GeometricDistributionForcedOutage(;
+                    mean_time_to_recovery = 0.0,
+                    outage_transition_probability = 0.0,
+                )
+                add_supplemental_attribute!(modf_sys, branch, outage)
+            end
+            _, time_build_modf1, _, _ = @timed VirtualMODF(modf_sys)
+            open("execute_time.txt", "a") do io
+                write(
+                    io,
+                    "| $(ARGS[1])-$(name)-Build VirtualMODF First | $(time_build_modf1) |\n",
+                )
+            end
+            vmodf = nothing
+            _, time_build_modf2, _, _ = @timed begin
+                vmodf = VirtualMODF(modf_sys)
+            end
+            open("execute_time.txt", "a") do io
+                write(
+                    io,
+                    "| $(ARGS[1])-$(name)-Build VirtualMODF Second | $(time_build_modf2) |\n",
+                )
+            end
+            # Time querying rows for the first registered contingency
+            ctgs = collect(values(get_registered_contingencies(vmodf)))
+            if !isempty(ctgs)
+                ctg = first(ctgs)
+                n_query = min(10, length(vmodf.axes[1]))
+                _, time_query, _, _ = @timed begin
+                    for m in 1:n_query
+                        vmodf[m, ctg]
+                    end
+                end
+                open("execute_time.txt", "a") do io
+                    write(
+                        io,
+                        "| $(ARGS[1])-$(name)-VirtualMODF Query $(n_query) rows | $(time_query) |\n",
+                    )
+                end
+            end
+        catch e
+            @error exception = (e, catch_backtrace())
+            open("execute_time.txt", "a") do io
+                write(io, "| $(ARGS[1])-$(name)-Build VirtualMODF | FAILED TO TEST |\n")
+            end
+        end
+    end
     try
         A = IncidenceMatrix(sys)
         _, time_radial, _, _ =

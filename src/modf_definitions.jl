@@ -14,21 +14,61 @@ struct ArcModification
 end
 
 """
+Merge ArcModifications that target the same arc index.
+"""
+function _merge_modifications(mods::Vector{ArcModification})
+    by_arc = Dict{Int, Float64}()
+    for m in mods
+        by_arc[m.arc_index] = get(by_arc, m.arc_index, 0.0) + m.delta_b
+    end
+    return [ArcModification(idx, db) for (idx, db) in sort!(collect(by_arc); by = first)]
+end
+
+"""
+    NetworkModification
+
+Lightweight description of topology changes to a power network.
+Wraps a vector of [`ArcModification`](@ref) plus a label.
+No dependency on `PSY.System` after construction.
+
+# Fields
+- `label::String`: Human-readable identifier for the modification.
+- `modifications::Vector{ArcModification}`: One entry per affected arc.
+"""
+struct NetworkModification
+    label::String
+    modifications::Vector{ArcModification}
+    function NetworkModification(label::String, mods::Vector{ArcModification})
+        return new(label, _merge_modifications(mods))
+    end
+end
+
+function Base.hash(m::NetworkModification, h::UInt)
+    h = hash(length(m.modifications), h)
+    for mod in m.modifications
+        h = hash(mod.arc_index, h)
+        h = hash(mod.delta_b, h)
+    end
+    return h
+end
+
+Base.:(==)(a::NetworkModification, b::NetworkModification) =
+    a.modifications == b.modifications
+
+"""
     ContingencySpec
 
-A resolved, self-contained contingency specification.
-After construction, contains only integer indices and floats —
-no PSY types, no System reference.
+A resolved, self-contained contingency specification backed by a
+[`NetworkModification`](@ref). The UUID links back to the source
+`PSY.Outage` supplemental attribute for caching purposes.
 
 # Fields
 - `uuid::Base.UUID`: Unique identifier matching the source Outage supplemental attribute.
-- `name::String`: Human-readable identifier, typically branch name(s) joined by '+'.
-- `modifications::Vector{ArcModification}`: One entry per affected arc.
+- `modification::NetworkModification`: The network topology change.
 """
 struct ContingencySpec
     uuid::Base.UUID
-    name::String
-    modifications::Vector{ArcModification}
+    modification::NetworkModification
 end
 
 """
