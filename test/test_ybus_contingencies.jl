@@ -14,13 +14,8 @@
     ybus_ref = Ybus(sys)
     set_available!(line, true)
 
-    # Compare all nonzero entries
-    I_ref, J_ref, V_ref = findnz(ybus_ref.data)
-    for (i, j, v) in zip(I_ref, J_ref, V_ref)
-        @test isapprox(modified_data[i, j], v, atol = 1e-4)
-    end
-    # Also check dimensions match
-    @test size(modified_data) == size(ybus_ref.data)
+    # Compare full sparse matrices
+    @test isapprox(modified_data, ybus_ref.data, atol = 1e-4)
 end
 
 @testset "YbusModification: all N-1 branch outages on c_sys5" begin
@@ -43,10 +38,7 @@ end
         ybus_ref = Ybus(sys)
         set_available!(branch, true)
 
-        I_ref, J_ref, V_ref = findnz(ybus_ref.data)
-        for (i, j, v) in zip(I_ref, J_ref, V_ref)
-            @test isapprox(modified_data[i, j], v, atol = 1e-4)
-        end
+        @test isapprox(modified_data, ybus_ref.data, atol = 1e-4)
     end
 end
 
@@ -80,10 +72,7 @@ end
     set_available!(line1, true)
     set_available!(line2, true)
 
-    I_ref, J_ref, V_ref = findnz(ybus_ref.data)
-    for (i, j, v) in zip(I_ref, J_ref, V_ref)
-        @test isapprox(modified_data[i, j], v, atol = 1e-4)
-    end
+    @test isapprox(modified_data, ybus_ref.data, atol = 1e-4)
 end
 
 @testset "YbusModification: N-3 contingency (3 branches)" begin
@@ -105,10 +94,7 @@ end
     set_available!(line2, true)
     set_available!(line3, true)
 
-    I_ref, J_ref, V_ref = findnz(ybus_ref.data)
-    for (i, j, v) in zip(I_ref, J_ref, V_ref)
-        @test isapprox(modified_data[i, j], v, atol = 1e-4)
-    end
+    @test isapprox(modified_data, ybus_ref.data, atol = 1e-4)
     @test length(mod.component_names) == 3
 end
 
@@ -134,10 +120,7 @@ end
     set_available!(line3, true)
     set_available!(line4, true)
 
-    I_ref, J_ref, V_ref = findnz(ybus_ref.data)
-    for (i, j, v) in zip(I_ref, J_ref, V_ref)
-        @test isapprox(modified_data[i, j], v, atol = 1e-4)
-    end
+    @test isapprox(modified_data, ybus_ref.data, atol = 1e-4)
     @test length(mod.component_names) == 4
 
     # Also verify sparsity: 4 branches × at most 4 entries each = at most 16 nonzeros
@@ -266,38 +249,29 @@ end
 end
 
 @testset "YbusModification: impedance change constructor" begin
-    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
-    ybus_original = Ybus(sys)
+    sys_old = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    sys_new = PSB.build_system(PSB.PSITestSystems, "c_sys5")
 
-    line = get_component(Line, sys, "1")
-    original_x = get_x(line)
+    old_line = get_component(Line, sys_old, "1")
+    new_line = get_component(Line, sys_new, "1")
+    original_x = get_x(old_line)
 
-    # Build a reference Ybus with doubled reactance
-    set_x!(line, original_x * 2.0)
-    ybus_modified_ref = Ybus(sys)
+    # Modify only the branch in the "new" system so old/new states are distinct
+    set_x!(new_line, original_x * 2.0)
 
-    # Use the 3-arg impedance change constructor: old state = original x, new state = 2x
-    # The line object currently has 2x, so ybus_branch_entries(line) gives the new Y.
-    # We need old_branch and new_branch to be the same object at different states.
-    # Since the line is mutated in-place, we compute the delta as:
-    #   ΔY = ybus_modified_ref.data - ybus_original.data
-    # and verify the constructor produces an equivalent result.
-    mod = YbusModification(ybus_original, line, line)
+    ybus_old = Ybus(sys_old)
+    ybus_new = Ybus(sys_new)
 
-    # Restore line to original state for the "old" entries
-    # Actually, the 3-arg constructor computes old and new from ybus_branch_entries
-    # on the same object. Since the line now has 2x, both old and new will be 2x,
-    # giving a zero delta. To properly test, restore and use two separate systems.
-    set_x!(line, original_x)
+    # Use the 3-arg impedance change constructor with distinct branch states
+    mod = YbusModification(ybus_old, old_line, new_line)
 
-    # Instead, verify the constructor works without error and produces a valid matrix
-    mod = YbusModification(ybus_original, line, line)
-    # Same branch for old and new → all delta values should be zero
-    @test all(iszero, SparseArrays.nonzeros(mod.data))
+    # The modification should equal the difference between rebuilt Ybus matrices
+    @test isapprox(mod.data, ybus_new.data - ybus_old.data, atol = 1e-4)
     @test length(mod.component_names) == 1
 
-    modified_data = apply_ybus_modification(ybus_original, mod)
-    @test isapprox(modified_data, ybus_original.data, atol = 1e-10)
+    # Applying the modification to the original Ybus should reproduce the modified Ybus
+    modified_data = apply_ybus_modification(ybus_old, mod)
+    @test isapprox(modified_data, ybus_new.data, atol = 1e-4)
 end
 
 @testset "YbusModification: parallel branch outage on RTS_GMLC" begin
@@ -321,10 +295,7 @@ end
         ybus_ref = Ybus(sys)
         set_available!(parallel_branch, true)
 
-        I_ref, J_ref, V_ref = findnz(ybus_ref.data)
-        for (i, j, v) in zip(I_ref, J_ref, V_ref)
-            @test isapprox(modified_data[i, j], v, atol = 1e-4)
-        end
+        @test isapprox(modified_data, ybus_ref.data, atol = 1e-4)
     end
 end
 
@@ -356,4 +327,122 @@ end
         modified_data = apply_ybus_modification(ybus, mod)
         @test size(modified_data) == size(ybus.data)
     end
+end
+
+@testset "YbusModification: FixedAdmittance shunt outage" begin
+    sys = PSB.build_system(PSB.PSYTestSystems, "psse_3bus_gen_cls_sys")
+    bus_103 = PSY.get_component(PSY.ACBus, sys, "BUS 3")
+    fix_shunt = FixedAdmittance("FixAdm_Bus3", true, bus_103, 0.0 + 0.2im)
+    add_component!(sys, fix_shunt)
+
+    ybus = Ybus(sys)
+    mod = YbusModification(ybus, PSY.Component[fix_shunt])
+    modified_data = apply_ybus_modification(ybus, mod)
+
+    # Reference: disable shunt and rebuild
+    set_available!(fix_shunt, false)
+    ybus_ref = Ybus(sys)
+    set_available!(fix_shunt, true)
+
+    @test isapprox(modified_data, ybus_ref.data, atol = 1e-4)
+    @test length(mod.component_names) == 1
+    # Shunt outage should only affect one diagonal entry
+    @test SparseArrays.nnz(mod.data) == 1
+end
+
+@testset "YbusModification: unsupported component warning" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    ybus = Ybus(sys)
+
+    # Use a ThermalStandard (generator) which does not affect Ybus
+    gen = first(get_components(ThermalStandard, sys))
+    mod = @test_logs(
+        (:warn, r"does not affect the Ybus"),
+        YbusModification(ybus, PSY.Component[gen]),
+    )
+    # Should produce an empty (all-zero) delta
+    @test SparseArrays.nnz(mod.data) == 0
+end
+
+@testset "YbusModification: series chain full outage with DegreeTwoReduction" begin
+    sys = PSB.build_system(
+        PSSEParsingTestSystems,
+        "psse_14_network_reduction_test_system",
+    )
+    ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nr = PNM.get_network_reduction_data(ybus)
+
+    # Find all branches in one series chain and trip them all (full chain outage)
+    if !isempty(nr.series_branch_map)
+        arc_tuple, series_chain = first(nr.series_branch_map)
+        all_segments = PSY.ACTransmission[]
+        for segment in series_chain
+            if segment isa PNM.BranchesParallel
+                for b in segment
+                    push!(all_segments, b)
+                end
+            elseif segment isa PSY.ACTransmission
+                push!(all_segments, segment)
+            end
+        end
+
+        if !isempty(all_segments)
+            mod = YbusModification(ybus, PSY.Component[all_segments...])
+            modified_data = apply_ybus_modification(ybus, mod)
+            @test size(modified_data) == size(ybus.data)
+            @test length(mod.component_names) == length(all_segments)
+        end
+    end
+end
+
+@testset "YbusModification: impedance change on series chain with DegreeTwoReduction" begin
+    sys_old = PSB.build_system(
+        PSSEParsingTestSystems,
+        "psse_14_network_reduction_test_system",
+    )
+    sys_new = PSB.build_system(
+        PSSEParsingTestSystems,
+        "psse_14_network_reduction_test_system",
+    )
+    reductions = NetworkReduction[DegreeTwoReduction()]
+    ybus_old = Ybus(sys_old; network_reductions = reductions)
+    nr = PNM.get_network_reduction_data(ybus_old)
+
+    # Find an ACBranch in the series map
+    series_branch_old = nothing
+    series_branch_new = nothing
+    for (br, arc) in nr.reverse_series_branch_map
+        if br isa PSY.ACTransmission && !(br isa PNM.ThreeWindingTransformerWinding)
+            series_branch_old = br
+            branch_name = PSY.get_name(br)
+            series_branch_new = get_component(typeof(br), sys_new, branch_name)
+            break
+        end
+    end
+
+    if series_branch_old !== nothing && series_branch_new !== nothing
+        # Modify reactance in the new system
+        original_x = get_x(series_branch_new)
+        set_x!(series_branch_new, original_x * 1.5)
+
+        ybus_new = Ybus(sys_new; network_reductions = reductions)
+        mod = YbusModification(ybus_old, series_branch_old, series_branch_new)
+
+        # The modification applied to old Ybus should reproduce the new Ybus
+        modified_data = apply_ybus_modification(ybus_old, mod)
+        @test isapprox(modified_data, ybus_new.data, atol = 1e-4)
+    end
+end
+
+@testset "YbusModification: contingency with no associated components" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    ybus = Ybus(sys)
+
+    # Create an outage not attached to any component
+    outage = GeometricDistributionForcedOutage(;
+        mean_time_to_recovery = 0.0,
+        outage_transition_probability = 0.0,
+    )
+    # Don't attach to any component — should error
+    @test_throws ErrorException YbusModification(ybus, sys, outage)
 end

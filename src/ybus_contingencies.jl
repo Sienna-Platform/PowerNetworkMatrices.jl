@@ -22,12 +22,18 @@ struct YbusModification
     component_names::Vector{String}
     "Types of the modified components"
     component_types::Vector{DataType}
+    "Whether this modification islands the network (disconnects it into additional components)"
+    is_islanding::Bool
 end
 
 function Base.show(io::IO, ::MIME{Symbol("text/plain")}, mod::YbusModification)
     n_components = length(mod.component_names)
     n_nz = SparseArrays.nnz(mod.data)
-    print(io, "YbusModification: $n_components component(s), $n_nz nonzeros in ΔY")
+    island_str = mod.is_islanding ? ", ISLANDING" : ""
+    print(
+        io,
+        "YbusModification: $n_components component(s), $n_nz nonzeros in ΔY$island_str",
+    )
     return
 end
 
@@ -99,6 +105,44 @@ function _accumulate_shunt_outage!(
     push!(J, bus_ix)
     push!(V, YBUS_ELTYPE(-Y))
     return
+end
+
+# --- Island detection ---
+
+"""
+Check whether severing the given arcs disconnects the network.
+Uses a lightweight union-find on a modified copy of the adjacency matrix.
+Returns `true` if the modified network has more connected components than the base.
+"""
+function _check_islanding(
+    adjacency_data::SparseArrays.SparseMatrixCSC{Int8, Int},
+    bus_lookup::Dict{Int, Int},
+    severed_arcs::Set{Tuple{Int, Int}},
+    base_num_components::Int,
+)::Bool
+    isempty(severed_arcs) && return false
+    adj = copy(adjacency_data)
+    for (fb, tb) in severed_arcs
+        fb_ix = bus_lookup[fb]
+        tb_ix = bus_lookup[tb]
+        adj[fb_ix, tb_ix] = 0
+        adj[tb_ix, fb_ix] = 0
+    end
+    SparseArrays.dropzeros!(adj)
+    n = size(adj, 1)
+    n <= 1 && return false
+    rows = SparseArrays.rowvals(adj)
+    uf = collect(1:n)
+    for ix in 1:n
+        for j in SparseArrays.nzrange(adj, ix)
+            union_sets!(uf, ix, rows[j])
+        end
+    end
+    for i in 1:n
+        uf[i] = get_representative(uf, i)
+    end
+    num_components = length(unique(uf))
+    return num_components > base_num_components
 end
 
 # --- Series chain helpers ---
@@ -189,6 +233,7 @@ end
 Compute the Y-bus delta for a series chain outage.
 Analogous to VirtualMODF's `_compute_series_outage_delta_b` but returns
 full Pi-model entries instead of scalar susceptance.
+Returns a tuple of (delta_entries, chain_broken::Bool).
 """
 function _compute_series_outage_delta_ybus(
     series_chain::BranchesSeries,
@@ -204,7 +249,8 @@ function _compute_series_outage_delta_ybus(
             YBUS_ELTYPE(-Y12_old),
             YBUS_ELTYPE(-Y21_old),
             YBUS_ELTYPE(-Y22_old),
-        )
+        ),
+        true
     end
 
     reduced = _reduce_internal_nodes(modified_chain_ybus)
@@ -213,13 +259,14 @@ function _compute_series_outage_delta_ybus(
         YBUS_ELTYPE(reduced[1, 2] - Y12_old),
         YBUS_ELTYPE(reduced[2, 1] - Y21_old),
         YBUS_ELTYPE(reduced[2, 2] - Y22_old),
-    )
+    ),
+    false
 end
 
 # --- Name helper ---
 
-_get_modification_name(c::PSY.Component) =PSY.get_name(c)
-_get_modification_name(c::ThreeWindingTransformerWinding) =get_name(c)
+_get_modification_name(c::PSY.Component) = PSY.get_name(c)
+_get_modification_name(c::ThreeWindingTransformerWinding) = get_name(c)
 
 # --- Component classification (mirrors VirtualMODF._classify_outage_component!) ---
 
@@ -358,6 +405,8 @@ function YbusModification(
     sizehint!(J, 4 * n_components)
     sizehint!(V, 4 * n_components)
     series_components_by_arc = Dict{Tuple{Int, Int}, Vector{PSY.ACTransmission}}()
+    severed_arcs = Set{Tuple{Int, Int}}()
+    parallel_tripped_by_arc = Dict{Tuple{Int, Int}, Int}()
 
     for (idx, component) in enumerate(components)
         component_names[idx] = _get_modification_name(component)
@@ -366,10 +415,20 @@ function YbusModification(
             _classify_ybus_outage_3w_winding!(
                 component, nr, bus_lookup, I, J, V,
             )
+            if haskey(nr.reverse_transformer3W_map, component)
+                push!(severed_arcs, nr.reverse_transformer3W_map[component])
+            end
         elseif component isa PSY.ACTransmission
             _classify_ybus_outage_component!(
                 component, nr, bus_lookup, I, J, V, series_components_by_arc,
             )
+            if haskey(nr.reverse_direct_branch_map, component)
+                push!(severed_arcs, nr.reverse_direct_branch_map[component])
+            elseif haskey(nr.reverse_parallel_branch_map, component)
+                arc_tuple = nr.reverse_parallel_branch_map[component]
+                parallel_tripped_by_arc[arc_tuple] =
+                    get(parallel_tripped_by_arc, arc_tuple, 0) + 1
+            end
         elseif component isa PSY.FixedAdmittance
             _accumulate_shunt_outage!(I, J, V, component, bus_lookup, nr)
         elseif component isa PSY.StandardLoad
@@ -380,10 +439,20 @@ function YbusModification(
         end
     end
 
+    for (arc_tuple, tripped_count) in parallel_tripped_by_arc
+        total_branches = length(nr.parallel_branch_map[arc_tuple].branches)
+        if tripped_count >= total_branches
+            push!(severed_arcs, arc_tuple)
+        end
+    end
+
     for (arc_tuple, tripped) in series_components_by_arc
         series_chain = nr.series_branch_map[arc_tuple]
-        delta_y11, delta_y12, delta_y21, delta_y22 =
+        (delta_y11, delta_y12, delta_y21, delta_y22), chain_broken =
             _compute_series_outage_delta_ybus(series_chain, tripped)
+        if chain_broken
+            push!(severed_arcs, arc_tuple)
+        end
         fb_ix = bus_lookup[arc_tuple[1]]
         tb_ix = bus_lookup[arc_tuple[2]]
         _accumulate_arc_delta!(
@@ -393,7 +462,13 @@ function YbusModification(
     end
 
     data = SparseArrays.sparse(I, J, V, n, n)
-    return YbusModification(data, component_names, component_types)
+    is_islanding = _check_islanding(
+        ybus.adjacency_data,
+        bus_lookup,
+        severed_arcs,
+        length(ybus.subnetwork_axes),
+    )
+    return YbusModification(data, component_names, component_types, is_islanding)
 end
 
 """
@@ -524,6 +599,7 @@ function YbusModification(
         data,
         [PSY.get_name(old_branch)],
         [typeof(old_branch)],
+        false,
     )
 end
 
@@ -618,8 +694,11 @@ end
 """
     $(TYPEDSIGNATURES)
 
-Combine two YbusModifications by adding their sparse deltas.
-Both modifications must originate from the same base Ybus.
+Combine two `YbusModification`s by adding their sparse deltas.
+
+Both modifications must have the same matrix dimensions and bus indexing.
+This method validates only dimensional compatibility; callers are responsible
+for ensuring both deltas use the same underlying bus lookup/indexing.
 """
 function Base.:+(m1::YbusModification, m2::YbusModification)
     IS.@assert_op size(m1.data) == size(m2.data)
@@ -627,5 +706,6 @@ function Base.:+(m1::YbusModification, m2::YbusModification)
         m1.data + m2.data,
         vcat(m1.component_names, m2.component_names),
         vcat(m1.component_types, m2.component_types),
+        m1.is_islanding || m2.is_islanding,
     )
 end
