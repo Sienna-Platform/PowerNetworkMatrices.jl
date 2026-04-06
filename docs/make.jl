@@ -1,24 +1,28 @@
 using Documenter, PowerNetworkMatrices
 import DataStructures: OrderedDict
+using DocumenterInterLinks
+
+links = InterLinks(
+    "Julia" => "https://docs.julialang.org/en/v1/",
+    "InfrastructureSystems" =>
+        "https://nrel-sienna.github.io/InfrastructureSystems.jl/stable/",
+    "PowerSystems" => "https://nrel-sienna.github.io/PowerSystems.jl/stable/",
+    "PowerSimulations" => "https://nrel-sienna.github.io/PowerSimulations.jl/stable/",
+)
 
 pages = OrderedDict(
     "Welcome Page" => "index.md",
     "Tutorials" => Any[
-        "Getting Started" => "tutorials/getting_started.md",
-        "Incidence, BA and ABA matrices" => "tutorials/tutorial_Incidence_BA_ABA_matrices.md",
-        "PTDF matrix" => "tutorials/tutorial_PTDF_matrix.md",
-        "VirtualPTDF matrix" => "tutorials/tutorial_VirtualPTDF_matrix.md",
-        "LODF matrix" => "tutorials/tutorial_LODF_matrix.md",
-        "VirtualLODF matrix" => "tutorials/tutorial_VirtualLODF_matrix.md",
-        "Radial Reduction" => "tutorials/tutorial_RadialReduction.md",
-        "Degree Two Reduction" => "tutorials/tutorial_DegreeTwoReduction.md",
+        "Network Matrices" => "tutorials/tutorial_network_matrices.md",
+        "Virtual Matrices" => "tutorials/tutorial_virtual_matrices.md",
+        "Network Reduction" => "tutorials/tutorial_network_reduction.md",
     ],
     "How-To Guides" => Any[
-        "Compute Network Matrices" => "how_to_guides/compute_network_matrices.md",
         "Choose a Linear Solver" => "how_to_guides/choose_linear_solver.md",
+        "Reduce Repeated Operations" => "how_to_guides/reduce_repeated_operations.md",
     ],
     "Explanation" => Any[
-        "Computational Considertaions" => "explanation/computational_considerations.md",
+        "Computational Considerations" => "explanation/computational_considerations.md",
         "DC Power Flow Approximation" => "explanation/dc_power_flow_approximation.md",
         "Network Reduction Theory" => "explanation/network_reduction_theory.md",
     ],
@@ -33,12 +37,13 @@ makedocs(;
     format = Documenter.HTML(;
         mathengine = Documenter.MathJax(),
         prettyurls = haskey(ENV, "GITHUB_ACTIONS"),
-        size_threshold_warn = 200 * 2^10, # raise slightly from 100 to 200 KiB
-        size_threshold = 300 * 2^10,      # raise slightly 200 to to 300 KiB
+        size_threshold_warn = 200 * 2^10,
+        size_threshold = 300 * 2^10,
     ),
     sitename = "PowerNetworkMatrices.jl",
     authors = "Jose Daniel Lara, Matt Bossart, Alessandro Francesco Castelli",
     pages = Any[p for p in pages],
+    plugins = [links],
     clean = true,
 )
 

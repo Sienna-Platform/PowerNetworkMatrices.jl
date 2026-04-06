@@ -14,16 +14,16 @@ The incidence matrix captures pure network topology without electrical parameter
 
 ### Adjacency Matrix ([`AdjacencyMatrix`](@ref))
 
-The incidence matrix $A$ represents the directed connectivity between buses, showing which buses are connected to eachother. It's a fundamental building block for other matrices.
+The adjacency matrix represents the undirected connectivity between buses, showing which buses are connected to each other.
 
 **Properties:**
 
-  - Square matrix (arcs × buses)
-  - Values indicate connection direction (+1 for "from" bus, -1 for "to" bus, or 0)
+  - Square matrix (buses × buses)
+  - Binary values indicate whether a connection exists
   - Sparsity pattern matches the bus admittance matrix.
 
 **Purpose:**
-The adjaency matrix captures pure network topology without electrical parameters, making it useful for graph-theoretic analysis.
+The adjacency matrix captures pure network topology without electrical parameters, making it useful for graph-theoretic analysis.
 
 ### Bus Admittance Matrix ([`Ybus`](@ref))
 

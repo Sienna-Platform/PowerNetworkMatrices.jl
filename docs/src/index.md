@@ -7,62 +7,50 @@ CurrentModule = PowerNetworkMatrices
 ## Overview
 
 `PowerNetworkMatrices.jl` is a [`Julia`](http://www.julialang.org) package for
-the evaluation of network matrices given the system's data. The package allows to compute
-the matrices according to different methods, providing a flexible and powerful tool.
+the evaluation of network matrices given the system's data. The package computes
+matrices such as the [`PTDF`](@ref), [`LODF`](@ref), [`Ybus`](@ref), and
+[`IncidenceMatrix`](@ref), along with virtual (lazy) counterparts
+[`VirtualPTDF`](@ref) and [`VirtualLODF`](@ref), and supports
+[network reduction](@ref "Network Reduction Theory") techniques.
 
 `PowerNetworkMatrices.jl` is an active project under development, and we welcome your feedback,
 suggestions, and bug reports.
 
-## Documentation Structure
+## About Sienna
 
-PowerNetworkMatrices.jl strives to follow the [Diataxis documentation framework](https://diataxis.fr/),
-which organizes documentation according to the different needs of users. The documentation is
-structured into four main sections:
+`PowerNetworkMatrices.jl` is part of the National Renewable Energy Laboratory's
+[Sienna ecosystem](https://nrel-sienna.github.io/Sienna/), an open source framework for
+power system modeling, simulation, and optimization. The Sienna ecosystem can be
+[found on Github](https://github.com/NREL-Sienna/Sienna). It contains three applications:
 
-### Tutorials
+  - [Sienna\Data](https://nrel-sienna.github.io/Sienna/pages/applications/sienna_data.html) enables
+    efficient data input, analysis, and transformation
+  - [Sienna\Ops](https://nrel-sienna.github.io/Sienna/pages/applications/sienna_ops.html) enables
+    enables system scheduling simulations by formulating and solving optimization problems
+  - [Sienna\Dyn](https://nrel-sienna.github.io/Sienna/pages/applications/sienna_dyn.html) enables
+    system transient analysis including small signal stability and full system dynamic
+    simulations
 
-**Learning-oriented guides to help you get started**
+Each application uses multiple packages in the [`Julia`](http://www.julialang.org)
+programming language.
 
-Tutorials are hands-on lessons that take you through practical examples step-by-step.
-They are designed to help you learn by doing, building understanding through practical experience.
+## Installation and Quick Links
 
-  - Start here if you're new to PowerNetworkMatrices.jl
-  - Follow along with executable examples
-  - Build foundational knowledge
+  - [Sienna installation page](https://nrel-sienna.github.io/Sienna/SiennaDocs/docs/build/how-to/install/):
+    Instructions to install `PowerNetworkMatrices.jl` and other Sienna packages
+  - [Sienna Documentation Hub](https://nrel-sienna.github.io/Sienna/SiennaDocs/docs/build/index.html):
+    Links to other Sienna packages' documentation
 
-### How-To Guides
+## How To Use This Documentation
 
-**Task-oriented guides for accomplishing specific goals**
+There are four main sections containing different information:
 
-How-to guides provide direct instructions for solving specific problems or completing
-particular tasks. They assume you have basic knowledge and want to accomplish something specific.
+  - **Tutorials** - Detailed walk-throughs to help you *learn* how to use
+    `PowerNetworkMatrices.jl`
+  - **How to...** - Directions to help *guide* your work for a particular task
+  - **Explanation** - Additional details and background information to help you *understand*
+    `PowerNetworkMatrices.jl`, its structure, and how it works behind the scenes
+  - **Reference** - Technical references and API for a quick *look-up* during your work
 
-  - Use when you know what you want to do
-  - Get straight to the solution
-  - Focus on practical application
-
-### Explanation
-
-**Understanding-oriented discussion of key topics**
-
-Explanations provide background, context, and deeper understanding of concepts, design
-decisions, and the theory behind the implementation.
-
-  - Understand the "why" behind the features
-  - Learn about the mathematical foundations
-  - Explore conceptual relationships
-
-### Reference
-
-**Information-oriented technical descriptions**
-
-Reference documentation provides detailed, technical information about the API, functions,
-and data structures. It's organized for quick lookup of specific details.
-
-  - Look up function signatures and parameters
-  - Find available methods and options
-  - Access complete API documentation
-
-* * *
-
-PowerNetworkMatrices has been developed as part of the Scalable Integrated Infrastructure Planning (SIIP) initiative at the U.S. Department of Energy's National Laboratory of the Rockies (formerly known as NREL) ([NLR](https://www.nrel.gov/)).
+`PowerNetworkMatrices.jl` strives to follow the [Diataxis](https://diataxis.fr/) documentation
+framework.

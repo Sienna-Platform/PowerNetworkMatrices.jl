@@ -6,9 +6,9 @@ This guide helps you select the appropriate linear solver for your network matri
 
 `PowerNetworkMatrices.jl` supports three linear solver methods:
 
- 1. **KLU** (default) - Sparse solver using KLU factorization
- 2. **Dense** - Dense matrix operations
- 3. **MKLPardiso** - Intel's MKL Pardiso solver (Intel systems only)
+ 1. **KLU** (default) — Sparse solver using [KLU](https://github.com/JuliaSparse/KLU.jl) factorization
+ 2. **Dense** — Dense matrix operations
+ 3. **MKLPardiso** — Intel's MKL Pardiso solver (Intel systems only)
 
 ## Choosing the Right Solver
 
@@ -78,13 +78,13 @@ You can easily switch between solvers to compare performance:
 using BenchmarkTools
 
 # Benchmark KLU
-@btime ptdf_klu = PTDF($sys; linear_solver = "KLU")
+@btime PTDF($sys; linear_solver = "KLU")
 
 # Benchmark Dense
-@btime ptdf_dense = PTDF($sys; linear_solver = "Dense")
+@btime PTDF($sys; linear_solver = "Dense")
 
 # Benchmark MKLPardiso (if available)
-@btime ptdf_mkl = PTDF($sys; linear_solver = "MKLPardiso")
+@btime PTDF($sys; linear_solver = "MKLPardiso")
 ```
 
 ## Troubleshooting
@@ -101,5 +101,5 @@ Fall back to KLU if MKLPardiso is unavailable.
 
 ## Related Topics
 
-  - [How to Compute Network Matrices](@ref) - Learn how to use these solvers
-  - [PTDF matrix](@ref) - Detailed walkthrough with solver comparisons
+  - [How to Reduce Repeated Operations](@ref) — Avoid recomputing intermediate matrices
+  - [Network Matrices](@ref) — Tutorial covering matrix construction
