@@ -107,6 +107,22 @@ function _accumulate_shunt_outage!(
     return
 end
 
+function _accumulate_shunt_outage!(
+    I::Vector{Int},
+    J::Vector{Int},
+    V::Vector{YBUS_ELTYPE},
+    component::PSY.SwitchedAdmittance,
+    bus_lookup::Dict{Int, Int},
+    nr::NetworkReductionData,
+)
+    bus_ix = get_bus_index(component, bus_lookup, nr)
+    Y = PSY.get_Y(component)
+    push!(I, bus_ix)
+    push!(J, bus_ix)
+    push!(V, YBUS_ELTYPE(-Y))
+    return
+end
+
 # --- Island detection ---
 
 """
@@ -433,6 +449,8 @@ function YbusModification(
             _accumulate_shunt_outage!(I, J, V, component, bus_lookup, nr)
         elseif component isa PSY.StandardLoad
             _accumulate_shunt_outage!(I, J, V, component, bus_lookup, nr)
+        elseif component isa PSY.SwitchedAdmittance
+            _accumulate_shunt_outage!(I, J, V, component, bus_lookup, nr)
         else
             @warn "Component $(_get_modification_name(component)) ($(typeof(component))) " *
                   "does not affect the Ybus. Skipping."
@@ -514,6 +532,13 @@ function YbusModification(
         component_type = PSY.StandardLoad,
     )
         push!(shunt_components, sl)
+    end
+    for sa in PSY.get_associated_components(
+        sys,
+        contingency;
+        component_type = PSY.SwitchedAdmittance,
+    )
+        push!(shunt_components, sa)
     end
 
     all_components = PSY.Component[associated; shunt_components]
@@ -604,7 +629,7 @@ function YbusModification(
 end
 
 """
-Build a chain Ybus with one branch replaced by a new version (for impedance changes).
+Build a Ybus for a series chain with one branch replaced by a new version (for impedance changes).
 """
 function _build_impedance_changed_chain_ybus(
     series_chain::BranchesSeries,
@@ -699,6 +724,9 @@ Combine two `YbusModification`s by adding their sparse deltas.
 Both modifications must have the same matrix dimensions and bus indexing.
 This method validates only dimensional compatibility; callers are responsible
 for ensuring both deltas use the same underlying bus lookup/indexing.
+
+# TODO: Store the source system UUID in each matrix and validate consistency here.
+# See https://github.com/NREL-Sienna/PowerNetworkMatrices.jl/pull/280 for discussion.
 """
 function Base.:+(m1::YbusModification, m2::YbusModification)
     IS.@assert_op size(m1.data) == size(m2.data)

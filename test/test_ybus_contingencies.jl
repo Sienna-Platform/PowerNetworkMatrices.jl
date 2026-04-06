@@ -1,23 +1,3 @@
-@testset "YbusModification: single branch outage on c_sys5" begin
-    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
-    ybus = Ybus(sys)
-
-    # Get a line to trip
-    line = get_component(Line, sys, "1")
-    mod = YbusModification(ybus, PSY.Component[line])
-
-    # Apply the modification
-    modified_data = apply_ybus_modification(ybus, mod)
-
-    # Build reference: disable line and rebuild Ybus
-    set_available!(line, false)
-    ybus_ref = Ybus(sys)
-    set_available!(line, true)
-
-    # Compare full sparse matrices
-    @test isapprox(modified_data, ybus_ref.data, atol = 1e-4)
-end
-
 @testset "YbusModification: all N-1 branch outages on c_sys5" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     ybus = Ybus(sys)
@@ -69,8 +49,6 @@ end
     set_available!(line1, false)
     set_available!(line2, false)
     ybus_ref = Ybus(sys)
-    set_available!(line1, true)
-    set_available!(line2, true)
 
     @test isapprox(modified_data, ybus_ref.data, atol = 1e-4)
 end
@@ -90,9 +68,6 @@ end
     set_available!(line2, false)
     set_available!(line3, false)
     ybus_ref = Ybus(sys)
-    set_available!(line1, true)
-    set_available!(line2, true)
-    set_available!(line3, true)
 
     @test isapprox(modified_data, ybus_ref.data, atol = 1e-4)
     @test length(mod.component_names) == 3
@@ -115,10 +90,6 @@ end
     set_available!(line3, false)
     set_available!(line4, false)
     ybus_ref = Ybus(sys)
-    set_available!(line1, true)
-    set_available!(line2, true)
-    set_available!(line3, true)
-    set_available!(line4, true)
 
     @test isapprox(modified_data, ybus_ref.data, atol = 1e-4)
     @test length(mod.component_names) == 4
@@ -222,30 +193,12 @@ end
 end
 
 @testset "YbusModification: PhaseShiftingTransformer rejection" begin
-    # Verify the PST rejection method exists and is callable.
-    # We construct a minimal PST to test dispatch.
-    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
-    pst_components = collect(get_components(PhaseShiftingTransformer, sys))
-    if !isempty(pst_components)
-        ybus = Ybus(sys)
-        @test_throws ErrorException YbusModification(
-            ybus, PSY.Component[pst_components[1]],
-        )
-    else
-        # c_sys5 has no PSTs; just verify the method is defined
-        @test hasmethod(
-            PNM._classify_ybus_outage_component!,
-            Tuple{
-                PSY.PhaseShiftingTransformer,
-                PNM.NetworkReductionData,
-                Dict{Int, Int},
-                Vector{Int},
-                Vector{Int},
-                Vector{PNM.YBUS_ELTYPE},
-                Dict{Tuple{Int, Int}, Vector{PSY.ACTransmission}},
-            },
-        )
-    end
+    sys = build_system(PSSEParsingTestSystems, "pti_case14_with_pst3w_sys")
+    ybus = Ybus(sys)
+    pst = first(get_components(PhaseShiftingTransformer, sys))
+    @test_throws ErrorException YbusModification(
+        ybus, PSY.Component[pst],
+    )
 end
 
 @testset "YbusModification: impedance change constructor" begin
@@ -293,7 +246,6 @@ end
         # Reference: disable branch and rebuild
         set_available!(parallel_branch, false)
         ybus_ref = Ybus(sys)
-        set_available!(parallel_branch, true)
 
         @test isapprox(modified_data, ybus_ref.data, atol = 1e-4)
     end
@@ -342,7 +294,6 @@ end
     # Reference: disable shunt and rebuild
     set_available!(fix_shunt, false)
     ybus_ref = Ybus(sys)
-    set_available!(fix_shunt, true)
 
     @test isapprox(modified_data, ybus_ref.data, atol = 1e-4)
     @test length(mod.component_names) == 1
