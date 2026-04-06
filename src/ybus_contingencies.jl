@@ -271,21 +271,29 @@ end
 _get_modification_name(c::PSY.Component) = PSY.get_name(c)
 _get_modification_name(c::ThreeWindingTransformerWinding) = get_name(c)
 
-# --- Component classification (mirrors VirtualMODF._classify_outage_component!) ---
+# --- Component outage processing (multiple dispatch replaces isa chain) ---
 
-function _classify_ybus_outage_3w_winding!(
+function _process_outage_component!(
     component::ThreeWindingTransformerWinding,
     nr::NetworkReductionData,
     bus_lookup::Dict{Int, Int},
     I::Vector{Int},
     J::Vector{Int},
     V::Vector{YBUS_ELTYPE},
+    ::Dict{Tuple{Int, Int}, Vector{PSY.ACTransmission}},
+    severed_arcs::Set{Tuple{Int, Int}},
+    ::Dict{Tuple{Int, Int}, Int},
+    component_names::Vector{String},
+    component_types::Vector{DataType},
 )
     if haskey(nr.reverse_transformer3W_map, component)
         arc_tuple = nr.reverse_transformer3W_map[component]
         fb_ix = bus_lookup[arc_tuple[1]]
         tb_ix = bus_lookup[arc_tuple[2]]
         _accumulate_branch_outage!(I, J, V, component, fb_ix, tb_ix)
+        push!(component_names, _get_modification_name(component))
+        push!(component_types, typeof(component))
+        push!(severed_arcs, arc_tuple)
     else
         @warn "ThreeWindingTransformerWinding $(get_name(component)) not found in " *
               "transformer3W map. Skipping."
@@ -293,7 +301,7 @@ function _classify_ybus_outage_3w_winding!(
     return
 end
 
-function _classify_ybus_outage_component!(
+function _process_outage_component!(
     ::PSY.PhaseShiftingTransformer,
     ::NetworkReductionData,
     ::Dict{Int, Int},
@@ -301,6 +309,10 @@ function _classify_ybus_outage_component!(
     ::Vector{Int},
     ::Vector{YBUS_ELTYPE},
     ::Dict{Tuple{Int, Int}, Vector{PSY.ACTransmission}},
+    ::Set{Tuple{Int, Int}},
+    ::Dict{Tuple{Int, Int}, Int},
+    ::Vector{String},
+    ::Vector{DataType},
 )
     error(
         "Contingencies on PhaseShiftingTransformer are not supported.",
@@ -308,11 +320,10 @@ function _classify_ybus_outage_component!(
 end
 
 """
-Classify a branch outage by its location in the NetworkReductionData maps.
-Direct and parallel branches are accumulated immediately; series chain
-components are deferred for grouped computation.
+Process an AC branch outage: classify by reduction map, accumulate ΔY entries,
+track severed arcs, and record component metadata.
 """
-function _classify_ybus_outage_component!(
+function _process_outage_component!(
     component::PSY.ACTransmission,
     nr::NetworkReductionData,
     bus_lookup::Dict{Int, Int},
@@ -320,19 +331,25 @@ function _classify_ybus_outage_component!(
     J::Vector{Int},
     V::Vector{YBUS_ELTYPE},
     series_components_by_arc::Dict{Tuple{Int, Int}, Vector{PSY.ACTransmission}},
+    severed_arcs::Set{Tuple{Int, Int}},
+    parallel_tripped_by_arc::Dict{Tuple{Int, Int}, Int},
+    component_names::Vector{String},
+    component_types::Vector{DataType},
 )
     if haskey(nr.reverse_direct_branch_map, component)
         arc_tuple = nr.reverse_direct_branch_map[component]
         fb_ix = bus_lookup[arc_tuple[1]]
         tb_ix = bus_lookup[arc_tuple[2]]
         _accumulate_branch_outage!(I, J, V, component, fb_ix, tb_ix)
+        push!(severed_arcs, arc_tuple)
 
     elseif haskey(nr.reverse_parallel_branch_map, component)
-        # Individual branch contribution only, not the full parallel set
         arc_tuple = nr.reverse_parallel_branch_map[component]
         fb_ix = bus_lookup[arc_tuple[1]]
         tb_ix = bus_lookup[arc_tuple[2]]
         _accumulate_branch_outage!(I, J, V, component, fb_ix, tb_ix)
+        parallel_tripped_by_arc[arc_tuple] =
+            get(parallel_tripped_by_arc, arc_tuple, 0) + 1
 
     elseif haskey(nr.reverse_series_branch_map, component)
         arc_tuple = nr.reverse_series_branch_map[component]
@@ -345,7 +362,72 @@ function _classify_ybus_outage_component!(
         @warn "Branch $(PSY.get_name(component)) not found in any reduction map. " *
               "The component may have been eliminated by a radial reduction. " *
               "Skipping."
+        return
     end
+    push!(component_names, _get_modification_name(component))
+    push!(component_types, typeof(component))
+    return
+end
+
+"""
+Process a shunt component outage: accumulate diagonal ΔY entry and record metadata.
+"""
+function _process_outage_component!(
+    component::Union{PSY.FixedAdmittance, PSY.SwitchedAdmittance},
+    nr::NetworkReductionData,
+    bus_lookup::Dict{Int, Int},
+    I::Vector{Int},
+    J::Vector{Int},
+    V::Vector{YBUS_ELTYPE},
+    ::Dict{Tuple{Int, Int}, Vector{PSY.ACTransmission}},
+    ::Set{Tuple{Int, Int}},
+    ::Dict{Tuple{Int, Int}, Int},
+    component_names::Vector{String},
+    component_types::Vector{DataType},
+)
+    _accumulate_shunt_outage!(I, J, V, component, bus_lookup, nr)
+    push!(component_names, _get_modification_name(component))
+    push!(component_types, typeof(component))
+    return
+end
+
+function _process_outage_component!(
+    component::PSY.StandardLoad,
+    nr::NetworkReductionData,
+    bus_lookup::Dict{Int, Int},
+    I::Vector{Int},
+    J::Vector{Int},
+    V::Vector{YBUS_ELTYPE},
+    ::Dict{Tuple{Int, Int}, Vector{PSY.ACTransmission}},
+    ::Set{Tuple{Int, Int}},
+    ::Dict{Tuple{Int, Int}, Int},
+    component_names::Vector{String},
+    component_types::Vector{DataType},
+)
+    _accumulate_shunt_outage!(I, J, V, component, bus_lookup, nr)
+    push!(component_names, _get_modification_name(component))
+    push!(component_types, typeof(component))
+    return
+end
+
+"""
+Fallback for unsupported component types that do not affect the Ybus.
+"""
+function _process_outage_component!(
+    component::PSY.Component,
+    ::NetworkReductionData,
+    ::Dict{Int, Int},
+    ::Vector{Int},
+    ::Vector{Int},
+    ::Vector{YBUS_ELTYPE},
+    ::Dict{Tuple{Int, Int}, Vector{PSY.ACTransmission}},
+    ::Set{Tuple{Int, Int}},
+    ::Dict{Tuple{Int, Int}, Int},
+    ::Vector{String},
+    ::Vector{DataType},
+)
+    @warn "Component $(_get_modification_name(component)) ($(typeof(component))) " *
+          "does not affect the Ybus. Skipping."
     return
 end
 
@@ -396,10 +478,12 @@ function YbusModification(
     nr = get_network_reduction_data(ybus)
     n = length(bus_lookup)
 
-    component_names = Vector{String}(undef, length(components))
-    component_types = Vector{DataType}(undef, length(components))
-
     n_components = length(components)
+    component_names = Vector{String}()
+    component_types = Vector{DataType}()
+    sizehint!(component_names, n_components)
+    sizehint!(component_types, n_components)
+
     I = Vector{Int}()
     J = Vector{Int}()
     V = Vector{YBUS_ELTYPE}()
@@ -410,37 +494,13 @@ function YbusModification(
     severed_arcs = Set{Tuple{Int, Int}}()
     parallel_tripped_by_arc = Dict{Tuple{Int, Int}, Int}()
 
-    for (idx, component) in enumerate(components)
-        component_names[idx] = _get_modification_name(component)
-        component_types[idx] = typeof(component)
-        if component isa ThreeWindingTransformerWinding
-            _classify_ybus_outage_3w_winding!(
-                component, nr, bus_lookup, I, J, V,
-            )
-            if haskey(nr.reverse_transformer3W_map, component)
-                push!(severed_arcs, nr.reverse_transformer3W_map[component])
-            end
-        elseif component isa PSY.ACTransmission
-            _classify_ybus_outage_component!(
-                component, nr, bus_lookup, I, J, V, series_components_by_arc,
-            )
-            if haskey(nr.reverse_direct_branch_map, component)
-                push!(severed_arcs, nr.reverse_direct_branch_map[component])
-            elseif haskey(nr.reverse_parallel_branch_map, component)
-                arc_tuple = nr.reverse_parallel_branch_map[component]
-                parallel_tripped_by_arc[arc_tuple] =
-                    get(parallel_tripped_by_arc, arc_tuple, 0) + 1
-            end
-        elseif component isa PSY.FixedAdmittance
-            _accumulate_shunt_outage!(I, J, V, component, bus_lookup, nr)
-        elseif component isa PSY.StandardLoad
-            _accumulate_shunt_outage!(I, J, V, component, bus_lookup, nr)
-        elseif component isa PSY.SwitchedAdmittance
-            _accumulate_shunt_outage!(I, J, V, component, bus_lookup, nr)
-        else
-            @warn "Component $(_get_modification_name(component)) ($(typeof(component))) " *
-                  "does not affect the Ybus. Skipping."
-        end
+    for component in components
+        _process_outage_component!(
+            component, nr, bus_lookup,
+            I, J, V,
+            series_components_by_arc, severed_arcs, parallel_tripped_by_arc,
+            component_names, component_types,
+        )
     end
 
     for (arc_tuple, tripped_count) in parallel_tripped_by_arc
