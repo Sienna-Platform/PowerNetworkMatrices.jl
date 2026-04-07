@@ -223,8 +223,7 @@ end
     row2 = vmodf[2, ctg]
     # Both rows should be cached now
     @test !isempty(vmodf.row_caches)
-    mod_key = hash(ctg.modification) % UInt64
-    cache = vmodf.row_caches[mod_key]
+    cache = vmodf.row_caches[ctg.modification]
     @test haskey(cache, 1)
     @test haskey(cache, 2)
 
