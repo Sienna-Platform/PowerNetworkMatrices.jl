@@ -421,10 +421,11 @@ end
 
 Classify a branch component by looking up which reverse map it belongs to in the
 `NetworkReductionData`. Returns `(tag, arc_tuple)` where `tag` is one of:
-- `:direct`    -- branch is the sole branch on its arc
-- `:parallel`  -- branch is one of several parallel branches on its arc
-- `:series`    -- branch is part of a series chain on its arc
-- `:not_found` -- branch is not in any map (e.g., eliminated by radial reduction)
+- `:direct`       -- branch is the sole branch on its arc
+- `:parallel`     -- branch is one of several parallel branches on its arc
+- `:series`       -- branch is part of a series chain on its arc
+- `:transformer3w` -- branch is a three-winding transformer winding
+- `:not_found`    -- branch is not in any map (e.g., eliminated by radial reduction)
 
 The second element is the arc tuple `(from_bus, to_bus)`, or `nothing` when `:not_found`.
 """
@@ -438,6 +439,8 @@ function _resolve_branch_arc(
         return (:parallel, nr.reverse_parallel_branch_map[component])
     elseif haskey(nr.reverse_series_branch_map, component)
         return (:series, nr.reverse_series_branch_map[component])
+    elseif haskey(nr.reverse_transformer3W_map, component)
+        return (:transformer3w, nr.reverse_transformer3W_map[component])
     else
         return (:not_found, nothing)
     end
