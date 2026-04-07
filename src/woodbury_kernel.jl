@@ -6,6 +6,54 @@ Implements van Dijk et al. Eq. 29:
     B_m⁻¹ = B_r⁻¹ - B_r⁻¹ U (A⁻¹ + U⊤ B_r⁻¹ U)⁻¹ U⊤ B_r⁻¹
 """
 
+"""
+    _invert_woodbury_W(W_mat, ::Val{M}) -> (W_inv::Matrix{Float64}, is_islanding::Bool)
+
+Invert the M×M Woodbury W matrix. Dispatches on `Val{M}` so the compiler
+can specialize each case. Analytical formulas for M=1 and M=2 avoid LU
+factorization overhead. Falls back to LU for M > 2.
+"""
+function _invert_woodbury_W(
+    W_mat::Matrix{Float64},
+    ::Val{1},
+)::Tuple{Matrix{Float64}, Bool}
+    w = W_mat[1, 1]
+    is_island = abs(w) < MODF_ISLANDING_TOLERANCE
+    W_inv = Matrix{Float64}(undef, 1, 1)
+    W_inv[1, 1] = is_island ? 0.0 : 1.0 / w
+    return W_inv, is_island
+end
+
+function _invert_woodbury_W(
+    W_mat::Matrix{Float64},
+    ::Val{2},
+)::Tuple{Matrix{Float64}, Bool}
+    a, b, c, d = W_mat[1, 1], W_mat[1, 2], W_mat[2, 1], W_mat[2, 2]
+    det_W = a * d - b * c
+    is_island = abs(det_W) < MODF_ISLANDING_TOLERANCE
+    W_inv = Matrix{Float64}(undef, 2, 2)
+    if is_island
+        fill!(W_inv, 0.0)
+    else
+        inv_det = 1.0 / det_W
+        W_inv[1, 1] = d * inv_det
+        W_inv[1, 2] = -b * inv_det
+        W_inv[2, 1] = -c * inv_det
+        W_inv[2, 2] = a * inv_det
+    end
+    return W_inv, is_island
+end
+
+function _invert_woodbury_W(
+    W_mat::Matrix{Float64},
+    ::Val{M},
+)::Tuple{Matrix{Float64}, Bool} where {M}
+    W_lu = LinearAlgebra.lu(W_mat)
+    is_island = any(i -> abs(W_lu.U[i, i]) < MODF_ISLANDING_TOLERANCE, 1:M)
+    W_inv = is_island ? zeros(M, M) : LinearAlgebra.inv(W_lu)
+    return W_inv, is_island
+end
+
 # --- Accessor functions for Woodbury kernel ---
 # VirtualPTDF accessors (VirtualMODF accessors defined in virtual_modf_calculations.jl)
 
@@ -92,8 +140,8 @@ function _compute_woodbury_factors(
     # W = diag(1/Δb) + K_mat
     W_mat = LinearAlgebra.diagm(1.0 ./ delta_b_vec) + K_mat
 
-    # Pre-invert W
-    W_inv, is_island = _invert_woodbury_W(W_mat, M)
+    # Pre-invert W (Val dispatch lets the compiler specialize M=1,2)
+    W_inv, is_island = _invert_woodbury_W(W_mat, Val(M))
 
     return WoodburyFactors(Z, W_inv, arc_indices, delta_b_vec, is_island)
 end
