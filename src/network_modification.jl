@@ -144,7 +144,7 @@ function _classify_outage_component!(
 )
     tag, arc_tuple = _resolve_branch_arc(nr, component)
 
-    if tag === :direct
+    if tag === :direct || tag === :transformer3w
         arc_idx = arc_lookup[arc_tuple]
         b_arc = arc_susceptances[arc_idx]
         push!(direct_mods, ArcModification(arc_idx, -b_arc))
@@ -223,7 +223,7 @@ function _classify_outage_component!(
     ::Vector{ShuntModification},
     ::Vector{String},
 )
-    @warn "Component $(PSY.get_name(component)) ($(typeof(component))) " *
+    @info "Component $(PSY.get_name(component)) ($(typeof(component))) " *
           "is not supported for outage classification. Skipping."
     return
 end
@@ -252,7 +252,7 @@ function _classify_branch_modification(
 )::Vector{ArcModification}
     tag, arc_tuple = _resolve_branch_arc(nr, branch)
 
-    if tag === :direct
+    if tag === :direct || tag === :transformer3w
         arc_idx = arc_lookup[arc_tuple]
         b_arc = arc_susceptances[arc_idx]
         return [ArcModification(arc_idx, -b_arc)]
@@ -297,9 +297,13 @@ function compute_ybus_delta(
     I = Vector{Int}()
     J = Vector{Int}()
     V = Vector{YBUS_ELTYPE}()
+    expected = 4 * length(mod.arc_modifications) + length(mod.shunt_modifications)
+    sizehint!(I, expected)
+    sizehint!(J, expected)
+    sizehint!(V, expected)
 
     # Arc modifications -> full Pi-model delta Y entries
-    for arc_mod in mod.modifications
+    for arc_mod in mod.arc_modifications
         arc_tuple = arc_ax[arc_mod.arc_index]
         fb_ix = bus_lookup[arc_tuple[1]]
         tb_ix = bus_lookup[arc_tuple[2]]
@@ -307,7 +311,7 @@ function compute_ybus_delta(
         if haskey(nr.direct_branch_map, arc_tuple)
             br = nr.direct_branch_map[arc_tuple]
             b_arc = get_series_susceptance(br)
-            if abs(b_arc + arc_mod.delta_b) < eps()
+            if isapprox(arc_mod.delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
                 # Full outage: negate all Pi-model entries
                 _accumulate_branch_outage!(I, J, V, br, fb_ix, tb_ix)
             else
@@ -323,34 +327,35 @@ function compute_ybus_delta(
         elseif haskey(nr.parallel_branch_map, arc_tuple)
             bp = nr.parallel_branch_map[arc_tuple]
             b_arc = get_series_susceptance(bp)
-            if abs(b_arc + arc_mod.delta_b) < eps()
+            if isapprox(arc_mod.delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
                 _accumulate_branch_outage!(I, J, V, bp, fb_ix, tb_ix)
             else
-                Y11, Y12, Y21, Y22 = ybus_branch_entries(bp)
-                scale = arc_mod.delta_b / b_arc
-                _accumulate_arc_delta!(
-                    I, J, V, fb_ix, tb_ix,
-                    YBUS_ELTYPE(scale * Y11), YBUS_ELTYPE(scale * Y12),
-                    YBUS_ELTYPE(scale * Y21), YBUS_ELTYPE(scale * Y22),
+                # Partial outage on parallel group: find and negate matching circuit(s)
+                _accumulate_parallel_partial_outage!(
+                    I, J, V, bp, fb_ix, tb_ix, arc_mod.delta_b,
                 )
             end
         elseif haskey(nr.series_branch_map, arc_tuple)
             series_chain = nr.series_branch_map[arc_tuple]
             b_arc = get_series_susceptance(series_chain)
-            if abs(b_arc + arc_mod.delta_b) < eps()
+            if isapprox(arc_mod.delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
                 _accumulate_branch_outage!(I, J, V, series_chain, fb_ix, tb_ix)
             else
-                Y11, Y12, Y21, Y22 = ybus_branch_entries(series_chain)
-                scale = arc_mod.delta_b / b_arc
-                _accumulate_arc_delta!(
-                    I, J, V, fb_ix, tb_ix,
-                    YBUS_ELTYPE(scale * Y11), YBUS_ELTYPE(scale * Y12),
-                    YBUS_ELTYPE(scale * Y21), YBUS_ELTYPE(scale * Y22),
+                error(
+                    "compute_ybus_delta does not support partial modifications on " *
+                    "series-reduced arcs. Arc $(arc_tuple), Δb=$(arc_mod.delta_b). " *
+                    "Per-component Pi-model data is required for partial Ybus deltas.",
                 )
             end
         elseif haskey(nr.transformer3W_map, arc_tuple)
             tr = nr.transformer3W_map[arc_tuple]
             _accumulate_branch_outage!(I, J, V, tr, fb_ix, tb_ix)
+        else
+            error(
+                "ArcModification for arc $(arc_tuple) (index=$(arc_mod.arc_index)) " *
+                "could not be resolved to any Ybus-relevant component. " *
+                "The NetworkModification and Ybus may have incompatible reduction contexts.",
+            )
         end
     end
 
