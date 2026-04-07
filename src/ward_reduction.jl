@@ -11,7 +11,7 @@ end
 get_study_buses(nr::WardReduction) = nr.study_buses
 
 """
-    get_ward_reduction(data, bus_lookup, bus_axis, arc_axis, boundary_buses, ref_bus_numbers, study_buses)
+    get_ward_reduction(data, bus_lookup, bus_axis, arc_axis, boundary_buses, ref_bus_numbers, study_buses, subnetwork_bus_axis)
 
 Perform Ward reduction to create an equivalent network representation.
 
@@ -27,6 +27,7 @@ buses based on impedance criteria, and equivalent admittances are computed.
 - `boundary_buses::Set{Int}`: Set of boundary bus numbers between study and external areas
 - `ref_bus_numbers::Set{Int}`: Set of reference bus numbers
 - `study_buses::Vector{Int}`: Vector of study bus numbers to retain
+- `subnetwork_bus_axis::Vector{Int}`: Bus numbers in the selected subnetwork to reduce
 
 # Returns
 - `Tuple`: Contains bus reduction map, reverse bus search map, added branch map, and added admittance map
@@ -39,13 +40,19 @@ function get_ward_reduction(
     boundary_buses::Set{Int},
     ref_bus_numbers::Set{Int},
     study_buses::Vector{Int},
+    subnetwork_bus_axis::Vector{Int},
 )
-    all_buses = bus_axis
+    # Restrict Ward operations to the study subnetwork.
+    all_buses = subnetwork_bus_axis
+    subnetwork_bus_indices = [bus_lookup[x] for x in all_buses]
+    subnetwork_bus_lookup = Dict(bus => ix for (ix, bus) in enumerate(all_buses))
+    subnetwork_data = data[subnetwork_bus_indices, subnetwork_bus_indices]
+    println(typeof(data))
+    println(typeof(subnetwork_data))
+    boundary_buses = collect(intersect(boundary_buses, Set(all_buses)))
+
     external_buses = setdiff(all_buses, study_buses)
-    boundary_buses = collect(boundary_buses)
-    n_external = length(external_buses)
-    n_boundary = length(boundary_buses)
-    n_buses = length(bus_axis)
+    n_buses = length(all_buses)
 
     bus_reduction_map_index = Dict{Int, Set{Int}}(k => Set{Int}() for k in study_buses)
 
@@ -58,13 +65,13 @@ function get_ward_reduction(
     else
         # Optimized: Only compute Z rows for external buses instead of full Z matrix
         # This reduces complexity from O(n³) to O(n_external * n²)
-        K = klu(data; allowsingular = true)
-        boundary_bus_indices = [bus_lookup[x] for x in boundary_buses]
+        K = klu(subnetwork_data)
+        boundary_bus_indices = [subnetwork_bus_lookup[x] for x in boundary_buses]
         boundary_bus_numbers = collect(boundary_buses)
         e = zeros(ComplexF64, n_buses)
 
         for b in external_buses
-            row_index = bus_lookup[b]
+            row_index = subnetwork_bus_lookup[b]
             # Compute only the row we need: Z[row_index, :] = e_row^T * Y^(-1)
             # This is equivalent to solving Y^T * z = e_row, but since Y is symmetric, Y * z = e_row
             fill!(e, zero(ComplexF64))
@@ -80,28 +87,22 @@ function get_ward_reduction(
         _make_reverse_bus_search_map(bus_reduction_map_index, length(all_buses))
 
     #Populate matrices for computing external equivalent
-    y_ee = SparseArrays.spzeros(YBUS_ELTYPE, n_external, n_external)
-    for (ix, i) in enumerate(external_buses)
-        for (jx, j) in enumerate(external_buses)
-            y_ee[ix, jx] = data[bus_lookup[i], bus_lookup[j]]
-        end
-    end
-    y_be = SparseArrays.spzeros(YBUS_ELTYPE, n_boundary, n_external)
-    for (ix, i) in enumerate(boundary_buses)
-        for (jx, j) in enumerate(external_buses)
-            y_be[ix, jx] = data[bus_lookup[i], bus_lookup[j]]
-        end
-    end
-    y_eb = SparseArrays.spzeros(YBUS_ELTYPE, n_external, n_boundary)
-    for (ix, i) in enumerate(external_buses)
-        for (jx, j) in enumerate(boundary_buses)
-            y_eb[ix, jx] = data[bus_lookup[i], bus_lookup[j]]
-        end
-    end
+    external_bus_indices = [subnetwork_bus_lookup[x] for x in external_buses]
+    boundary_bus_indices = [subnetwork_bus_lookup[x] for x in boundary_buses]
+    y_ee = subnetwork_data[external_bus_indices, external_bus_indices]
+    y_be = subnetwork_data[
+        boundary_bus_indices,
+        external_bus_indices,
+    ]
+    y_eb = subnetwork_data[
+        external_bus_indices,
+        boundary_bus_indices,
+    ]
+
 
     # Eq. (2.16) from  https://core.ac.uk/download/pdf/79564835.pdf
     y_eq =
-        y_be * KLU.solve!(klu(y_ee; allowsingular = true), Matrix{Complex{Float64}}(y_eb))
+        y_be * KLU.solve!(klu(y_ee), Matrix{Complex{Float64}}(y_eb))
     #Loop upper diagonal of Yeq
     for ix in 1:length(boundary_buses)
         for jx in ix:length(boundary_buses)

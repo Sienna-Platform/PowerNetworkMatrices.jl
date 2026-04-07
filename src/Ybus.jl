@@ -1910,35 +1910,57 @@ function get_reduction(
     return get_reduction(A, sys, reduction)
 end
 
+"""
+    _validate_study_buses(ybus::Ybus, study_buses::Vector{Int}) -> Union{Int, Nothing}
+
+Validate that Ward reduction study buses are compatible with the network islands.
+
+Checks that all study buses exist in the reduced/unreduced bus maps, that they lie in a
+single synchronously connected subnetwork, and that any partially reduced subnetwork
+includes its slack bus. Returns the reference-bus key of the matching subnetwork when
+validation succeeds.
+
+# Errors
+- Throws `IS.DataFormatError` if any study bus is not present in the system.
+- Throws `IS.DataFormatError` if study buses span multiple subnetworks.
+- Throws `IS.DataFormatError` if a partially reduced subnetwork excludes its slack bus.
+"""
 function _validate_study_buses(
     ybus::Ybus,
     study_buses::Vector{Int},
 )
     nrd = get_network_reduction_data(ybus)
-    valid_bus_numbers =
-        union(Set(keys(nrd.bus_reduction_map)), Set(keys(nrd.reverse_bus_search_map)))
-    for b in study_buses
-        b ∉ valid_bus_numbers &&
-            throw(IS.DataFormatError("Study bus $b not found in system"))
+    valid_bus_numbers = union(
+        Set(keys(nrd.bus_reduction_map)),
+        Set(keys(nrd.reverse_bus_search_map)),
+    )
+
+    for bus_number in study_buses
+        bus_number ∉ valid_bus_numbers &&
+            throw(IS.DataFormatError("Study bus $bus_number not found in system"))
     end
+
+    study_bus_set = Set(study_buses)
     slack_bus_numbers = get_ref_bus(ybus)
-    subnetwork_axes = ybus.subnetwork_axes
-    for axes in values(subnetwork_axes)
-        subnetwork_bus_ax = axes[1]
-        all_in = all(x -> x in Set(subnetwork_bus_ax), study_buses)
-        none_in = all(x -> !(x in Set(subnetwork_bus_ax)), study_buses)
-        if Set(subnetwork_bus_ax) == Set(study_buses)
-            @warn "The study buses comprise an entire island; ward reduction will not modify this island and other islands will be eliminated"
-        end
-        if !(all_in || none_in)
+
+    for (ref_bus_key, axes) in ybus.subnetwork_axes
+        subnetwork_bus_set = Set(axes[1])
+        all_in_subnetwork = issubset(study_bus_set, subnetwork_bus_set)
+        no_study_buses_in_subnetwork = isempty(intersect(study_bus_set, subnetwork_bus_set))
+        if !(all_in_subnetwork || no_study_buses_in_subnetwork)
             throw(
                 IS.DataFormatError(
                     "All study_buses must occur in a single synchronously connected system.",
                 ),
             )
         end
+
+        if !all_in_subnetwork
+            continue
+        end
+
         for sb in slack_bus_numbers
-            if sb in subnetwork_bus_ax && sb ∉ study_buses && !(none_in)
+            if sb in subnetwork_bus_set && sb ∉ study_bus_set
                 throw(
                     IS.DataFormatError(
                         "Slack bus $sb must be included in the study buses for an area that is partially reduced",
@@ -1946,9 +1968,11 @@ function _validate_study_buses(
                 )
             end
         end
-    end
 
-    return
+        return ref_bus_key
+    end
+    error("Unable to identify subnetwork for provided study buses")
+    return nothing
 end
 
 function get_reduction(
@@ -1957,13 +1981,15 @@ function get_reduction(
     reduction::WardReduction,
 )
     study_buses = get_study_buses(reduction)
-    _validate_study_buses(ybus, study_buses)
+    ref_bus_key = _validate_study_buses(ybus, study_buses)
+    subnetwork_bus_axis = ybus.subnetwork_axes[ref_bus_key][1]
     bus_lookup = get_bus_lookup(ybus)
     bus_axis = get_bus_axis(ybus)
     A = IncidenceMatrix(ybus)
     arc_axis = get_arc_axis(A)
     boundary_buses = Set{Int}()
     removed_arcs = Set{Tuple{Int, Int}}()
+    removed_buses = setdiff(Set(bus_axis), Set(subnetwork_bus_axis))
     removed_arc_to_surviving_bus = Dict{Tuple{Int, Int}, Int}()
     for arc in arc_axis
         #Determine boundary buses:
@@ -1986,6 +2012,15 @@ function get_reduction(
         push!(set, removed_arc)
     end
 
+    if Set(subnetwork_bus_axis) == Set(study_buses)
+        @error "The study buses comprise an entire island; ward reduction will not modify this island and other islands will be eliminated"
+        return NetworkReductionData(;
+            removed_arcs = removed_arcs,
+            removed_buses = removed_buses,
+            reductions = ReductionContainer(; ward_reduction = reduction),
+        )
+    end
+
     bus_reduction_map,
     reverse_bus_search_map,
     added_arc_impedance_map,
@@ -1998,6 +2033,7 @@ function get_reduction(
             boundary_buses,
             Set(get_ref_bus(ybus)),
             study_buses,
+            subnetwork_bus_axis,
         )
 
     for arc_tuple in keys(added_arc_impedance_map)
@@ -2006,11 +2042,11 @@ function get_reduction(
                     Indexing into PTDF/LODF with branch names may give unexpected results for arc $arc_tuple"
         end
     end
-
     return NetworkReductionData(;
         bus_reduction_map = bus_reduction_map,
         reverse_bus_search_map = reverse_bus_search_map,
         removed_arcs = removed_arcs,
+        removed_buses = removed_buses,
         added_arc_impedance_map = added_arc_impedance_map,
         added_admittance_map = added_admittance_map,
         removed_arc_to_surviving_bus = removed_arc_to_surviving_bus,

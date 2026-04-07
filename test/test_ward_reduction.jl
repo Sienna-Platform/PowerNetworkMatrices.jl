@@ -155,7 +155,7 @@ end
     @test length(wr.added_admittance_map) == 1
 
     wr =
-        @test_logs (:error, r"no boundary buses found") match_mode = :any get_network_reduction_data(
+        @test_logs (:error, r"The study buses comprise an entire island") match_mode = :any get_network_reduction_data(
             Ybus(sys; network_reductions = NetworkReduction[WardReduction([15, 16, 17])]),
         )
     @test isa(wr, NetworkReductionData)
