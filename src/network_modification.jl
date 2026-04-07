@@ -60,10 +60,6 @@ function NetworkModification(
             component_type = PSY.ACTransmission),
     )
 
-    if isempty(associated_components)
-        error("Outage has no associated ACTransmission components.")
-    end
-
     nr = get_network_reduction_data(mat)
     arc_lookup = get_arc_lookup(mat)
     arc_sus = _get_arc_susceptances(mat)
@@ -94,16 +90,34 @@ function NetworkModification(
         push!(series_mods, ArcModification(arc_idx, delta_b))
     end
 
+    # Resolve shunt component modifications (affect Ybus, not DC sensitivity)
+    bus_lookup = get_bus_lookup(mat)
+    shunt_mods = ShuntModification[]
+    for T in (PSY.FixedAdmittance, PSY.SwitchedAdmittance)
+        for c in PSY.get_associated_components(sys, outage; component_type = T)
+            bus_ix = get_bus_index(c, bus_lookup, nr)
+            Y = PSY.get_Y(c)
+            push!(shunt_mods, ShuntModification(bus_ix, YBUS_ELTYPE(-Y)))
+            push!(component_names, PSY.get_name(c))
+        end
+    end
+    for c in PSY.get_associated_components(sys, outage; component_type = PSY.StandardLoad)
+        bus_ix = get_bus_index(c, bus_lookup, nr)
+        Y = PSY.get_impedance_active_power(c) - im * PSY.get_impedance_reactive_power(c)
+        push!(shunt_mods, ShuntModification(bus_ix, YBUS_ELTYPE(-Y)))
+        push!(component_names, PSY.get_name(c))
+    end
+
     mods = vcat(direct_mods, parallel_mods, series_mods)
 
-    if isempty(mods)
-        error("No valid arc modifications found for outage.")
+    if isempty(mods) && isempty(shunt_mods)
+        error("No valid arc or shunt modifications found for outage.")
     end
 
     outage_uuid = IS.get_uuid(outage)
     ctg_name = isempty(component_names) ? string(outage_uuid) :
                join(component_names, "+")
-    return NetworkModification(ctg_name, mods)
+    return NetworkModification(ctg_name, mods, shunt_mods, false)
 end
 
 """
@@ -122,10 +136,7 @@ function _classify_outage_component!(
     ::Dict{Int, Vector{PSY.ACTransmission}},
     ::Dict{Int, Tuple{Int, Int}},
 )
-    error(
-        "Contingencies on PhaseShiftingTransformer are not supported. " *
-        "Component: $(PSY.get_name(component)).",
-    )
+    _assert_not_phase_shifting(component)
 end
 
 function _classify_outage_component!(
@@ -138,27 +149,23 @@ function _classify_outage_component!(
     series_components_by_arc::Dict{Int, Vector{PSY.ACTransmission}},
     series_arc_tuples::Dict{Int, Tuple{Int, Int}},
 )
-    if haskey(nr.reverse_direct_branch_map, component)
-        arc_tuple = nr.reverse_direct_branch_map[component]
+    tag, arc_tuple = _resolve_branch_arc(nr, component)
+
+    if tag === :direct
         arc_idx = arc_lookup[arc_tuple]
         b_arc = arc_susceptances[arc_idx]
         push!(direct_mods, ArcModification(arc_idx, -b_arc))
-
-    elseif haskey(nr.reverse_parallel_branch_map, component)
-        arc_tuple = nr.reverse_parallel_branch_map[component]
+    elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
         b_circuit = PSY.get_series_susceptance(component)
         push!(parallel_mods, ArcModification(arc_idx, -b_circuit))
-
-    elseif haskey(nr.reverse_series_branch_map, component)
-        arc_tuple = nr.reverse_series_branch_map[component]
+    elseif tag === :series
         arc_idx = arc_lookup[arc_tuple]
         if !haskey(series_components_by_arc, arc_idx)
             series_components_by_arc[arc_idx] = PSY.ACTransmission[]
             series_arc_tuples[arc_idx] = arc_tuple
         end
         push!(series_components_by_arc[arc_idx], component)
-
     else
         @warn "Branch $(PSY.get_name(component)) not found in any reduction map. " *
               "The component may have been eliminated by a radial reduction."
@@ -179,10 +186,7 @@ function _classify_branch_modification(
     ::Vector{Float64},
     branch::PSY.PhaseShiftingTransformer,
 )
-    error(
-        "Modifications on PhaseShiftingTransformer are not supported. " *
-        "Component: $(PSY.get_name(branch)).",
-    )
+    _assert_not_phase_shifting(branch)
 end
 
 function _classify_branch_modification(
@@ -191,28 +195,130 @@ function _classify_branch_modification(
     arc_susceptances::Vector{Float64},
     branch::PSY.ACTransmission,
 )::Vector{ArcModification}
-    if haskey(nr.reverse_direct_branch_map, branch)
-        arc_tuple = nr.reverse_direct_branch_map[branch]
+    tag, arc_tuple = _resolve_branch_arc(nr, branch)
+
+    if tag === :direct
         arc_idx = arc_lookup[arc_tuple]
         b_arc = arc_susceptances[arc_idx]
         return [ArcModification(arc_idx, -b_arc)]
-
-    elseif haskey(nr.reverse_parallel_branch_map, branch)
-        arc_tuple = nr.reverse_parallel_branch_map[branch]
+    elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
         b_circuit = PSY.get_series_susceptance(branch)
         return [ArcModification(arc_idx, -b_circuit)]
-
-    elseif haskey(nr.reverse_series_branch_map, branch)
-        arc_tuple = nr.reverse_series_branch_map[branch]
+    elseif tag === :series
         arc_idx = arc_lookup[arc_tuple]
         series_chain = nr.series_branch_map[arc_tuple]
         delta_b = _compute_series_outage_delta_b(series_chain, branch)
         return [ArcModification(arc_idx, delta_b)]
-
     else
         @warn "Branch $(PSY.get_name(branch)) not found in any reduction map. " *
               "The component may have been eliminated by a radial reduction."
         return ArcModification[]
     end
+end
+
+# --- Bridge from NetworkModification to Ybus domain ---
+
+"""
+    compute_ybus_delta(ybus::Ybus, mod::NetworkModification) -> SparseMatrixCSC{YBUS_ELTYPE, Int}
+
+Compute the sparse ΔYbus matrix from a canonical `NetworkModification`.
+Combines arc modifications (branch outages producing Pi-model deltas) and
+shunt modifications (diagonal admittance changes) into a single sparse delta.
+
+This is the bridge between the DC sensitivity path (`NetworkModification`) and the
+AC admittance path (`Ybus`). The `NetworkModification` is the canonical representation;
+this function converts it to the Ybus domain.
+"""
+function compute_ybus_delta(
+    ybus::Ybus,
+    mod::NetworkModification,
+)::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int}
+    bus_lookup = get_bus_lookup(ybus)
+    nr = get_network_reduction_data(ybus)
+    n = length(bus_lookup)
+    arc_ax = get_arc_axis(nr)
+
+    I = Vector{Int}()
+    J = Vector{Int}()
+    V = Vector{YBUS_ELTYPE}()
+
+    # Arc modifications -> full Pi-model delta Y entries
+    for arc_mod in mod.modifications
+        arc_tuple = arc_ax[arc_mod.arc_index]
+        fb_ix = bus_lookup[arc_tuple[1]]
+        tb_ix = bus_lookup[arc_tuple[2]]
+
+        if haskey(nr.direct_branch_map, arc_tuple)
+            br = nr.direct_branch_map[arc_tuple]
+            b_arc = get_series_susceptance(br)
+            if abs(b_arc + arc_mod.delta_b) < eps()
+                # Full outage: negate all Pi-model entries
+                _accumulate_branch_outage!(I, J, V, br, fb_ix, tb_ix)
+            else
+                # Partial: scale Pi-model entries by delta_b / b_arc
+                Y11, Y12, Y21, Y22 = ybus_branch_entries(br)
+                scale = arc_mod.delta_b / b_arc
+                _accumulate_arc_delta!(
+                    I, J, V, fb_ix, tb_ix,
+                    YBUS_ELTYPE(scale * Y11), YBUS_ELTYPE(scale * Y12),
+                    YBUS_ELTYPE(scale * Y21), YBUS_ELTYPE(scale * Y22),
+                )
+            end
+        elseif haskey(nr.parallel_branch_map, arc_tuple)
+            bp = nr.parallel_branch_map[arc_tuple]
+            b_arc = get_series_susceptance(bp)
+            if abs(b_arc + arc_mod.delta_b) < eps()
+                _accumulate_branch_outage!(I, J, V, bp, fb_ix, tb_ix)
+            else
+                Y11, Y12, Y21, Y22 = ybus_branch_entries(bp)
+                scale = arc_mod.delta_b / b_arc
+                _accumulate_arc_delta!(
+                    I, J, V, fb_ix, tb_ix,
+                    YBUS_ELTYPE(scale * Y11), YBUS_ELTYPE(scale * Y12),
+                    YBUS_ELTYPE(scale * Y21), YBUS_ELTYPE(scale * Y22),
+                )
+            end
+        elseif haskey(nr.series_branch_map, arc_tuple)
+            series_chain = nr.series_branch_map[arc_tuple]
+            b_arc = get_series_susceptance(series_chain)
+            if abs(b_arc + arc_mod.delta_b) < eps()
+                _accumulate_branch_outage!(I, J, V, series_chain, fb_ix, tb_ix)
+            else
+                Y11, Y12, Y21, Y22 = ybus_branch_entries(series_chain)
+                scale = arc_mod.delta_b / b_arc
+                _accumulate_arc_delta!(
+                    I, J, V, fb_ix, tb_ix,
+                    YBUS_ELTYPE(scale * Y11), YBUS_ELTYPE(scale * Y12),
+                    YBUS_ELTYPE(scale * Y21), YBUS_ELTYPE(scale * Y22),
+                )
+            end
+        elseif haskey(nr.transformer3W_map, arc_tuple)
+            tr = nr.transformer3W_map[arc_tuple]
+            _accumulate_branch_outage!(I, J, V, tr, fb_ix, tb_ix)
+        end
+    end
+
+    # Shunt modifications -> diagonal delta Y entries
+    for smod in mod.shunt_modifications
+        push!(I, smod.bus_index)
+        push!(J, smod.bus_index)
+        push!(V, smod.delta_y)
+    end
+
+    return SparseArrays.sparse(I, J, V, n, n)
+end
+
+"""
+    apply_ybus_modification(ybus::Ybus, mod::NetworkModification) -> SparseMatrixCSC
+
+Apply a canonical NetworkModification to a Ybus, returning the modified sparse matrix.
+Convenience wrapper around `compute_ybus_delta`.
+"""
+function apply_ybus_modification(
+    ybus::Ybus,
+    mod::NetworkModification,
+)
+    delta = compute_ybus_delta(ybus, mod)
+    return ybus.data + delta
 end
