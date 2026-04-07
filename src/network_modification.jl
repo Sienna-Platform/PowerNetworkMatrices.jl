@@ -55,14 +55,17 @@ function NetworkModification(
 )
     _validate_system_uuid(mat, sys)
 
-    associated_components = collect(
-        PSY.get_associated_components(sys, outage;
-            component_type = PSY.ACTransmission),
-    )
+    # Single query for all associated components (avoids repeated PSY lookups)
+    all_components = collect(PSY.get_associated_components(sys, outage))
+
+    if isempty(all_components)
+        error("No valid arc or shunt modifications found for outage.")
+    end
 
     nr = get_network_reduction_data(mat)
     arc_lookup = get_arc_lookup(mat)
     arc_sus = _get_arc_susceptances(mat)
+    bus_lookup = get_bus_lookup(mat)
 
     # Pass 1: classify components. Series branches on the same arc must be
     # grouped so their combined Δb is computed correctly.
@@ -71,13 +74,14 @@ function NetworkModification(
     series_components_by_arc = Dict{Int, Vector{PSY.ACTransmission}}()
     series_arc_tuples = Dict{Int, Tuple{Int, Int}}()
     component_names = String[]
+    shunt_mods = ShuntModification[]
 
-    for component in associated_components
-        push!(component_names, PSY.get_name(component))
+    for component in all_components
         _classify_outage_component!(
-            nr, arc_lookup, arc_sus, component,
+            nr, arc_lookup, arc_sus, bus_lookup, component,
             direct_mods, parallel_mods,
             series_components_by_arc, series_arc_tuples,
+            shunt_mods, component_names,
         )
     end
 
@@ -88,24 +92,6 @@ function NetworkModification(
         series_chain = nr.series_branch_map[arc_tuple]
         delta_b = _compute_series_outage_delta_b(series_chain, tripped)
         push!(series_mods, ArcModification(arc_idx, delta_b))
-    end
-
-    # Resolve shunt component modifications (affect Ybus, not DC sensitivity)
-    bus_lookup = get_bus_lookup(mat)
-    shunt_mods = ShuntModification[]
-    for T in (PSY.FixedAdmittance, PSY.SwitchedAdmittance)
-        for c in PSY.get_associated_components(sys, outage; component_type = T)
-            bus_ix = get_bus_index(c, bus_lookup, nr)
-            Y = PSY.get_Y(c)
-            push!(shunt_mods, ShuntModification(bus_ix, YBUS_ELTYPE(-Y)))
-            push!(component_names, PSY.get_name(c))
-        end
-    end
-    for c in PSY.get_associated_components(sys, outage; component_type = PSY.StandardLoad)
-        bus_ix = get_bus_index(c, bus_lookup, nr)
-        Y = PSY.get_impedance_active_power(c) - im * PSY.get_impedance_reactive_power(c)
-        push!(shunt_mods, ShuntModification(bus_ix, YBUS_ELTYPE(-Y)))
-        push!(component_names, PSY.get_name(c))
     end
 
     mods = vcat(direct_mods, parallel_mods, series_mods)
@@ -121,20 +107,24 @@ function NetworkModification(
 end
 
 """
-    _classify_outage_component!(nr, arc_lookup, arc_sus, component, ...) -> nothing
+    _classify_outage_component!(nr, arc_lookup, arc_sus, bus_lookup, component, ...) -> nothing
 
-Classify a single outage component into direct, parallel, or series accumulators.
-Series components on the same arc are grouped for combined Δb computation.
+Classify a single outage component via multiple dispatch. ACTransmission branches are
+classified into direct/parallel/series arc modifications. Shunt components produce
+diagonal admittance changes. Unsupported component types are silently ignored.
 """
 function _classify_outage_component!(
     ::NetworkReductionData,
     ::Dict,
     ::Vector{Float64},
+    ::Dict{Int, Int},
     component::PSY.PhaseShiftingTransformer,
     ::Vector{ArcModification},
     ::Vector{ArcModification},
     ::Dict{Int, Vector{PSY.ACTransmission}},
     ::Dict{Int, Tuple{Int, Int}},
+    ::Vector{ShuntModification},
+    ::Vector{String},
 )
     _assert_not_phase_shifting(component)
 end
@@ -143,11 +133,14 @@ function _classify_outage_component!(
     nr::NetworkReductionData,
     arc_lookup::Dict,
     arc_susceptances::Vector{Float64},
+    ::Dict{Int, Int},
     component::PSY.ACTransmission,
     direct_mods::Vector{ArcModification},
     parallel_mods::Vector{ArcModification},
     series_components_by_arc::Dict{Int, Vector{PSY.ACTransmission}},
     series_arc_tuples::Dict{Int, Tuple{Int, Int}},
+    ::Vector{ShuntModification},
+    component_names::Vector{String},
 )
     tag, arc_tuple = _resolve_branch_arc(nr, component)
 
@@ -169,7 +162,69 @@ function _classify_outage_component!(
     else
         @warn "Branch $(PSY.get_name(component)) not found in any reduction map. " *
               "The component may have been eliminated by a radial reduction."
+        return
     end
+    push!(component_names, PSY.get_name(component))
+    return
+end
+
+function _classify_outage_component!(
+    nr::NetworkReductionData,
+    ::Dict,
+    ::Vector{Float64},
+    bus_lookup::Dict{Int, Int},
+    component::Union{PSY.FixedAdmittance, PSY.SwitchedAdmittance},
+    ::Vector{ArcModification},
+    ::Vector{ArcModification},
+    ::Dict{Int, Vector{PSY.ACTransmission}},
+    ::Dict{Int, Tuple{Int, Int}},
+    shunt_mods::Vector{ShuntModification},
+    component_names::Vector{String},
+)
+    bus_ix = get_bus_index(component, bus_lookup, nr)
+    Y = PSY.get_Y(component)
+    push!(shunt_mods, ShuntModification(bus_ix, YBUS_ELTYPE(-Y)))
+    push!(component_names, PSY.get_name(component))
+    return
+end
+
+function _classify_outage_component!(
+    nr::NetworkReductionData,
+    ::Dict,
+    ::Vector{Float64},
+    bus_lookup::Dict{Int, Int},
+    component::PSY.StandardLoad,
+    ::Vector{ArcModification},
+    ::Vector{ArcModification},
+    ::Dict{Int, Vector{PSY.ACTransmission}},
+    ::Dict{Int, Tuple{Int, Int}},
+    shunt_mods::Vector{ShuntModification},
+    component_names::Vector{String},
+)
+    bus_ix = get_bus_index(component, bus_lookup, nr)
+    Y =
+        PSY.get_impedance_active_power(component) -
+        im * PSY.get_impedance_reactive_power(component)
+    push!(shunt_mods, ShuntModification(bus_ix, YBUS_ELTYPE(-Y)))
+    push!(component_names, PSY.get_name(component))
+    return
+end
+
+function _classify_outage_component!(
+    ::NetworkReductionData,
+    ::Dict,
+    ::Vector{Float64},
+    ::Dict{Int, Int},
+    component::PSY.Component,
+    ::Vector{ArcModification},
+    ::Vector{ArcModification},
+    ::Dict{Int, Vector{PSY.ACTransmission}},
+    ::Dict{Int, Tuple{Int, Int}},
+    ::Vector{ShuntModification},
+    ::Vector{String},
+)
+    @warn "Component $(PSY.get_name(component)) ($(typeof(component))) " *
+          "is not supported for outage classification. Skipping."
     return
 end
 
