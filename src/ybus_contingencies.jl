@@ -38,3 +38,38 @@ function _accumulate_branch_outage!(
     )
     return
 end
+
+"""
+Accumulate Ybus delta entries for a partial outage on a parallel branch group.
+Greedily matches circuit(s) by susceptance and negates their Pi-model entries.
+Supports multi-circuit outages where the total delta_b is the sum of tripped circuits.
+"""
+function _accumulate_parallel_partial_outage!(
+    I::Vector{Int},
+    J::Vector{Int},
+    V::Vector{YBUS_ELTYPE},
+    bp::BranchesParallel,
+    fb_ix::Int,
+    tb_ix::Int,
+    delta_b::Float64,
+)
+    remaining_delta = delta_b
+    for br in bp.branches
+        b_circuit = get_series_susceptance(br)
+        if isapprox(-b_circuit, remaining_delta; atol = YBUS_DELTA_TOL, rtol = 0)
+            _accumulate_branch_outage!(I, J, V, br, fb_ix, tb_ix)
+            return
+        elseif -b_circuit > remaining_delta
+            _accumulate_branch_outage!(I, J, V, br, fb_ix, tb_ix)
+            remaining_delta += b_circuit
+        end
+    end
+    # Check that all delta_b was consumed by matched circuits.
+    if abs(remaining_delta) < YBUS_DELTA_TOL
+        return
+    end
+    error(
+        "Could not resolve partial parallel outage to individual circuit Pi-models. " *
+        "Arc delta_b=$(delta_b), unmatched remainder=$(remaining_delta).",
+    )
+end

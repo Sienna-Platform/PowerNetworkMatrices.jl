@@ -293,7 +293,7 @@ function _get_woodbury_factors(
     if haskey(vmodf.woodbury_cache, mod)
         return vmodf.woodbury_cache[mod]
     end
-    wf = _compute_woodbury_factors(vmodf, mod.modifications)
+    wf = _compute_woodbury_factors(vmodf, mod.arc_modifications)
     vmodf.woodbury_cache[mod] = wf
     return wf
 end
