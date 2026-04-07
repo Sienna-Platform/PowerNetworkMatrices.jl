@@ -14,9 +14,26 @@ struct ArcModification
 end
 
 """
+    ShuntModification
+
+A diagonal admittance change on a single bus (shunt outage or modification).
+Used to track shunt component outages (FixedAdmittance, SwitchedAdmittance, StandardLoad)
+that affect the Ybus but not DC sensitivity factors.
+
+# Fields
+- `bus_index::Int`: Index of the bus in the network matrix.
+- `delta_y::ComplexF32`: Change in shunt admittance (negative for an outage).
+"""
+struct ShuntModification
+    bus_index::Int
+    delta_y::ComplexF32
+end
+
+"""
 Merge ArcModifications that target the same arc index.
 """
 function _merge_modifications(mods::Vector{ArcModification})
+    length(mods) <= 1 && return mods
     by_arc = Dict{Int, Float64}()
     for m in mods
         by_arc[m.arc_index] = get(by_arc, m.arc_index, 0.0) + m.delta_b
@@ -27,19 +44,34 @@ end
 """
     NetworkModification
 
-Lightweight description of topology changes to a power network.
-Wraps a vector of [`ArcModification`](@ref) plus a label.
+Canonical description of topology changes to a power network.
+Wraps arc susceptance changes, shunt admittance changes, and islanding status.
 No dependency on `PSY.System` after construction.
 
 # Fields
 - `label::String`: Human-readable identifier for the modification.
 - `modifications::Vector{ArcModification}`: One entry per affected arc.
+- `shunt_modifications::Vector{ShuntModification}`: One entry per affected shunt bus.
+- `is_islanding::Bool`: Whether this modification disconnects the network.
 """
 struct NetworkModification
     label::String
     modifications::Vector{ArcModification}
-    function NetworkModification(label::String, mods::Vector{ArcModification})
-        return new(label, _merge_modifications(mods))
+    shunt_modifications::Vector{ShuntModification}
+    is_islanding::Bool
+    function NetworkModification(
+        label::String,
+        mods::Vector{ArcModification},
+        shunt_mods::Vector{ShuntModification},
+        is_islanding::Bool,
+    )
+        return new(label, _merge_modifications(mods), shunt_mods, is_islanding)
+    end
+    function NetworkModification(
+        label::String,
+        mods::Vector{ArcModification},
+    )
+        return new(label, _merge_modifications(mods), ShuntModification[], false)
     end
 end
 
@@ -49,11 +81,18 @@ function Base.hash(m::NetworkModification, h::UInt)
         h = hash(mod.arc_index, h)
         h = hash(mod.delta_b, h)
     end
+    for smod in m.shunt_modifications
+        h = hash(smod.bus_index, h)
+        h = hash(smod.delta_y, h)
+    end
+    h = hash(m.is_islanding, h)
     return h
 end
 
 Base.:(==)(a::NetworkModification, b::NetworkModification) =
-    a.modifications == b.modifications
+    a.modifications == b.modifications &&
+    a.shunt_modifications == b.shunt_modifications &&
+    a.is_islanding == b.is_islanding
 
 """
     ContingencySpec

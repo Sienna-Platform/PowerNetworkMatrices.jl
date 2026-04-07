@@ -414,3 +414,121 @@ function get_device_with_time_series(
     end
     return nothing
 end
+
+"""
+    _resolve_branch_arc(nr::NetworkReductionData, component::PSY.ACTransmission)
+        -> Tuple{Symbol, Union{Tuple{Int, Int}, Nothing}}
+
+Classify a branch component by looking up which reverse map it belongs to in the
+`NetworkReductionData`. Returns `(tag, arc_tuple)` where `tag` is one of:
+- `:direct`    -- branch is the sole branch on its arc
+- `:parallel`  -- branch is one of several parallel branches on its arc
+- `:series`    -- branch is part of a series chain on its arc
+- `:not_found` -- branch is not in any map (e.g., eliminated by radial reduction)
+
+The second element is the arc tuple `(from_bus, to_bus)`, or `nothing` when `:not_found`.
+"""
+function _resolve_branch_arc(
+    nr::NetworkReductionData,
+    component::PSY.ACTransmission,
+)::Tuple{Symbol, Union{Tuple{Int, Int}, Nothing}}
+    if haskey(nr.reverse_direct_branch_map, component)
+        return (:direct, nr.reverse_direct_branch_map[component])
+    elseif haskey(nr.reverse_parallel_branch_map, component)
+        return (:parallel, nr.reverse_parallel_branch_map[component])
+    elseif haskey(nr.reverse_series_branch_map, component)
+        return (:series, nr.reverse_series_branch_map[component])
+    else
+        return (:not_found, nothing)
+    end
+end
+
+"""
+    _assert_not_phase_shifting(component::PSY.ACTransmission)
+
+No-op for non-PST branches. Throws `ErrorException` for `PhaseShiftingTransformer`.
+"""
+_assert_not_phase_shifting(::PSY.ACTransmission) = nothing
+
+function _assert_not_phase_shifting(component::PSY.PhaseShiftingTransformer)
+    return error(
+        "Contingencies on PhaseShiftingTransformer are not supported. " *
+        "Component: $(PSY.get_name(component)).",
+    )
+end
+
+"""
+    _segment_susceptance_after_outage(segment, tripped_set) -> Float64
+
+Compute the remaining susceptance of a series chain segment after removing
+tripped components. Dispatches on segment type to handle both single branches
+and parallel groups within a series chain.
+
+Returns 0.0 if the segment (or all branches in a parallel group) is fully tripped.
+"""
+function _segment_susceptance_after_outage(
+    segment::PSY.ACTransmission,
+    tripped_set::Set{<:PSY.ACTransmission},
+)::Float64
+    return segment ∈ tripped_set ? 0.0 : get_series_susceptance(segment)
+end
+
+function _segment_susceptance_after_outage(
+    segment::BranchesParallel,
+    tripped_set::Set{<:PSY.ACTransmission},
+)::Float64
+    b_remaining = 0.0
+    for branch in segment.branches
+        if branch ∉ tripped_set
+            b_remaining += get_series_susceptance(branch)
+        end
+    end
+    return b_remaining
+end
+
+"""
+    _compute_series_outage_delta_b(series_chain::BranchesSeries, component::PSY.ACTransmission) -> Float64
+
+Compute the change in equivalent arc susceptance when `component` is tripped
+from `series_chain`. Delegates to the vector version.
+"""
+function _compute_series_outage_delta_b(
+    series_chain::BranchesSeries,
+    component::PSY.ACTransmission,
+)::Float64
+    return _compute_series_outage_delta_b(series_chain, [component])
+end
+
+"""
+    _compute_series_outage_delta_b(series_chain::BranchesSeries, tripped::Vector{<:PSY.ACTransmission}) -> Float64
+
+Compute the change in equivalent arc susceptance when multiple components are
+simultaneously tripped from a series chain.
+
+For a series chain with segments of susceptance b₁, b₂, ..., bₙ, the equivalent
+susceptance is: b_eq = 1 / (1/b₁ + 1/b₂ + ... + 1/bₙ).
+
+Segments can be individual branches or `BranchesParallel` groups. When a tripped
+component is inside a parallel group, only that branch's susceptance is removed
+from the group — the rest of the parallel group remains in the series chain.
+
+Returns Δb = b_new - b_old (always negative for outages).
+If all segments are fully tripped, returns -b_eq (full arc outage).
+"""
+function _compute_series_outage_delta_b(
+    series_chain::BranchesSeries,
+    tripped::Vector{<:PSY.ACTransmission},
+)::Float64
+    b_old = get_series_susceptance(series_chain)
+    tripped_set = Set{PSY.ACTransmission}(tripped)
+    remaining_inv_sum = 0.0
+    for segment in series_chain
+        b_seg = _segment_susceptance_after_outage(segment, tripped_set)
+        if b_seg == 0.0
+            return -b_old
+        end
+        remaining_inv_sum += 1.0 / b_seg
+    end
+    b_new = 1.0 / remaining_inv_sum
+    return b_new - b_old
+end
