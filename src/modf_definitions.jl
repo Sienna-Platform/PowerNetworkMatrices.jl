@@ -42,6 +42,21 @@ function _merge_modifications(mods::Vector{ArcModification})
 end
 
 """
+Merge ShuntModifications that target the same bus index, sorted by bus index.
+"""
+function _merge_shunt_modifications(mods::Vector{ShuntModification})
+    length(mods) <= 1 && return mods
+    # Accumulate in ComplexF64 to avoid precision loss, downcast on output.
+    by_bus = Dict{Int, ComplexF64}()
+    for m in mods
+        by_bus[m.bus_index] = get(by_bus, m.bus_index, zero(ComplexF64)) + m.delta_y
+    end
+    # Sort by bus index so that hash/== are insertion-order independent,
+    # preventing cache misses when identical modifications arrive in different order.
+    return [ShuntModification(idx, YBUS_ELTYPE(dy)) for (idx, dy) in sort!(collect(by_bus); by = first)]
+end
+
+"""
     NetworkModification
 
 Canonical description of topology changes to a power network.
@@ -50,13 +65,13 @@ No dependency on `PSY.System` after construction.
 
 # Fields
 - `label::String`: Human-readable identifier for the modification.
-- `modifications::Vector{ArcModification}`: One entry per affected arc.
+- `arc_modifications::Vector{ArcModification}`: One entry per affected arc.
 - `shunt_modifications::Vector{ShuntModification}`: One entry per affected shunt bus.
 - `is_islanding::Bool`: Whether this modification disconnects the network.
 """
 struct NetworkModification
     label::String
-    modifications::Vector{ArcModification}
+    arc_modifications::Vector{ArcModification}
     shunt_modifications::Vector{ShuntModification}
     is_islanding::Bool
     function NetworkModification(
@@ -65,7 +80,12 @@ struct NetworkModification
         shunt_mods::Vector{ShuntModification},
         is_islanding::Bool,
     )
-        return new(label, _merge_modifications(mods), shunt_mods, is_islanding)
+        return new(
+            label,
+            _merge_modifications(mods),
+            _merge_shunt_modifications(shunt_mods),
+            is_islanding,
+        )
     end
     function NetworkModification(
         label::String,
@@ -76,8 +96,8 @@ struct NetworkModification
 end
 
 function Base.hash(m::NetworkModification, h::UInt)
-    h = hash(length(m.modifications), h)
-    for mod in m.modifications
+    h = hash(length(m.arc_modifications), h)
+    for mod in m.arc_modifications
         h = hash(mod.arc_index, h)
         h = hash(mod.delta_b, h)
     end
@@ -90,7 +110,7 @@ function Base.hash(m::NetworkModification, h::UInt)
 end
 
 Base.:(==)(a::NetworkModification, b::NetworkModification) =
-    a.modifications == b.modifications &&
+    a.arc_modifications == b.arc_modifications &&
     a.shunt_modifications == b.shunt_modifications &&
     a.is_islanding == b.is_islanding
 
