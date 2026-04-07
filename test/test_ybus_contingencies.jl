@@ -72,7 +72,7 @@ end
     ybus_ref = Ybus(sys)
 
     @test isapprox(result, ybus_ref.data, atol = 1e-4)
-    @test length(mod.modifications) >= 1
+    @test length(mod.arc_modifications) >= 1
 end
 
 @testset "compute_ybus_delta: N-4 contingency (4 branches)" begin
@@ -105,7 +105,7 @@ end
     ybus_ref = Ybus(sys)
 
     @test isapprox(result, ybus_ref.data, atol = 1e-4)
-    @test length(mod.modifications) >= 1
+    @test length(mod.arc_modifications) >= 1
 end
 
 @testset "compute_ybus_delta: parallel branch outage on RTS_GMLC" begin
@@ -157,7 +157,7 @@ end
         result = apply_ybus_modification(ybus, mod)
 
         @test size(result) == size(ybus.data)
-        @test length(mod.modifications) == 1
+        @test length(mod.arc_modifications) == 1
     end
 end
 

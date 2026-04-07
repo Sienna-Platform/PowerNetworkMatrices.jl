@@ -365,6 +365,6 @@ end
         outage = get_supplemental_attributes(branch)[1]
         ctg_uuid = outage.internal.uuid
         ctg = get_registered_contingencies(vmodf)[ctg_uuid]
-        @test ctg.modification.modifications[1].delta_b <= 0.0
+        @test ctg.modification.arc_modifications[1].delta_b <= 0.0
     end
 end

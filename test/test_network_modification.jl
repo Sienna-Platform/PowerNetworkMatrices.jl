@@ -193,7 +193,7 @@ end
     line = first(PSY.get_components(PSY.Line, sys))
     mod = NetworkModification(vptdf, line)
 
-    @test !isempty(mod.modifications)
+    @test !isempty(mod.arc_modifications)
     @test mod.label == PSY.get_name(line)
 
     # Should produce a valid row
