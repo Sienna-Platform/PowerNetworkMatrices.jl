@@ -81,22 +81,12 @@ for (group, name) in systems
                 add_supplemental_attribute!(modf_sys, branch, outage)
             end
             _, time_build_modf1, _, _ = @timed VirtualMODF(modf_sys)
-            open("execute_time.txt", "a") do io
-                write(
-                    io,
-                    "| $(ARGS[1])-$(name)-Build VirtualMODF First | $(time_build_modf1) |\n",
-                )
-            end
+            record_time("$(name)-Build VirtualMODF First", time_build_modf1)
             vmodf = nothing
             _, time_build_modf2, _, _ = @timed begin
                 vmodf = VirtualMODF(modf_sys)
             end
-            open("execute_time.txt", "a") do io
-                write(
-                    io,
-                    "| $(ARGS[1])-$(name)-Build VirtualMODF Second | $(time_build_modf2) |\n",
-                )
-            end
+            record_time("$(name)-Build VirtualMODF Second", time_build_modf2)
             # Time querying rows for the first registered contingency
             ctgs = collect(values(get_registered_contingencies(vmodf)))
             if !isempty(ctgs)
@@ -107,18 +97,11 @@ for (group, name) in systems
                         vmodf[m, ctg]
                     end
                 end
-                open("execute_time.txt", "a") do io
-                    write(
-                        io,
-                        "| $(ARGS[1])-$(name)-VirtualMODF Query $(n_query) rows | $(time_query) |\n",
-                    )
-                end
+                record_time("$(name)-VirtualMODF Query $(n_query) rows", time_query)
             end
         catch e
             @error exception = (e, catch_backtrace())
-            open("execute_time.txt", "a") do io
-                write(io, "| $(ARGS[1])-$(name)-Build VirtualMODF | FAILED TO TEST |\n")
-            end
+            record_failure("$(name)-Build VirtualMODF")
         end
     end
     try
