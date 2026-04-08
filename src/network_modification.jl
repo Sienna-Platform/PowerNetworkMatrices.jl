@@ -1,4 +1,103 @@
 """
+    _compute_parallel_partial_ybus_delta(bp, delta_b) -> NTuple{4, YBUS_ELTYPE}
+
+Compute the Pi-model Ybus delta for a partial outage on a parallel branch group.
+Greedily matches circuit(s) by susceptance and sums their negated Pi-model entries.
+Same matching logic as `_accumulate_parallel_partial_outage!` but returns a tuple.
+"""
+function _compute_parallel_partial_ybus_delta(
+    bp::BranchesParallel,
+    delta_b::Float64,
+)::NTuple{4, YBUS_ELTYPE}
+    remaining_delta = delta_b
+    dY11 = dY12 = dY21 = dY22 = zero(YBUS_ELTYPE)
+    for br in bp.branches
+        b_circuit = get_series_susceptance(br)
+        if isapprox(-b_circuit, remaining_delta; atol = YBUS_DELTA_TOL, rtol = 0)
+            Y11, Y12, Y21, Y22 = ybus_branch_entries(br)
+            dY11 -= Y11
+            dY12 -= Y12
+            dY21 -= Y21
+            dY22 -= Y22
+            return (dY11, dY12, dY21, dY22)
+        elseif -b_circuit > remaining_delta
+            Y11, Y12, Y21, Y22 = ybus_branch_entries(br)
+            dY11 -= Y11
+            dY12 -= Y12
+            dY21 -= Y21
+            dY22 -= Y22
+            remaining_delta += b_circuit
+        end
+    end
+    if abs(remaining_delta) < YBUS_DELTA_TOL
+        return (dY11, dY12, dY21, dY22)
+    end
+    error(
+        "Could not resolve partial parallel outage to individual circuit Pi-models. " *
+        "Arc delta_b=$(delta_b), unmatched remainder=$(remaining_delta).",
+    )
+end
+
+"""
+    _compute_arc_ybus_delta(nr, arc_tuple, delta_b) -> NTuple{4, YBUS_ELTYPE}
+
+Compute the Pi-model Ybus delta `(ΔY11, ΔY12, ΔY21, ΔY22)` for an arc modification.
+Dispatches on the branch map that contains `arc_tuple` and handles full vs partial outages.
+"""
+function _compute_arc_ybus_delta(
+    nr::NetworkReductionData,
+    arc_tuple::Tuple{Int, Int},
+    delta_b::Float64,
+)::NTuple{4, YBUS_ELTYPE}
+    if haskey(nr.direct_branch_map, arc_tuple)
+        br = nr.direct_branch_map[arc_tuple]
+        b_arc = get_series_susceptance(br)
+        Y11, Y12, Y21, Y22 = ybus_branch_entries(br)
+        if isapprox(delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
+            return (YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
+                YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22))
+        else
+            scale = delta_b / b_arc
+            return (YBUS_ELTYPE(scale * Y11), YBUS_ELTYPE(scale * Y12),
+                YBUS_ELTYPE(scale * Y21), YBUS_ELTYPE(scale * Y22))
+        end
+    elseif haskey(nr.parallel_branch_map, arc_tuple)
+        bp = nr.parallel_branch_map[arc_tuple]
+        b_arc = get_series_susceptance(bp)
+        if isapprox(delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
+            Y11, Y12, Y21, Y22 = ybus_branch_entries(bp)
+            return (YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
+                YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22))
+        else
+            return _compute_parallel_partial_ybus_delta(bp, delta_b)
+        end
+    elseif haskey(nr.series_branch_map, arc_tuple)
+        series_chain = nr.series_branch_map[arc_tuple]
+        b_arc = get_series_susceptance(series_chain)
+        if isapprox(delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
+            Y11, Y12, Y21, Y22 = ybus_branch_entries(series_chain)
+            return (YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
+                YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22))
+        else
+            error(
+                "Partial Ybus delta is not supported on series-reduced arcs. " *
+                "Arc $(arc_tuple), Δb=$(delta_b).",
+            )
+        end
+    elseif haskey(nr.transformer3W_map, arc_tuple)
+        tr = nr.transformer3W_map[arc_tuple]
+        Y11, Y12, Y21, Y22 = ybus_branch_entries(tr)
+        return (YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
+            YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22))
+    else
+        error(
+            "Arc $(arc_tuple) not found in any network reduction map. " *
+            "Cannot compute Ybus Pi-model delta.",
+        )
+    end
+end
+
+"""
 $(TYPEDSIGNATURES)
 
 Construct a full arc outage `NetworkModification` by bus-pair tuple.
@@ -8,9 +107,11 @@ function NetworkModification(mat::PowerNetworkMatrix, arc::Tuple{Int, Int})
     arc_lookup = get_arc_lookup(mat)
     arc_idx = arc_lookup[arc]
     b = _get_arc_susceptances(mat)[arc_idx]
+    nr = get_network_reduction_data(mat)
+    dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc, -b)
     return NetworkModification(
         "outage_$(arc[1])_$(arc[2])",
-        [ArcModification(arc_idx, -b)],
+        [ArcModification(arc_idx, -b, dy11, dy12, dy21, dy22)],
     )
 end
 
@@ -91,7 +192,8 @@ function NetworkModification(
         arc_tuple = series_arc_tuples[arc_idx]
         series_chain = nr.series_branch_map[arc_tuple]
         delta_b = _compute_series_outage_delta_b(series_chain, tripped)
-        push!(series_mods, ArcModification(arc_idx, delta_b))
+        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
+        push!(series_mods, ArcModification(arc_idx, delta_b, dy11, dy12, dy21, dy22))
     end
 
     mods = vcat(direct_mods, parallel_mods, series_mods)
@@ -147,11 +249,13 @@ function _classify_outage_component!(
     if tag === :direct || tag === :transformer3w
         arc_idx = arc_lookup[arc_tuple]
         b_arc = arc_susceptances[arc_idx]
-        push!(direct_mods, ArcModification(arc_idx, -b_arc))
+        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc)
+        push!(direct_mods, ArcModification(arc_idx, -b_arc, dy11, dy12, dy21, dy22))
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
         b_circuit = PSY.get_series_susceptance(component)
-        push!(parallel_mods, ArcModification(arc_idx, -b_circuit))
+        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_circuit)
+        push!(parallel_mods, ArcModification(arc_idx, -b_circuit, dy11, dy12, dy21, dy22))
     elseif tag === :series
         arc_idx = arc_lookup[arc_tuple]
         if !haskey(series_components_by_arc, arc_idx)
@@ -255,16 +359,19 @@ function _classify_branch_modification(
     if tag === :direct || tag === :transformer3w
         arc_idx = arc_lookup[arc_tuple]
         b_arc = arc_susceptances[arc_idx]
-        return [ArcModification(arc_idx, -b_arc)]
+        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc)
+        return [ArcModification(arc_idx, -b_arc, dy11, dy12, dy21, dy22)]
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
         b_circuit = PSY.get_series_susceptance(branch)
-        return [ArcModification(arc_idx, -b_circuit)]
+        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_circuit)
+        return [ArcModification(arc_idx, -b_circuit, dy11, dy12, dy21, dy22)]
     elseif tag === :series
         arc_idx = arc_lookup[arc_tuple]
         series_chain = nr.series_branch_map[arc_tuple]
         delta_b = _compute_series_outage_delta_b(series_chain, branch)
-        return [ArcModification(arc_idx, delta_b)]
+        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
+        return [ArcModification(arc_idx, delta_b, dy11, dy12, dy21, dy22)]
     else
         @warn "Branch $(PSY.get_name(branch)) not found in any reduction map. " *
               "The component may have been eliminated by a radial reduction."
