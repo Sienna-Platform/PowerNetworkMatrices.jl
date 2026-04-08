@@ -1,16 +1,32 @@
 """
     ArcModification
 
-A susceptance change on a single aggregated arc.
+A susceptance change on a single aggregated arc, with optional Ybus Pi-model deltas.
 Full outage: `delta_b = -b_arc`. Single circuit on double-circuit: `delta_b = -b_circuit`.
 
 # Fields
 - `arc_index::Int`: Index of the modified arc in the network matrix.
 - `delta_b::Float64`: Change in susceptance (negative for an outage or reduction).
+- `delta_y11::ComplexF32`: Change in Pi-model self-admittance at the from bus.
+- `delta_y12::ComplexF32`: Change in Pi-model mutual admittance (from -> to).
+- `delta_y21::ComplexF32`: Change in Pi-model mutual admittance (to -> from).
+- `delta_y22::ComplexF32`: Change in Pi-model self-admittance at the to bus.
 """
 struct ArcModification
     arc_index::Int
     delta_b::Float64
+    delta_y11::ComplexF32
+    delta_y12::ComplexF32
+    delta_y21::ComplexF32
+    delta_y22::ComplexF32
+end
+
+"""
+Backward-compatible constructor that sets all Pi-model ΔY fields to zero.
+"""
+function ArcModification(arc_index::Int, delta_b::Float64)
+    z = zero(YBUS_ELTYPE)
+    return ArcModification(arc_index, delta_b, z, z, z, z)
 end
 
 """
@@ -34,11 +50,31 @@ Merge ArcModifications that target the same arc index.
 """
 function _merge_modifications(mods::Vector{ArcModification})
     length(mods) <= 1 && return mods
-    by_arc = Dict{Int, Float64}()
+    by_arc = Dict{Int, Tuple{Float64, ComplexF64, ComplexF64, ComplexF64, ComplexF64}}()
     for m in mods
-        by_arc[m.arc_index] = get(by_arc, m.arc_index, 0.0) + m.delta_b
+        prev = get(
+            by_arc,
+            m.arc_index,
+            (0.0, zero(ComplexF64), zero(ComplexF64), zero(ComplexF64), zero(ComplexF64)),
+        )
+        by_arc[m.arc_index] = (
+            prev[1] + m.delta_b,
+            prev[2] + m.delta_y11,
+            prev[3] + m.delta_y12,
+            prev[4] + m.delta_y21,
+            prev[5] + m.delta_y22,
+        )
     end
-    return [ArcModification(idx, db) for (idx, db) in sort!(collect(by_arc); by = first)]
+    return [
+        ArcModification(
+            idx,
+            vals[1],
+            YBUS_ELTYPE(vals[2]),
+            YBUS_ELTYPE(vals[3]),
+            YBUS_ELTYPE(vals[4]),
+            YBUS_ELTYPE(vals[5]),
+        ) for (idx, vals) in sort!(collect(by_arc); by = first)
+    ]
 end
 
 """
@@ -103,6 +139,10 @@ function Base.hash(m::NetworkModification, h::UInt)
     for mod in m.arc_modifications
         h = hash(mod.arc_index, h)
         h = hash(mod.delta_b, h)
+        h = hash(mod.delta_y11, h)
+        h = hash(mod.delta_y12, h)
+        h = hash(mod.delta_y21, h)
+        h = hash(mod.delta_y22, h)
     end
     for smod in m.shunt_modifications
         h = hash(smod.bus_index, h)
