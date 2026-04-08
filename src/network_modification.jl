@@ -3,7 +3,7 @@
 
 Compute the Pi-model Ybus delta for a partial outage on a parallel branch group.
 Greedily matches circuit(s) by susceptance and sums their negated Pi-model entries.
-Same matching logic as `_accumulate_parallel_partial_outage!` but returns a tuple.
+Greedily matches circuit(s) by susceptance and returns the summed negated Pi-model entries.
 """
 function _compute_parallel_partial_ybus_delta(
     bp::BranchesParallel,
@@ -416,61 +416,16 @@ function compute_ybus_delta(
     sizehint!(J, expected)
     sizehint!(V, expected)
 
-    # Arc modifications -> full Pi-model delta Y entries
+    # Arc modifications -> pre-computed Pi-model delta Y entries
     for arc_mod in mod.arc_modifications
         arc_tuple = arc_ax[arc_mod.arc_index]
         fb_ix = bus_lookup[arc_tuple[1]]
         tb_ix = bus_lookup[arc_tuple[2]]
-
-        if haskey(nr.direct_branch_map, arc_tuple)
-            br = nr.direct_branch_map[arc_tuple]
-            b_arc = get_series_susceptance(br)
-            if isapprox(arc_mod.delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
-                # Full outage: negate all Pi-model entries
-                _accumulate_branch_outage!(I, J, V, br, fb_ix, tb_ix)
-            else
-                # Partial: scale Pi-model entries by delta_b / b_arc
-                Y11, Y12, Y21, Y22 = ybus_branch_entries(br)
-                scale = arc_mod.delta_b / b_arc
-                _accumulate_arc_delta!(
-                    I, J, V, fb_ix, tb_ix,
-                    YBUS_ELTYPE(scale * Y11), YBUS_ELTYPE(scale * Y12),
-                    YBUS_ELTYPE(scale * Y21), YBUS_ELTYPE(scale * Y22),
-                )
-            end
-        elseif haskey(nr.parallel_branch_map, arc_tuple)
-            bp = nr.parallel_branch_map[arc_tuple]
-            b_arc = get_series_susceptance(bp)
-            if isapprox(arc_mod.delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
-                _accumulate_branch_outage!(I, J, V, bp, fb_ix, tb_ix)
-            else
-                # Partial outage on parallel group: find and negate matching circuit(s)
-                _accumulate_parallel_partial_outage!(
-                    I, J, V, bp, fb_ix, tb_ix, arc_mod.delta_b,
-                )
-            end
-        elseif haskey(nr.series_branch_map, arc_tuple)
-            series_chain = nr.series_branch_map[arc_tuple]
-            b_arc = get_series_susceptance(series_chain)
-            if isapprox(arc_mod.delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
-                _accumulate_branch_outage!(I, J, V, series_chain, fb_ix, tb_ix)
-            else
-                error(
-                    "compute_ybus_delta does not support partial modifications on " *
-                    "series-reduced arcs. Arc $(arc_tuple), Δb=$(arc_mod.delta_b). " *
-                    "Per-component Pi-model data is required for partial Ybus deltas.",
-                )
-            end
-        elseif haskey(nr.transformer3W_map, arc_tuple)
-            tr = nr.transformer3W_map[arc_tuple]
-            _accumulate_branch_outage!(I, J, V, tr, fb_ix, tb_ix)
-        else
-            error(
-                "ArcModification for arc $(arc_tuple) (index=$(arc_mod.arc_index)) " *
-                "could not be resolved to any Ybus-relevant component. " *
-                "The NetworkModification and Ybus may have incompatible reduction contexts.",
-            )
-        end
+        _accumulate_arc_delta!(
+            I, J, V, fb_ix, tb_ix,
+            arc_mod.delta_y11, arc_mod.delta_y12,
+            arc_mod.delta_y21, arc_mod.delta_y22,
+        )
     end
 
     # Shunt modifications -> diagonal delta Y entries
