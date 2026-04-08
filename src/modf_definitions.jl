@@ -104,14 +104,19 @@ No dependency on `PSY.System` after construction.
 
 # Fields
 - `label::String`: Human-readable identifier for the modification.
-- `arc_modifications::Vector{ArcModification}`: One entry per affected arc.
-- `shunt_modifications::Vector{ShuntModification}`: One entry per affected shunt bus.
+- `arc_modifications::Tuple{Vararg{ArcModification}}`: One entry per affected arc (immutable).
+- `shunt_modifications::Tuple{Vararg{ShuntModification}}`: One entry per affected shunt bus (immutable).
 - `is_islanding::Bool`: Whether this modification disconnects the network.
+
+Modification vectors are converted to tuples at construction time to guarantee
+immutability. This is required because `NetworkModification` is used as a `Dict`
+key (via custom `hash`/`==`) in VirtualMODF caches; mutable fields would
+silently corrupt lookups if modified after insertion.
 """
 struct NetworkModification
     label::String
-    arc_modifications::Vector{ArcModification}
-    shunt_modifications::Vector{ShuntModification}
+    arc_modifications::Tuple{Vararg{ArcModification}}
+    shunt_modifications::Tuple{Vararg{ShuntModification}}
     is_islanding::Bool
     function NetworkModification(
         label::String,
@@ -121,8 +126,8 @@ struct NetworkModification
     )
         return new(
             label,
-            _merge_modifications(mods),
-            _merge_shunt_modifications(shunt_mods),
+            Tuple(_merge_modifications(mods)),
+            Tuple(_merge_shunt_modifications(shunt_mods)),
             is_islanding,
         )
     end
@@ -130,7 +135,7 @@ struct NetworkModification
         label::String,
         mods::Vector{ArcModification},
     )
-        return new(label, _merge_modifications(mods), ShuntModification[], false)
+        return new(label, Tuple(_merge_modifications(mods)), (), false)
     end
 end
 
