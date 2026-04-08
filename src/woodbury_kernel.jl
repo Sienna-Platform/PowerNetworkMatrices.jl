@@ -82,7 +82,7 @@ across all monitored arcs for a given modification set.
 """
 function _compute_woodbury_factors(
     mat::PowerNetworkMatrix,
-    modifications::Union{Vector{ArcModification}, Tuple{Vararg{ArcModification}}},
+    modifications::Tuple{Vararg{ArcModification}},
 )::WoodburyFactors
     M = length(modifications)
     K = _get_K(mat)

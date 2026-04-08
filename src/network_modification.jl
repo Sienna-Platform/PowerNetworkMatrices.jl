@@ -415,7 +415,6 @@ function compute_ybus_delta(
     sizehint!(J, expected)
     sizehint!(V, expected)
 
-    # Arc modifications -> pre-computed Pi-model delta Y entries
     for arc_mod in mod.arc_modifications
         arc_tuple = arc_ax[arc_mod.arc_index]
         fb_ix = bus_lookup[arc_tuple[1]]
@@ -427,7 +426,6 @@ function compute_ybus_delta(
         )
     end
 
-    # Shunt modifications -> diagonal delta Y entries
     for smod in mod.shunt_modifications
         push!(I, smod.bus_index)
         push!(J, smod.bus_index)
