@@ -2,7 +2,6 @@
     _compute_parallel_partial_ybus_delta(bp, delta_b) -> NTuple{4, YBUS_ELTYPE}
 
 Compute the Pi-model Ybus delta for a partial outage on a parallel branch group.
-Greedily matches circuit(s) by susceptance and sums their negated Pi-model entries.
 Greedily matches circuit(s) by susceptance and returns the summed negated Pi-model entries.
 """
 function _compute_parallel_partial_ybus_delta(

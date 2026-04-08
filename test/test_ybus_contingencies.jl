@@ -197,3 +197,28 @@ end
 
     @test isapprox(result, ybus_ref.data, atol = 1e-4)
 end
+
+@testset "ArcModification stores correct Ybus delta entries" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    vptdf = VirtualPTDF(sys)
+    nr = PNM.get_network_reduction_data(vptdf)
+
+    for branch in get_components(
+        x -> !(typeof(x) <: Union{PhaseShiftingTransformer, DiscreteControlledACBranch}),
+        ACTransmission, sys,
+    )
+        mod = NetworkModification(vptdf, branch)
+        for arc_mod in mod.arc_modifications
+            # ΔY fields should be nonzero for a real outage
+            @test !iszero(arc_mod.delta_y12)
+
+            # Verify off-diagonal ΔY matches negated ybus_branch_entries for full outage
+            arc_tuple = PNM.get_arc_axis(nr)[arc_mod.arc_index]
+            if haskey(nr.direct_branch_map, arc_tuple)
+                br = nr.direct_branch_map[arc_tuple]
+                _, Y12, _, _ = PNM.ybus_branch_entries(br)
+                @test isapprox(arc_mod.delta_y12, PNM.YBUS_ELTYPE(-Y12); atol = 1e-6)
+            end
+        end
+    end
+end
