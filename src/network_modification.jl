@@ -86,6 +86,13 @@ function _compute_arc_ybus_delta(
         end
     elseif haskey(nr.transformer3W_map, arc_tuple)
         tr = nr.transformer3W_map[arc_tuple]
+        b_arc = get_series_susceptance(tr)
+        if !isapprox(delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
+            error(
+                "Partial Ybus delta is not supported on 3-winding transformer arcs. " *
+                "Arc $(arc_tuple), Δb=$(delta_b).",
+            )
+        end
         Y11, Y12, Y21, Y22 = ybus_branch_entries(tr)
         return (YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
             YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22))

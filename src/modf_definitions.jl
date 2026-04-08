@@ -134,6 +134,9 @@ struct NetworkModification
     end
 end
 
+# `label` is intentionally excluded from hash and equality so that physically
+# identical modifications compare equal regardless of naming. The woodbury_cache
+# in VirtualMODF relies on this property for cache hits across naming paths.
 function Base.hash(m::NetworkModification, h::UInt)
     h = hash(length(m.arc_modifications), h)
     for mod in m.arc_modifications
