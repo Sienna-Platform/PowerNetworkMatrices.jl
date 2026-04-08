@@ -53,7 +53,10 @@ function _merge_shunt_modifications(mods::Vector{ShuntModification})
     end
     # Sort by bus index so that hash/== are insertion-order independent,
     # preventing cache misses when identical modifications arrive in different order.
-    return [ShuntModification(idx, YBUS_ELTYPE(dy)) for (idx, dy) in sort!(collect(by_bus); by = first)]
+    return [
+        ShuntModification(idx, YBUS_ELTYPE(dy)) for
+        (idx, dy) in sort!(collect(by_bus); by = first)
+    ]
 end
 
 """
