@@ -266,6 +266,9 @@ end
     for branch in valid_outage_branches
         outage = get_supplemental_attributes(branch)[1]
         ctg_uuid = outage.internal.uuid
+        # Skip branches not registered as contingencies in either system
+        haskey(get_registered_contingencies(vmodf), ctg_uuid) || continue
+        haskey(get_registered_contingencies(vmodf_d2), ctg_uuid) || continue
         ctg = get_registered_contingencies(vmodf)[ctg_uuid]
         ctg_d2 = get_registered_contingencies(vmodf_d2)[ctg_uuid]
         for arc in arcs_to_compare
