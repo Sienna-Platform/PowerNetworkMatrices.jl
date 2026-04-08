@@ -47,8 +47,6 @@ function get_ward_reduction(
     subnetwork_bus_indices = [bus_lookup[x] for x in all_buses]
     subnetwork_bus_lookup = Dict(bus => ix for (ix, bus) in enumerate(all_buses))
     subnetwork_data = data[subnetwork_bus_indices, subnetwork_bus_indices]
-    println(typeof(data))
-    println(typeof(subnetwork_data))
     boundary_buses = collect(intersect(boundary_buses, Set(all_buses)))
 
     external_buses = setdiff(all_buses, study_buses)
