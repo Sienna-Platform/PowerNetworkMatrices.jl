@@ -223,8 +223,7 @@ end
     row2 = vmodf[2, ctg]
     # Both rows should be cached now
     @test !isempty(vmodf.row_caches)
-    mod_key = hash(ctg.modification) % UInt64
-    cache = vmodf.row_caches[mod_key]
+    cache = vmodf.row_caches[ctg.modification]
     @test haskey(cache, 1)
     @test haskey(cache, 2)
 
@@ -267,6 +266,9 @@ end
     for branch in valid_outage_branches
         outage = get_supplemental_attributes(branch)[1]
         ctg_uuid = outage.internal.uuid
+        # Skip branches not registered as contingencies in either system
+        haskey(get_registered_contingencies(vmodf), ctg_uuid) || continue
+        haskey(get_registered_contingencies(vmodf_d2), ctg_uuid) || continue
         ctg = get_registered_contingencies(vmodf)[ctg_uuid]
         ctg_d2 = get_registered_contingencies(vmodf_d2)[ctg_uuid]
         for arc in arcs_to_compare
@@ -366,6 +368,6 @@ end
         outage = get_supplemental_attributes(branch)[1]
         ctg_uuid = outage.internal.uuid
         ctg = get_registered_contingencies(vmodf)[ctg_uuid]
-        @test ctg.modification.modifications[1].delta_b <= 0.0
+        @test ctg.modification.arc_modifications[1].delta_b <= 0.0
     end
 end

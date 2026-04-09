@@ -5,6 +5,7 @@ export AdjacencyMatrix
 export ArcAdmittanceMatrix
 export BA_Matrix
 export ArcModification
+export ShuntModification
 export ContingencySpec
 export NetworkModification
 export DegreeTwoReduction
@@ -19,8 +20,8 @@ export VirtualMODF
 export VirtualPTDF
 export WardReduction
 export Ybus
-export YbusModification
 export apply_ybus_modification
+export compute_ybus_delta
 export DC_ABA_Matrix_Factorized
 export DC_ABA_Matrix_Unfactorized
 export DC_PTDF_Matrix
@@ -103,7 +104,6 @@ include("AdjacencyMatrix.jl")
 include("connectivity_checks.jl")
 include("subnetworks.jl")
 include("common.jl")
-include("ybus_contingencies.jl")
 include("BA_ABA_matrices.jl")
 include("ptdf_calculations.jl")
 include("row_cache.jl")

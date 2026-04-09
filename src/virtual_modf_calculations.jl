@@ -36,10 +36,10 @@ Caching is two-tiered:
         Indices of non-reference buses.
 - `contingency_cache::Dict{Base.UUID, ContingencySpec}`:
         Resolved contingencies keyed by outage UUID.
-- `woodbury_cache::Dict{UInt64, WoodburyFactors}`:
-        Precomputed Woodbury factors keyed by modification content hash.
-- `row_caches::Dict{UInt64, RowCache}`:
-        One RowCache per modification, keyed by modification content hash.
+- `woodbury_cache::Dict{NetworkModification, WoodburyFactors}`:
+        Precomputed Woodbury factors keyed by modification.
+- `row_caches::Dict{NetworkModification, RowCache}`:
+        One RowCache per modification, keyed by modification.
 - `subnetwork_axes::Dict{Int, Ax}`:
         Maps reference bus indices to subnetwork axes.
 - `tol::Base.RefValue{Float64}`:
@@ -69,8 +69,8 @@ struct VirtualMODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
     lookup::L
     valid_ix::Vector{Int}
     contingency_cache::Dict{Base.UUID, ContingencySpec}
-    woodbury_cache::Dict{UInt64, WoodburyFactors}
-    row_caches::Dict{UInt64, RowCache}
+    woodbury_cache::Dict{NetworkModification, WoodburyFactors}
+    row_caches::Dict{NetworkModification, RowCache}
     subnetwork_axes::Dict{Int, Ax}
     tol::Base.RefValue{Float64}
     max_cache_size_bytes::Int
@@ -202,8 +202,8 @@ function VirtualMODF(
         look_up,
         valid_ix,
         Dict{Base.UUID, ContingencySpec}(),
-        Dict{UInt64, WoodburyFactors}(),
-        Dict{UInt64, RowCache}(),
+        Dict{NetworkModification, WoodburyFactors}(),
+        Dict{NetworkModification, RowCache}(),
         subnetwork_axes,
         Ref(tol),
         max_cache_bytes,
@@ -253,88 +253,6 @@ function _register_outages!(vmodf::VirtualMODF, sys::PSY.System)
 end
 
 """
-    _segment_susceptance_after_outage(segment, tripped_set) -> Float64
-
-Compute the remaining susceptance of a series chain segment after removing
-tripped components. Dispatches on segment type to handle both single branches
-and parallel groups within a series chain.
-
-Returns 0.0 if the segment (or all branches in a parallel group) is fully tripped.
-"""
-function _segment_susceptance_after_outage(
-    segment::PSY.ACTransmission,
-    tripped_set::Set{<:PSY.ACTransmission},
-)::Float64
-    return segment ∈ tripped_set ? 0.0 : get_series_susceptance(segment)
-end
-
-function _segment_susceptance_after_outage(
-    segment::BranchesParallel,
-    tripped_set::Set{<:PSY.ACTransmission},
-)::Float64
-    b_remaining = 0.0
-    for branch in segment.branches
-        if branch ∉ tripped_set
-            b_remaining += get_series_susceptance(branch)
-        end
-    end
-    return b_remaining
-end
-
-"""
-    _compute_series_outage_delta_b(series_chain::BranchesSeries, component::PSY.ACTransmission) -> Float64
-
-Compute the change in equivalent arc susceptance when `component` is tripped
-from `series_chain`. Delegates to the vector version.
-"""
-function _compute_series_outage_delta_b(
-    series_chain::BranchesSeries,
-    component::PSY.ACTransmission,
-)::Float64
-    return _compute_series_outage_delta_b(series_chain, [component])
-end
-
-"""
-    _compute_series_outage_delta_b(series_chain::BranchesSeries, tripped::Vector{<:PSY.ACTransmission}) -> Float64
-
-Compute the change in equivalent arc susceptance when multiple components are
-simultaneously tripped from a series chain.
-
-For a series chain with segments of susceptance b₁, b₂, ..., bₙ, the equivalent
-susceptance is: b_eq = 1 / (1/b₁ + 1/b₂ + ... + 1/bₙ).
-
-Segments can be individual branches or `BranchesParallel` groups. When a tripped
-component is inside a parallel group, only that branch's susceptance is removed
-from the group — the rest of the parallel group remains in the series chain.
-
-Returns Δb = b_new - b_old (always negative for outages).
-If all segments are fully tripped, returns -b_eq (full arc outage).
-"""
-function _compute_series_outage_delta_b(
-    series_chain::BranchesSeries,
-    tripped::Vector{<:PSY.ACTransmission},
-)::Float64
-    b_old = get_series_susceptance(series_chain)
-    tripped_set = Set{PSY.ACTransmission}(tripped)
-    remaining_inv_sum = 0.0
-    chain_broken = false
-    for segment in series_chain
-        b_seg = _segment_susceptance_after_outage(segment, tripped_set)
-        if b_seg == 0.0
-            chain_broken = true
-            continue
-        else
-            remaining_inv_sum += 1.0 / b_seg
-        end
-    end
-    if chain_broken
-        return -b_old
-    end
-    b_new = 1.0 / remaining_inv_sum
-    return b_new - b_old
-end
-
-"""
     _register_outage!(vmodf, sys, outage) -> ContingencySpec
 
 Resolve an Outage supplemental attribute to a ContingencySpec and cache it.
@@ -358,46 +276,6 @@ end
 # --- Woodbury factor computation ---
 
 """
-    _invert_woodbury_W(W_mat, M) -> (W_inv::Matrix{Float64}, is_islanding::Bool)
-
-Invert the M×M Woodbury W matrix. Uses analytical formulas for M ≤ 2
-(the common N-1 and N-2 cases) to avoid LU factorization overhead.
-Falls back to LU for M > 2.
-"""
-function _invert_woodbury_W(
-    W_mat::Matrix{Float64},
-    M::Int,
-)::Tuple{Matrix{Float64}, Bool}
-    if M == 1
-        w = W_mat[1, 1]
-        is_island = abs(w) < MODF_ISLANDING_TOLERANCE
-        W_inv = Matrix{Float64}(undef, 1, 1)
-        W_inv[1, 1] = is_island ? 0.0 : 1.0 / w
-        return W_inv, is_island
-    elseif M == 2
-        a, b, c, d = W_mat[1, 1], W_mat[1, 2], W_mat[2, 1], W_mat[2, 2]
-        det_W = a * d - b * c
-        is_island = abs(det_W) < MODF_ISLANDING_TOLERANCE
-        W_inv = Matrix{Float64}(undef, 2, 2)
-        if is_island
-            fill!(W_inv, 0.0)
-        else
-            inv_det = 1.0 / det_W
-            W_inv[1, 1] = d * inv_det
-            W_inv[1, 2] = -b * inv_det
-            W_inv[2, 1] = -c * inv_det
-            W_inv[2, 2] = a * inv_det
-        end
-        return W_inv, is_island
-    else
-        W_lu = LinearAlgebra.lu(W_mat)
-        is_island = any(i -> abs(W_lu.U[i, i]) < MODF_ISLANDING_TOLERANCE, 1:M)
-        W_inv = is_island ? zeros(M, M) : LinearAlgebra.inv(W_lu)
-        return W_inv, is_island
-    end
-end
-
-"""
     _get_woodbury_factors(vmodf, mod) -> WoodburyFactors
 
 Compute and cache the Woodbury factors for a network modification.
@@ -412,12 +290,11 @@ function _get_woodbury_factors(
     vmodf::VirtualMODF,
     mod::NetworkModification,
 )
-    key = hash(mod) % UInt64
-    if haskey(vmodf.woodbury_cache, key)
-        return vmodf.woodbury_cache[key]
+    if haskey(vmodf.woodbury_cache, mod)
+        return vmodf.woodbury_cache[mod]
     end
-    wf = _compute_woodbury_factors(vmodf, mod.modifications)
-    vmodf.woodbury_cache[key] = wf
+    wf = _compute_woodbury_factors(vmodf, mod.arc_modifications)
+    vmodf.woodbury_cache[mod] = wf
     return wf
 end
 
@@ -445,17 +322,17 @@ end
 # --- Row cache management ---
 
 """
-    _get_or_create_row_cache(vmodf, key) -> RowCache
+    _get_or_create_row_cache(vmodf, mod) -> RowCache
 
-Get or create the per-modification RowCache for the given label key.
+Get or create the per-modification RowCache for the given modification.
 """
-function _get_or_create_row_cache(vmodf::VirtualMODF, key::UInt64)
-    if !haskey(vmodf.row_caches, key)
+function _get_or_create_row_cache(vmodf::VirtualMODF, mod::NetworkModification)
+    if !haskey(vmodf.row_caches, mod)
         row_size = length(vmodf.temp_data) * sizeof(Float64)
-        vmodf.row_caches[key] =
+        vmodf.row_caches[mod] =
             RowCache(vmodf.max_cache_size_bytes, Set{Int}(), row_size)
     end
-    return vmodf.row_caches[key]
+    return vmodf.row_caches[mod]
 end
 
 # --- getindex: by integer monitored index + NetworkModification ---
@@ -471,8 +348,7 @@ function Base.getindex(
     monitored_idx::Int,
     mod::NetworkModification,
 )
-    key = hash(mod) % UInt64
-    cache = _get_or_create_row_cache(vmodf, key)
+    cache = _get_or_create_row_cache(vmodf, mod)
 
     if haskey(cache, monitored_idx)
         return copy(cache[monitored_idx])
