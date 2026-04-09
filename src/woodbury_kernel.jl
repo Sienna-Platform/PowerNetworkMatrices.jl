@@ -20,7 +20,11 @@ function _invert_woodbury_W(
     w = W_mat[1, 1]
     is_island = abs(w) < MODF_ISLANDING_TOLERANCE
     W_inv = Matrix{Float64}(undef, 1, 1)
-    W_inv[1, 1] = is_island ? 0.0 : 1.0 / w
+    if is_island
+        W_inv[1, 1] = 0.0
+    else
+        W_inv[1, 1] = 1.0 / w
+    end
     return W_inv, is_island
 end
 
@@ -32,7 +36,7 @@ function _invert_woodbury_W(
     det_W = a * d - b * c
     is_island = abs(det_W) < MODF_ISLANDING_TOLERANCE
     if is_island
-        W_inv = LinearAlgebra.pinv(W_mat)
+        W_inv = LinearAlgebra.pinv(W_mat; atol = MODF_ISLANDING_TOLERANCE)
     else
         inv_det = 1.0 / det_W
         W_inv = Matrix{Float64}(undef, 2, 2)
@@ -50,7 +54,12 @@ function _invert_woodbury_W(
 )::Tuple{Matrix{Float64}, Bool} where {M}
     W_lu = LinearAlgebra.lu(W_mat; check = false)
     is_island = any(i -> abs(W_lu.U[i, i]) < MODF_ISLANDING_TOLERANCE, 1:M)
-    W_inv = is_island ? LinearAlgebra.pinv(W_mat) : LinearAlgebra.inv(W_lu)
+    W_inv =
+        if is_island
+            LinearAlgebra.pinv(W_mat; atol = MODF_ISLANDING_TOLERANCE)
+        else
+            LinearAlgebra.inv(W_lu)
+        end
     return W_inv, is_island
 end
 
@@ -143,6 +152,10 @@ function _compute_woodbury_factors(
     # Pre-invert W (Val dispatch lets the compiler specialize M=1,2)
     W_inv, is_island = _invert_woodbury_W(W_mat, Val(M))
 
+    if is_island
+        @debug "Contingency islands the network; using pinv-based Woodbury correction."
+    end
+
     return WoodburyFactors(Z, W_inv, arc_indices, delta_b_vec, is_island)
 end
 
@@ -171,10 +184,6 @@ function _apply_woodbury_correction(
     temp_data = _get_temp_data(mat)
     work_ba_col = _get_work_ba_col(mat)
     n_bus = length(temp_data)
-
-    if wf.is_islanding
-        @debug "Contingency islands the network; using pinv-based Woodbury correction."
-    end
 
     M = length(wf.arc_indices)
 
