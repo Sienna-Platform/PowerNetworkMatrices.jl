@@ -48,7 +48,7 @@ end
 """
 Merge ArcModifications that target the same arc index.
 """
-function _merge_modifications(mods::Vector{ArcModification})
+function _merge_arc_modifications(mods::Vector{ArcModification})
     length(mods) <= 1 && return mods
     by_arc = Dict{Int, Tuple{Float64, ComplexF64, ComplexF64, ComplexF64, ComplexF64}}()
     for m in mods
@@ -126,7 +126,7 @@ struct NetworkModification
     )
         return new(
             label,
-            Tuple(_merge_modifications(mods)),
+            Tuple(_merge_arc_modifications(mods)),
             Tuple(_merge_shunt_modifications(shunt_mods)),
             is_islanding,
         )
@@ -135,7 +135,7 @@ struct NetworkModification
         label::String,
         mods::Vector{ArcModification},
     )
-        return new(label, Tuple(_merge_modifications(mods)), (), false)
+        return new(label, Tuple(_merge_arc_modifications(mods)), (), false)
     end
 end
 
