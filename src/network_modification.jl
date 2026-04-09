@@ -2,38 +2,23 @@
     _compute_parallel_partial_ybus_delta(bp, delta_b) -> NTuple{4, YBUS_ELTYPE}
 
 Compute the Pi-model Ybus delta for a partial outage on a parallel branch group.
-Greedily matches circuit(s) by susceptance and returns the summed negated Pi-model entries.
+Finds the circuit whose susceptance matches `delta_b` and returns its negated Pi-model entries.
 """
 function _compute_parallel_partial_ybus_delta(
     bp::BranchesParallel,
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
-    remaining_delta = delta_b
-    dY11 = dY12 = dY21 = dY22 = zero(YBUS_ELTYPE)
     for br in bp.branches
         b_circuit = get_series_susceptance(br)
-        if isapprox(-b_circuit, remaining_delta; atol = YBUS_DELTA_TOL, rtol = 0)
+        if isapprox(-b_circuit, delta_b; atol = YBUS_DELTA_TOL, rtol = 0)
             Y11, Y12, Y21, Y22 = ybus_branch_entries(br)
-            dY11 -= Y11
-            dY12 -= Y12
-            dY21 -= Y21
-            dY22 -= Y22
-            return (dY11, dY12, dY21, dY22)
-        elseif -b_circuit > remaining_delta
-            Y11, Y12, Y21, Y22 = ybus_branch_entries(br)
-            dY11 -= Y11
-            dY12 -= Y12
-            dY21 -= Y21
-            dY22 -= Y22
-            remaining_delta += b_circuit
+            return (YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
+                YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22))
         end
-    end
-    if abs(remaining_delta) < YBUS_DELTA_TOL
-        return (dY11, dY12, dY21, dY22)
     end
     error(
         "Could not resolve partial parallel outage to individual circuit Pi-models. " *
-        "Arc delta_b=$(delta_b), unmatched remainder=$(remaining_delta).",
+        "No circuit in parallel group matches delta_b=$(delta_b).",
     )
 end
 
@@ -205,7 +190,8 @@ function NetworkModification(
     mods = vcat(direct_mods, parallel_mods, series_mods)
 
     if isempty(mods) && isempty(shunt_mods)
-        error("No valid arc or shunt modifications found for outage.")
+        @info "No valid arc or shunt modifications found for outage. " *
+              "The outage may only affect non-network components (e.g., generators)."
     end
 
     outage_uuid = IS.get_uuid(outage)
@@ -270,7 +256,7 @@ function _classify_outage_component!(
         end
         push!(series_components_by_arc[arc_idx], component)
     else
-        @warn "Branch $(PSY.get_name(component)) not found in any reduction map. " *
+        @info "Branch $(PSY.get_name(component)) not found in any reduction map. " *
               "The component may have been eliminated by a radial reduction."
         return
     end
@@ -338,6 +324,26 @@ function _classify_outage_component!(
     return
 end
 
+function _classify_outage_component!(
+    ::NetworkReductionData,
+    ::Dict,
+    ::Vector{Float64},
+    ::Dict{Int, Int},
+    component::PSY.ThreeWindingTransformer,
+    ::Vector{ArcModification},
+    ::Vector{ArcModification},
+    ::Dict{Int, Vector{PSY.ACTransmission}},
+    ::Dict{Int, Tuple{Int, Int}},
+    ::Vector{ShuntModification},
+    ::Vector{String},
+)
+    error(
+        "Outages on ThreeWindingTransformer components are not yet supported. " *
+        "Component: $(PSY.get_name(component)). " *
+        "Use individual ThreeWindingTransformerWinding arcs instead.",
+    )
+end
+
 """
     _classify_branch_modification(nr, arc_lookup, arc_susceptances, branch) -> Vector{ArcModification}
 
@@ -379,10 +385,29 @@ function _classify_branch_modification(
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
         return [ArcModification(arc_idx, delta_b, dy11, dy12, dy21, dy22)]
     else
-        @warn "Branch $(PSY.get_name(branch)) not found in any reduction map. " *
+        @info "Branch $(PSY.get_name(branch)) not found in any reduction map. " *
               "The component may have been eliminated by a radial reduction."
         return ArcModification[]
     end
+end
+
+# --- Accumulation helpers for Ybus deltas ---
+
+function _accumulate_arc_delta!(
+    I::Vector{Int},
+    J::Vector{Int},
+    V::Vector{YBUS_ELTYPE},
+    fb_ix::Int,
+    tb_ix::Int,
+    delta_y11::YBUS_ELTYPE,
+    delta_y12::YBUS_ELTYPE,
+    delta_y21::YBUS_ELTYPE,
+    delta_y22::YBUS_ELTYPE,
+)
+    push!(I, fb_ix, fb_ix, tb_ix, tb_ix)
+    push!(J, fb_ix, tb_ix, fb_ix, tb_ix)
+    push!(V, delta_y11, delta_y12, delta_y21, delta_y22)
+    return
 end
 
 # --- Bridge from NetworkModification to Ybus domain ---
