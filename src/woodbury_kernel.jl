@@ -44,6 +44,9 @@ function _invert_woodbury_W(
     return W_inv, is_island
 end
 
+# TODO: handle islanding case properly — currently returns zeros which
+# silently produces incorrect results for partially-islanded contingencies.
+# See PR #286 review discussion.
 function _invert_woodbury_W(
     W_mat::Matrix{Float64},
     ::Val{M},
