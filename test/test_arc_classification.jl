@@ -27,6 +27,13 @@
         @test tag === :series
         @test arc == expected_arc
     end
+
+    if !isempty(nr.reverse_transformer3W_map)
+        winding, expected_arc = first(nr.reverse_transformer3W_map)
+        tag, arc = PNM._resolve_branch_arc(nr, winding)
+        @test tag === :transformer3w
+        @test arc == expected_arc
+    end
 end
 
 @testset "_resolve_branch_arc: returns :not_found for eliminated branches" begin
