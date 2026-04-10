@@ -1991,17 +1991,18 @@ function get_reduction(
     removed_arcs = Set{Tuple{Int, Int}}()
     removed_buses = setdiff(Set(bus_axis), Set(subnetwork_bus_axis))
     removed_arc_to_surviving_bus = Dict{Tuple{Int, Int}, Int}()
+    study_bus_set = Set(study_buses)
     for arc in arc_axis
         #Determine boundary buses:
-        if (arc[1] ∈ study_buses) && (arc[2] ∉ study_buses)
+        if (arc[1] ∈ study_bus_set) && (arc[2] ∉ study_bus_set)
             push!(boundary_buses, arc[1])
             removed_arc_to_surviving_bus[arc] = arc[1]
-        elseif (arc[1] ∉ study_buses) && (arc[2] ∈ study_buses)
+        elseif (arc[1] ∉ study_bus_set) && (arc[2] ∈ study_bus_set)
             push!(boundary_buses, arc[2])
             removed_arc_to_surviving_bus[arc] = arc[2]
         end
         #Determine arcs outside of study area
-        if !(arc[1] ∈ study_buses && arc[2] ∈ study_buses)
+        if !(arc[1] ∈ study_bus_set && arc[2] ∈ study_bus_set)
             push!(removed_arcs, arc)
         end
     end
