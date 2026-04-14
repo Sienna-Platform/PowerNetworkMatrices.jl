@@ -46,16 +46,16 @@ The matrix axes are indexed by arc tuples `(from_bus_number, to_bus_number)` and
 You can inspect the axes and lookup dictionaries as follows:
 
 ```@repl quick_start_guide
-# axes: first element is bus numbers, second is arc tuples (due to transposed storage)
+# axes and lookup dictionaries describe the arc tuples and bus numbers for each dimension
 PNM.get_axes(ptdf_matrix)
-
-# lookup dictionaries map arc tuples and bus numbers to matrix indices
 PNM.get_lookup(ptdf_matrix)
 ```
 
-Elements can be accessed using arc tuples and bus numbers directly:
+Elements can be accessed using arc tuples and bus numbers directly. The example below picks
+the first arc and first bus from the matrix axes so it works for any system:
 
 ```@repl quick_start_guide
-# access a PTDF element by arc tuple and bus number
-ptdf_matrix[(1, 2), 3]
+some_arc = PNM.get_axes(ptdf_matrix)[2][1]
+some_bus = PNM.get_axes(ptdf_matrix)[1][1]
+ptdf_matrix[some_arc, some_bus]
 ```
