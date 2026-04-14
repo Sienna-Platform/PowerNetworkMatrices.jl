@@ -61,6 +61,7 @@ lodf_1[row_idx, col_idx]
 ```
 
 !!! note
+    
     For backward compatibility, branch name strings can also be used to index the `LODF` matrix (e.g. `lodf_1["branch_name_1", "branch_name_2"]`). This uses `get_branch_multiplier` internally to map branch names to their corresponding arc tuples. Using arc tuples directly is recommended.
 
 ## Computing `LODF` from pre-computed matrices

@@ -110,18 +110,20 @@ Each matrix stores `axes` and `lookup` fields:
 
 **Indexing summary by matrix type:**
 
-| Matrix            | Dimension 1 (rows)    | Dimension 2 (columns) |
-|:----------------- |:--------------------- |:--------------------- |
-| `IncidenceMatrix` | Arc tuples            | Bus numbers           |
-| `BA_Matrix`       | Arc tuples            | Bus numbers           |
-| `PTDF`            | Arc tuples            | Bus numbers           |
-| `LODF`            | Arc tuples            | Arc tuples            |
-| `Ybus`            | Bus numbers           | Bus numbers           |
-| `VirtualPTDF`     | Arc tuples            | Bus numbers           |
-| `VirtualLODF`     | Arc tuples            | Arc tuples            |
+| Matrix            | Dimension 1 (rows) | Dimension 2 (columns) |
+|:----------------- |:------------------ |:--------------------- |
+| `IncidenceMatrix` | Arc tuples         | Bus numbers           |
+| `BA_Matrix`       | Arc tuples         | Bus numbers           |
+| `PTDF`            | Arc tuples         | Bus numbers           |
+| `LODF`            | Arc tuples         | Arc tuples            |
+| `Ybus`            | Bus numbers        | Bus numbers           |
+| `VirtualPTDF`     | Arc tuples         | Bus numbers           |
+| `VirtualLODF`     | Arc tuples         | Arc tuples            |
 
 !!! note
+    
     For backward compatibility, branch name strings can also be used to index PTDF and LODF matrices. This internally maps the branch name to its corresponding arc tuple via the network reduction data. Using arc tuples directly is recommended for new code.
 
 !!! note
+    
     When network reductions are applied (e.g. `RadialReduction`, `DegreeTwoReduction`), some branches are eliminated from the network. Attempting to index a matrix with an arc tuple that was reduced will result in an error. Use `get_axes` to inspect the available arc tuples after reduction.

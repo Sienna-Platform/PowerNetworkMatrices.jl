@@ -60,6 +60,7 @@ ptdf_1[row_idx, col_idx]
 ```
 
 !!! note
+    
     For backward compatibility, branch name strings can also be used to index the `PTDF` matrix (e.g. `ptdf_1["branch_name", 3]`). This uses `get_branch_multiplier` internally to map the branch name to its corresponding arc tuple. Using arc tuples directly is recommended.
 
 ## Computing `PTDF` from pre-computed matrices

@@ -126,16 +126,17 @@ All network matrices store `axes` and `lookup` fields that describe how rows and
 
 For matrices involving branches (IncidenceMatrix, PTDF, LODF), branches are represented as **arc tuples** `(from_bus_number, to_bus_number)` rather than branch name strings. This provides a compact, unambiguous identifier for each directed branch in the network.
 
-| Matrix            | Dimension 1 (rows)    | Dimension 2 (columns) |
-|:----------------- |:--------------------- |:--------------------- |
-| `IncidenceMatrix` | Arc tuples            | Bus numbers           |
-| `PTDF`            | Arc tuples            | Bus numbers           |
-| `LODF`            | Arc tuples            | Arc tuples            |
-| `Ybus`            | Bus numbers           | Bus numbers           |
-| `VirtualPTDF`     | Arc tuples            | Bus numbers           |
-| `VirtualLODF`     | Arc tuples            | Arc tuples            |
+| Matrix            | Dimension 1 (rows) | Dimension 2 (columns) |
+|:----------------- |:------------------ |:--------------------- |
+| `IncidenceMatrix` | Arc tuples         | Bus numbers           |
+| `PTDF`            | Arc tuples         | Bus numbers           |
+| `LODF`            | Arc tuples         | Arc tuples            |
+| `Ybus`            | Bus numbers        | Bus numbers           |
+| `VirtualPTDF`     | Arc tuples         | Bus numbers           |
+| `VirtualLODF`     | Arc tuples         | Arc tuples            |
 
 !!! note
+    
     For backward compatibility, branch name strings can also be used to index PTDF and LODF matrices. This uses the `get_branch_multiplier` function internally to map names to arc tuples. Using arc tuples directly is recommended.
 
 ## Next Steps
