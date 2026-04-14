@@ -97,11 +97,13 @@ v_ptdf_distr = VirtualPTDF(sys_2; dist_slack = dis_slack_dict);
 v_ptdf_orig = VirtualPTDF(sys_2);
 ```
 
-Now check the difference with the same row related to the branch `"1"` evaluated without considering distributed slack bus.
+Now check the difference with the same row evaluated without considering distributed slack bus.
 
 ```@repl tutorial_VirtualPTDF_matrix
-row_distr = [v_ptdf_distr["1", j] for j in v_ptdf_distr.axes[2]]
-row_original = [v_ptdf_orig["1", j] for j in v_ptdf_orig.axes[2]]
+# get the first arc tuple from the axes
+first_arc = v_ptdf_distr.axes[1][1]
+row_distr = [v_ptdf_distr[first_arc, j] for j in v_ptdf_distr.axes[2]]
+row_original = [v_ptdf_orig[first_arc, j] for j in v_ptdf_orig.axes[2]]
 ```
 
 ## "Sparse" `VirtualPTDF`
@@ -118,8 +120,9 @@ v_ptdf_sparse = VirtualPTDF(sys_2; tol = 0.2);
 Let's now evaluate the same row as before and compare the results:
 
 ```@repl tutorial_VirtualPTDF_matrix
-original_row = [v_ptdf_dense["1", j] for j in v_ptdf_dense.axes[2]]
-sparse_row = [v_ptdf_sparse["1", j] for j in v_ptdf_sparse.axes[2]]
+first_arc = v_ptdf_dense.axes[1][1]
+original_row = [v_ptdf_dense[first_arc, j] for j in v_ptdf_dense.axes[2]]
+sparse_row = [v_ptdf_sparse[first_arc, j] for j in v_ptdf_sparse.axes[2]]
 ```
 
 ## Network Reductions

@@ -32,6 +32,39 @@ lodf_2 = LODF(sys; linear_solver = "Dense");
 get_lodf_data(lodf_1)
 ```
 
+## Indexing the `LODF` matrix
+
+The `LODF` matrix is indexed by **arc tuples** `(from_bus_number, to_bus_number)` for both dimensions. Both the row (selected line) and column (outage line) use arc tuples as identifiers.
+
+```@repl tutorial_PTDF_matrix
+# inspect the axes: both are arc tuple vectors
+get_axes(lodf_1)
+
+# inspect the lookup dictionaries
+get_lookup(lodf_1)
+```
+
+Elements of the `LODF` matrix can be accessed by arc tuples:
+
+```@repl tutorial_PTDF_matrix
+# access LODF element: flow change on arc (1, 4) due to outage of arc (2, 3)
+lodf_1[(1, 4), (2, 3)]
+```
+
+It is also possible to access elements by integer row and column indices, with the mapping provided by the `lookup` dictionaries:
+
+```@repl tutorial_PTDF_matrix
+# get matrix indices for the arc tuples
+row_idx = lodf_1.lookup[2][(1, 4)]     # selected line (second due to transposed storage)
+col_idx = lodf_1.lookup[1][(2, 3)]     # outage line
+lodf_1[row_idx, col_idx]
+```
+
+!!! note
+    For backward compatibility, branch name strings can also be used to index the `LODF` matrix (e.g. `lodf_1["branch_name_1", "branch_name_2"]`). This uses `get_branch_multiplier` internally to map branch names to their corresponding arc tuples. Using arc tuples directly is recommended.
+
+## Computing `LODF` from pre-computed matrices
+
 Advanced users might be interested in computing the `LODF` matrix starting from either the `IncidenceMatrix` and `PTDF` structures (`CASE 1`), or by the information related to `IncidenceMatrix`, `BA_Matrix` and `ABA_Matrix` (`CASE 2`).
 
 ```@repl tutorial_PTDF_matrix
