@@ -1,7 +1,6 @@
 module MKLPardisoExt
 
 import PowerNetworkMatrices as PNM
-using MKL
 using Pardiso
 import SparseArrays
 import LinearAlgebra

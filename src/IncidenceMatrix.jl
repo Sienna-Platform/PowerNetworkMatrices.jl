@@ -40,7 +40,8 @@ each row corresponds to a branch and each column corresponds to a bus. Elements 
 - Supports various network reduction techniques for computational efficiency
 - Essential building block for BA_Matrix and ABA_Matrix constructions
 """
-struct IncidenceMatrix{Ax, L <: NTuple{2, Dict}} <: PowerNetworkMatrix{Int8}
+struct IncidenceMatrix{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
+       PowerNetworkMatrix{Int8}
     data::SparseArrays.SparseMatrixCSC{Int8, Int}
     axes::Ax
     lookup::L
@@ -76,7 +77,7 @@ function get_reduction(
         bus_reduction_map = bus_reduction_map,
         reverse_bus_search_map = reverse_bus_search_map,
         removed_arcs = radial_arcs,
-        radial_arc_to_surviving_bus = final_arc_map,
+        removed_arc_to_surviving_bus = final_arc_map,
         reductions = ReductionContainer(; radial_reduction = reduction),
     )
 end

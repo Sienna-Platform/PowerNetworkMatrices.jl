@@ -33,8 +33,8 @@ makedocs(;
     format = Documenter.HTML(;
         mathengine = Documenter.MathJax(),
         prettyurls = haskey(ENV, "GITHUB_ACTIONS"),
-        size_threshold_warn = 200 * 2^10, # raise slightly from 100 to 200 KiB
-        size_threshold = 300 * 2^10,      # raise slightly 200 to to 300 KiB
+        size_threshold_warn = 400 * 2^10,
+        size_threshold = 600 * 2^10,
     ),
     sitename = "PowerNetworkMatrices.jl",
     authors = "Jose Daniel Lara, Matt Bossart, Alessandro Francesco Castelli",

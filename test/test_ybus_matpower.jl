@@ -7,8 +7,10 @@
         readdlm(joinpath(TEST_DATA_DIR, "ybus_10k_cols.csv"), Int)
     matpower_rows =
         readdlm(joinpath(TEST_DATA_DIR, "ybus_10k_rows.csv"), Int)
-    matpower_vals_re = readdlm(joinpath(TEST_DATA_DIR, "ybus_10k_vals_re.csv"), Float32)
-    matpower_vals_im = readdlm(joinpath(TEST_DATA_DIR, "ybus_10k_vals_im.csv"), Float32)
+    matpower_vals_re =
+        readdlm(joinpath(TEST_DATA_DIR, "ybus_10k_vals_re.csv"), real(YBUS_ELTYPE))
+    matpower_vals_im =
+        readdlm(joinpath(TEST_DATA_DIR, "ybus_10k_vals_im.csv"), real(YBUS_ELTYPE))
     ybus_pnm = Ybus(sys)
     @test nnz(ybus_pnm.data) ==
           length(filter(!iszero, matpower_vals_re .+ im .* matpower_vals_im))
@@ -25,9 +27,9 @@ end
     matpower_rows =
         readdlm(joinpath(TEST_DATA_DIR, "ybus_cats_rows.csv"), Int)
     matpower_vals_re =
-        readdlm(joinpath(TEST_DATA_DIR, "ybus_cats_vals_re.csv"), Float32)
+        readdlm(joinpath(TEST_DATA_DIR, "ybus_cats_vals_re.csv"), real(YBUS_ELTYPE))
     matpower_vals_im =
-        readdlm(joinpath(TEST_DATA_DIR, "ybus_cats_vals_im.csv"), Float32)
+        readdlm(joinpath(TEST_DATA_DIR, "ybus_cats_vals_im.csv"), real(YBUS_ELTYPE))
     ybus_pnm = Ybus(sys)
     @test nnz(ybus_pnm.data) ==
           length(filter(!iszero, matpower_vals_re .+ im .* matpower_vals_im))
@@ -51,9 +53,15 @@ end
             Int,
         )
     matpower_vals_re =
-        readdlm(joinpath(TEST_DATA_DIR, "ybus_case5_transformers_vals_re.csv"), Float32)
+        readdlm(
+            joinpath(TEST_DATA_DIR, "ybus_case5_transformers_vals_re.csv"),
+            real(YBUS_ELTYPE),
+        )
     matpower_vals_im =
-        readdlm(joinpath(TEST_DATA_DIR, "ybus_case5_transformers_vals_im.csv"), Float32)
+        readdlm(
+            joinpath(TEST_DATA_DIR, "ybus_case5_transformers_vals_im.csv"),
+            real(YBUS_ELTYPE),
+        )
     ybus_pnm = Ybus(sys)
     @test nnz(ybus_pnm.data) ==
           length(filter(!iszero, matpower_vals_re .+ im .* matpower_vals_im))
@@ -62,27 +70,36 @@ end
         if col == 1 && row == 1
             @test isapprox(
                 imag(ybus_pnm.data[row, col]) - val_im,
-                Float32((3.126 / 2) / 1.3^2),
+                real(YBUS_ELTYPE)((3.126 / 2) / 1.3^2),
             )
             continue
         end
         if col == 2 && row == 2
-            @test isapprox(imag(ybus_pnm.data[row, col]) - val_im, Float32(1.852 / 2))
+            @test isapprox(
+                imag(ybus_pnm.data[row, col]) - val_im,
+                real(YBUS_ELTYPE)(1.852 / 2),
+            )
             continue
         end
         if col == 3 && row == 3
             @test isapprox(
                 imag(ybus_pnm.data[row, col]) - val_im,
-                Float32((0.674 / 2) / 1.5^2 - 1.852 / 2),
+                real(YBUS_ELTYPE)((0.674 / 2) / 1.5^2 - 1.852 / 2),
             )
             continue
         end
         if col == 4 && row == 4
-            @test isapprox(imag(ybus_pnm.data[row, col]) - val_im, Float32(-0.674 / 2))
+            @test isapprox(
+                imag(ybus_pnm.data[row, col]) - val_im,
+                real(YBUS_ELTYPE)(-0.674 / 2),
+            )
             continue
         end
         if col == 5 && row == 5
-            @test isapprox(imag(ybus_pnm.data[row, col]) - val_im, Float32(-3.126 / 2))
+            @test isapprox(
+                imag(ybus_pnm.data[row, col]) - val_im,
+                real(YBUS_ELTYPE)(-3.126 / 2),
+            )
             continue
         end
         @test isapprox(ybus_pnm.data[row, col], Complex(val_re, val_im); atol = 1e-5)

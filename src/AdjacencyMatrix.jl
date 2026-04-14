@@ -39,7 +39,8 @@ subnetworks = find_subnetworks(adj)
 
 See also: [`Ybus`](@ref), [`IncidenceMatrix`](@ref), [`PowerNetworkMatrix`](@ref)
 """
-struct AdjacencyMatrix{Ax, L <: NTuple{2, Dict}} <: PowerNetworkMatrix{Int8}
+struct AdjacencyMatrix{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
+       PowerNetworkMatrix{Int8}
     data::SparseArrays.SparseMatrixCSC{Int8, Int}
     axes::Ax
     lookup::L
@@ -244,7 +245,15 @@ function AdjacencyMatrix(ybus::Ybus)
 end
 
 """
-Validates connectivity by checking that the number of subnetworks is 1 (fully connected network).
+    validate_connectivity(M::AdjacencyMatrix) -> Bool
+
+Check whether the network represented by an [`AdjacencyMatrix`](@ref) is fully connected.
+
+# Arguments
+- `M::AdjacencyMatrix`: The adjacency matrix of the network
+
+# Returns
+- `Bool`: `true` if the network has exactly one subnetwork (fully connected), `false` otherwise
 """
 function validate_connectivity(M::AdjacencyMatrix)
     sub_nets = find_subnetworks(M)

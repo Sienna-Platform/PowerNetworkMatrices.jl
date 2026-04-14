@@ -2,7 +2,7 @@ using SparseArrays
 
 function parse_psse_ybus(path)
     data = readlines(path)
-    row_buses, col_buses, y_values = Int[], Int[], ComplexF32[]
+    row_buses, col_buses, y_values = Int[], Int[], YBUS_ELTYPE[]
     reduced_bus_pairs = Vector{Vector{Int}}()
     values_done = false
     for line in data
@@ -18,8 +18,8 @@ function parse_psse_ybus(path)
                 vals = split(strip(line), r",\s*")
                 row_bus = parse(Int, vals[1])
                 col_bus = parse(Int, vals[2])
-                y_real = parse(Float32, vals[3])
-                y_imag = parse(Float32, vals[4])
+                y_real = parse(real(YBUS_ELTYPE), vals[3])
+                y_imag = parse(real(YBUS_ELTYPE), vals[4])
                 push!(row_buses, row_bus)
                 push!(col_buses, col_bus)
                 push!(y_values, y_real + im * y_imag)
@@ -150,6 +150,7 @@ end
     ref_row =
         get_number(first(get_components(x -> get_bustype(x) == ACBusTypes.REF, ACBus, sys)))
     Ybus_psse[ref_row, Ybus_pnm.axes[2]] = Ybus_pnm[ref_row, :]
+    # PSS/E reference data has Float32 precision, so tolerance must reflect that.
     @test isapprox(
         Ybus_pnm.data,
         Ybus_psse[Ybus_pnm.axes[1], Ybus_pnm.axes[2]],

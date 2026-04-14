@@ -1,14 +1,14 @@
 """
 Structure containing the Line Outage Distribution Factor (LODF) matrix and related power system data.
 
-The LODF matrix contains sensitivity coefficients that quantify how the outage of one transmission 
-line affects the power flows on all other lines in the system. Each element LODF[i,j] represents 
-the change in flow on line i when line j is taken out of service, normalized by the pre-outage 
+The LODF matrix contains sensitivity coefficients that quantify how the outage of one transmission
+line affects the power flows on all other lines in the system. Each element LODF[i,j] represents
+the change in flow on line i when line j is taken out of service, normalized by the pre-outage
 flow on line j.
 
 # Fields
 - `data::M <: AbstractArray{Float64, 2}`:
-        The LODF matrix data stored in transposed form for computational efficiency. 
+        The LODF matrix data stored in transposed form for computational efficiency.
         Element (i,j) represents the sensitivity of line j flow to line i outage
 - `axes::Ax`:
         Tuple of identical branch/arc identifier vectors for both matrix dimensions
@@ -55,33 +55,47 @@ struct LODF{Ax, L <: NTuple{2, Dict}, M <: AbstractArray{Float64, 2}} <:
     tol::Base.RefValue{Float64}
     network_reduction_data::NetworkReductionData
 end
+
+get_axes(M::LODF) = M.axes
+get_lookup(M::LODF) = M.lookup
+get_ref_bus(M::LODF) = sort!(collect(keys(M.subnetwork_axes)))
+get_ref_bus_position(M::LODF) = [get_bus_lookup(M)[x] for x in keys(M.subnetwork_axes)]
+get_network_reduction_data(M::LODF) = M.network_reduction_data
+get_arc_lookup(M::LODF) = M.lookup[1]
 stores_transpose(::LODF) = true
 
 function _buildlodf(
     a::SparseArrays.SparseMatrixCSC{Int8, Int},
     ptdf::Matrix{Float64},
-    linear_solver::String = "KLU",
+    ::KLUSolver,
 )
-    if linear_solver == "KLU"
-        lodf_t = _calculate_LODF_matrix_KLU(a, ptdf)
-    elseif linear_solver == "Dense"
-        lodf_t = _calculate_LODF_matrix_DENSE(a, ptdf)
-    elseif linear_solver == "MKLPardiso"
-        if !_has_mkl_pardiso_ext()
-            error(
-                "The MKL/Pardiso extension is not available. Install MKL and Pardiso packages: using Pkg; Pkg.add([\"MKL\", \"Pardiso\"])",
-            )
-        end
-        lodf_t = _calculate_LODF_matrix_MKLPardiso(a, ptdf)
-    elseif linear_solver == "AppleAccelerate"
-        if !_has_apple_accelerate_ext()
-            error(
-                "AppleAccelerate extension is not available. This solver is only available on macOS. Install AppleAccelerate: using Pkg; Pkg.add(\"AppleAccelerate\")",
-            )
-        end
-        lodf_t = _calculate_LODF_matrix_AppleAccelerate(a, ptdf)
-    end
-    return lodf_t
+    return _calculate_LODF_matrix_KLU(a, ptdf)
+end
+
+function _buildlodf(
+    a::SparseArrays.SparseMatrixCSC{Int8, Int},
+    ptdf::Matrix{Float64},
+    ::DenseSolver,
+)
+    return _calculate_LODF_matrix_DENSE(a, ptdf)
+end
+
+function _buildlodf(
+    a::SparseArrays.SparseMatrixCSC{Int8, Int},
+    ptdf::Matrix{Float64},
+    ::MKLPardisoSolver,
+)
+    _has_mkl_pardiso_ext() || error(_mkl_pardiso_install_error())
+    return _calculate_LODF_matrix_MKLPardiso(a, ptdf)
+end
+
+function _buildlodf(
+    a::SparseArrays.SparseMatrixCSC{Int8, Int},
+    ptdf::Matrix{Float64},
+    ::AppleAccelerateSolver,
+)
+    _has_apple_accelerate_ext() || error(_apple_accelerate_install_error())
+    return _calculate_LODF_matrix_AppleAccelerate(a, ptdf)
 end
 
 function _buildlodf(
@@ -89,14 +103,19 @@ function _buildlodf(
     k::KLU.KLUFactorization{Float64, Int},
     ba::SparseArrays.SparseMatrixCSC{Float64, Int},
     ref_bus_positions::Set{Int},
-    linear_solver::String,
+    ::KLUSolver,
 )
-    if linear_solver == "KLU"
-        lodf_t = _calculate_LODF_matrix_KLU(a, k, ba, ref_bus_positions)
-    else
-        error("Other linear solvers are not implemented.")
-    end
-    return lodf_t
+    return _calculate_LODF_matrix_KLU(a, k, ba, ref_bus_positions)
+end
+
+function _buildlodf(
+    a::SparseArrays.SparseMatrixCSC{Int8, Int},
+    k::KLU.KLUFactorization{Float64, Int},
+    ba::SparseArrays.SparseMatrixCSC{Float64, Int},
+    ref_bus_positions::Set{Int},
+    ::LinearSolverType,
+)
+    return error("Only KLU solver is implemented for this LODF construction path.")
 end
 
 function _calculate_LODF_matrix_KLU(
@@ -177,31 +196,31 @@ function _calculate_LODF_matrix_DENSE(
 end
 
 # _pardiso_sequential_LODF!, _pardiso_single_LODF!, _calculate_LODF_matrix_MKLPardiso
-# are defined in ext/MKLPardisoExt.jl when MKL and Pardiso packages are loaded
+# are defined in ext/MKLPardisoExt.jl when the Pardiso package is loaded
 
 # _calculate_LODF_matrix_AppleAccelerate is defined in ext/AppleAccelerateExt.jl
-# when AppleAccelerate package is loaded
+# when the AppleAccelerate package is loaded
 
 """
     LODF(sys::PSY.System; linear_solver::String = "KLU", tol::Float64 = eps(), network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
 
-Construct a Line Outage Distribution Factor (LODF) matrix from a PowerSystems.System by computing 
-the sensitivity of line flows to single line outages. This is the primary constructor for LODF 
+Construct a Line Outage Distribution Factor (LODF) matrix from a PowerSystems.System by computing
+the sensitivity of line flows to single line outages. This is the primary constructor for LODF
 analysis starting from system data.
 
 # Arguments
 - `sys::PSY.System`: The power system from which to construct the LODF matrix
 
 # Keyword Arguments
-- `linear_solver::String = "KLU"`: 
+- `linear_solver::String = "KLU"`:
         Linear solver algorithm for matrix computations. Options: "KLU", "Dense", "MKLPardiso"
-- `tol::Float64 = eps()`: 
+- `tol::Float64 = eps()`:
         Sparsification tolerance for dropping small matrix elements to reduce memory usage
-- `network_reductions::Vector{NetworkReduction} = NetworkReduction[]`: 
+- `network_reductions::Vector{NetworkReduction} = NetworkReduction[]`:
         Vector of network reduction algorithms to apply before matrix construction
-- `include_constant_impedance_loads::Bool=true`: 
+- `include_constant_impedance_loads::Bool=true`:
         Whether to include constant impedance loads as shunt admittances in the network model
-- `subnetwork_algorithm=iterative_union_find`: 
+- `subnetwork_algorithm=iterative_union_find`:
         Algorithm used for identifying electrical islands and connected components
 - Additional keyword arguments are passed to the underlying matrix constructors
 
@@ -267,9 +286,9 @@ This constructor is more efficient when the prerequisite matrices are already av
 - `PTDFm::PTDF`: The power transfer distribution factor matrix (should be non-sparsified for accuracy)
 
 # Keyword Arguments
-- `linear_solver::String = "KLU"`: 
+- `linear_solver::String = "KLU"`:
         Linear solver algorithm for matrix computations. Options: "KLU", "Dense", "MKLPardiso"
-- `tol::Float64 = eps()`: 
+- `tol::Float64 = eps()`:
         Sparsification tolerance for the LODF matrix (not applied to input PTDF)
 
 # Returns
@@ -312,7 +331,7 @@ function LODF(
     linear_solver::String = "KLU",
     tol::Float64 = eps(),
 )
-    validate_linear_solver(linear_solver)
+    solver = resolve_linear_solver(linear_solver)
     subnetwork_axes = make_arc_arc_subnetwork_axes(A)
 
     if PTDFm.tol.x > 1e-15
@@ -332,7 +351,7 @@ function LODF(
     ax_ref = make_ax_ref(get_arc_axis(A))
 
     if tol > eps()
-        lodf_t = _buildlodf(A.data, PTDFm_data, linear_solver)
+        lodf_t = _buildlodf(A.data, PTDFm_data, solver)
         return LODF(
             sparsify(lodf_t, tol),
             (get_arc_axis(A), get_arc_axis(A)),
@@ -343,7 +362,7 @@ function LODF(
         )
     end
     return LODF(
-        _buildlodf(A.data, PTDFm_data, linear_solver),
+        _buildlodf(A.data, PTDFm_data, solver),
         (get_arc_axis(A), get_arc_axis(A)),
         (ax_ref, ax_ref),
         subnetwork_axes,
@@ -365,9 +384,9 @@ efficient when the prerequisite matrices with factorization are already availabl
 - `BA::BA_Matrix`: The branch susceptance weighted incidence matrix (B * A)
 
 # Keyword Arguments
-- `linear_solver::String = "KLU"`: 
+- `linear_solver::String = "KLU"`:
         Linear solver algorithm for matrix computations. Currently only "KLU" is supported
-- `tol::Float64 = eps()`: 
+- `tol::Float64 = eps()`:
         Sparsification tolerance for dropping small matrix elements
 
 # Returns
@@ -421,12 +440,12 @@ function LODF(
             "Mismatch in `NetworkReduction`, A, BA, and ABA matrices must be computed with the same network reduction.",
         )
     end
-    validate_linear_solver(linear_solver)
+    solver = resolve_linear_solver(linear_solver)
     subnetwork_axes = make_arc_arc_subnetwork_axes(A)
     ax_ref = make_ax_ref(get_arc_axis(A))
     if tol > eps()
         lodf_t =
-            _buildlodf(A.data, ABA.K, BA.data, Set(get_ref_bus_position(A)), linear_solver)
+            _buildlodf(A.data, ABA.K, BA.data, Set(get_ref_bus_position(A)), solver)
         return LODF(
             sparsify(lodf_t, tol),
             (get_arc_axis(A), get_arc_axis(A)),
@@ -437,7 +456,7 @@ function LODF(
         )
     end
     return LODF(
-        _buildlodf(A.data, ABA.K, BA.data, Set(get_ref_bus_position(A)), linear_solver),
+        _buildlodf(A.data, ABA.K, BA.data, Set(get_ref_bus_position(A)), solver),
         (get_arc_axis(A), get_arc_axis(A)),
         (ax_ref, ax_ref),
         subnetwork_axes,

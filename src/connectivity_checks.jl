@@ -24,6 +24,21 @@ function _goderya(ybus::SparseArrays.SparseMatrixCSC)
     return I
 end
 
+"""
+    validate_connectivity(M, nodes, bus_lookup; connectivity_method) -> Bool
+
+Check whether the network described by matrix `M` is fully connected, using the
+specified connectivity algorithm.
+
+# Arguments
+- `M`: Matrix representation of the network (e.g., admittance or adjacency matrix)
+- `nodes::Vector{PSY.ACBus}`: AC buses in the network
+- `bus_lookup::Dict{Int64, Int64}`: Mapping from bus numbers to matrix indices
+- `connectivity_method::Function`: Algorithm to use (default: `goderya_connectivity`)
+
+# Returns
+- `Bool`: `true` if the network is fully connected, `false` otherwise
+"""
 function validate_connectivity(
     M,
     nodes::Vector{PSY.ACBus},

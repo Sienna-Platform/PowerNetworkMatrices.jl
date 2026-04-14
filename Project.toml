@@ -1,7 +1,7 @@
 name = "PowerNetworkMatrices"
 uuid = "bed98974-b02a-5e2f-9fe0-a103f5c450dd"
-version = "0.18.0"
-authors = ["Jose Daniel Lara", "Matt Bossart", "Alessandro Francesco Castelli"]
+version = "0.20.0"
+authors = ["SIENNA TEAM"]
 
 [deps]
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
@@ -11,16 +11,16 @@ InfrastructureSystems = "2cd47ed4-ca9b-11e9-27f2-ab636a7671f1"
 KLU = "ef3ab10e-7fda-4108-b977-705223b18434"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
+Preferences = "21216c6a-2e73-6563-6e65-726566657250"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 
 [weakdeps]
 AppleAccelerate = "13e28ba4-7ad8-5781-acae-3021b1ed3924"
-MKL = "33e6dc65-8f57-5167-99aa-e5a354878fb2"
 Pardiso = "46dd5b70-b6fb-5a00-ae2d-e8fea33afaf2"
 
 [extensions]
 AppleAccelerateExt = "AppleAccelerate"
-MKLPardisoExt = ["MKL", "Pardiso"]
+MKLPardisoExt = "Pardiso"
 
 [compat]
 AppleAccelerate = "^0.4"
@@ -30,8 +30,8 @@ HDF5 = "0.17"
 InfrastructureSystems = "3"
 KLU = "^0.6"
 LinearAlgebra = "1"
-MKL = "0.9"
 Pardiso = "1"
-PowerSystems = "^5.3"
+PowerSystems = "^5.7"
+Preferences = "^1.5"
 SparseArrays = "1"
 julia = "^1.9"
