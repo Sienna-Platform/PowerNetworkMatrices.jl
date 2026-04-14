@@ -17,34 +17,48 @@ Efficient computation of power network matrices for large-scale systems. Support
   - Support multiple electrical islands (subnetworks) transparently
   - Provide both dense and memory-efficient virtual matrix options
   - Leverage KLU factorization for sparse linear solves
+
+### Source Layout (`src/`)
+
+#### Core
+
+  - **PowerNetworkMatrices.jl**: module entry point and include order
+  - **PowerNetworkMatrix.jl**: abstract base type implementing array interface
+  - **PowerflowMatrixTypes.jl**: shared matrix type aliases (DC_PTDF_Matrix, DC_ABA_Matrix_Factorized, AC_Ybus_Matrix, etc.)
   - **definitions.jl**: constants (solvers, cache limits, tolerances)
+  - **linalg_settings.jl**: linear-algebra backend selection
   - **common.jl**: shared utility functions and getters
   - **system_utils.jl**: PowerSystems integration helpers
   - **serialization.jl**: HDF5 I/O support
 
 #### Network Matrices
 
-  - **PowerNetworkMatrix.jl**: abstract base type implementing array interface
   - **Ybus.jl**: nodal admittance matrix (Complex, sparse)
+  - **YbusACBranches.jl**: per-branch Ybus Pi-model contributions
+  - **ArcAdmittanceMatrix.jl**: arc-level admittance
   - **IncidenceMatrix.jl**: bus-branch connectivity (Int8, sparse)
   - **AdjacencyMatrix.jl**: bus connectivity structure
-  - **BA_Matrix.jl**: branch susceptance weighted incidence
-  - **ABA_Matrix.jl**: susceptance matrix for DC power flow
-  - **ArcAdmittanceMatrix.jl**: arc-level admittance
-  - **PTDF.jl**: power transfer distribution factors
-  - **LODF.jl**: line outage distribution factors
-  - **VirtualPTDF.jl**: on-demand PTDF with row caching
-  - **VirtualLODF.jl**: on-demand LODF with row caching
-  - **row_cache.jl**: LRU caching for virtual matrices
+  - **BA_ABA_matrices.jl**: BA_Matrix and ABA_Matrix (susceptance forms for DC power flow)
   - **ptdf_calculations.jl**: PTDF computation (KLU, Dense, MKL, Apple)
   - **lodf_calculations.jl**: LODF calculation from PTDF
+  - **row_cache.jl**: LRU caching for virtual matrices
   - **virtual_ptdf_calculations.jl**: on-demand PTDF row computation
   - **virtual_lodf_calculations.jl**: on-demand LODF row computation
+  - **virtual_modf_calculations.jl**: on-demand MODF (modification distribution factors)
+
+#### Network Modification & Contingencies
+
+  - **modf_definitions.jl**: MODF-related types (`ArcModification`, `ShuntModification`, `ContingencySpec`)
+  - **network_modification.jl**: `NetworkModification` container and application logic
+  - **virtual_ptdf_modification.jl**: apply modifications to virtual PTDF rows
+  - **woodbury_kernel.jl**: Woodbury-identity updates for low-rank modifications
+  - **ybus_contingencies.jl**: Ybus contingency application helpers
 
 #### Network Reduction
 
   - **NetworkReduction.jl**: abstract base for reductions
   - **NetworkReductionData.jl**: tracks bus/branch mappings
+  - **ReductionContainer.jl**: tracks applied reduction algorithms
   - **radial_reduction.jl**: eliminates dangling buses
   - **degree_two_reduction.jl**: eliminates degree-2 buses
   - **ward_reduction.jl**: preserves study area, reduces external
@@ -123,6 +137,7 @@ Documentation source
   - **LODF**: N_arcs × N_arcs line outage distribution factors (diagonal = -1.0)
   - **VirtualPTDF**: on-demand PTDF with LRU row caching for memory efficiency
   - **VirtualLODF**: on-demand LODF with LRU row caching
+  - **VirtualMODF**: on-demand modification distribution factors using Woodbury updates over a base PTDF
 
 ### Network Reduction
 
@@ -131,6 +146,14 @@ Documentation source
   - **DegreeTwoReduction**: eliminates degree-two buses
   - **WardReduction**: preserves study area while reducing external network
   - **NetworkReductionData**: tracks all reduction mappings and equivalents
+
+### Network Modification
+
+  - **ArcModification**: describes an arc (branch) change with precomputed Ybus Pi-model deltas
+  - **ShuntModification**: describes a shunt admittance change at a bus
+  - **ContingencySpec**: named bundle of modifications representing a contingency case
+  - **NetworkModification**: container applied to matrices/Ybus to produce post-modification state
+  - **apply_ybus_modification / compute_ybus_delta / apply_woodbury_correction**: helpers for applying modifications to Ybus and to factorized PTDF solves
 
 ### Key Patterns
 
@@ -154,7 +177,7 @@ Documentation source
 ### Formatter
 
   - **Tool**: JuliaFormatter
-  - **Command**: `julia -e 'include("scripts/formatter/formatter_code.jl")'`
+  - **Command**: `julia --project=scripts/formatter -e 'include("scripts/formatter/formatter_code.jl")'`
 
 ### Key Rules
 
@@ -177,10 +200,14 @@ Documentation source
   - **Automation**: `DocStringExtensions.TYPEDSIGNATURES`
   - **See also**: add links for functions with same name (multiple dispatch)
 
-### API Docs
+### Docs Organization
 
-  - **Public**: `docs/src/api/public.md` using `@autodocs` with `Public=true, Private=false`
-  - **Internals**: `docs/src/api/internals.md`
+Documentation is organized following the [Diataxis](https://diataxis.fr/) framework under `docs/src/`:
+
+  - **tutorials/**: learning-oriented walkthroughs (PTDF, LODF, VirtualPTDF/LODF, Radial/Degree-Two Reduction, etc.)
+  - **how_to_guides/**: task-oriented recipes (`compute_network_matrices.md`, `choose_linear_solver.md`)
+  - **explanation/**: conceptual background (DC power-flow approximation, network-reduction theory, computational considerations)
+  - **reference/**: API and matrix overview (`public.md` uses `@autodocs` with `Public=true`; `network_matrices_overview.md` summarizes the matrix types)
 
 ## Common Tasks
 
@@ -195,7 +222,7 @@ julia --project=test test/runtests.jl
 julia --project=docs docs/make.jl
 
 # Format code
-julia -e 'include("scripts/formatter/formatter_code.jl")'
+julia --project=scripts/formatter -e 'include("scripts/formatter/formatter_code.jl")'
 
 # Check formatting
 git diff --exit-code
