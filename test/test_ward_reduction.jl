@@ -155,7 +155,7 @@ end
     @test length(wr.added_admittance_map) == 1
 
     wr =
-        @test_logs (:error, r"no boundary buses found") match_mode = :any get_network_reduction_data(
+        @test_logs (:error, r"The study buses comprise an entire island") match_mode = :any get_network_reduction_data(
             Ybus(sys; network_reductions = NetworkReduction[WardReduction([15, 16, 17])]),
         )
     @test isa(wr, NetworkReductionData)
@@ -177,4 +177,40 @@ end
     @test_throws IS.DataFormatError get_network_reduction_data(
         Ybus(sys; network_reductions = NetworkReduction[WardReduction([2, 3, 4])]),
     )
+end
+
+@testset "WardReduction with isolated buses" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    sys_with_isolated = deepcopy(sys)
+    bus6 = ACBus(;
+        number = 6,
+        name = "Bus 6",
+        available = true,
+        bustype = ACBusTypes.REF,
+        angle = 0.0,
+        magnitude = 1.0,
+        voltage_limits = (min = 0.9, max = 1.05),
+        base_voltage = 69.0,
+    )
+    add_component!(sys_with_isolated, bus6)
+    bus5 = get_component(ACBus, sys_with_isolated, "nodeD")
+    hvdc1 = TwoTerminalHVDCLine(;
+        name = "Line18",
+        available = true,
+        active_power_flow = 0.0,
+        arc = Arc(; from = bus5, to = bus6),
+        active_power_limits_from = (min = -100.0, max = 100.0),
+        active_power_limits_to = (min = -100.0, max = 100.0),
+        reactive_power_limits_from = (min = -100.0, max = 100.0),
+        reactive_power_limits_to = (min = -100.0, max = 100.0),
+    )
+    add_component!(sys_with_isolated, hvdc1)
+    ybus = Ybus(sys; network_reductions = NetworkReduction[WardReduction([1, 2, 3, 4])])
+    ybus_with_isolated = Ybus(
+        sys_with_isolated;
+        network_reductions = NetworkReduction[WardReduction([1, 2, 3, 4])],
+    )
+    @test ybus.data == ybus_with_isolated.data
+    # Building PTDF tests handling of subnetwork_axes when an entire subnetwork is eliminated during reduction:
+    @test isa(PTDF(ybus_with_isolated), PTDF)
 end
