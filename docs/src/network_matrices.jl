@@ -46,22 +46,18 @@ ptdf = PTDF(system_data)
 # **bus numbers** for buses. An arc tuple represents a directed connection between two buses.
 # For example, an arc `(1, 2)` represents a branch from bus 1 to bus 2.
 #
-# Elements can be accessed using arc tuples and bus numbers:
+# Elements can be accessed using arc tuples and bus numbers. The `axes` field lists the
+# identifiers for each dimension and the `lookup` dictionaries map those identifiers to
+# integer matrix indices:
 
-arc_lookup, bus_lookup = get_lookup(ptdf);
+get_axes(ptdf)
 
-# Arc lookup maps arc tuples to matrix indices:
+get_lookup(ptdf)
 
-arc_lookup
+# Access a PTDF entry using an arc tuple and bus number taken from the axes:
 
-# Bus lookup maps bus numbers to matrix indices:
-
-bus_lookup
-
-# Access PTDF entries using an arc tuple and bus number:
-
-first_arc = collect(keys(arc_lookup))[1]
-first_bus = collect(keys(bus_lookup))[1]
+first_arc = get_axes(ptdf)[2][1]
+first_bus = get_axes(ptdf)[1][1]
 
 ptdf_entry = ptdf[first_arc, first_bus]
 
@@ -76,8 +72,6 @@ ptdf_entry = ptdf[first_arc, first_bus]
 
 lodf = LODF(system_data)
 
-lodf_arc_lookup_1, lodf_arc_lookup_2 = get_lookup(lodf);
-
 # Both lookup dictionaries map arc tuples to matrix indices:
 
-lodf_arc_lookup_1
+get_lookup(lodf)

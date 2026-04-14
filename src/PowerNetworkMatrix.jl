@@ -338,11 +338,10 @@ function _validate_system_uuid(mat::PowerNetworkMatrix, sys::PSY.System)
 end
 
 """
-    returns the lookup tuple of the `PowerNetworkMatrix`. The first entry corresponds
-    to the first dimension and the second entry corresponds to the second dimension. For
-    instance in Ybus the first dimension is buses and second dimension is buses too, and in
-    PTDF the first dimension is buses and the second dimension is arcs (stored transposed).
-    The lookup dictionaries map arc tuples `(from_bus, to_bus)` or bus numbers to integer indices.
+    returns the lookup tuple of the `PowerNetworkMatrix`. The entries correspond
+    to the dimensions of the underlying `axes` tuple, and each lookup dictionary maps
+    arc tuples `(from_bus, to_bus)` or bus numbers to integer indices into the stored
+    data.
 """
 get_lookup(mat::PowerNetworkMatrix) = mat.lookup
 
