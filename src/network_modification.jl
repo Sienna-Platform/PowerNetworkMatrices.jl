@@ -118,6 +118,28 @@ function NetworkModification(mat::PowerNetworkMatrix, branch::PSY.ACTransmission
     arc_sus = _get_arc_susceptances(mat)
     mods = _classify_branch_modification(nr, arc_lookup, arc_sus, branch)
     return NetworkModification(
+        get_name(branch),
+        mods,
+    )
+end
+
+"""
+$(TYPEDSIGNATURES)
+
+Construct a `NetworkModification` from a `ThreeWindingTransformer` component.
+Automatically decomposes the transformer into its three winding arcs and classifies
+each one. For a partial outage (single winding trip), use a
+`ThreeWindingTransformerWinding` instead.
+"""
+function NetworkModification(
+    mat::PowerNetworkMatrix,
+    branch::PSY.ThreeWindingTransformer,
+)
+    nr = get_network_reduction_data(mat)
+    arc_lookup = get_arc_lookup(mat)
+    arc_sus = _get_arc_susceptances(mat)
+    mods = _classify_branch_modification(nr, arc_lookup, arc_sus, branch)
+    return NetworkModification(
         PSY.get_name(branch),
         mods,
     )
@@ -238,11 +260,21 @@ function _classify_outage_component!(
 )
     tag, arc_tuple = _resolve_branch_arc(nr, component)
 
-    if tag === :direct || tag === :transformer3w
+    if tag === :direct
         arc_idx = arc_lookup[arc_tuple]
         b_arc = arc_susceptances[arc_idx]
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc)
         push!(direct_mods, ArcModification(arc_idx, -b_arc, dy11, dy12, dy21, dy22))
+    elseif tag === :transformer3w
+        arc_idx = arc_lookup[arc_tuple]
+        b_arc = arc_susceptances[arc_idx]
+        tr = nr.transformer3W_map[arc_tuple]
+        Y11, Y12, Y21, Y22 = ybus_branch_entries(tr)
+        push!(direct_mods, ArcModification(
+            arc_idx, -b_arc,
+            YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
+            YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22),
+        ))
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
         b_circuit = PSY.get_series_susceptance(component)
@@ -256,11 +288,11 @@ function _classify_outage_component!(
         end
         push!(series_components_by_arc[arc_idx], component)
     else
-        @info "Branch $(PSY.get_name(component)) not found in any reduction map. " *
+        @info "Branch $(get_name(component)) not found in any reduction map. " *
               "The component may have been eliminated by a radial reduction."
         return
     end
-    push!(component_names, PSY.get_name(component))
+    push!(component_names, get_name(component))
     return
 end
 
@@ -325,23 +357,31 @@ function _classify_outage_component!(
 end
 
 function _classify_outage_component!(
-    ::NetworkReductionData,
-    ::Dict,
-    ::Vector{Float64},
-    ::Dict{Int, Int},
+    nr::NetworkReductionData,
+    arc_lookup::Dict,
+    arc_susceptances::Vector{Float64},
+    bus_lookup::Dict{Int, Int},
     component::PSY.ThreeWindingTransformer,
-    ::Vector{ArcModification},
-    ::Vector{ArcModification},
-    ::Dict{Int, Vector{PSY.ACTransmission}},
-    ::Dict{Int, Tuple{Int, Int}},
-    ::Vector{ShuntModification},
-    ::Vector{String},
+    direct_mods::Vector{ArcModification},
+    parallel_mods::Vector{ArcModification},
+    series_components_by_arc::Dict{Int, Vector{PSY.ACTransmission}},
+    series_arc_tuples::Dict{Int, Tuple{Int, Int}},
+    shunt_mods::Vector{ShuntModification},
+    component_names::Vector{String},
 )
-    error(
-        "Outages on ThreeWindingTransformer components are not yet supported. " *
-        "Component: $(PSY.get_name(component)). " *
-        "Use individual ThreeWindingTransformerWinding arcs instead.",
-    )
+    for winding_num in 1:3
+        winding = ThreeWindingTransformerWinding(component, winding_num)
+        if !get_equivalent_available(winding)
+            continue
+        end
+        _classify_outage_component!(
+            nr, arc_lookup, arc_susceptances, bus_lookup, winding,
+            direct_mods, parallel_mods,
+            series_components_by_arc, series_arc_tuples,
+            shunt_mods, component_names,
+        )
+    end
+    return
 end
 
 """
@@ -360,6 +400,30 @@ function _classify_branch_modification(
     _assert_not_phase_shifting(branch)
 end
 
+"""
+    _classify_branch_modification(nr, arc_lookup, arc_susceptances, branch::PSY.ThreeWindingTransformer) -> Vector{ArcModification}
+
+Classify a `ThreeWindingTransformer` by decomposing it into its three winding arcs
+and classifying each one individually. Returns arc modifications for all windings
+present in the network.
+"""
+function _classify_branch_modification(
+    nr::NetworkReductionData,
+    arc_lookup::Dict,
+    arc_susceptances::Vector{Float64},
+    branch::PSY.ThreeWindingTransformer,
+)::Vector{ArcModification}
+    mods = ArcModification[]
+    for winding_num in 1:3
+        winding = ThreeWindingTransformerWinding(branch, winding_num)
+        if !get_equivalent_available(winding)
+            continue
+        end
+        append!(mods, _classify_branch_modification(nr, arc_lookup, arc_susceptances, winding))
+    end
+    return mods
+end
+
 function _classify_branch_modification(
     nr::NetworkReductionData,
     arc_lookup::Dict,
@@ -368,11 +432,21 @@ function _classify_branch_modification(
 )::Vector{ArcModification}
     tag, arc_tuple = _resolve_branch_arc(nr, branch)
 
-    if tag === :direct || tag === :transformer3w
+    if tag === :direct
         arc_idx = arc_lookup[arc_tuple]
         b_arc = arc_susceptances[arc_idx]
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc)
         return [ArcModification(arc_idx, -b_arc, dy11, dy12, dy21, dy22)]
+    elseif tag === :transformer3w
+        arc_idx = arc_lookup[arc_tuple]
+        b_arc = arc_susceptances[arc_idx]
+        tr = nr.transformer3W_map[arc_tuple]
+        Y11, Y12, Y21, Y22 = ybus_branch_entries(tr)
+        return [ArcModification(
+            arc_idx, -b_arc,
+            YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
+            YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22),
+        )]
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
         b_circuit = PSY.get_series_susceptance(branch)
@@ -385,7 +459,7 @@ function _classify_branch_modification(
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
         return [ArcModification(arc_idx, delta_b, dy11, dy12, dy21, dy22)]
     else
-        @info "Branch $(PSY.get_name(branch)) not found in any reduction map. " *
+        @info "Branch $(get_name(branch)) not found in any reduction map. " *
               "The component may have been eliminated by a radial reduction."
         return ArcModification[]
     end
