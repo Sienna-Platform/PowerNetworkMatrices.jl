@@ -10,31 +10,59 @@ CurrentModule = PowerNetworkMatrices
 the evaluation of network matrices given the system's data. The package allows to compute
 the matrices according to different methods, providing a flexible and powerful tool.
 
-The documentation and code are organized according to the needs of different
-users depending on their skillset and requirements. In broad terms there are three categories:
-
-- **Modeler**: Users that want to run a particular analysis or experiment and use `PowerNetworkMatrices.jl` to develop data sets.
-
-- **Model Developer**: Users that want to develop custom components and structs in order to exploit `PowerNetworkMatrices.jl` features to produce custom data sets.
-
-- **Code Base Developers**: Users that want to add new core functionalities or fix bugs in the core capabilities of `PowerNetworkMatrices.jl`.
-
 `PowerNetworkMatrices.jl` is an active project under development, and we welcome your feedback,
 suggestions, and bug reports.
 
-## Installation
+## Documentation Structure
 
-The latest stable release of PowerNetworkMatrices can be installed using the Julia package manager with
+PowerNetworkMatrices.jl strives to follow the [Diataxis documentation framework](https://diataxis.fr/),
+which organizes documentation according to the different needs of users. The documentation is
+structured into four main sections:
 
-```julia
-] add PowerNetworkMatrices
-```
+### Tutorials
 
-For the current development version, "checkout" this package with
+**Learning-oriented guides to help you get started**
 
-```julia
-] add PowerNetworkMatrices#main
-```
+Tutorials are hands-on lessons that take you through practical examples step-by-step.
+They are designed to help you learn by doing, building understanding through practical experience.
 
-------------
+  - Start here if you're new to PowerNetworkMatrices.jl
+  - Follow along with executable examples
+  - Build foundational knowledge
+
+### How-To Guides
+
+**Task-oriented guides for accomplishing specific goals**
+
+How-to guides provide direct instructions for solving specific problems or completing
+particular tasks. They assume you have basic knowledge and want to accomplish something specific.
+
+  - Use when you know what you want to do
+  - Get straight to the solution
+  - Focus on practical application
+
+### Explanation
+
+**Understanding-oriented discussion of key topics**
+
+Explanations provide background, context, and deeper understanding of concepts, design
+decisions, and the theory behind the implementation.
+
+  - Understand the "why" behind the features
+  - Learn about the mathematical foundations
+  - Explore conceptual relationships
+
+### Reference
+
+**Information-oriented technical descriptions**
+
+Reference documentation provides detailed, technical information about the API, functions,
+and data structures. It's organized for quick lookup of specific details.
+
+  - Look up function signatures and parameters
+  - Find available methods and options
+  - Access complete API documentation
+
+* * *
+
 PowerNetworkMatrices has been developed as part of the Scalable Integrated Infrastructure Planning (SIIP) initiative at the U.S. Department of Energy's National Laboratory of the Rockies (formerly known as NREL) ([NLR](https://www.nrel.gov/)).

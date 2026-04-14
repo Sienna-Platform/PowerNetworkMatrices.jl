@@ -1,35 +1,3 @@
-"""
-    NetworkReductionData
-
-Mutable struct containing all data mappings and metadata for network reduction operations.
-This structure tracks how buses and branches are mapped, combined, or eliminated during
-network reduction algorithms.
-
-# Fields
-- `irreducible_buses::Set{Int}`: Buses that cannot be reduced
-- `bus_reduction_map::Dict{Int, Set{Int}}`: Maps retained buses to sets of eliminated buses
-- `reverse_bus_search_map::Dict{Int, Int}`: Maps eliminated buses to their parent buses
-- `direct_branch_map::Dict{Tuple{Int, Int}, PSY.ACTransmission}`: One-to-one branch mappings
-- `reverse_direct_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}}`: Reverse direct mappings
-- `parallel_branch_map::Dict{Tuple{Int, Int}, BranchesParallel}`: Parallel branch combinations
-- `reverse_parallel_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}}`: Reverse parallel mappings
-- `series_branch_map::Dict{Tuple{Int, Int}, BranchesSeries}`: Series branch combinations
-- `reverse_series_branch_map::Dict{Any, Tuple{Int, Int}}`: Reverse series mappings
-- `transformer3W_map::Dict{Tuple{Int, Int}, ThreeWindingTransformerWinding}`: Three-winding transformer mappings
-- `reverse_transformer3W_map::Dict{ThreeWindingTransformerWinding, Tuple{Int, Int}}`: Reverse transformer mappings
-- `removed_buses::Set{Int}`: Set of buses eliminated from the network
-- `removed_arcs::Set{Tuple{Int, Int}}`: Set of arcs eliminated from the network
-- `removed_arc_to_surviving_bus::Dict{Tuple{Int, Int}, Int}`: Maps removed arcs to the connected surviving bus number (occurs for radial reduction or Ward reduction)
-- `boundary_bus_to_removed_arcs::Dict{Int, Set{Tuple{Int, Int}}}`: Maps boundary buses to the set of removed arcs connected to them
-- `added_admittance_map::Dict{Int, PSY.FixedAdmittance}`: Admittances added to buses during reduction
-- `added_arc_impedance_map::Dict{Tuple{Int, Int}, PSY.GenericArcImpedance}`: New arcs created during reduction
-- `all_branch_maps_by_type::BranchMapsByType`: Branch mappings organized by component type
-- `reductions::ReductionContainer`: Container tracking applied reduction algorithms
-- `name_to_arc_map::Dict{Type, DataStructures.SortedDict{String, Tuple{Tuple{Int, Int}, String}}}`: Lazily filled with the call to [`populate_branch_maps_by_type!`](@ref), maps string names to their corresponding arcs and the map where the arc can be found. Used in optimization models or power flow reporting after reductions are applied. It is possible to have repeated arcs for some names if case of serial or parallel combinations.
-- `component_to_reduction_name_map::Dict{Type, Dict{String, String}}`: Lazily filled with the call to [`populate_branch_maps_by_type!`](@ref), maps component names to the names of the reduction entries used in name_to_arc_map. Used in optimization models for connecting component attributes (e.g. outages) to network reduction entries.
-- `filters_applied::Dict{Type, Function}`: Filters applied when populating branch maps by type
-- `direct_branch_name_map::Dict{String, Tuple{Int, Int}}`: Lazily filled, maps branch names to their corresponding arc tuples for direct branches
-"""
 @kwdef mutable struct BranchMapsByType
     direct_branch_map::Dict{DataType, Any} = Dict{DataType, Any}()
     reverse_direct_branch_map::Dict{DataType, Any} = Dict{DataType, Any}()
@@ -129,6 +97,38 @@ function get_typed_reverse_transformer3W_map(
     }
 end
 
+"""
+    NetworkReductionData
+
+Mutable struct containing all data mappings and metadata for network reduction operations.
+This structure tracks how buses and branches are mapped, combined, or eliminated during
+network reduction algorithms.
+
+# Fields
+- `irreducible_buses::Set{Int}`: Buses that cannot be reduced
+- `bus_reduction_map::Dict{Int, Set{Int}}`: Maps retained buses to sets of eliminated buses
+- `reverse_bus_search_map::Dict{Int, Int}`: Maps eliminated buses to their parent buses
+- `direct_branch_map::Dict{Tuple{Int, Int}, PSY.ACTransmission}`: One-to-one branch mappings
+- `reverse_direct_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}}`: Reverse direct mappings
+- `parallel_branch_map::Dict{Tuple{Int, Int}, BranchesParallel}`: Parallel branch combinations
+- `reverse_parallel_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}}`: Reverse parallel mappings
+- `series_branch_map::Dict{Tuple{Int, Int}, BranchesSeries}`: Series branch combinations
+- `reverse_series_branch_map::Dict{Any, Tuple{Int, Int}}`: Reverse series mappings
+- `transformer3W_map::Dict{Tuple{Int, Int}, ThreeWindingTransformerWinding}`: Three-winding transformer mappings
+- `reverse_transformer3W_map::Dict{ThreeWindingTransformerWinding, Tuple{Int, Int}}`: Reverse transformer mappings
+- `removed_buses::Set{Int}`: Set of buses eliminated from the network
+- `removed_arcs::Set{Tuple{Int, Int}}`: Set of arcs eliminated from the network
+- `removed_arc_to_surviving_bus::Dict{Tuple{Int, Int}, Int}`: Maps removed arcs to the connected surviving bus number (occurs for radial reduction or Ward reduction)
+- `boundary_bus_to_removed_arcs::Dict{Int, Set{Tuple{Int, Int}}}`: Maps boundary buses to the set of removed arcs connected to them
+- `added_admittance_map::Dict{Int, PSY.FixedAdmittance}`: Admittances added to buses during reduction
+- `added_arc_impedance_map::Dict{Tuple{Int, Int}, PSY.GenericArcImpedance}`: New arcs created during reduction
+- `all_branch_maps_by_type::BranchMapsByType`: Branch mappings organized by component type
+- `reductions::ReductionContainer`: Container tracking applied reduction algorithms
+- `name_to_arc_map::Dict{Type, DataStructures.SortedDict{String, Tuple{Tuple{Int, Int}, String}}}`: Lazily filled with the call to [`populate_branch_maps_by_type!`](@ref), maps string names to their corresponding arcs and the map where the arc can be found.
+- `component_to_reduction_name_map::Dict{Type, Dict{String, String}}`: Lazily filled with the call to [`populate_branch_maps_by_type!`](@ref), maps component names to the names of the reduction entries used in name_to_arc_map.
+- `filters_applied::Dict{Type, Function}`: Filters applied when populating branch maps by type
+- `direct_branch_name_map::Dict{String, Tuple{Int, Int}}`: Lazily filled, maps branch names to their corresponding arc tuples for direct branches
+"""
 @kwdef mutable struct NetworkReductionData
     irreducible_buses::Set{Int} = Set{Int}() # Buses that are not reduced in the network reduction
     bus_reduction_map::Dict{Int, Set{Int}} = Dict{Int, Set{Int}}() # Maps reduced bus to the set of buses it was reduced to

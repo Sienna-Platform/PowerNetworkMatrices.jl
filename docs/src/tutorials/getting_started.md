@@ -1,6 +1,7 @@
 # Quick Start Guide
 
 !!! note
+    
     `PowerSystemCaseBuilder.jl` is a helper library that makes it easier to reproduce examples in the documentation and tutorials. Normally you would pass your local files to create the system data instead of calling the function `build_system`.
     For more details visit [PowerSystemCaseBuilder Documentation](https://nrel-sienna.github.io/PowerSystemCaseBuilder.jl/stable)
 
@@ -12,7 +13,7 @@ section of the documentation in `PowerSystems.jl`.
 
 Data can be loaded from a pss/e raw file and a pss/e dyr file.
 
-``` @repl quick_start_guide
+```@repl quick_start_guide
 using PowerNetworkMatrices
 using PowerSystemCaseBuilder
 
@@ -30,7 +31,7 @@ example shows how the PTDF matrix is computed.
 The function `PTDF` is called for the evaluation of the matrix and other data. These
 are stored in a structure of type `PTDF`.
 
-``` @repl quick_start_guide
+```@repl quick_start_guide
 # evaluate the PTDF structure containing the matrix and other data.
 ptdf_matrix = PNM.PTDF(sys);
 
