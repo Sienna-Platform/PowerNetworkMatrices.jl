@@ -1,6 +1,12 @@
 using Documenter, PowerNetworkMatrices
 import DataStructures: OrderedDict
 using Literate
+using DocumenterInterLinks
+
+links = InterLinks(
+    "PowerSystems" => "https://nrel-sienna.github.io/PowerSystems.jl/stable/",
+    "PowerSystemCaseBuilder" => "https://nrel-sienna.github.io/PowerSystemCaseBuilder.jl/stable/",
+)
 
 include(joinpath(@__DIR__, "make_tutorials.jl"))
 make_tutorials()
@@ -45,6 +51,7 @@ makedocs(;
     authors = "Jose Daniel Lara, Matt Bossart, Alessandro Francesco Castelli",
     pages = Any[p for p in pages],
     clean = true,
+    plugins = [links],
 )
 
 deploydocs(;
