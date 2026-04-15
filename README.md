@@ -12,7 +12,7 @@
 ## Version Advisory
 
   - PowerNetworkMatrices.jl will work with Julia v1.10+.
-  - PowerNetworkMatrices.jl exports Matrix methods that were available in PowerSystems.jl version 1.0 and have been implemented as a separate package since 2022. 
+  - PowerNetworkMatrices.jl exports Matrix methods that were available in PowerSystems.jl version 1.0 and have been implemented as a separate package since 2022.
 
 ## License
 

@@ -25,116 +25,29 @@ ybus = Ybus(system; network_reductions=[reduction])
 end
 get_irreducible_buses(nr::RadialReduction) = nr.irreducible_buses
 
-function _find_upstream_bus(
-    A::SparseArrays.SparseMatrixCSC{Int8, Int},
-    j::Int,
-    reverse_arc_map::Dict{Int, Tuple{Int, Int}},
-    radial_arcs::Set{Tuple{Int, Int}},
-    reduced_buses::Set{Int},
-    reverse_bus_map::Dict{Int, Int},
-)
-    row_ix = A.rowval[A.colptr[j]]
-    parent = setdiff!(A[row_ix, :].nzind, j)[1]
-    if reverse_bus_map[parent] ∈ reduced_buses
-        row_ix = A.rowval[A.colptr[j] + 1]
-        parent = setdiff!(A[row_ix, :].nzind, j)[1]
-    end
-    arc = reverse_arc_map[row_ix]
-    push!(radial_arcs, arc)
-    return parent, arc
-end
+"""
+Pre-compute a mapping from each row (branch) in a CSC sparse matrix to its two column
+(bus) endpoints. This avoids the expensive `A[row, :].nzind` operation on CSC matrices
+which requires a full scan of all columns (O(nnz) per call).
 
-function _new_parent(
-    A::SparseArrays.SparseMatrixCSC{Int8, Int},
-    parent::Int,
-    bus_reduction_map_index::Dict{Int, Set{Int}},
-    reverse_arc_map::Dict{Int, Tuple{Int, Int}},
-    radial_arcs::Set{Tuple{Int, Int}},
-    reverse_bus_map::Dict{Int, Int},
-    final_arc_map::Dict{Tuple{Int, Int}, Int},
-)
-    if length(SparseArrays.nzrange(A, parent)) == 2
-        parent_bus_number = reverse_bus_map[parent]
-        new_parent_val, arc = _find_upstream_bus(
-            A,
-            parent,
-            reverse_arc_map,
-            radial_arcs,
-            bus_reduction_map_index[parent_bus_number],
-            reverse_bus_map,
-        )
-        new_parent_bus_number = reverse_bus_map[new_parent_val]
-        # This check is meant to capture cases of a full radial network which can happen in
-        # system with small islands that represent larger interconnected areas.
-        if length(SparseArrays.nzrange(A, new_parent_val)) < 2
-            @warn "Bus $parent_bus_number Parent $new_parent_bus_number is a leaf node, indicating there is an island."
-            push!(bus_reduction_map_index[parent_bus_number], new_parent_bus_number)
-            final_arc_map[arc] = new_parent_bus_number
-            return
+Returns a Vector where index `row` gives `(col1, col2)` — the two bus columns connected
+by that branch.
+"""
+function _build_row_to_cols(A::SparseArrays.SparseMatrixCSC{Int8, Int}, buscount::Int)
+    n_rows = size(A, 1)
+    row_first_col = zeros(Int, n_rows)
+    row_to_cols = Vector{Tuple{Int, Int}}(undef, n_rows)
+    for col in 1:buscount
+        for k in A.colptr[col]:(A.colptr[col + 1] - 1)
+            row = A.rowval[k]
+            if row_first_col[row] == 0
+                row_first_col[row] = col
+            else
+                row_to_cols[row] = (row_first_col[row], col)
+            end
         end
-        # Check if chain terminates (new_parent survives with >2 connections)
-        if length(SparseArrays.nzrange(A, new_parent_val)) > 2
-            final_arc_map[arc] = new_parent_bus_number
-        end
-        new_set = push!(pop!(bus_reduction_map_index, parent_bus_number), parent_bus_number)
-        union!(bus_reduction_map_index[new_parent_bus_number], new_set)
-        _new_parent(
-            A,
-            new_parent_val,
-            bus_reduction_map_index,
-            reverse_arc_map,
-            radial_arcs,
-            reverse_bus_map,
-            final_arc_map,
-        )
     end
-    return
-end
-
-function _reverse_search(
-    A::SparseArrays.SparseMatrixCSC{Int8, Int},
-    j::Int,
-    bus_reduction_map_index::Dict{Int, Set{Int}},
-    reverse_arc_map::Dict{Int, Tuple{Int, Int}},
-    radial_arcs::Set{Tuple{Int, Int}},
-    reverse_bus_map::Dict{Int, Int},
-    ref_bus_positions::Set{Int},
-    final_arc_map::Dict{Tuple{Int, Int}, Int},
-)
-    if j ∈ ref_bus_positions
-        return
-    end
-    j_bus_number = reverse_bus_map[j]
-    pop!(bus_reduction_map_index, j_bus_number)
-    reduction_set = Set{Int}(j_bus_number)
-    parent, arc = _find_upstream_bus(
-        A,
-        j,
-        reverse_arc_map,
-        radial_arcs,
-        reduction_set,
-        reverse_bus_map,
-    )
-    parent_bus_number = reverse_bus_map[parent]
-    union!(bus_reduction_map_index[parent_bus_number], reduction_set)
-    if parent ∈ ref_bus_positions
-        final_arc_map[arc] = parent_bus_number
-        return
-    end
-    # Check if chain terminates (parent survives with >2 connections)
-    if length(SparseArrays.nzrange(A, parent)) > 2
-        final_arc_map[arc] = parent_bus_number
-    end
-    _new_parent(
-        A,
-        parent,
-        bus_reduction_map_index,
-        reverse_arc_map,
-        radial_arcs,
-        reverse_bus_map,
-        final_arc_map,
-    )
-    return
+    return row_to_cols
 end
 
 function _make_reverse_bus_search_map(bus_reduction_map::Dict{Int, Set{Int}}, n_buses::Int)
@@ -177,11 +90,13 @@ with only one connection that do not affect the electrical behavior of the core 
         (the arc whose admittance must be subtracted from the surviving bus's diagonal)
 
 # Algorithm Overview
-1. **Leaf Detection**: Identifies buses with exactly one connection (radial buses)
-2. **Reference Protection**: Preserves reference buses from elimination regardless of connectivity
-3. **Upstream Tracing**: Traces from radial buses toward the core network to find parent buses
-4. **Cascading Reduction**: Recursively eliminates buses that become radial after initial reductions
-5. **Parallel Processing**: Uses multithreading for efficient analysis of large networks
+1. **Adjacency Pre-computation**: Builds adjacency lists from the incidence matrix to avoid
+   expensive sparse row access operations on the CSC matrix
+2. **Leaf Detection**: Identifies buses with exactly one connection (radial buses)
+3. **Reference Protection**: Preserves reference buses from elimination regardless of connectivity
+4. **Iterative Chain Walking**: Uses a queue-based approach to trace from radial buses toward
+   the core network, walking through chains of degree-2 buses
+5. **Cascading Reduction**: Eliminates buses that become radial after initial reductions
 
 # Network Topology Preservation
 - **Electrical Equivalence**: Ensures reduced network maintains same electrical behavior
@@ -196,9 +111,10 @@ with only one connection that do not affect the electrical behavior of the core 
 - **Memory Optimization**: Reduces storage requirements for large network models
 
 # Implementation Notes
-- Uses sparse matrix operations for efficiency with large, sparse networks
+- Pre-computes row-to-column mapping for O(1) branch endpoint lookup instead of O(nnz) sparse
+  row access
+- Uses iterative queue-based processing instead of recursive DFS for better performance
 - Handles edge cases like fully radial networks and isolated islands
-- Maintains thread safety for concurrent processing of network analysis
 - Provides comprehensive mapping for traceability and debugging
 """
 function calculate_radial_arcs(
@@ -207,29 +123,97 @@ function calculate_radial_arcs(
     bus_map::Dict{Int, Int},
     ref_bus_positions::Set{Int},
 )
-    lk = ReentrantLock()
     buscount = length(bus_map)
+    n_arcs = size(A, 1)
     radial_arcs = Set{Tuple{Int, Int}}()
     final_arc_map = Dict{Tuple{Int, Int}, Int}()
     reverse_arc_map = Dict(reverse(kv) for kv in arc_map)
     reverse_bus_map = Dict(reverse(kv) for kv in bus_map)
     bus_reduction_map_index = Dict{Int, Set{Int}}(k => Set{Int}() for k in keys(bus_map))
-    Threads.@threads for j in 1:buscount
-        if length(SparseArrays.nzrange(A, j)) == 1
-            lock(lk) do
-                _reverse_search(
-                    A,
-                    j,
-                    bus_reduction_map_index,
-                    reverse_arc_map,
-                    radial_arcs,
-                    reverse_bus_map,
-                    ref_bus_positions,
-                    final_arc_map,
-                )
-            end
+
+    # Pre-compute row → (col1, col2) mapping. This replaces the expensive A[row, :].nzind
+    # operations on CSC matrices (O(nnz) per call) with O(1) lookups.
+    row_to_cols = _build_row_to_cols(A, buscount)
+
+    # Build adjacency lists: for each bus column, store (neighbor_col, row_index) pairs.
+    adj = Vector{Vector{Tuple{Int, Int}}}(undef, buscount)
+    for j in 1:buscount
+        adj[j] = Vector{Tuple{Int, Int}}()
+    end
+    for row in 1:n_arcs
+        c1, c2 = row_to_cols[row]
+        push!(adj[c1], (c2, row))
+        push!(adj[c2], (c1, row))
+    end
+
+    # Compute original degree of each bus (used for chain-walking decisions).
+    orig_degree = Vector{Int}(undef, buscount)
+    for j in 1:buscount
+        orig_degree[j] = length(adj[j])
+    end
+
+    # Initialize queue with all original leaf buses (degree 1, not exempt).
+    queue = Vector{Int}()
+    for j in 1:buscount
+        if orig_degree[j] == 1 && j ∉ ref_bus_positions
+            push!(queue, j)
         end
     end
+
+    # Track which bus columns have been removed during reduction.
+    removed = falses(buscount)
+
+    # Iterative radial chain peeling: process leaves and walk up through degree-2 chains.
+    while !isempty(queue)
+        j = popfirst!(queue)
+        if removed[j]
+            continue
+        end
+
+        # Find the non-removed parent (neighbor) of j.
+        parent = 0
+        row_ix = 0
+        for (neighbor, rix) in adj[j]
+            if !removed[neighbor]
+                parent = neighbor
+                row_ix = rix
+                break
+            end
+        end
+
+        if parent == 0
+            continue
+        end
+
+        # Mark j as removed and record the radial arc.
+        removed[j] = true
+        j_bus_number = reverse_bus_map[j]
+        arc = reverse_arc_map[row_ix]
+        push!(radial_arcs, arc)
+
+        # Update reduction maps: merge j's reduction set into parent's.
+        reduction_set = pop!(bus_reduction_map_index, j_bus_number)
+        push!(reduction_set, j_bus_number)
+        parent_bus_number = reverse_bus_map[parent]
+        union!(bus_reduction_map_index[parent_bus_number], reduction_set)
+
+        if parent ∈ ref_bus_positions
+            # Parent is a reference/exempt bus — chain terminates here.
+            final_arc_map[arc] = parent_bus_number
+        elseif orig_degree[parent] > 2
+            # Parent has >2 original connections — it survives.
+            final_arc_map[arc] = parent_bus_number
+        elseif orig_degree[parent] == 2
+            # Parent is an original degree-2 chain node — continue walking.
+            push!(queue, parent)
+        else
+            # This check captures cases of a full radial network which can happen in
+            # systems with small islands that represent larger interconnected areas.
+            @warn "Bus $j_bus_number Parent $parent_bus_number is a leaf node, indicating there is an island."
+            final_arc_map[arc] = parent_bus_number
+        end
+    end
+
     reverse_bus_search_map = _make_reverse_bus_search_map(bus_reduction_map_index, buscount)
     return bus_reduction_map_index,
     reverse_bus_search_map,
