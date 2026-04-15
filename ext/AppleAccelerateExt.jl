@@ -1,11 +1,9 @@
 module AppleAccelerateExt
 
-using PowerNetworkMatrices
+import PowerNetworkMatrices as PNM
 using AppleAccelerate
 import SparseArrays
 import LinearAlgebra
-
-const PNM = PowerNetworkMatrices
 
 # Extend the factorization creation function
 function PNM._create_apple_accelerate_factorization(ABA)

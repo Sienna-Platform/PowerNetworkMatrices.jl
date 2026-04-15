@@ -3,7 +3,7 @@ mutable struct BranchesSeries <: PSY.ACTransmission
     needs_insertion_order::Bool
     insertion_order::Vector{Tuple{DataType, Int}}
     segment_orientations::Vector{Symbol}
-    equivalent_ybus::Union{Matrix{ComplexF32}, Nothing}
+    equivalent_ybus::Union{Matrix{YBUS_ELTYPE}, Nothing}
 end
 
 BranchesSeries() = BranchesSeries(
@@ -129,11 +129,65 @@ end
     get_equivalent_rating(bs::BranchesSeries)
 
 Calculate the rating for branches in series.
+Series chains, can be composed of PSY.ACTransmission branches and PNM.BranchesParallel.
 For series circuits, the rating is limited by the weakest link: Rating_total = min(Rating1, Rating2, ..., Ratingn)
 """
 function get_equivalent_rating(bs::BranchesSeries)
     # Minimum rating for series branches (weakest link)
-    return minimum(PSY.get_rating(branch) for branch in bs)
+    return minimum(get_equivalent_rating(branch) for branch in bs)
+end
+
+"""
+    get_equivalent_rating(bs<:PSY.ACTransmission)
+
+Return the rating for PSY.ACTransmission branches.
+"""
+function get_equivalent_rating(bs::PSY.ACTransmission)
+    return PSY.get_rating(bs)
+end
+
+"""
+    get_equivalent_rating(bs::PSY.GenericArcImpedance)
+
+Rating is assumed to be max_flow for GenericArcImpedance.
+"""
+function get_equivalent_rating(bs::PSY.GenericArcImpedance)
+    return PSY.get_max_flow(bs)
+end
+
+"""
+    get_equivalent_emergency_rating(bs::BranchesSeries)
+
+Calculate the emergency rating for branches in series.
+For series circuits, the emergency rating is limited by the weakest link: Rating_total = min(Rating1, Rating2, ..., Ratingn)
+"""
+function get_equivalent_emergency_rating(bs::BranchesSeries)
+    # Minimum emergency rating for series branches (weakest link)
+    return minimum(get_equivalent_emergency_rating(branch) for branch in bs)
+end
+
+"""
+    get_equivalent_emergency_rating(bs<:PSY.ACTransmission)
+
+Return the emergency rating for PSY.ACTransmission branches.
+"""
+function get_equivalent_emergency_rating(branch::PSY.ACTransmission)
+    if isnothing(PSY.get_rating_b(branch))
+        @debug "Branch $(get_name(branch)) has no 'rating_b' defined. Post-contingency limit is going to be set using normal-operation rating.
+            \n Consider including post-contingency limits using set_rating_b!()."
+        return PSY.get_rating(branch)
+    end
+    return PSY.get_rating_b(branch)
+end
+
+"""
+    get_equivalent_emergency_rating(bs<:PSY.ACTransmission)
+
+Return the emergency rating for PSY.GenericArcImpedance.
+"""
+function get_equivalent_emergency_rating(branch::PSY.GenericArcImpedance)
+    @debug "GenericArcImpedance $(get_name(branch)) has no emergency rating. Using max_flow as a proxy instead."
+    return PSY.get_max_flow(branch)
 end
 
 """
@@ -170,7 +224,6 @@ function add_to_map(series_circuit::BranchesSeries, filters::Dict)
 
         @warn "Series circuit contains mixed branch types, filters might be applied to more components than intended. Use Logging.Debug for additional information."
         @debug "Series circuit branch types: $(keys(series_circuit.branches))"
-        @debug "Series circuit branch names: $(vcat([PSY.get_name.(v) for (k , v) in series_circuit.branches]))"
         for (branch_type, branch_list) in series_circuit.branches
             filter = get(filters, branch_type, x -> true)
             for device in branch_list
@@ -194,3 +247,5 @@ end
 function Base.show(io::IO, x::MIME{Symbol("text/plain")}, y::BranchesSeries)
     show(io, x, y.branches)
 end
+
+is_a_reduction(::BranchesSeries) = true

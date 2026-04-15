@@ -2,7 +2,7 @@
 Arc admittance matrix
 
 # Arguments
-- `data::SparseArrays.SparseMatrixCSC{ComplexF32, Int}`:
+- `data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int}`:
         The arc admittance matrix in the from-to direction
 - `axes<:NTuple{2, Dict}`:
         Tuple containing two vectors (the first one showing the arc tuples,
@@ -15,8 +15,9 @@ Arc admittance matrix
 - `direction::Symbol`:
         Direction of admittance (:FromTo or :ToFrom)
 """
-struct ArcAdmittanceMatrix{Ax, L <: NTuple{2, Dict}} <: PowerNetworkMatrix{ComplexF32}
-    data::SparseArrays.SparseMatrixCSC{ComplexF32, Int}
+struct ArcAdmittanceMatrix{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
+       PowerNetworkMatrix{YBUS_ELTYPE}
+    data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int}
     axes::Ax
     lookup::L
     network_reduction_data::NetworkReductionData

@@ -82,36 +82,37 @@ function _buildptdf_from_matrices(
     BA::SparseArrays.SparseMatrixCSC{T, Int} where {T <: Union{Float32, Float64}},
     ref_bus_positions::Set{Int},
     dist_slack::Vector{Float64},
-    linear_solver::String)
-    if linear_solver == "KLU"
-        PTDFm = _calculate_PTDF_matrix_KLU(A, BA, ref_bus_positions, dist_slack)
-    elseif linear_solver == "Dense"
-        # Convert SparseMatrices to Dense
-        PTDFm = _calculate_PTDF_matrix_DENSE(
-            A,
-            BA,
-            ref_bus_positions,
-            dist_slack,
-        )
-    elseif linear_solver == "MKLPardiso"
-        if !_has_mkl_pardiso_ext()
-            error(
-                "The MKL/Pardiso extension is not available. Install MKL and Pardiso packages: using Pkg; Pkg.add([\"MKL\", \"Pardiso\"])",
-            )
-        end
-        PTDFm =
-            _calculate_PTDF_matrix_MKLPardiso(A, BA, ref_bus_positions, dist_slack)
-    elseif linear_solver == "AppleAccelerate"
-        if !_has_apple_accelerate_ext()
-            error(
-                "AppleAccelerate extension is not available. This solver is only available on macOS. Install AppleAccelerate: using Pkg; Pkg.add(\"AppleAccelerate\")",
-            )
-        end
-        PTDFm =
-            _calculate_PTDF_matrix_AppleAccelerate(A, BA, ref_bus_positions, dist_slack)
-    end
+    ::KLUSolver)
+    return _calculate_PTDF_matrix_KLU(A, BA, ref_bus_positions, dist_slack)
+end
 
-    return PTDFm
+function _buildptdf_from_matrices(
+    A::SparseArrays.SparseMatrixCSC{Int8, Int},
+    BA::SparseArrays.SparseMatrixCSC{T, Int} where {T <: Union{Float32, Float64}},
+    ref_bus_positions::Set{Int},
+    dist_slack::Vector{Float64},
+    ::DenseSolver)
+    return _calculate_PTDF_matrix_DENSE(A, BA, ref_bus_positions, dist_slack)
+end
+
+function _buildptdf_from_matrices(
+    A::SparseArrays.SparseMatrixCSC{Int8, Int},
+    BA::SparseArrays.SparseMatrixCSC{T, Int} where {T <: Union{Float32, Float64}},
+    ref_bus_positions::Set{Int},
+    dist_slack::Vector{Float64},
+    ::MKLPardisoSolver)
+    _has_mkl_pardiso_ext() || error(_mkl_pardiso_install_error())
+    return _calculate_PTDF_matrix_MKLPardiso(A, BA, ref_bus_positions, dist_slack)
+end
+
+function _buildptdf_from_matrices(
+    A::SparseArrays.SparseMatrixCSC{Int8, Int},
+    BA::SparseArrays.SparseMatrixCSC{T, Int} where {T <: Union{Float32, Float64}},
+    ref_bus_positions::Set{Int},
+    dist_slack::Vector{Float64},
+    ::AppleAccelerateSolver)
+    _has_apple_accelerate_ext() || error(_apple_accelerate_install_error())
+    return _calculate_PTDF_matrix_AppleAccelerate(A, BA, ref_bus_positions, dist_slack)
 end
 
 """
@@ -231,7 +232,7 @@ function _calculate_PTDF_matrix_DENSE(
 end
 
 # _calculate_PTDF_matrix_MKLPardiso is defined in ext/MKLPardisoExt.jl
-# when MKL and Pardiso packages are loaded
+# when Pardiso package is loaded
 
 # _calculate_PTDF_matrix_AppleAccelerate is defined in ext/AppleAccelerateExt.jl
 # when AppleAccelerate package is loaded
@@ -290,7 +291,7 @@ for PTDF analysis starting from system data.
 # Mathematical Foundation
 The PTDF matrix is computed as:
 ```
-PTDF = A^T × (A^T × B × A)^(-1) × A^T × B
+PTDF = (A^T × B × A)^(-1) × A^T × B
 ```
 where A is the incidence matrix and B is the susceptance matrix.
 
@@ -307,12 +308,77 @@ function PTDF(sys::PSY.System;
     tol::Float64 = eps(),
     kwargs...,
 )
-    Ymatrix = Ybus(
+    ybus = Ybus(
         sys;
         kwargs...,
     )
-    A = IncidenceMatrix(Ymatrix)
-    BA = BA_Matrix(Ymatrix)
+    return PTDF(ybus; dist_slack = dist_slack, linear_solver = linear_solver, tol = tol)
+end
+
+"""
+    PTDF(ybus::Ybus; dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(), linear_solver = "KLU", tol::Float64 = eps(), network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
+
+Construct a Power Transfer Distribution Factor (PTDF) matrix from existing Ybus matrix.
+This constructor is more efficient when the prerequisite matrices are already available and provides
+direct control over the underlying matrix computations.
+
+# Arguments
+- `ybus::Ybus`: The power system Ybus matrix from which to construct the PTDF matrix
+
+# Keyword Arguments
+- `dist_slack::Dict{Int, Float64} = Dict{Int, Float64}()`:
+        Dictionary mapping bus numbers to distributed slack weights for realistic slack modeling.
+        Empty dictionary uses single slack bus (default behavior)
+- `linear_solver::String = "KLU"`:
+        Linear solver algorithm for matrix computations. Options: "KLU", "Dense", "MKLPardiso"
+- `tol::Float64 = eps()`:
+        Sparsification tolerance for dropping small matrix elements to reduce memory usage
+
+# Returns
+- `PTDF`: The constructed PTDF matrix structure containing:
+  - Bus-to-impedance-arc injection sensitivity coefficients
+  - Network topology information and reference bus identification
+  - Sparsification tolerance and computational metadata
+
+# Construction Process
+1. **Incidence Matrix**: Builds bus-branch connectivity matrix A (from Ybus matrix)
+2. **BA Matrix**: Computes branch susceptance weighted incidence matrix
+3. **PTDF Computation**: Calculates power transfer distribution factors using A^T × B^(-1) × A
+4. **Distributed Slack**: Applies distributed slack correction if specified
+5. **Sparsification**: Removes small elements based on tolerance threshold
+
+# Distributed Slack Configuration
+- **Single Slack**: Empty `dist_slack` dictionary uses conventional single slack bus
+- **Distributed Slack**: Dictionary maps bus numbers to participation factors
+- **Normalization**: Participation factors automatically normalized to sum to 1.0
+- **Physical Meaning**: Distributed slack better represents generator response to load changes
+
+# Linear Solver Options
+- **"KLU"**: Sparse LU factorization (default, recommended for most cases)
+- **"Dense"**: Dense matrix operations (faster for small systems, higher memory usage)
+- **"MKLPardiso"**: Intel MKL Pardiso solver (requires MKL library, best for very large systems)
+
+# Mathematical Foundation
+The PTDF matrix is computed as:
+```
+PTDF = (A^T × B × A)^(-1) × A^T × B
+```
+where A is the incidence matrix and B is the susceptance matrix.
+
+# Notes
+- Results are valid under DC power flow assumptions (linear approximation)
+- Reference bus selection affects specific values but not relative sensitivities
+- Sparsification with `tol > eps()` can significantly reduce memory usage
+- Network reductions improve computational efficiency for large systems
+- Distributed slack provides more realistic representation of system response
+"""
+function PTDF(ybus::Ybus;
+    dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(),
+    linear_solver = "KLU",
+    tol::Float64 = eps(),
+)
+    A = IncidenceMatrix(ybus)
+    BA = BA_Matrix(ybus)
     return PTDF(
         A,
         BA;
@@ -392,12 +458,12 @@ function PTDF(
     linear_solver = "KLU",
     tol::Float64 = eps(),
 )
-    if !(isempty(dist_slack))
-        dist_slack = redistribute_dist_slack(dist_slack, A, A.network_reduction_data)
+    dist_slack_vector = if !(isempty(dist_slack))
+        redistribute_dist_slack(dist_slack, A, A.network_reduction_data)
     else
-        dist_slack = Float64[]
+        Float64[]
     end
-    validate_linear_solver(linear_solver)
+    solver = resolve_linear_solver(linear_solver)
     if !isequal(A.network_reduction_data, BA.network_reduction_data)
         error("A and BA matrices have non-equivalent network reductions.")
     end
@@ -410,8 +476,8 @@ function PTDF(
         A_matrix,
         BA.data,
         Set(ref_bus_positions),
-        dist_slack,
-        linear_solver,
+        dist_slack_vector,
+        solver,
     )
     if tol > eps()
         return PTDF(

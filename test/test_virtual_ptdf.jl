@@ -130,7 +130,7 @@ end
     buscount = length(PSY.get_available_components(PSY.ACBus, sys5)) + 1
     dist_slack_factor = 1 / buscount
     dist_slack = Dict(i => dist_slack_factor for i in 1:buscount)
-    @test_throws InfrastructureSystems.InvalidValue VirtualPTDF(
+    @test_throws IS.InvalidValue VirtualPTDF(
         sys5;
         dist_slack = dist_slack,
     )

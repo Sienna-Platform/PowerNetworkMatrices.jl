@@ -40,12 +40,29 @@
     rating_eq = PNM.get_equivalent_rating(bp)
     @test rating_eq ≈ 125.0 atol = 1e-6
 
+    emergency_rating_eq = PNM.get_equivalent_emergency_rating(bp)
+    @test emergency_rating_eq ≈ 250.0 atol = 1e-6
+
     bs = PNM.BranchesSeries()
     PNM.add_branch!(bs, line1, :FromTo)
     PNM.add_branch!(bs, line2, :FromTo)
     # Test get_rating: Rating = minimum rating for series branches (weakest link)
     rating_eq = PNM.get_equivalent_rating(bs)
     @test rating_eq ≈ 100.0 atol = 1e-6
+
+    emergency_rating_eq = PNM.get_equivalent_emergency_rating(bs)
+    @test emergency_rating_eq ≈ 100.0 atol = 1e-6
+
+    #Add test parrallel circuit + line1
+    bs = PNM.BranchesSeries()
+    PNM.add_branch!(bs, bp, :FromTo)
+    PNM.add_branch!(bs, line2, :FromTo)
+    # Test get_rating: Rating = minimum rating for series branches (weakest link)
+    rating_eq = PNM.get_equivalent_rating(bs)
+    @test rating_eq ≈ 125.0 atol = 1e-6
+
+    emergency_rating_eq = PNM.get_equivalent_emergency_rating(bs)
+    @test emergency_rating_eq ≈ 150.0 atol = 1e-6
 
     # Test get_available: all branches must be available
     @test PSY.get_available(bp) == true

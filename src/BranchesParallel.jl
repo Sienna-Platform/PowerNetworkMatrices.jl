@@ -1,6 +1,6 @@
 mutable struct BranchesParallel{T <: PSY.ACTransmission} <: PSY.ACTransmission
     branches::Vector{T}
-    equivalent_ybus::Union{Matrix{ComplexF32}, Nothing}
+    equivalent_ybus::Union{Matrix{YBUS_ELTYPE}, Nothing}
 end
 
 function BranchesParallel(branches::Vector{T}) where {T <: PSY.ACTransmission}
@@ -72,7 +72,7 @@ end
 
 function populate_equivalent_ybus!(bp::BranchesParallel)
     Y11, Y12, Y21, Y22 = ybus_branch_entries(bp)
-    bp.equivalent_ybus = ComplexF32[Y11 Y12; Y21 Y22]
+    bp.equivalent_ybus = YBUS_ELTYPE[Y11 Y12; Y21 Y22]
     return
 end
 
@@ -85,7 +85,24 @@ This provides a conservative estimate that accounts for potential overestimation
 """
 function get_equivalent_rating(bp::BranchesParallel)
     # Sum of ratings divided by number of circuits
-    return sum(PSY.get_rating(branch) for branch in bp.branches) / length(bp.branches)
+    return sum(get_equivalent_rating(branch) for branch in bp.branches) /
+           length(bp.branches)
+end
+
+"""
+    get_equivalent_emergency_rating(bp::BranchesParallel)
+
+Calculate the total emergency rating for branches in parallel.
+For parallel circuits, the emergency rating is the sum of individual emergency ratings divided by the number of circuits.
+This provides a conservative estimate that accounts for potential overestimation of total capacity.
+"""
+function get_equivalent_emergency_rating(bp::BranchesParallel)
+    equivalent_rating = 0.0
+    for branch in bp.branches
+        rating_b = get_equivalent_emergency_rating(branch)
+        equivalent_rating += rating_b
+    end
+    return equivalent_rating # In Emergency conditions, we should consider the full capacity
 end
 
 """
@@ -129,8 +146,8 @@ function add_to_map(
     isempty(filters) && return true
     if isabstracttype(T)
         @warn "Parallel circuit contains mixed branch types, filters might be applied to more components than intended. Use Logging.Debug for additional information."
-        @debug "Parallel circuit branch types: $(keys(double_circuit.branches))"
-        @debug "Parallel circuit branch names: $(vcat([PSY.get_name.(v) for (k , v) in double_circuit.branches]))"
+        @debug "Parallel circuit branch types: $(typeof.(double_circuit.branches))"
+        @debug "Parallel circuit branch names: $(PSY.get_name.(double_circuit.branches))"
         for branch in double_circuit.branches
             filter = get(filters, typeof(branch), x -> true)
             if !filter(branch)
@@ -155,3 +172,5 @@ end
 function Base.show(io::IO, x::MIME{Symbol("text/plain")}, y::BranchesParallel)
     show(io, x, y.branches)
 end
+
+is_a_reduction(::BranchesParallel) = true

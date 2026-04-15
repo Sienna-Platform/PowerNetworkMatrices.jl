@@ -130,6 +130,17 @@ function get_equivalent_rating(tw::ThreeWindingTransformerWinding)
 end
 
 """
+    get_equivalent_emergency_rating(tw::ThreeWindingTransformerWinding)
+
+Get the rating for a specific winding of a three-winding transformer.
+Returns the winding-specific rating if non-zero, otherwise returns the parent transformer rating.
+"""
+function get_equivalent_emergency_rating(tw::ThreeWindingTransformerWinding)
+    #Currently there is no rating_b defined in PSY5 for the different windings of a 3WTransformer
+    get_equivalent_rating(tw)
+end
+
+"""
     get_equivalent_available(tw::ThreeWindingTransformerWinding)
 
 Get the availability status for a specific winding of a three-winding transformer.
@@ -223,4 +234,30 @@ end
 function add_to_map(device::ThreeWindingTransformerWinding, filters::Dict)
     isempty(filters) && return true
     return add_to_map(get_transformer(device), filters)
+end
+
+is_a_reduction(::ThreeWindingTransformerWinding) = true
+
+function has_time_series(
+    device::ThreeWindingTransformerWinding,
+    ts_type::Type{T},
+    ts_name::String,
+) where {
+    T <: PSY.TimeSeriesData,
+}
+    return PSY.has_time_series(get_transformer(device), ts_type, ts_name)
+end
+
+function get_device_with_time_series(
+    device::ThreeWindingTransformerWinding,
+    ts_type::Type{T},
+    ts_name::String,
+) where {
+    T <: PSY.TimeSeriesData,
+}
+    transformer = get_transformer(device)
+    if PSY.has_time_series(transformer, ts_type, ts_name)
+        return transformer
+    end
+    return nothing
 end

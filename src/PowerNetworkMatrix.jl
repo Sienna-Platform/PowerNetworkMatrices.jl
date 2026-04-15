@@ -54,33 +54,33 @@ Base.CartesianIndices(A::PowerNetworkMatrix) =
 Base.eachindex(A::PowerNetworkMatrix) = CartesianIndices(size(A.data))
 
 """
-Gets bus indices to a certain branch index
+Gets the matrix index corresponding to a given key (arc tuple, bus number, etc.)
 """
 function lookup_index(i, lookup::Dict)
     return isa(i, Colon) ? Colon() : lookup[i]
 end
 
 """
-Gets bus indices to a certain branch name
+Gets the matrix index for a `PSY.Arc`, converting it to an arc tuple first.
 
 # Arguments
-- `i::PSY.ACBranch`:
-        Power System AC branch
+- `i::PSY.Arc`:
+        Power System Arc object
 - `lookup::Dict`:
-        Dictionary mapping branch and buses
+        Dictionary mapping arc tuples or bus numbers to matrix indices
 """
 function lookup_index(i::PSY.Arc, lookup::Dict)
     return isa(i, Colon) ? Colon() : lookup[Base.to_index(i)]
 end
 
 """
-Gets bus indices to a certain branch name
+Gets the matrix index for a `PSY.ACBus`, converting it to a bus number first.
 
 # Arguments
-- `i::PSY.ACBranch`:
-        Power System AC branch
+- `i::PSY.ACBus`:
+        Power System AC bus
 - `lookup::Dict`:
-        Dictionary mapping branches and buses
+        Dictionary mapping arc tuples or bus numbers to matrix indices
 """
 function lookup_index(i::PSY.ACBus, lookup::Dict)
     return isa(i, Colon) ? Colon() : lookup[Base.to_index(i)]
@@ -311,10 +311,37 @@ Base.to_index(b::PSY.Arc) = get_arc_tuple(b)
 get_data(mat::PowerNetworkMatrix) = mat.data
 
 """
-    returns the lookup tuple of the `PowerNetworkMatrix`. The first entry corresponds
-    to the first dimension and the second entry corresponds to the second dimension. For
-    instance in Ybus the first dimension is buses and second dimension is buses too, and in
-    PTDF the first dimension is branches and the second dimension is buses
+    get_system_uuid(mat::PowerNetworkMatrix) -> Union{Base.UUID, Nothing}
+
+Return the UUID of the system used to construct the matrix, or `nothing`
+if the matrix type does not track system origin.
+"""
+get_system_uuid(::PowerNetworkMatrix) = nothing
+
+"""
+    _validate_system_uuid(mat::PowerNetworkMatrix, sys::PSY.System)
+
+Validate that the matrix was constructed from the same system. Throws an
+`ErrorException` if the matrix stores a system UUID that does not match
+the UUID of `sys`. No-op when the matrix does not track system origin.
+"""
+function _validate_system_uuid(mat::PowerNetworkMatrix, sys::PSY.System)
+    mat_uuid = get_system_uuid(mat)
+    if mat_uuid !== nothing && mat_uuid != IS.get_uuid(sys)
+        error(
+            "System UUID mismatch: the matrix was constructed from a system with " *
+            "UUID $mat_uuid, but the provided system has UUID $(IS.get_uuid(sys)). " *
+            "Ensure the matrix and system originate from the same source.",
+        )
+    end
+    return
+end
+
+"""
+    returns the lookup tuple of the `PowerNetworkMatrix`. The entries correspond
+    to the dimensions of the underlying `axes` tuple, and each lookup dictionary maps
+    arc tuples `(from_bus, to_bus)` or bus numbers to integer indices into the stored
+    data.
 """
 get_lookup(mat::PowerNetworkMatrix) = mat.lookup
 

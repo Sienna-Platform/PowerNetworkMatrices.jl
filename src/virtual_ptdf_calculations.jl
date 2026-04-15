@@ -44,11 +44,17 @@ matrix.
         Tolerance related to scarification and values to drop.
 - `network_reduction::NetworkReduction`:
         Structure containing the details of the network reduction applied when computing the matrix
+- `system_uuid::Union{Base.UUID, Nothing}`:
+        UUID of the system used to construct the matrix, used to validate that
+        modification operations are applied to the correct system. `nothing` when
+        constructed from a Ybus without an associated system.
 """
 struct VirtualPTDF{Ax, L <: NTuple{2, Dict}, K <: LinearAlgebra.Factorization} <:
        PowerNetworkMatrix{Float64}
     K::K
     BA::SparseArrays.SparseMatrixCSC{Float64, Int}
+    A::SparseArrays.SparseMatrixCSC{Int8, Int}
+    arc_susceptances::Vector{Float64}
     dist_slack::Vector{Float64}
     dist_slack_normalized::Vector{Float64}
     axes::Ax
@@ -60,6 +66,7 @@ struct VirtualPTDF{Ax, L <: NTuple{2, Dict}, K <: LinearAlgebra.Factorization} <
     tol::Base.RefValue{Float64}
     network_reduction_data::NetworkReductionData
     work_ba_col::Vector{Float64}
+    system_uuid::Union{Base.UUID, Nothing}
 end
 
 get_axes(M::VirtualPTDF) = M.axes
@@ -70,6 +77,7 @@ get_ref_bus_position(M::VirtualPTDF) =
 get_network_reduction_data(M::VirtualPTDF) = M.network_reduction_data
 get_bus_lookup(M::VirtualPTDF) = M.lookup[2]
 get_arc_lookup(M::VirtualPTDF) = M.lookup[1]
+get_system_uuid(M::VirtualPTDF) = M.system_uuid
 
 function Base.show(io::IO, ::MIME{Symbol("text/plain")}, array::VirtualPTDF)
     summary(io, array)
@@ -88,17 +96,17 @@ struct with an empty cache.
         PSY system for which the matrix is constructed
 
 # Keyword Arguments
-- `dist_slack::Vector{Float64} = Float64[]`:
-        Vector of weights to be used as distributed slack bus.
-        The distributed slack vector has to be the same length as the number of buses.
+- `dist_slack::Dict{Int, Float64} = Dict{Int, Float64}()`:
+        Dictionary of weights to be used as distributed slack bus.
+        The distributed slack dictionary must have the same number of entries as the number of buses.
 - `linear_solver::String = "KLU"`:
         Linear solver to use for factorization. Options: "KLU", "AppleAccelerate"
 - `tol::Float64 = eps()`:
         Tolerance related to sparsification and values to drop.
 - `max_cache_size::Int`:
         max cache size in MiB (initialized as MAX_CACHE_SIZE_MiB).
-- `persistent_lines::Vector{String}`:
-        line to be evaluated as soon as the VirtualPTDF is created (initialized as empty vector of strings).
+- `persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}()`:
+        arcs to be evaluated as soon as the VirtualPTDF is created (initialized as empty vector of tuples).
 - `network_reduction::NetworkReduction`:
         Structure containing the details of the network reduction applied when computing the matrix
 - `kwargs...`:
@@ -114,20 +122,84 @@ function VirtualPTDF(
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
     kwargs...,
 )
-    validate_linear_solver(linear_solver)
+    resolve_linear_solver(linear_solver)
     Ymatrix = Ybus(
         sys;
         network_reductions = network_reductions,
         kwargs...,
     )
-    ref_bus_positions = get_ref_bus_position(Ymatrix)
-    A = IncidenceMatrix(Ymatrix)
+    VirtualPTDF(
+        Ymatrix;
+        dist_slack = dist_slack,
+        linear_solver = linear_solver,
+        tol = tol,
+        max_cache_size = max_cache_size,
+        persistent_arcs = persistent_arcs,
+        system_uuid = IS.get_uuid(sys),
+    )
+end
+
+# Factorization dispatch methods for VirtualPTDF solver selection.
+function _create_factorization(::KLUSolver, ABA::SparseArrays.SparseMatrixCSC{Float64, Int})
+    return klu(ABA)
+end
+
+function _create_factorization(
+    ::AppleAccelerateSolver,
+    ABA::SparseArrays.SparseMatrixCSC{Float64, Int},
+)
+    _has_apple_accelerate_ext() || error(_apple_accelerate_install_error())
+    return _create_apple_accelerate_factorization(ABA)
+end
+
+function _create_factorization(
+    ::LinearSolverType,
+    ::SparseArrays.SparseMatrixCSC{Float64, Int},
+)
+    return error(
+        "Only KLU and AppleAccelerate solvers are supported for VirtualPTDF factorization.",
+    )
+end
+
+"""
+Builds the Virtual PTDF matrix from a Ybus matrix. This constructor is more efficient when the prerequisite Ybus
+matrix is already available and provides direct control over the underlying matrix computations (including network reductions).
+The return is a VirtualPTDF struct with an empty cache. 
+
+# Arguments
+- `ybus::Ybus`: Ybus matrix from which the matrix is constructed
+
+# Keyword Arguments
+- `dist_slack::Dict{Int, Float64} = Dict{Int, Float64}()`:
+        Dictionary of weights to be used as distributed slack bus.
+        The distributed slack dictionary must have the same number of entries as the number of buses.
+- `linear_solver::String = "KLU"`:
+        Linear solver to use for factorization. Options: "KLU", "AppleAccelerate"
+- `tol::Float64 = eps()`:
+        Tolerance related to sparsification and values to drop.
+- `max_cache_size::Int`:
+        max cache size in MiB (initialized as MAX_CACHE_SIZE_MiB).
+- `persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}()`:
+        arcs to be evaluated as soon as the VirtualPTDF is created (initialized as empty vector of tuples).
+"""
+function VirtualPTDF(
+    ybus::Ybus;
+    dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(),
+    linear_solver::String = "KLU",
+    tol::Float64 = eps(),
+    max_cache_size::Int = MAX_CACHE_SIZE_MiB,
+    persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}(),
+    system_uuid::Union{Base.UUID, Nothing} = nothing,
+)
+    solver = resolve_linear_solver(linear_solver)
+    ref_bus_positions = get_ref_bus_position(ybus)
+    A = IncidenceMatrix(ybus)
     if !(isempty(dist_slack))
         dist_slack_vector = redistribute_dist_slack(dist_slack, A, A.network_reduction_data)
     else
         dist_slack_vector = Float64[]
     end
-    BA = BA_Matrix(Ymatrix)
+    BA = BA_Matrix(ybus)
     ABA = calculate_ABA_matrix(A.data, BA.data, Set(ref_bus_positions))
     bus_ax = get_bus_axis(A)
     axes = A.axes
@@ -151,20 +223,8 @@ function VirtualPTDF(
             )
     end
 
-    # Create factorization based on solver choice
-    if linear_solver == "KLU"
-        K = klu(ABA)
-    elseif linear_solver == "AppleAccelerate"
-        if !_has_apple_accelerate_ext()
-            error(
-                "AppleAccelerate extension is not available. This solver is only available on macOS. Install AppleAccelerate: using Pkg; Pkg.add(\"AppleAccelerate\")",
-            )
-        end
-        # This will use the AAFactorization type from the extension
-        K = _create_apple_accelerate_factorization(ABA)
-    else
-        error("Unsupported linear solver: $linear_solver")
-    end
+    # Create factorization based on solver type dispatch.
+    K = _create_factorization(solver, ABA)
 
     # Pre-compute normalized distributed slack for efficiency
     if !isempty(dist_slack_vector)
@@ -177,9 +237,13 @@ function VirtualPTDF(
     valid_ix = setdiff(1:length(temp_data), ref_bus_positions)
     work_ba_col = zeros(length(valid_ix))
 
+    arc_susceptances = _extract_arc_susceptances(BA.data)
+
     return VirtualPTDF(
         K,
         BA.data,
+        A.data,
+        arc_susceptances,
         dist_slack_vector,
         dist_slack_normalized,
         axes,
@@ -189,8 +253,9 @@ function VirtualPTDF(
         empty_cache,
         subnetwork_axes,
         Ref(tol),
-        Ymatrix.network_reduction_data,
+        ybus.network_reduction_data,
         work_ba_col,
+        system_uuid,
     )
 end
 
@@ -323,6 +388,20 @@ Base.setindex!(::VirtualPTDF, _, idx...) = error("Operation not supported by Vir
 Base.setindex!(::VirtualPTDF, _, ::CartesianIndex) =
     error("Operation not supported by VirtualPTDF")
 
+"""
+    get_ptdf_data(mat::VirtualPTDF) -> Dict{Int, Vector{Float64}}
+
+Get the cached PTDF row data from a [`VirtualPTDF`](@ref) matrix.
+
+Unlike [`get_ptdf_data(::PTDF)`](@ref), which returns a dense matrix, this returns
+a dictionary mapping row indices to lazily computed row vectors.
+
+# Arguments
+- `mat::VirtualPTDF`: The virtual PTDF matrix
+
+# Returns
+- `Dict{Int, Vector{Float64}}`: Cached row data keyed by row index
+"""
 get_ptdf_data(mat::VirtualPTDF) = mat.cache.temp_cache
 
 function get_arc_axis(ptdf::VirtualPTDF)

@@ -76,3 +76,12 @@
         @test isapprox(Ybus3.data[i[1], i[2]], Ybus3_matpower[i[1], i[2]], atol = 1e-5)
     end
 end
+
+@testset "Test modification of units base when constructing Ybus" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    PSY.set_units_base_system!(sys, "NATURAL_UNITS")
+    ybus = @test_logs (
+        :warn,
+        r"Setting the system unit base from NATURAL_UNITS to SYSTEM_BASE for matrix construction",
+    ) match_mode = :any Ybus(sys)
+end
