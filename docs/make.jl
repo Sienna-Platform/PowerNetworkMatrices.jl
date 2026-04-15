@@ -21,6 +21,7 @@ pages = OrderedDict(
         "Computational Considertaions" => "explanation/computational_considerations.md",
         "DC Power Flow Approximation" => "explanation/dc_power_flow_approximation.md",
         "Network Reduction Theory" => "explanation/network_reduction_theory.md",
+        "Flowgate Methodology" => "explanation/flowgate_methodology.md",
     ],
     "Reference" => Any[
         "Matrix Overview" => "reference/network_matrices_overview.md",
