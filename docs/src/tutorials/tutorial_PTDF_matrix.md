@@ -29,7 +29,30 @@ ptdf_1 = PTDF(sys);
 get_ptdf_data(ptdf_1)
 ```
 
-Note that while the `PTDF` stores the transpose of the matrix data, the function `get_ptdf_data` returns the data in the standard orientation.
+Note that while the `PTDF` stores the transpose of the matrix data, the function `get_ptdf_data` returns the data in the standard orientation (arcs × buses).
+
+## Indexing the `PTDF` matrix
+
+The `PTDF` matrix is indexed by **arc tuples** `(from_bus_number, to_bus_number)` for the row dimension and **bus numbers** for the column dimension.
+
+```@repl tutorial_PTDF_matrix
+# inspect the axes and lookup dictionaries
+get_axes(ptdf_1)
+get_lookup(ptdf_1)
+```
+
+Elements of the `PTDF` matrix can be accessed by arc tuple and bus number:
+
+```@repl tutorial_PTDF_matrix
+# access PTDF element for arc (1, 2) and bus 3
+ptdf_1[(1, 2), 3]
+```
+
+!!! note
+    
+    For backward compatibility, branch name strings can also be used to index the `PTDF` matrix (e.g. `ptdf_1["branch_name", 3]`). This uses `get_branch_multiplier` internally to map the branch name to its corresponding arc tuple. Using arc tuples directly is recommended.
+
+## Computing `PTDF` from pre-computed matrices
 
 Advanced users might be interested in computing the `PTDF` matrix starting from either the data contained in the `IncidenceMatrix` and `BA_matrix` structures.
 

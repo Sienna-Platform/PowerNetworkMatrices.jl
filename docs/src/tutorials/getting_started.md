@@ -39,5 +39,23 @@ ptdf_matrix = PNM.PTDF(sys);
 PNM.get_data(ptdf_matrix)
 ```
 
-As it can be seen, PTDF matrix is stored such that the number of rows is equal
-to the number of buses, number of columns equal to the number of branches.
+As it can be seen, the PTDF matrix is stored internally in transposed form for computational efficiency.
+The function `get_ptdf_data` returns the data in the standard orientation (arcs × buses).
+
+The matrix axes are indexed by arc tuples `(from_bus_number, to_bus_number)` and bus numbers.
+You can inspect the axes and lookup dictionaries as follows:
+
+```@repl quick_start_guide
+# axes and lookup dictionaries describe the arc tuples and bus numbers for each dimension
+PNM.get_axes(ptdf_matrix)
+PNM.get_lookup(ptdf_matrix)
+```
+
+Elements can be accessed using arc tuples and bus numbers directly. The example below picks
+the first arc and first bus from the matrix axes so it works for any system:
+
+```@repl quick_start_guide
+some_arc = PNM.get_axes(ptdf_matrix)[2][1]
+some_bus = PNM.get_axes(ptdf_matrix)[1][1]
+ptdf_matrix[some_arc, some_bus]
+```
