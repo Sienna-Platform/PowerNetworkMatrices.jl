@@ -22,6 +22,9 @@ export WardReduction
 export Ybus
 export apply_ybus_modification
 export compute_ybus_delta
+export apply_aba_modification
+export compute_aba_delta
+export ABADelta
 export DC_ABA_Matrix_Factorized
 export DC_ABA_Matrix_Unfactorized
 export DC_PTDF_Matrix
@@ -31,9 +34,11 @@ export AC_Ybus_Matrix
 export YBUS_ELTYPE
 
 export apply_woodbury_correction
+export apply_aba_woodbury_correction!
 export clear_all_caches!
 export clear_caches!
 export compute_woodbury_factors
+export compute_aba_woodbury_factors
 export factorize
 export get_post_modification_ptdf_row
 export get_system_uuid

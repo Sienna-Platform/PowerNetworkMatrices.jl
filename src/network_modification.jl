@@ -473,3 +473,300 @@ function apply_ybus_modification(
     delta = compute_ybus_delta(ybus, mod)
     return ybus.data + delta
 end
+
+# --- Accessors so BA_Matrix and ABA_Matrix can be used directly with
+#     NetworkModification(mat, sys, outage). Previously only VirtualPTDF /
+#     VirtualMODF defined these.
+
+"""
+    _get_arc_susceptances(ba::BA_Matrix) -> Vector{Float64}
+
+Extract per-arc series susceptance from a `BA_Matrix`. Each column of `ba.data`
+has `+b` at the from-bus row and `-b` at the to-bus row; the from-bus entry is
+returned for each arc. Aligned with `get_arc_axis(ba)`.
+"""
+function _get_arc_susceptances(ba::BA_Matrix)
+    arc_ax = get_arc_axis(ba)
+    bus_lookup = get_bus_lookup(ba)
+    nr = get_network_reduction_data(ba)
+    n_arcs = length(arc_ax)
+    sus = Vector{Float64}(undef, n_arcs)
+    rows = SparseArrays.rowvals(ba.data)
+    nzs = SparseArrays.nonzeros(ba.data)
+    for (i, arc) in enumerate(arc_ax)
+        fb = get_bus_index(arc[1], bus_lookup, nr)
+        found = 0.0
+        for nz in SparseArrays.nzrange(ba.data, i)
+            if rows[nz] == fb
+                found = nzs[nz]
+                break
+            end
+        end
+        sus[i] = found
+    end
+    return sus
+end
+
+# --- Tap-ratio guard for ABA delta -------------------------------------
+#
+# Ybus entries for transformers with off-nominal taps are asymmetric
+# (`Y11 = Y_t/abs2(tap)`, `Y22 = Y_t`, `Y12 = -Y_t/c_tap`, `Y21 = -Y_t/tap`).
+# `compute_aba_delta`'s symmetric `ΔABA = Uᵀ·diag(Δb)·U` only holds when
+# tap=1 and α=0; asymmetric Woodbury for tapped branches is not implemented.
+
+"""Return the tap ratio of `branch`, defaulting to `1.0` for types that do
+not carry one (lines, non-tap two-winding transformers)."""
+_branch_tap(::PSY.ACTransmission) = 1.0
+_branch_tap(br::PSY.TwoWindingTransformer) = PSY.get_tap(br)
+
+function _branch_tap(tw::ThreeWindingTransformerWinding)
+    tfw = get_transformer(tw)
+    winding_num = get_winding_number(tw)
+    if winding_num == 1
+        return PSY.get_primary_turns_ratio(tfw)
+    elseif winding_num == 2
+        return PSY.get_secondary_turns_ratio(tfw)
+    elseif winding_num == 3
+        return PSY.get_tertiary_turns_ratio(tfw)
+    else
+        throw(ArgumentError("Invalid winding number: $winding_num"))
+    end
+end
+
+"""Phase-shift angle (radians), default zero."""
+_branch_alpha(::PSY.ACTransmission) = 0.0
+_branch_alpha(br::PSY.PhaseShiftingTransformer) = PSY.get_α(br)
+
+function _branch_alpha(
+    tw::ThreeWindingTransformerWinding{PSY.PhaseShiftingTransformer3W},
+)
+    tfw = get_transformer(tw)
+    winding_num = get_winding_number(tw)
+    if winding_num == 1
+        return PSY.get_α_primary(tfw)
+    elseif winding_num == 2
+        return PSY.get_α_secondary(tfw)
+    elseif winding_num == 3
+        return PSY.get_α_tertiary(tfw)
+    else
+        throw(ArgumentError("Invalid winding number: $winding_num"))
+    end
+end
+
+"""Check whether a single branch has an off-nominal tap or a non-zero phase
+shift. Raises `ArgumentError` with a specific message if so."""
+function _assert_nominal_branch_for_aba_delta(branch::PSY.ACTransmission)
+    tap = _branch_tap(branch)
+    if !isapprox(tap, 1.0; atol = 1e-9)
+        throw(
+            ArgumentError(
+                "compute_aba_delta does not yet support off-nominal tap ratios: " *
+                "branch '$(PSY.get_name(branch))' has tap=$tap. The symmetric " *
+                "Woodbury decomposition requires tap=1.0; asymmetric Woodbury " *
+                "for tapped transformers is a planned follow-on (see the " *
+                "PF-DC-Contingency-Analysis project note). For now, exclude " *
+                "off-nominal-tap branches from the contingency set.",
+            ),
+        )
+    end
+    α = _branch_alpha(branch)
+    if !isapprox(α, 0.0; atol = 1e-9)
+        throw(
+            ArgumentError(
+                "compute_aba_delta does not support phase-shifting transformers: " *
+                "branch '$(PSY.get_name(branch))' has α=$α rad. Exclude " *
+                "phase-shifters from the contingency set.",
+            ),
+        )
+    end
+    return nothing
+end
+
+"""Validate that no branch(es) associated with `arc_tuple` have off-nominal
+tap or phase shift. Resolves through direct / parallel / series maps."""
+function _assert_nominal_arc_for_aba_delta(
+    nr::NetworkReductionData,
+    arc_tuple::Tuple{Int, Int},
+)
+    if haskey(nr.direct_branch_map, arc_tuple)
+        _assert_nominal_branch_for_aba_delta(nr.direct_branch_map[arc_tuple])
+    elseif haskey(nr.parallel_branch_map, arc_tuple)
+        bp = nr.parallel_branch_map[arc_tuple]
+        for br in bp.branches
+            _assert_nominal_branch_for_aba_delta(br)
+        end
+    elseif haskey(nr.series_branch_map, arc_tuple)
+        chain = nr.series_branch_map[arc_tuple]
+        # BranchesSeries.branches is a Dict{DataType, Vector{<:ACTransmission}}
+        for (_, brs) in chain.branches
+            for br in brs
+                _assert_nominal_branch_for_aba_delta(br)
+            end
+        end
+    end
+    return nothing
+end
+
+# --- Bridge from NetworkModification to ABA (DC) domain ---
+
+"""
+    ABADelta
+
+Bundle returned by [`compute_aba_delta`](@ref). Carries both the assembled sparse
+ΔABA matrix (for generic use or convenience add) and the Woodbury-ready pair
+`(U, delta_b)` so callers doing Sherman-Morrison-Woodbury updates do not have to
+reconstruct the incidence columns.
+
+# Fields
+- `delta::SparseMatrixCSC{Float64, Int}` — the sparse delta, same size as `aba.data`.
+  Ref-bus rows/columns are already dropped.
+- `U::SparseMatrixCSC{Float64, Int}` — reduced arc incidence matrix for the modified
+  arcs. Size `n_valid × M` where `M = length(mod.arc_modifications)`. Each column has
+  entries `+1` at the from-bus row and `-1` at the to-bus row (either may be absent
+  if the corresponding endpoint is a reference bus).
+- `delta_b::Vector{Float64}` — susceptance deltas, length `M`. `Δb = -b_arc` for a
+  full outage.
+- `arc_indices::Vector{Int}` — arc indices of the modified arcs, length `M`,
+  aligned with `delta_b` and the columns of `U`.
+- `skipped_shunts::Int` — count of `ShuntModification`s present in the input `mod`
+  that were skipped (DC ABA is susceptance-only; shunt admittance deltas do not
+  contribute to susceptance).
+"""
+struct ABADelta
+    delta::SparseArrays.SparseMatrixCSC{Float64, Int}
+    U::SparseArrays.SparseMatrixCSC{Float64, Int}
+    delta_b::Vector{Float64}
+    arc_indices::Vector{Int}
+    skipped_shunts::Int
+end
+
+"""
+    compute_aba_delta(aba::ABA_Matrix, mod::NetworkModification) -> ABADelta
+
+Compute the DC susceptance-domain ΔABA for a canonical `NetworkModification`, plus
+the Woodbury-ready `(U, delta_b)` pair.
+
+The ABA matrix is `Aᵀ diag(b) A` on the reduced bus basis (reference buses removed).
+For a set of arc modifications with susceptance deltas `Δb`, the delta matrix is
+
+    ΔABA = Aᵤᵀ diag(Δb) Aᵤ
+
+where `Aᵤ` is the reduced arc incidence matrix restricted to the modified arcs.
+
+This is the DC companion to [`compute_ybus_delta`](@ref). Arc modifications
+contribute via `delta_b`; shunt modifications are silently skipped (they are
+purely complex admittance changes and do not affect the DC susceptance B matrix).
+
+# Notes
+- If an arc touches a reference bus, the corresponding row in that column of `U`
+  is omitted (only one of the two endpoint entries is present).
+- The returned `delta` shares the sparsity pattern footprint of the original ABA
+  for typical branch-outage modifications, so `aba.data + delta` preserves the
+  structural pattern. For in-place numeric refactor paths that rely on
+  `check_pattern=true`, callers should mutate an `nzval` copy at known positions
+  rather than use Julia's sparse `+` (which canonicalizes explicit zeros).
+"""
+function compute_aba_delta(
+    aba::ABA_Matrix,
+    mod::NetworkModification,
+)::ABADelta
+    bus_lookup = get_bus_lookup(aba)
+    n = size(aba.data, 1)
+    nr = get_network_reduction_data(aba)
+    arc_ax = get_arc_axis(nr)
+    n_arcs_mod = length(mod.arc_modifications)
+
+    I = Vector{Int}()
+    J = Vector{Int}()
+    V = Vector{Float64}()
+    sizehint!(I, 4 * n_arcs_mod)
+    sizehint!(J, 4 * n_arcs_mod)
+    sizehint!(V, 4 * n_arcs_mod)
+
+    U_I = Vector{Int}()
+    U_J = Vector{Int}()
+    U_V = Vector{Float64}()
+    sizehint!(U_I, 2 * n_arcs_mod)
+    sizehint!(U_J, 2 * n_arcs_mod)
+    sizehint!(U_V, 2 * n_arcs_mod)
+
+    delta_b = Vector{Float64}()
+    arc_indices = Vector{Int}()
+    sizehint!(delta_b, n_arcs_mod)
+    sizehint!(arc_indices, n_arcs_mod)
+
+    kept = 0
+    for arc_mod in mod.arc_modifications
+        arc_tuple = arc_ax[arc_mod.arc_index]
+        _assert_nominal_arc_for_aba_delta(nr, arc_tuple)
+        fb_ix = get(bus_lookup, arc_tuple[1], 0)
+        tb_ix = get(bus_lookup, arc_tuple[2], 0)
+        if fb_ix == 0 && tb_ix == 0
+            throw(
+                ArgumentError(
+                    "Modified arc $(arc_tuple) has both endpoints at reference buses. " *
+                    "This is a degenerate topology for DC contingency analysis; " *
+                    "the arc contributes nothing to the reduced ABA basis and " *
+                    "indicates either a malformed system or an accidentally " *
+                    "double-ref subnetwork.",
+                ),
+            )
+        end
+        kept += 1
+        Δb = arc_mod.delta_b
+        push!(delta_b, Δb)
+        push!(arc_indices, arc_mod.arc_index)
+
+        # U column: +1 at fb, -1 at tb (drop ref entries)
+        if fb_ix != 0
+            push!(U_I, fb_ix)
+            push!(U_J, kept)
+            push!(U_V, 1.0)
+        end
+        if tb_ix != 0
+            push!(U_I, tb_ix)
+            push!(U_J, kept)
+            push!(U_V, -1.0)
+        end
+
+        # ΔABA = A_colᵀ Δb A_col expansion, ref entries dropped
+        if fb_ix != 0
+            push!(I, fb_ix)
+            push!(J, fb_ix)
+            push!(V, Δb)
+        end
+        if fb_ix != 0 && tb_ix != 0
+            push!(I, fb_ix)
+            push!(J, tb_ix)
+            push!(V, -Δb)
+            push!(I, tb_ix)
+            push!(J, fb_ix)
+            push!(V, -Δb)
+        end
+        if tb_ix != 0
+            push!(I, tb_ix)
+            push!(J, tb_ix)
+            push!(V, Δb)
+        end
+    end
+
+    delta = SparseArrays.sparse(I, J, V, n, n)
+    U = SparseArrays.sparse(U_I, U_J, U_V, n, kept)
+    return ABADelta(delta, U, delta_b, arc_indices, length(mod.shunt_modifications))
+end
+
+"""
+    apply_aba_modification(aba::ABA_Matrix, mod::NetworkModification) -> SparseMatrixCSC
+
+Apply a canonical NetworkModification to an ABA matrix and return the modified
+sparse matrix. Convenience wrapper around [`compute_aba_delta`](@ref) for
+correctness reference; performance-critical paths should mutate an `nzval` copy
+in place to preserve exact sparsity pattern (see notes on `compute_aba_delta`).
+"""
+function apply_aba_modification(
+    aba::ABA_Matrix,
+    mod::NetworkModification,
+)
+    d = compute_aba_delta(aba, mod)
+    return aba.data + d.delta
+end
