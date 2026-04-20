@@ -44,7 +44,7 @@ makedocs(;
 )
 
 deploydocs(;
-    repo = "github.com/NREL-Sienna/PowerNetworkMatrices.jl.git",
+    repo = "github.com/Sienna-Platform/PowerNetworkMatrices.jl.git",
     target = "build",
     branch = "gh-pages",
     devurl = "dev",

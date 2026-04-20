@@ -3,10 +3,10 @@
 !!! note
     
     `PowerSystemCaseBuilder.jl` is a helper library that makes it easier to reproduce examples in the documentation and tutorials. Normally you would pass your local files to create the system data instead of calling the function `build_system`.
-    For more details visit [PowerSystemCaseBuilder Documentation](https://nrel-sienna.github.io/PowerSystemCaseBuilder.jl/stable)
+    For more details visit [PowerSystemCaseBuilder Documentation](https://sienna-platform.github.io/PowerSystemCaseBuilder.jl/stable)
 
 For more details about loading data and adding more dynamic components check the
-[Creating a System with Dynamic devices](https://nrel-sienna.github.io/PowerSystems.jl/stable/tutorials/add_dynamic_data/)
+[Creating a System with Dynamic devices](https://sienna-platform.github.io/PowerSystems.jl/stable/tutorials/add_dynamic_data/)
 section of the documentation in `PowerSystems.jl`.
 
 ## Loading data

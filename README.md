@@ -1,9 +1,9 @@
 # PowerNetworkMatrices.jl
 
-[![Main - CI](https://github.com/NREL-Sienna/PowerNetworkMatrices.jl/actions/workflows/main-tests.yml/badge.svg)](https://github.com/NREL-Sienna/PowerNetworkMatrices.jl/actions/workflows/main-tests.yml)
-[![codecov](https://codecov.io/gh/NREL-Sienna/PowerNetworkMatrices.jl/branch/main/graph/badge.svg?token=2VvekKsf11)](https://codecov.io/gh/NREL-Sienna/PowerNetworkMatrices.jl)
-[![Documentation Build](https://github.com/NREL-Sienna/PowerNetworkMatrices.jl/workflows/Documentation/badge.svg?)](https://nrel-sienna.github.io/PowerNetworkMatrices.jl/stable)
-[<img src="https://img.shields.io/badge/slack-@Sienna/PNM-sienna.svg?logo=slack">](https://join.slack.com/t/nrel-sienna/shared_invite/zt-glam9vdu-o8A9TwZTZqqNTKHa7q3BpQ)
+[![Main - CI](https://github.com/Sienna-Platform/PowerNetworkMatrices.jl/actions/workflows/main-tests.yml/badge.svg)](https://github.com/Sienna-Platform/PowerNetworkMatrices.jl/actions/workflows/main-tests.yml)
+[![codecov](https://codecov.io/gh/Sienna-Platform/PowerNetworkMatrices.jl/branch/main/graph/badge.svg?token=2VvekKsf11)](https://codecov.io/gh/Sienna-Platform/PowerNetworkMatrices.jl)
+[![Documentation Build](https://github.com/Sienna-Platform/PowerNetworkMatrices.jl/workflows/Documentation/badge.svg?)](https://sienna-platform.github.io/PowerNetworkMatrices.jl/stable)
+[<img src="https://img.shields.io/badge/slack-@Sienna/PNM-sienna.svg?logo=slack">](https://join.slack.com/t/core-sienna/shared_invite/zt-glam9vdu-o8A9TwZTZqqNTKHa7q3BpQ)
 [![PowerNetworkMatrices.jl Downloads](https://img.shields.io/badge/dynamic/json?url=http%3A%2F%2Fjuliapkgstats.com%2Fapi%2Fv1%2Ftotal_downloads%2FPowerNetworkMatrices&query=total_requests&label=Downloads)](http://juliapkgstats.com/pkg/PowerNetworkMatrices)
 
 `PowerNetworkMatrices.jl` is able to build classic power systems modeling network matrices such as

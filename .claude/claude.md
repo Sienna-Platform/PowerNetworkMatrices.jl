@@ -4,7 +4,7 @@
 
 ## Package Role
 
-PowerNetworkMatrices.jl constructs classic power systems network matrices (Ybus, PTDF, LODF) for power flow analysis, sensitivity analysis, and contingency studies. Part of the NREL-Sienna ecosystem, it provides computational building blocks for optimization and analysis packages.
+PowerNetworkMatrices.jl constructs classic power systems network matrices (Ybus, PTDF, LODF) for power flow analysis, sensitivity analysis, and contingency studies. Part of the Sienna-Platform ecosystem, it provides computational building blocks for optimization and analysis packages.
 
 ## Design Objectives
 
@@ -172,7 +172,7 @@ Documentation source
 
 ## Code Conventions
 
-**Style Guide:** [NREL-Sienna Style Guide](https://nrel-sienna.github.io/InfrastructureSystems.jl/stable/style/)
+**Style Guide:** [Sienna-Platform Style Guide](https://sienna-platform.github.io/InfrastructureSystems.jl/stable/style/)
 
 ### Formatter
 
@@ -191,7 +191,7 @@ Documentation source
 ## Documentation Practices
 
 **Framework:** [Diataxis](https://diataxis.fr/)
-**Sienna Guide:** [Documentation Best Practices](https://nrel-sienna.github.io/InfrastructureSystems.jl/stable/docs_best_practices/explanation/)
+**Sienna Guide:** [Documentation Best Practices](https://sienna-platform.github.io/InfrastructureSystems.jl/stable/docs_best_practices/explanation/)
 
 ### Docstring Requirements
 
