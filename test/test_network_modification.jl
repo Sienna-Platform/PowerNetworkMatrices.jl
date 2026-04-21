@@ -250,3 +250,72 @@ end
         end
     end
 end
+
+@testset "NetworkModification: full ThreeWindingTransformer outage" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
+    vptdf = VirtualPTDF(sys)
+
+    # Full 3WT outage should produce 3 arc modifications (one per winding)
+    mod = NetworkModification(vptdf, trf)
+    @test length(mod.arc_modifications) == 3
+    @test mod.label == PSY.get_name(trf)
+
+    # Each modification should have negative delta_b (removing susceptance)
+    for am in mod.arc_modifications
+        @test am.delta_b < 0
+    end
+
+    # Should produce valid PTDF rows
+    row = get_post_modification_ptdf_row(vptdf, 1, mod)
+    @test length(row) == length(PNM.get_bus_axis(vptdf))
+end
+
+@testset "NetworkModification: single ThreeWindingTransformerWinding outage" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
+    vptdf = VirtualPTDF(sys)
+
+    # Single winding outage
+    for w in 1:3
+        winding = PNM.ThreeWindingTransformerWinding(trf, w)
+        mod = NetworkModification(vptdf, winding)
+        @test length(mod.arc_modifications) == 1
+        @test mod.arc_modifications[1].delta_b < 0
+    end
+end
+
+@testset "NetworkModification: partial ThreeWindingTransformer (disabled winding)" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
+
+    # Disable one winding before building the matrix
+    PSY.set_available_secondary!(trf, false)
+    vptdf = VirtualPTDF(sys)
+
+    # Full 3WT outage should only produce 2 mods (secondary is unavailable)
+    mod = NetworkModification(vptdf, trf)
+    @test length(mod.arc_modifications) == 2
+end
+
+@testset "NetworkModification: ThreeWindingTransformer via Outage attribute" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
+
+    # Attach an outage supplemental attribute to the 3WT
+    outage = GeometricDistributionForcedOutage(;
+        mean_time_to_recovery = 0.0,
+        outage_transition_probability = 0.0,
+    )
+    add_supplemental_attribute!(sys, trf, outage)
+    vptdf = VirtualPTDF(sys)
+
+    # Construct modification via Outage path
+    mod = NetworkModification(vptdf, sys, outage)
+    @test length(mod.arc_modifications) == 3
+    @test !isempty(mod.label)
+
+    # Should produce valid PTDF rows
+    row = get_post_modification_ptdf_row(vptdf, 1, mod)
+    @test length(row) == length(PNM.get_bus_axis(vptdf))
+end
