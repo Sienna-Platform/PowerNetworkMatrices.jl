@@ -61,7 +61,7 @@ Avoid returning `Union` types or abstract types.
 
 ## Code Conventions
 
-Style guide: [https://nrel-sienna.github.io/InfrastructureSystems.jl/stable/style/](https://nrel-sienna.github.io/InfrastructureSystems.jl/stable/style/)
+Style guide: [https://sienna-platform.github.io/InfrastructureSystems.jl/stable/style/](https://sienna-platform.github.io/InfrastructureSystems.jl/stable/style/)
 
 Formatter (JuliaFormatter): Use the formatter script provided in each package.
 
@@ -77,7 +77,7 @@ Key rules:
 
 Framework: [Diataxis](https://diataxis.fr/)
 
-Sienna guide: [https://nrel-sienna.github.io/InfrastructureSystems.jl/stable/docs_best_practices/explanation/](https://nrel-sienna.github.io/InfrastructureSystems.jl/stable/docs_best_practices/explanation/)
+Sienna guide: [https://sienna-platform.github.io/InfrastructureSystems.jl/stable/docs_best_practices/explanation/](https://sienna-platform.github.io/InfrastructureSystems.jl/stable/docs_best_practices/explanation/)
 
 Docstring requirements:
 

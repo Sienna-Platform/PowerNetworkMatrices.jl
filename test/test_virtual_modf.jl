@@ -286,7 +286,7 @@ end
 end
 
 @testset "VirtualMODF: BA/A sign convention consistency (issue #278)" begin
-    # Regression test for NREL-Sienna/PowerNetworkMatrices.jl#278.
+    # Regression test for Sienna-Platform/PowerNetworkMatrices.jl#278.
     #
     # The issue is an inconsistent branch orientation between BA[:, m] and
     # A[m, :]: BA[:, m] can correspond to -b_m * A[m, :] even when b_m itself
