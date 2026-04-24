@@ -82,7 +82,7 @@ end
     Y = test_all_subtypes(sys, network_reductions)
     # test that the parallel lines were reduced
     nrd = PNM.get_network_reduction_data(Y)
-    @test PNM.BranchesParallel{Line} in types_in_series_reduction(nrd)
+    @test PNM.BranchesParallel in types_in_series_reduction(nrd)
 end
 
 @testset "Test Reductions with filters" begin
