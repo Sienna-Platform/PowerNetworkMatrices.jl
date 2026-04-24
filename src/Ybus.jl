@@ -166,15 +166,13 @@ end
 function _push_parallel_branch!(
     parallel_branch_map::Dict,
     arc_tuple::Tuple{Int, Int},
-    br::T,
-) where {T <: PSY.ACTransmission}
-    if get_branch_type(parallel_branch_map[arc_tuple]) == T
-        add_branch!(parallel_branch_map[arc_tuple], br)
-    else
+    br::PSY.ACTransmission,
+)
+    bp = parallel_branch_map[arc_tuple]
+    if any(typeof(b) != typeof(br) for b in bp.branches)
         @warn "Mismatch in parallel device types for arc $(arc_tuple). This could indicate issues in the network data."
-        parallel_branch_map[arc_tuple] =
-            BranchesParallel([parallel_branch_map[arc_tuple].branches..., br])
     end
+    add_branch!(bp, br)
     return
 end
 

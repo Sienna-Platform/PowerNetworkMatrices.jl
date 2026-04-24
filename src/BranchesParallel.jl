@@ -1,23 +1,17 @@
-mutable struct BranchesParallel{T <: PSY.ACTransmission} <: PSY.ACTransmission
-    branches::Vector{T}
+mutable struct BranchesParallel <: PSY.ACTransmission
+    branches::Vector{PSY.ACTransmission}
     equivalent_ybus::Union{Matrix{YBUS_ELTYPE}, Nothing}
 end
 
-function BranchesParallel(branches::Vector{T}) where {T <: PSY.ACTransmission}
-    BranchesParallel(branches, nothing)
-end
-# Constructor for the mixed types
-function BranchesParallel(branches::Vector{PSY.ACTransmission})
-    return BranchesParallel{PSY.ACTransmission}(branches, nothing)
+function BranchesParallel(branches::Vector{<:PSY.ACTransmission})
+    BranchesParallel(Vector{PSY.ACTransmission}(branches), nothing)
 end
 
-function add_branch!(bp::BranchesParallel{T}, branch::T) where {T <: PSY.ACTransmission}
+function add_branch!(bp::BranchesParallel, branch::PSY.ACTransmission)
     push!(bp.branches, branch)
 end
 
-get_branch_type(::BranchesParallel{T}) where {T <: PSY.ACTransmission} = T
-
-function get_name(bp::BranchesParallel{T}) where {T <: PSY.ACTransmission}
+function get_name(bp::BranchesParallel)
     base_string = _longest_starting_substring(PSY.get_name.(bp.branches)...)
     if isempty(base_string)
         base_string = join(PSY.get_name.(bp.branches), "_") * "_"
@@ -139,12 +133,10 @@ function Base.length(bp::BranchesParallel)
     return length(bp.branches)
 end
 
-function add_to_map(
-    double_circuit::BranchesParallel{T},
-    filters::Dict,
-) where {T <: PSY.ACTransmission}
+function add_to_map(double_circuit::BranchesParallel, filters::Dict)
     isempty(filters) && return true
-    if isabstracttype(T)
+    branch_types = unique(typeof.(double_circuit.branches))
+    if length(branch_types) > 1
         @warn "Parallel circuit contains mixed branch types, filters might be applied to more components than intended. Use Logging.Debug for additional information."
         @debug "Parallel circuit branch types: $(typeof.(double_circuit.branches))"
         @debug "Parallel circuit branch names: $(PSY.get_name.(double_circuit.branches))"
@@ -156,7 +148,7 @@ function add_to_map(
         end
         return true
     end
-
+    T = only(branch_types)
     if !haskey(filters, T)
         return true
     else

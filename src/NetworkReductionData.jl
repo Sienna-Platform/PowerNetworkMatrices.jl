@@ -63,7 +63,7 @@ function get_typed_parallel_branch_map(
     b::BranchMapsByType,
     ::Type{T},
 ) where {T <: PSY.ACTransmission}
-    return b.parallel_branch_map[T]::Dict{Tuple{Int, Int}, BranchesParallel{T}}
+    return b.parallel_branch_map[T]::Dict{Tuple{Int, Int}, BranchesParallel}
 end
 
 function get_typed_reverse_parallel_branch_map(
@@ -270,7 +270,7 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
                 map_by_type = get!(
                     all_branch_maps_by_type.parallel_branch_map,
                     concrete_type,
-                    Dict{Tuple{Int, Int}, BranchesParallel{_get_segment_type(v)}}(),
+                    Dict{Tuple{Int, Int}, BranchesParallel}(),
                 )
                 map_by_type[k] = v
                 name_to_arc_map = get!(
@@ -385,16 +385,14 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
 end
 
 _get_segment_components(x::T) where {T <: PSY.ACBranch} = [x]
-_get_segment_components(x::BranchesParallel{T}) where {T <: PSY.ACTransmission} = x.branches
+_get_segment_components(x::BranchesParallel) = x.branches
 _get_segment_type(::T) where {T <: PSY.ACBranch} = T
-_get_segment_type(::BranchesParallel{T}) where {T <: PSY.ACTransmission} = T
 _get_segment_type(
     ::ThreeWindingTransformerWinding{T},
 ) where {T <: PSY.ThreeWindingTransformer} = T
 
 _get_concrete_types(x::T) where {T <: PSY.ACBranch} = [T]
-_get_concrete_types(x::BranchesParallel{T}) where {T <: PSY.ACTransmission} =
-    unique(_get_segment_type.(x.branches))
+_get_concrete_types(x::BranchesParallel) = unique(typeof.(x.branches))
 
 get_irreducible_buses(rb::NetworkReductionData) = rb.irreducible_buses
 """
