@@ -12,8 +12,9 @@ Caching is two-tiered:
   one RowCache per contingency
 
 # Arguments
-- `K::KLULinSolveCache{Float64}`:
-        Cached LU factorization of the ABA matrix.
+- `K::KLULinSolvePool{Float64}`:
+        Pool of independent ABA factorizations sized to `nworkers`. With
+        `nworkers > 1`, multiple threads may call `getindex` concurrently.
 - `BA::SparseArrays.SparseMatrixCSC{Float64, Int}`:
         BA matrix.
 - `A::SparseArrays.SparseMatrixCSC{Int8, Int}`:
@@ -48,17 +49,17 @@ Caching is two-tiered:
         Max cache size in bytes per contingency.
 - `network_reduction_data::NetworkReductionData`:
         Network reduction mappings for branch resolution.
-- `temp_data::Vector{Float64}`:
-        Scratch vector of size n_buses.
-- `work_ba_col::Vector{Float64}`:
-        Pre-allocated work array for BA column extraction.
+- `temp_data::Vector{Vector{Float64}}`:
+        Per-worker scratch vector of size n_buses (one per pool worker).
+- `work_ba_col::Vector{Vector{Float64}}`:
+        Per-worker work array for BA column extraction (one per pool worker).
 - `system_uuid::Union{Base.UUID, Nothing}`:
         UUID of the system used to construct the matrix, used to validate that
         modification operations are applied to the correct system.
 """
 struct VirtualMODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
        PowerNetworkMatrix{Float64}
-    K::KLULinSolveCache{Float64}
+    K::KLULinSolvePool{Float64}
     BA::SparseArrays.SparseMatrixCSC{Float64, Int}
     A::SparseArrays.SparseMatrixCSC{Int8, Int}
     PTDF_A_diag::Vector{Float64}
@@ -70,13 +71,15 @@ struct VirtualMODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
     valid_ix::Vector{Int}
     contingency_cache::Dict{Base.UUID, ContingencySpec}
     woodbury_cache::Dict{NetworkModification, WoodburyFactors}
+    woodbury_cache_lock::ReentrantLock
     row_caches::Dict{NetworkModification, RowCache}
+    row_caches_lock::ReentrantLock
     subnetwork_axes::Dict{Int, Ax}
     tol::Base.RefValue{Float64}
     max_cache_size_bytes::Int
     network_reduction_data::NetworkReductionData
-    temp_data::Vector{Float64}
-    work_ba_col::Vector{Float64}
+    temp_data::Vector{Vector{Float64}}
+    work_ba_col::Vector{Vector{Float64}}
     system_uuid::Union{Base.UUID, Nothing}
 end
 
@@ -93,13 +96,41 @@ get_bus_axis(mat::VirtualMODF) = mat.axes[2]
 get_tol(mat::VirtualMODF) = mat.tol[]
 get_system_uuid(M::VirtualMODF) = M.system_uuid
 
-# Woodbury kernel accessors
-_get_K(m::VirtualMODF) = m.K
+# Woodbury kernel accessors. VirtualMODF holds per-worker scratch and a pool;
+# use with_worker(K) and the matching scratch index for thread safety.
 _get_BA(m::VirtualMODF) = m.BA
 _get_arc_susceptances(m::VirtualMODF) = m.arc_susceptances
 _get_valid_ix(m::VirtualMODF) = m.valid_ix
-_get_temp_data(m::VirtualMODF) = m.temp_data
-_get_work_ba_col(m::VirtualMODF) = m.work_ba_col
+
+"""
+Return the number of pool workers (= max concurrent solves) for `vmodf`.
+"""
+nworkers(vmodf::VirtualMODF) = nworkers(vmodf.K)
+
+function _compute_woodbury_factors(
+    mat::VirtualMODF,
+    modifications::Tuple{Vararg{ArcModification}},
+)::WoodburyFactors
+    return with_worker(mat.K) do cache, idx
+        _compute_woodbury_factors_impl(
+            cache, mat.work_ba_col[idx], mat.temp_data[idx],
+            mat.BA, mat.arc_susceptances, mat.valid_ix, modifications,
+        )
+    end
+end
+
+function _apply_woodbury_correction(
+    mat::VirtualMODF,
+    monitored_idx::Int,
+    wf::WoodburyFactors,
+)::Vector{Float64}
+    return with_worker(mat.K) do cache, idx
+        _apply_woodbury_correction_impl(
+            cache, mat.work_ba_col[idx], mat.temp_data[idx],
+            mat.BA, mat.arc_susceptances, mat.valid_ix, monitored_idx, wf,
+        )
+    end
+end
 
 """
     get_registered_contingencies(vmodf::VirtualMODF) -> Dict{Base.UUID, ContingencySpec}
@@ -154,6 +185,7 @@ function VirtualMODF(
     tol::Float64 = eps(),
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
+    nworkers::Int = Threads.nthreads(),
     kwargs...,
 )
     if length(dist_slack) != 0
@@ -171,27 +203,29 @@ function VirtualMODF(
     arc_ax_ref = make_ax_ref(arc_ax)
     bus_ax_ref = make_ax_ref(bus_ax)
     look_up = (arc_ax_ref, bus_ax_ref)
-    # Use A.subnetwork_axes which has Ax == (arc_ax, bus_ax) matching our axes field type
     subnetwork_axes = A.subnetwork_axes
 
     BA = BA_Matrix(Ymatrix)
     ABA = calculate_ABA_matrix(A.data, BA.data, Set(ref_bus_positions))
-    K = klu_factorize(ABA)
+    K_pool = KLULinSolvePool(ABA; nworkers = nworkers)
 
     valid_ix = setdiff(1:length(bus_ax), ref_bus_positions)
 
-    # Compute raw PTDF diagonal and arc susceptances
-    PTDF_A_diag = _get_PTDF_A_diag(K, BA.data, A.data, Set(ref_bus_positions))
+    # Use one worker for the diagonal precomputation; the pool is sized to
+    # `nworkers` solves, so a serial precompute is fine.
+    PTDF_A_diag = with_worker(K_pool) do cache, _idx
+        _get_PTDF_A_diag(cache, BA.data, A.data, Set(ref_bus_positions))
+    end
     arc_susceptances = _extract_arc_susceptances(BA.data)
     branch_susceptances_by_arc = _extract_branch_susceptances_by_arc(
         BA.data, arc_ax, Ymatrix.network_reduction_data)
 
-    temp_data = zeros(length(bus_ax))
-    work_ba_col = zeros(length(valid_ix))
+    temp_data = [zeros(length(bus_ax)) for _ in 1:nworkers]
+    work_ba_col = [zeros(length(valid_ix)) for _ in 1:nworkers]
     max_cache_bytes = max_cache_size * MiB
 
     vmodf = VirtualMODF(
-        K,
+        K_pool,
         BA.data,
         A.data,
         PTDF_A_diag,
@@ -203,7 +237,9 @@ function VirtualMODF(
         valid_ix,
         Dict{Base.UUID, ContingencySpec}(),
         Dict{NetworkModification, WoodburyFactors}(),
+        ReentrantLock(),
         Dict{NetworkModification, RowCache}(),
+        ReentrantLock(),
         subnetwork_axes,
         Ref(tol),
         max_cache_bytes,
@@ -278,23 +314,26 @@ end
 """
     _get_woodbury_factors(vmodf, mod) -> WoodburyFactors
 
-Compute and cache the Woodbury factors for a network modification.
-Delegates to the shared Woodbury kernel `_compute_woodbury_factors`.
-Caches by content hash of the modification.
-
-!!! warning
-    This function is NOT thread-safe. It mutates `vmodf.work_ba_col` on
-    every call. Do not call concurrently on the same `VirtualMODF` instance.
+Compute and cache the Woodbury factors for a network modification. Safe to
+call from multiple threads: the cache is guarded by `vmodf.woodbury_cache_lock`,
+and the underlying solve uses a per-worker pool worker.
 """
 function _get_woodbury_factors(
     vmodf::VirtualMODF,
     mod::NetworkModification,
 )
-    if haskey(vmodf.woodbury_cache, mod)
-        return vmodf.woodbury_cache[mod]
+    @lock vmodf.woodbury_cache_lock begin
+        haskey(vmodf.woodbury_cache, mod) && return vmodf.woodbury_cache[mod]
     end
     wf = _compute_woodbury_factors(vmodf, mod.arc_modifications)
-    vmodf.woodbury_cache[mod] = wf
+    @lock vmodf.woodbury_cache_lock begin
+        # Another thread may have populated the entry while we computed.
+        existing = get(vmodf.woodbury_cache, mod, nothing)
+        if existing !== nothing
+            return existing
+        end
+        vmodf.woodbury_cache[mod] = wf
+    end
     return wf
 end
 
@@ -324,15 +363,18 @@ end
 """
     _get_or_create_row_cache(vmodf, mod) -> RowCache
 
-Get or create the per-modification RowCache for the given modification.
+Get or create the per-modification RowCache. Guarded by
+`vmodf.row_caches_lock` for parallel access.
 """
 function _get_or_create_row_cache(vmodf::VirtualMODF, mod::NetworkModification)
-    if !haskey(vmodf.row_caches, mod)
-        row_size = length(vmodf.temp_data) * sizeof(Float64)
-        vmodf.row_caches[mod] =
-            RowCache(vmodf.max_cache_size_bytes, Set{Int}(), row_size)
+    @lock vmodf.row_caches_lock begin
+        if !haskey(vmodf.row_caches, mod)
+            row_size = length(vmodf.temp_data[1]) * sizeof(Float64)
+            vmodf.row_caches[mod] =
+                RowCache(vmodf.max_cache_size_bytes, Set{Int}(), row_size)
+        end
+        return vmodf.row_caches[mod]
     end
-    return vmodf.row_caches[mod]
 end
 
 # --- getindex: by integer monitored index + NetworkModification ---
@@ -348,21 +390,20 @@ function Base.getindex(
     monitored_idx::Int,
     mod::NetworkModification,
 )
-    cache = _get_or_create_row_cache(vmodf, mod)
+    row_cache = _get_or_create_row_cache(vmodf, mod)
 
-    if haskey(cache, monitored_idx)
-        return copy(cache[monitored_idx])
+    @lock vmodf.row_caches_lock begin
+        haskey(row_cache, monitored_idx) && return copy(row_cache[monitored_idx])
     end
 
     row = _compute_modf_entry(vmodf, monitored_idx, mod)
+    stored = get_tol(vmodf) > eps() ? sparsify(row, get_tol(vmodf)) : row
 
-    if get_tol(vmodf) > eps()
-        cache[monitored_idx] = sparsify(row, get_tol(vmodf))
-    else
-        cache[monitored_idx] = row
+    @lock vmodf.row_caches_lock begin
+        haskey(row_cache, monitored_idx) && return copy(row_cache[monitored_idx])
+        row_cache[monitored_idx] = stored
+        return copy(row_cache[monitored_idx])
     end
-
-    return copy(cache[monitored_idx])
 end
 
 """
@@ -448,8 +489,8 @@ Clear Woodbury and row caches. Does NOT clear the contingency registration
 cache — registered outages remain valid and can be queried again.
 """
 function clear_caches!(vmodf::VirtualMODF)
-    empty!(vmodf.woodbury_cache)
-    empty!(vmodf.row_caches)
+    @lock vmodf.woodbury_cache_lock empty!(vmodf.woodbury_cache)
+    @lock vmodf.row_caches_lock empty!(vmodf.row_caches)
     return
 end
 
@@ -466,7 +507,7 @@ freeing computation cache memory.
 """
 function clear_all_caches!(vmodf::VirtualMODF)
     empty!(vmodf.contingency_cache)
-    empty!(vmodf.woodbury_cache)
-    empty!(vmodf.row_caches)
+    @lock vmodf.woodbury_cache_lock empty!(vmodf.woodbury_cache)
+    @lock vmodf.row_caches_lock empty!(vmodf.row_caches)
     return
 end

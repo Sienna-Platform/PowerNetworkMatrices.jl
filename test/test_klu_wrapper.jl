@@ -80,6 +80,70 @@ end
     @test isapprox(cache \ b, x, atol = 1e-10)
 end
 
+@testset "KLU wrapper: pool basic" begin
+    n = 30
+    A = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 1.0,
+        1 => fill(0.1, n - 1), -1 => fill(0.1, n - 1))
+    pool = PNM.KLULinSolvePool(A; nworkers = 4)
+    @test PNM.nworkers(pool) == 4
+    @test size(pool) == (n, n)
+
+    x = randn(n)
+    b = A * x
+    result = PNM.with_worker(pool) do cache, idx
+        @test 1 <= idx <= 4
+        y = copy(b)
+        PNM.solve!(cache, y)
+        return y
+    end
+    @test isapprox(result, x, atol = 1e-10)
+end
+
+@testset "KLU wrapper: pool concurrent solves" begin
+    n = 60
+    A = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 2.0,
+        1 => fill(0.1, n - 1), -1 => fill(0.1, n - 1))
+    nw = max(2, min(Threads.nthreads(), 4))
+    pool = PNM.KLULinSolvePool(A; nworkers = nw)
+
+    nrhs = 32
+    Xs = [randn(n) for _ in 1:nrhs]
+    Bs = [A * x for x in Xs]
+    Ys = Vector{Vector{Float64}}(undef, nrhs)
+
+    Threads.@threads for k in 1:nrhs
+        PNM.with_worker(pool) do cache, _idx
+            y = copy(Bs[k])
+            PNM.solve!(cache, y)
+            Ys[k] = y
+        end
+    end
+
+    for k in 1:nrhs
+        @test isapprox(Ys[k], Xs[k], atol = 1e-9)
+    end
+end
+
+@testset "KLU wrapper: pool numeric_refactor!" begin
+    n = 20
+    A = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 1.0,
+        1 => fill(0.1, n - 1), -1 => fill(0.1, n - 1))
+    pool = PNM.KLULinSolvePool(A; nworkers = 2)
+
+    A2 = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 5.0,
+        1 => fill(0.2, n - 1), -1 => fill(0.2, n - 1))
+    PNM.numeric_refactor!(pool, A2)
+
+    x = randn(n)
+    b = A2 * x
+    y = PNM.with_worker(pool) do cache, _idx
+        out = copy(b)
+        PNM.solve!(cache, out)
+        return out
+    end
+    @test isapprox(y, x, atol = 1e-9)
+end
+
 @testset "KLU wrapper: ComplexF64 path" begin
     n = 12
     A = SparseArrays.spdiagm(
