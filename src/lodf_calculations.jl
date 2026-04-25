@@ -100,7 +100,7 @@ end
 
 function _buildlodf(
     a::SparseArrays.SparseMatrixCSC{Int8, Int},
-    k::KLU.KLUFactorization{Float64, Int},
+    k::KLULinSolveCache{Float64},
     ba::SparseArrays.SparseMatrixCSC{Float64, Int},
     ref_bus_positions::Set{Int},
     ::KLUSolver,
@@ -110,7 +110,7 @@ end
 
 function _buildlodf(
     a::SparseArrays.SparseMatrixCSC{Int8, Int},
-    k::KLU.KLUFactorization{Float64, Int},
+    k::KLULinSolveCache{Float64},
     ba::SparseArrays.SparseMatrixCSC{Float64, Int},
     ref_bus_positions::Set{Int},
     ::LinearSolverType,
@@ -120,17 +120,19 @@ end
 
 function _calculate_LODF_matrix_KLU(
     a::SparseArrays.SparseMatrixCSC{Int8, Int},
-    k::KLU.KLUFactorization{Float64, Int},
+    k::KLULinSolveCache{Float64},
     ba::SparseArrays.SparseMatrixCSC{Float64, Int},
     ref_bus_positions::Set{Int},
 )
     linecount = size(ba, 2)
-    # get inverse of aba
-    first_ = zeros(size(a, 2), size(a, 1))
+    # The RHS is `transpose(a)` restricted to valid (non-reference) rows —
+    # each column has at most 2 nonzeros. Pass it directly to solve_sparse!
+    # so we never densify a (buscount × buscount) intermediate.
     valid_ix = setdiff(1:size(a, 2), ref_bus_positions)
-    copyto!(first_, transpose(a))
-    first_[valid_ix, :] = KLU.solve!(k, first_[valid_ix, :])
-    first_[collect(ref_bus_positions), :] .= 0.0
+    a_t_valid = SparseArrays.SparseMatrixCSC(transpose(a))[valid_ix, :]
+    first_ = zeros(size(a, 2), size(a, 1))
+    solve_sparse!(k, a_t_valid; out = view(first_, valid_ix, :))
+    # Reference rows are already zero from the `zeros(...)` initializer.
     ptdf_denominator = first_' * ba
 
     m_I = Int[]
@@ -144,8 +146,8 @@ function _calculate_LODF_matrix_KLU(
             push!(m_V, 1 - ptdf_denominator[iline, iline])
         end
     end
-    Dem_LU = klu(SparseArrays.sparse(m_I, m_I, m_V))
-    KLU.solve!(Dem_LU, ptdf_denominator)
+    Dem_cache = klu_factorize(SparseArrays.sparse(m_I, m_I, m_V))
+    solve!(Dem_cache, ptdf_denominator)
     ptdf_denominator[SparseArrays.diagind(ptdf_denominator)] .= -1.0
     return ptdf_denominator
 end
@@ -167,8 +169,9 @@ function _calculate_LODF_matrix_KLU(
             push!(m_V, 1 - ptdf_denominator_t[iline, iline])
         end
     end
-    Dem_LU = klu(SparseArrays.sparse(m_I, m_I, m_V))
-    lodf_t = Dem_LU \ ptdf_denominator_t
+    Dem_cache = klu_factorize(SparseArrays.sparse(m_I, m_I, m_V))
+    lodf_t = copy(ptdf_denominator_t)
+    solve!(Dem_cache, lodf_t)
     lodf_t[SparseArrays.diagind(lodf_t)] .= -1.0
 
     return lodf_t

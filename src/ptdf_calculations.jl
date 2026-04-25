@@ -139,22 +139,25 @@ function _calculate_PTDF_matrix_KLU(
     buscount = size(BA, 1)
 
     ABA = calculate_ABA_matrix(A, BA, ref_bus_positions)
-    K = klu(ABA)
-    # initialize matrices for evaluation
+    cache = klu_factorize(ABA)
     valid_ix = setdiff(1:buscount, ref_bus_positions)
     PTDFm_t = zeros(buscount, linecount)
-    copyto!(PTDFm_t, BA)
     if !isempty(dist_slack) && length(ref_bus_positions) != 1
         error(
             "Distributed slack is not supported for systems with multiple reference buses.",
         )
     elseif isempty(dist_slack) && length(ref_bus_positions) < buscount
-        PTDFm_t[valid_ix, :] = KLU.solve!(K, PTDFm_t[valid_ix, :])
+        # BA is structurally sparse (each column has 2 nonzeros). The sparse
+        # RHS path scatters columns in chunks instead of densifying the full
+        # (buscount-nref) × linecount matrix.
+        BA_valid = BA[valid_ix, :]
+        solve_sparse!(cache, BA_valid; out = view(PTDFm_t, valid_ix, :))
         PTDFm_t[collect(ref_bus_positions), :] .= 0.0
         return PTDFm_t
     elseif length(dist_slack) == buscount
         @info "Distributed bus"
-        PTDFm_t[valid_ix, :] = KLU.solve!(K, PTDFm_t[valid_ix, :])
+        BA_valid = BA[valid_ix, :]
+        solve_sparse!(cache, BA_valid; out = view(PTDFm_t, valid_ix, :))
         PTDFm_t[collect(ref_bus_positions), :] .= 0.0
         slack_array = dist_slack / sum(dist_slack)
         slack_array = reshape(slack_array, 1, buscount)

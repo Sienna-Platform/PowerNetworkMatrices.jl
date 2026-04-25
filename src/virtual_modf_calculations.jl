@@ -12,8 +12,8 @@ Caching is two-tiered:
   one RowCache per contingency
 
 # Arguments
-- `K::KLU.KLUFactorization{Float64, Int}`:
-        LU factorization of ABA matrix.
+- `K::KLULinSolveCache{Float64}`:
+        Cached LU factorization of the ABA matrix.
 - `BA::SparseArrays.SparseMatrixCSC{Float64, Int}`:
         BA matrix.
 - `A::SparseArrays.SparseMatrixCSC{Int8, Int}`:
@@ -58,7 +58,7 @@ Caching is two-tiered:
 """
 struct VirtualMODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
        PowerNetworkMatrix{Float64}
-    K::KLU.KLUFactorization{Float64, Int}
+    K::KLULinSolveCache{Float64}
     BA::SparseArrays.SparseMatrixCSC{Float64, Int}
     A::SparseArrays.SparseMatrixCSC{Int8, Int}
     PTDF_A_diag::Vector{Float64}
@@ -176,7 +176,7 @@ function VirtualMODF(
 
     BA = BA_Matrix(Ymatrix)
     ABA = calculate_ABA_matrix(A.data, BA.data, Set(ref_bus_positions))
-    K = klu(ABA)
+    K = klu_factorize(ABA)
 
     valid_ix = setdiff(1:length(bus_ax), ref_bus_positions)
 

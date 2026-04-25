@@ -11,8 +11,10 @@ The VirtualPTDF is indexed using branch names and bus numbers as for the PTDF
 matrix.
 
 # Arguments
-- `K::Union{KLU.KLUFactorization{Float64, Int}, AppleAccelerate.AAFactorization{Float64}}`:
-        LU factorization matrices of the ABA matrix, evaluated by means of KLU or AppleAccelerate
+- `K`:
+        LU factorization of the ABA matrix. A `KLULinSolveCache{Float64}` for the
+        default KLU solver, or an `AppleAccelerate.AAFactorization{Float64}` when
+        the AppleAccelerate extension is loaded.
 - `BA::SparseArrays.SparseMatrixCSC{Float64, Int}`:
         BA matrix
 - `ref_bus_positions::Set{Int}`:
@@ -49,7 +51,7 @@ matrix.
         modification operations are applied to the correct system. `nothing` when
         constructed from a Ybus without an associated system.
 """
-struct VirtualPTDF{Ax, L <: NTuple{2, Dict}, K <: LinearAlgebra.Factorization} <:
+struct VirtualPTDF{Ax, L <: NTuple{2, Dict}, K} <:
        PowerNetworkMatrix{Float64}
     K::K
     BA::SparseArrays.SparseMatrixCSC{Float64, Int}
@@ -141,7 +143,7 @@ end
 
 # Factorization dispatch methods for VirtualPTDF solver selection.
 function _create_factorization(::KLUSolver, ABA::SparseArrays.SparseMatrixCSC{Float64, Int})
-    return klu(ABA)
+    return klu_factorize(ABA)
 end
 
 function _create_factorization(
@@ -293,12 +295,13 @@ if isdefined(Base, :print_array) # 0.7 and later
 end
 
 # Helper function to solve with different factorization types
-function _solve_factorization(K::KLU.KLUFactorization{Float64, Int}, b::Vector{Float64})
-    return KLU.solve!(K, b)
+function _solve_factorization(K::KLULinSolveCache{Float64}, b::Vector{Float64})
+    solve!(K, b)
+    return b
 end
 
 # Generic fallback for other factorization types (will be extended by extensions)
-function _solve_factorization(K::LinearAlgebra.Factorization, b::Vector{Float64})
+function _solve_factorization(K, b::Vector{Float64})
     return K \ b
 end
 

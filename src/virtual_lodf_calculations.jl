@@ -10,8 +10,8 @@ The VirtualLODF is initialized with no row stored.
 The VirtualLODF struct is indexed using branch names.
 
 # Arguments
-- `K::KLU.KLUFactorization{Float64, Int}`:
-        LU factorization matrices of the ABA matrix, evaluated by means of KLU.
+- `K::KLULinSolveCache{Float64}`:
+        Cached LU factorization of the ABA matrix.
 - `BA::SparseArrays.SparseMatrixCSC{Float64, Int}`:
         BA matrix.
 - `A::SparseArrays.SparseMatrixCSC{Int8, Int}`:
@@ -58,7 +58,7 @@ The VirtualLODF struct is indexed using branch names.
 """
 struct VirtualLODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
        PowerNetworkMatrix{Float64}
-    K::KLU.KLUFactorization{Float64, Int}
+    K::KLULinSolveCache{Float64}
     BA::SparseArrays.SparseMatrixCSC{Float64, Int}
     A::SparseArrays.SparseMatrixCSC{Int8, Int}
     inv_PTDF_A_diag::Vector{Float64}
@@ -94,7 +94,7 @@ function Base.show(io::IO, ::MIME{Symbol("text/plain")}, array::VirtualLODF)
 end
 
 function _get_PTDF_A_diag(
-    K::KLU.KLUFactorization{Float64, Int},
+    K::KLULinSolveCache{Float64},
     BA::SparseArrays.SparseMatrixCSC{Float64, Int},
     A::SparseArrays.SparseMatrixCSC{Int8, Int},
     ref_bus_positions::Set{Int},
@@ -120,13 +120,13 @@ function _get_PTDF_A_diag(
             ba_col[idx] = BA[bus_idx, i]
         end
 
-        # Solve for PTDF row: ptdf_row_valid = ABA^(-1) * ba_col
-        ptdf_row_valid = K \ ba_col
+        # Solve for PTDF row in place: ABA · x = ba_col.
+        solve!(K, ba_col)
 
         # Map back to full bus indices
         fill!(ptdf_row, 0.0)
         for idx in 1:n_valid
-            ptdf_row[valid_ix[idx]] = ptdf_row_valid[idx]
+            ptdf_row[valid_ix[idx]] = ba_col[idx]
         end
 
         # Compute diagonal element: sum of PTDF[i,j] * A[i,j] for all buses j
@@ -238,7 +238,7 @@ function VirtualLODF(
     subnetwork_axes = make_arc_arc_subnetwork_axes(A)
     BA = BA_Matrix(Ymatrix)
     ABA = calculate_ABA_matrix(A.data, BA.data, Set(ref_bus_positions))
-    K = klu(ABA)
+    K = klu_factorize(ABA)
     bus_ax = get_bus_axis(A)
 
     temp_data = zeros(length(bus_ax))
@@ -336,11 +336,11 @@ function _getindex(
         @inbounds for i in eachindex(vlodf.valid_ix)
             vlodf.work_ba_col[i] = vlodf.BA[vlodf.valid_ix[i], row]
         end
-        lin_solve = KLU.solve!(vlodf.K, vlodf.work_ba_col)
+        solve!(vlodf.K, vlodf.work_ba_col)
 
         # get full lodf row
         @inbounds for i in eachindex(vlodf.valid_ix)
-            vlodf.temp_data[vlodf.valid_ix[i]] = lin_solve[i]
+            vlodf.temp_data[vlodf.valid_ix[i]] = vlodf.work_ba_col[i]
         end
 
         # now get the LODF row
@@ -463,12 +463,12 @@ function _getindex_partial(
     @inbounds for i in eachindex(vlodf.valid_ix)
         vlodf.work_ba_col[i] = vlodf.BA[vlodf.valid_ix[i], arc_idx]
     end
-    lin_solve = KLU.solve!(vlodf.K, vlodf.work_ba_col)
+    solve!(vlodf.K, vlodf.work_ba_col)
 
     # Step 3: Map solution back to full bus space.
     fill!(vlodf.temp_data, 0.0)
     @inbounds for i in eachindex(vlodf.valid_ix)
-        vlodf.temp_data[vlodf.valid_ix[i]] = lin_solve[i]
+        vlodf.temp_data[vlodf.valid_ix[i]] = vlodf.work_ba_col[i]
     end
 
     # Step 4: H_col[ℓ] = b_e · C[e,ℓ] for all monitoring arcs ℓ.
