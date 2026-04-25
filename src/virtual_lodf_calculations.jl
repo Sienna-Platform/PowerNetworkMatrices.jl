@@ -120,7 +120,6 @@ function _get_PTDF_A_diag(
             ba_col[idx] = BA[bus_idx, i]
         end
 
-        # Solve for PTDF row in place: ABA · x = ba_col.
         solve!(K, ba_col)
 
         # Map back to full bus indices

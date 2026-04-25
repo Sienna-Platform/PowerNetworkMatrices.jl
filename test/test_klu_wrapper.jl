@@ -42,33 +42,42 @@ end
     vals = [1.0, -2.0, 3.5, -0.5, 2.0, -1.0, 1.5]
     B = SparseArrays.sparse(rows, cols, vals, n, m)
 
-    out = PNM.solve_sparse(cache, B; block = 8)
+    out = PNM.solve_sparse(cache, B)
     Bdense = Matrix(B)
     PNM.solve!(cache, Bdense)
     @test isapprox(out, Bdense, atol = 1e-10)
 end
 
-@testset "KLU wrapper: solve_sparse! skip_empty" begin
+@testset "KLU wrapper: solve_sparse! zeros empty columns" begin
     n = 20
     A = SparseArrays.spdiagm(0 => fill(2.0, n), 1 => fill(-1.0, n - 1),
         -1 => fill(-1.0, n - 1))
     cache = PNM.klu_factorize(A)
-    # 5 RHS columns, only the middle one has any nonzeros.
     rows = [3, 7]
     cols = [3, 3]
     vals = [1.0, 2.0]
     B = SparseArrays.sparse(rows, cols, vals, n, 5)
 
-    out = PNM.solve_sparse(cache, B; skip_empty = true)
+    out = PNM.solve_sparse(cache, B)
     @test all(==(0.0), out[:, 1])
     @test all(==(0.0), out[:, 2])
     @test all(==(0.0), out[:, 4])
     @test all(==(0.0), out[:, 5])
     @test !all(==(0.0), out[:, 3])
 
-    # Same answer with skip_empty=false (zero columns produce zero solutions).
-    out_full = PNM.solve_sparse(cache, B; skip_empty = false)
-    @test isapprox(out, out_full, atol = 1e-12)
+    Bdense = Matrix(B)
+    PNM.solve!(cache, Bdense)
+    @test isapprox(out, Bdense, atol = 1e-12)
+end
+
+@testset "KLU wrapper: backslash" begin
+    n = 25
+    A = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 1.0,
+        1 => fill(0.1, n - 1), -1 => fill(0.1, n - 1))
+    cache = PNM.klu_factorize(A)
+    x = randn(n)
+    b = A * x
+    @test isapprox(cache \ b, x, atol = 1e-10)
 end
 
 @testset "KLU wrapper: ComplexF64 path" begin

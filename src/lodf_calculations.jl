@@ -125,14 +125,10 @@ function _calculate_LODF_matrix_KLU(
     ref_bus_positions::Set{Int},
 )
     linecount = size(ba, 2)
-    # The RHS is `transpose(a)` restricted to valid (non-reference) rows —
-    # each column has at most 2 nonzeros. Pass it directly to solve_sparse!
-    # so we never densify a (buscount × buscount) intermediate.
     valid_ix = setdiff(1:size(a, 2), ref_bus_positions)
     a_t_valid = SparseArrays.SparseMatrixCSC(transpose(a))[valid_ix, :]
     first_ = zeros(size(a, 2), size(a, 1))
     solve_sparse!(k, a_t_valid; out = view(first_, valid_ix, :))
-    # Reference rows are already zero from the `zeros(...)` initializer.
     ptdf_denominator = first_' * ba
 
     m_I = Int[]

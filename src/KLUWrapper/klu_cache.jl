@@ -1,46 +1,18 @@
 import SparseArrays: SparseMatrixCSC, getcolptr, rowvals, nonzeros
 
-# --- index conversions (kept private) -------------------------------------
-
-@inline function _decrement!(v::Vector{Int64})
-    @inbounds for i in eachindex(v)
-        v[i] -= 1
-    end
-    return v
-end
-
-@inline function _increment!(v::Vector{Int64})
-    @inbounds for i in eachindex(v)
-        v[i] += 1
-    end
-    return v
-end
-
-# --- cache struct ---------------------------------------------------------
-
 """
 A cached KLU linear solver designed for repeated solves against the same
-sparse matrix structure.
+sparse matrix structure. `numeric_refactor!` and `solve!` allocate nothing
+once the cache is built.
 
-Holds a 0-indexed copy of the sparsity pattern (`colptr`/`rowval`) and
-opaque pointers to KLU's symbolic and numeric factorizations. `numeric_refactor!`
-and `solve!` allocate nothing once the cache is built.
+The type parameter `Tv ∈ {Float64, ComplexF64}` selects the real/complex KLU
+path. Indices are always `Int64` (SuiteSparse_long).
 
-Type parameter `Tv ∈ {Float64, ComplexF64}` selects the real/complex KLU path.
-The integer parameter is fixed to `Int64` since SuiteSparse's `_l_` entry points
-take 64-bit indices and PowerNetworkMatrices only constructs `SparseMatrixCSC{T, Int}`.
-
-# Fields
-- `n`: matrix dimension.
-- `colptr`, `rowval`: 0-indexed structural arrays.
-- `common`: KLU's parameter/status struct (kept in a `Ref` for ccall).
-- `symbolic`, `numeric`: opaque libklu pointers; `C_NULL` until factored.
-- `reuse_symbolic`: if true, `symbolic_refactor!` keeps the analysis.
-- `check_pattern`: if true, refactor calls verify the structural arrays
-  match the matrix being passed in.
+`reuse_symbolic` controls whether `symbolic_refactor!` keeps the analysis;
+`check_pattern` adds a structural-equality check on refactor calls and is
+only consulted when reusing.
 """
 mutable struct KLULinSolveCache{Tv <: Union{Float64, ComplexF64}}
-    n::Int64
     colptr::Vector{Int64}
     rowval::Vector{Int64}
     common::Base.RefValue{KluLCommon}
@@ -50,14 +22,14 @@ mutable struct KLULinSolveCache{Tv <: Union{Float64, ComplexF64}}
     check_pattern::Bool
 end
 
-Base.size(cache::KLULinSolveCache) = (cache.n, cache.n)
-Base.size(cache::KLULinSolveCache, d::Integer) = d <= 2 ? cache.n : 1
+@inline _dim(cache::KLULinSolveCache) = Int64(length(cache.colptr) - 1)
+
+Base.size(cache::KLULinSolveCache) = (n = _dim(cache); (n, n))
+Base.size(cache::KLULinSolveCache, d::Integer) = d <= 2 ? _dim(cache) : 1
 Base.eltype(::Type{KLULinSolveCache{Tv}}) where {Tv} = Tv
 get_reuse_symbolic(cache::KLULinSolveCache) = cache.reuse_symbolic
 is_factored(cache::KLULinSolveCache) =
     cache.symbolic != C_NULL && cache.numeric != C_NULL
-
-# --- ccall dispatch helpers ----------------------------------------------
 
 @inline _factor_call(::Type{Float64}, ap, ai, ax, sym, common) =
     klu_l_factor(ap, ai, ax, sym, common)
@@ -74,23 +46,25 @@ is_factored(cache::KLULinSolveCache) =
 @inline _solve_call(::Type{ComplexF64}, sym, num, n, nrhs, b, common) =
     klu_zl_solve(sym, num, n, nrhs, b, common)
 
+@inline _tsolve_call(::Type{Float64}, sym, num, n, nrhs, b, common; conjugate = false) =
+    klu_l_tsolve(sym, num, n, nrhs, b, common)
+@inline _tsolve_call(::Type{ComplexF64}, sym, num, n, nrhs, b, common; conjugate = false) =
+    klu_zl_tsolve(sym, num, n, nrhs, b, Cint(conjugate), common)
+
 @inline _free_numeric!(::Type{Float64}, num_ref, common) =
     klu_l_free_numeric!(num_ref, common)
 @inline _free_numeric!(::Type{ComplexF64}, num_ref, common) =
     klu_zl_free_numeric!(num_ref, common)
 
-# --- constructor ----------------------------------------------------------
-
 """
     KLULinSolveCache(A; reuse_symbolic=true, check_pattern=true)
 
-Build a cache for the sparse matrix `A`. Allocates structural arrays and runs
-`klu_l_defaults`, but does **not** factorize. Call `full_factor!(cache, A)` (or
-`symbolic_factor!` followed by `numeric_refactor!`) before `solve!`.
+Build a cache for the sparse matrix `A`. Allocates structural arrays and
+runs `klu_l_defaults`, but does **not** factorize. Call `full_factor!`
+(or `symbolic_factor!` followed by `numeric_refactor!`) before `solve!`.
 
-A finalizer is attached so symbolic/numeric handles are freed if the cache
-is garbage collected. Prefer calling `finalize!(cache)` explicitly when the
-cache is no longer needed in long-running processes.
+A finalizer frees libklu handles on GC; call `Base.finalize(cache)` to
+release them eagerly.
 """
 function KLULinSolveCache(
     A::SparseMatrixCSC{Tv, Int};
@@ -101,7 +75,7 @@ function KLULinSolveCache(
         "KLULinSolveCache requires 64-bit Int (Julia >= 1.10 on 64-bit). " *
         "Got Int = $(Int).",
     )
-    n = Int64(size(A, 1))
+    n = size(A, 1)
     n == size(A, 2) || throw(DimensionMismatch("matrix must be square; got $(size(A))"))
 
     common = Ref(KluLCommon())
@@ -109,22 +83,22 @@ function KLULinSolveCache(
 
     colptr = Vector{Int64}(undef, length(getcolptr(A)))
     copyto!(colptr, getcolptr(A))
-    _decrement!(colptr)
+    colptr .-= 1
     rowval = Vector{Int64}(undef, length(rowvals(A)))
     copyto!(rowval, rowvals(A))
-    _decrement!(rowval)
+    rowval .-= 1
 
     cache = KLULinSolveCache{Tv}(
-        n, colptr, rowval, common,
+        colptr, rowval, common,
         convert(SymbolicPtr, C_NULL),
         convert(NumericPtr, C_NULL),
         reuse_symbolic, check_pattern,
     )
-    finalizer(_finalize_cache!, cache)
+    finalizer(Base.finalize, cache)
     return cache
 end
 
-function _finalize_cache!(cache::KLULinSolveCache{Tv}) where {Tv}
+function Base.finalize(cache::KLULinSolveCache{Tv}) where {Tv}
     if cache.numeric != C_NULL
         num_ref = Ref(cache.numeric)
         _free_numeric!(Tv, num_ref, cache.common)
@@ -138,11 +112,6 @@ function _finalize_cache!(cache::KLULinSolveCache{Tv}) where {Tv}
     return nothing
 end
 
-"""Explicitly free libklu resources held by `cache`. Idempotent."""
-finalize!(cache::KLULinSolveCache) = _finalize_cache!(cache)
-
-# --- structural sync ------------------------------------------------------
-
 @inline function _check_pattern_match(cache::KLULinSolveCache,
     A::SparseMatrixCSC, op::AbstractString)
     Acolptr = getcolptr(A)
@@ -153,13 +122,12 @@ finalize!(cache::KLULinSolveCache) = _finalize_cache!(cache)
             "Cannot $op: matrix has different sparsity structure (length).",
         ))
     end
-    # KLU stores 0-indexed; A is 1-indexed. Increment in place, compare,
-    # decrement back. Avoids a temporary copy.
-    _increment!(cache.colptr)
-    _increment!(cache.rowval)
+    # Increment-compare-decrement: avoids allocating a 1-indexed copy.
+    cache.colptr .+= 1
+    cache.rowval .+= 1
     bad = (cache.colptr != Acolptr) || (cache.rowval != Arowval)
-    _decrement!(cache.colptr)
-    _decrement!(cache.rowval)
+    cache.colptr .-= 1
+    cache.rowval .-= 1
     if bad
         throw(ArgumentError(
             "Cannot $op: matrix has different sparsity structure.",
@@ -168,35 +136,33 @@ finalize!(cache::KLULinSolveCache) = _finalize_cache!(cache)
     return nothing
 end
 
-# --- factor / refactor ----------------------------------------------------
-
 """
     symbolic_factor!(cache, A)
 
 Free any cached symbolic/numeric factor, replace the structural arrays with
-`A`'s pattern, and run `klu_l_analyze`. Use this when the matrix dimensions
-or sparsity have changed.
+`A`'s pattern, and run `klu_l_analyze`.
 """
 function symbolic_factor!(cache::KLULinSolveCache{Tv},
     A::SparseMatrixCSC{Tv, Int}) where {Tv}
-    if size(A, 1) != cache.n || size(A, 2) != cache.n
+    n = _dim(cache)
+    if size(A, 1) != n || size(A, 2) != n
         throw(DimensionMismatch(
-            "Cannot factor: cache is $(cache.n)×$(cache.n) but A is $(size(A)).",
+            "Cannot factor: cache is $(n)×$(n) but A is $(size(A)).",
         ))
     end
-    _finalize_cache!(cache)
+    Base.finalize(cache)
 
     Acolptr = getcolptr(A)
     Arowval = rowvals(A)
     resize!(cache.colptr, length(Acolptr))
     copyto!(cache.colptr, Acolptr)
-    _decrement!(cache.colptr)
+    cache.colptr .-= 1
     resize!(cache.rowval, length(Arowval))
     copyto!(cache.rowval, Arowval)
-    _decrement!(cache.rowval)
+    cache.rowval .-= 1
 
     sym = klu_l_analyze(
-        cache.n, pointer(cache.colptr), pointer(cache.rowval), cache.common,
+        Int64(n), pointer(cache.colptr), pointer(cache.rowval), cache.common,
     )
     sym == C_NULL && klu_throw(cache.common[], "klu_l_analyze")
     cache.symbolic = sym
@@ -215,9 +181,10 @@ function symbolic_refactor!(cache::KLULinSolveCache{Tv},
         return symbolic_factor!(cache, A)
     end
     if cache.check_pattern
-        if size(A, 1) != cache.n || size(A, 2) != cache.n
+        n = _dim(cache)
+        if size(A, 1) != n || size(A, 2) != n
             throw(DimensionMismatch(
-                "Cannot refactor: cache is $(cache.n)×$(cache.n) but A is $(size(A)).",
+                "Cannot refactor: cache is $(n)×$(n) but A is $(size(A)).",
             ))
         end
         _check_pattern_match(cache, A, "symbolic_refactor")
@@ -230,11 +197,7 @@ end
 
 Compute (or refresh) the numeric factorization. The first call after
 `symbolic_factor!` invokes `klu_*_factor`; subsequent calls invoke
-`klu_*_refactor` and reuse the existing numeric struct (much cheaper, no
-allocation in the wrapper).
-
-When `cache.check_pattern` is true the call verifies that `A` still has the
-cached sparsity pattern and throws otherwise.
+`klu_*_refactor` and reuse the existing numeric struct.
 """
 function numeric_refactor!(cache::KLULinSolveCache{Tv},
     A::SparseMatrixCSC{Tv, Int}) where {Tv}
@@ -246,14 +209,10 @@ function numeric_refactor!(cache::KLULinSolveCache{Tv},
             Tv, pointer(cache.colptr), pointer(cache.rowval),
             pointer(nonzeros(A)), cache.symbolic, cache.common,
         )
-        if num == C_NULL
-            klu_throw(cache.common[], "klu_factor")
-        end
+        num == C_NULL && klu_throw(cache.common[], "klu_factor")
         cache.numeric = num
     else
-        if cache.check_pattern
-            _check_pattern_match(cache, A, "numeric_refactor")
-        end
+        cache.check_pattern && _check_pattern_match(cache, A, "numeric_refactor")
         ok = _refactor_call(
             Tv, pointer(cache.colptr), pointer(cache.rowval),
             pointer(nonzeros(A)), cache.symbolic, cache.numeric, cache.common,
@@ -263,7 +222,6 @@ function numeric_refactor!(cache::KLULinSolveCache{Tv},
     return cache
 end
 
-"""Run `symbolic_factor!` then `numeric_refactor!`."""
 function full_factor!(cache::KLULinSolveCache{Tv},
     A::SparseMatrixCSC{Tv, Int}) where {Tv}
     symbolic_factor!(cache, A)
@@ -271,7 +229,6 @@ function full_factor!(cache::KLULinSolveCache{Tv},
     return cache
 end
 
-"""Run `symbolic_refactor!` then `numeric_refactor!`."""
 function full_refactor!(cache::KLULinSolveCache{Tv},
     A::SparseMatrixCSC{Tv, Int}) where {Tv}
     symbolic_refactor!(cache, A)
@@ -282,8 +239,7 @@ end
 """
     klu_factorize(A; reuse_symbolic=true, check_pattern=true) -> KLULinSolveCache
 
-Convenience: build a cache for `A` and immediately compute the full factorization.
-Mirrors the role of `KLU.klu(A)` in the previous code path.
+Build a cache for `A` and immediately compute the full factorization.
 """
 function klu_factorize(A::SparseMatrixCSC{Tv, Int};
     reuse_symbolic::Bool = true,

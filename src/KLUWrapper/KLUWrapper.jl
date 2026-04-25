@@ -22,6 +22,7 @@ import SparseArrays
 import SparseArrays: SparseMatrixCSC, getcolptr, rowvals, nonzeros
 
 export KLULinSolveCache,
+    KLULinSolvePool,
     klu_factorize,
     symbolic_factor!,
     symbolic_refactor!,
@@ -32,13 +33,16 @@ export KLULinSolveCache,
     tsolve!,
     solve_sparse!,
     solve_sparse,
-    solve_w_refinement,
-    is_factored,
-    finalize!
+    with_worker,
+    acquire!,
+    release!,
+    nworkers,
+    is_factored
 
 include("klu_jll_bindings.jl")
 include("klu_cache.jl")
 include("solve_dense.jl")
 include("solve_sparse_rhs.jl")
+include("pool.jl")
 
 end # module
