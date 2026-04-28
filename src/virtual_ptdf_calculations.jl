@@ -10,11 +10,21 @@ The VirtualPTDF is initialized with no row stored.
 The VirtualPTDF is indexed using branch names and bus numbers as for the PTDF
 matrix.
 
+# Thread-safety
+
+The KLU-backed `VirtualPTDF` is parallel-safe for concurrent `getindex`: the
+factorization is held in a `KLULinSolvePool`, scratch arrays are sized
+per-worker, and the row cache is guarded by a `ReentrantLock`. The
+AppleAccelerate-backed path serializes solves through a single lock and is
+therefore safe for concurrent calls but with no parallel speedup; for parallel
+workloads on Apple silicon prefer the KLU backend.
+
 # Arguments
 - `K`:
-        LU factorization of the ABA matrix. A `KLULinSolveCache{Float64}` for the
-        default KLU solver, or an `AppleAccelerate.AAFactorization{Float64}` when
-        the AppleAccelerate extension is loaded.
+        LU factorization of the ABA matrix. A `KLULinSolvePool{Float64}` for the
+        default KLU solver (one factorization per worker), or an
+        `AppleAccelerate.AAFactorization{Float64}` when the AppleAccelerate
+        extension is loaded (single shared factorization).
 - `BA::SparseArrays.SparseMatrixCSC{Float64, Int}`:
         BA matrix
 - `ref_bus_positions::Set{Int}`:
@@ -33,19 +43,27 @@ matrix.
         and buses with their enumerated indexes. The branch indexes refer to
         the key of the cache dictionary. The bus indexes refer to the position
         of the elements in the PTDF row stored.
-- `temp_data::Vector{Float64}`:
-        Temporary vector for internal use.
+- `temp_data::Vector{Vector{Float64}}`:
+        Per-worker temporary vector for internal use. Size matches the number
+        of pool workers (KLU) or 1 (AppleAccelerate).
 - `valid_ix::Vector{Int}`:
         Vector containing the row/columns indices of matrices related the buses
         which are not slack ones.
 - `cache::RowCache`:
-        Cache were PTDF rows are stored.
+        Cache where PTDF rows are stored.
+- `cache_lock::ReentrantLock`:
+        Guards `cache` reads/writes for parallel `getindex` callers.
 - `subnetworks::Dict{Int, Set{Int}}`:
         Dictionary containing the subsets of buses defining the different subnetwork of the system.
 - `tol::Base.RefValue{Float64}`:
         Tolerance related to scarification and values to drop.
 - `network_reduction::NetworkReduction`:
         Structure containing the details of the network reduction applied when computing the matrix
+- `work_ba_col::Vector{Vector{Float64}}`:
+        Per-worker BA-column scratch buffer (one per pool worker; length 1 for AA).
+- `solver_lock::ReentrantLock`:
+        Serializes solves for the AppleAccelerate path. Unused on the KLU path
+        (the pool already ensures one solve per worker at a time).
 - `system_uuid::Union{Base.UUID, Nothing}`:
         UUID of the system used to construct the matrix, used to validate that
         modification operations are applied to the correct system. `nothing` when
@@ -61,13 +79,15 @@ struct VirtualPTDF{Ax, L <: NTuple{2, Dict}, K} <:
     dist_slack_normalized::Vector{Float64}
     axes::Ax
     lookup::L
-    temp_data::Vector{Float64}
+    temp_data::Vector{Vector{Float64}}
     valid_ix::Vector{Int}
     cache::RowCache
+    cache_lock::ReentrantLock
     subnetwork_axes::Dict{Int, Ax}
     tol::Base.RefValue{Float64}
     network_reduction_data::NetworkReductionData
-    work_ba_col::Vector{Float64}
+    work_ba_col::Vector{Vector{Float64}}
+    solver_lock::ReentrantLock
     system_uuid::Union{Base.UUID, Nothing}
 end
 
@@ -111,6 +131,10 @@ struct with an empty cache.
         arcs to be evaluated as soon as the VirtualPTDF is created (initialized as empty vector of tuples).
 - `network_reduction::NetworkReduction`:
         Structure containing the details of the network reduction applied when computing the matrix
+- `nworkers::Int`:
+        Number of parallel workers in the underlying KLU pool (KLU backend only).
+        Defaults to `max(1, Threads.nthreads() - 1)`. Ignored for the
+        AppleAccelerate backend.
 - `kwargs...`:
         other keyword arguments used by VirtualPTDF
 """
@@ -122,6 +146,7 @@ function VirtualPTDF(
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}(),
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
+    nworkers::Int = max(1, Threads.nthreads() - 1),
     kwargs...,
 )
     resolve_linear_solver(linear_solver)
@@ -137,18 +162,24 @@ function VirtualPTDF(
         tol = tol,
         max_cache_size = max_cache_size,
         persistent_arcs = persistent_arcs,
+        nworkers = nworkers,
         system_uuid = IS.get_uuid(sys),
     )
 end
 
 # Factorization dispatch methods for VirtualPTDF solver selection.
-function _create_factorization(::KLUSolver, ABA::SparseArrays.SparseMatrixCSC{Float64, Int})
-    return klu_factorize(ABA)
+function _create_factorization(
+    ::KLUSolver,
+    ABA::SparseArrays.SparseMatrixCSC{Float64, Int};
+    nworkers::Int,
+)
+    return KLULinSolvePool(ABA; nworkers = nworkers)
 end
 
 function _create_factorization(
     ::AppleAccelerateSolver,
-    ABA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    ABA::SparseArrays.SparseMatrixCSC{Float64, Int};
+    nworkers::Int,
 )
     _has_apple_accelerate_ext() || error(_apple_accelerate_install_error())
     return _create_apple_accelerate_factorization(ABA)
@@ -156,17 +187,25 @@ end
 
 function _create_factorization(
     ::LinearSolverType,
-    ::SparseArrays.SparseMatrixCSC{Float64, Int},
+    ::SparseArrays.SparseMatrixCSC{Float64, Int};
+    nworkers::Int,
 )
     return error(
         "Only KLU and AppleAccelerate solvers are supported for VirtualPTDF factorization.",
     )
 end
 
+# How many per-worker scratch buffers to allocate. The KLU pool path has one
+# per worker so concurrent `with_worker` calls each see exclusive scratch;
+# the AppleAccelerate path serializes through `solver_lock` and uses a single
+# scratch buffer.
+_n_scratch(K::KLULinSolvePool) = nworkers(K)
+_n_scratch(_) = 1
+
 """
 Builds the Virtual PTDF matrix from a Ybus matrix. This constructor is more efficient when the prerequisite Ybus
 matrix is already available and provides direct control over the underlying matrix computations (including network reductions).
-The return is a VirtualPTDF struct with an empty cache. 
+The return is a VirtualPTDF struct with an empty cache.
 
 # Arguments
 - `ybus::Ybus`: Ybus matrix from which the matrix is constructed
@@ -183,6 +222,10 @@ The return is a VirtualPTDF struct with an empty cache.
         max cache size in MiB (initialized as MAX_CACHE_SIZE_MiB).
 - `persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}()`:
         arcs to be evaluated as soon as the VirtualPTDF is created (initialized as empty vector of tuples).
+- `nworkers::Int`:
+        Number of parallel workers in the underlying KLU pool (KLU backend only).
+        Defaults to `max(1, Threads.nthreads() - 1)`. Ignored for the
+        AppleAccelerate backend.
 """
 function VirtualPTDF(
     ybus::Ybus;
@@ -191,6 +234,7 @@ function VirtualPTDF(
     tol::Float64 = eps(),
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}(),
+    nworkers::Int = max(1, Threads.nthreads() - 1),
     system_uuid::Union{Base.UUID, Nothing} = nothing,
 )
     solver = resolve_linear_solver(linear_solver)
@@ -210,7 +254,6 @@ function VirtualPTDF(
     if length(subnetwork_axes) > 1
         @info "Network is not connected, using subnetworks"
     end
-    temp_data = zeros(length(axes[2]))
 
     if isempty(persistent_arcs)
         empty_cache =
@@ -226,7 +269,7 @@ function VirtualPTDF(
     end
 
     # Create factorization based on solver type dispatch.
-    K = _create_factorization(solver, ABA)
+    K = _create_factorization(solver, ABA; nworkers = nworkers)
 
     # Pre-compute normalized distributed slack for efficiency
     if !isempty(dist_slack_vector)
@@ -235,9 +278,13 @@ function VirtualPTDF(
         dist_slack_normalized = Float64[]
     end
 
-    # Pre-allocate work array for BA column extraction
-    valid_ix = setdiff(1:length(temp_data), ref_bus_positions)
-    work_ba_col = zeros(length(valid_ix))
+    # Pre-allocate per-worker scratch. KLU pool: one set per worker so
+    # concurrent solves never collide; AA path: a single buffer guarded by
+    # `solver_lock`.
+    valid_ix = setdiff(1:length(bus_ax), ref_bus_positions)
+    n_scratch = _n_scratch(K)
+    temp_data = [zeros(length(bus_ax)) for _ in 1:n_scratch]
+    work_ba_col = [zeros(length(valid_ix)) for _ in 1:n_scratch]
 
     arc_susceptances = _extract_arc_susceptances(BA.data)
 
@@ -253,10 +300,12 @@ function VirtualPTDF(
         temp_data,
         valid_ix,
         empty_cache,
+        ReentrantLock(),
         subnetwork_axes,
         Ref(tol),
         ybus.network_reduction_data,
         work_ba_col,
+        ReentrantLock(),
         system_uuid,
     )
 end
@@ -305,49 +354,71 @@ function _solve_factorization(K, b::Vector{Float64})
     return K \ b
 end
 
+"""
+    with_solver(f, vptdf) -> result
+
+Acquire exclusive access to a solver and a matched per-worker scratch pair
+(`work_ba_col`, `temp_data`), then invoke `f(solver, work_ba_col, temp_data)`.
+For the KLU pool path this routes through `with_worker`; for the
+AppleAccelerate path it serializes through `solver_lock`.
+"""
+function with_solver(
+    f,
+    vptdf::VirtualPTDF{Ax, L, KLULinSolvePool{Float64}},
+) where {Ax, L <: NTuple{2, Dict}}
+    return with_worker(vptdf.K) do cache, idx
+        f(cache, vptdf.work_ba_col[idx], vptdf.temp_data[idx])
+    end
+end
+
+function with_solver(
+    f,
+    vptdf::VirtualPTDF{Ax, L, K},
+) where {Ax, L <: NTuple{2, Dict}, K}
+    @lock vptdf.solver_lock f(vptdf.K, vptdf.work_ba_col[1], vptdf.temp_data[1])
+end
+
+# A/B test: revert to the closure-based path so we can quantify the impact.
+function _compute_ptdf_row(vptdf::VirtualPTDF, row::Int)::Vector{Float64}
+    buscount = size(vptdf, 1)
+    ref_bus_positions = get_ref_bus_position(vptdf)
+    if !isempty(vptdf.dist_slack) && length(ref_bus_positions) != 1
+        error(
+            "Distributed slack is not supported for systems with multiple reference buses.",
+        )
+    end
+    use_dist_slack = length(vptdf.dist_slack) == buscount
+    if !use_dist_slack && !isempty(vptdf.dist_slack)
+        error("Distributed bus specification doesn't match the number of buses.")
+    end
+
+    return with_solver(vptdf) do K_solver, work_ba_col, temp_data
+        valid_ix = vptdf.valid_ix
+        @inbounds for i in eachindex(valid_ix)
+            work_ba_col[i] = vptdf.BA[valid_ix[i], row]
+        end
+        lin_solve = _solve_factorization(K_solver, work_ba_col)
+        fill!(temp_data, 0.0)
+        @inbounds for i in eachindex(valid_ix)
+            temp_data[valid_ix[i]] = lin_solve[i]
+        end
+        if use_dist_slack
+            adjustment = dot(temp_data, vptdf.dist_slack_normalized)
+            return temp_data .- adjustment
+        end
+        return copy(temp_data)
+    end
+end
+
 function _getindex(
     vptdf::VirtualPTDF,
     row::Int,
     column::Union{Int, Colon},
 )
-    # check if value is in the cache
-    if haskey(vptdf.cache, row)
-        return vptdf.cache.temp_cache[row][column]
-    else
-        # evaluate the value for the PTDF column
-        valid_ix = vptdf.valid_ix
-        # Use pre-allocated work array instead of collect() to reduce allocations
-        @inbounds for i in eachindex(valid_ix)
-            vptdf.work_ba_col[i] = vptdf.BA[valid_ix[i], row]
-        end
-        lin_solve = _solve_factorization(vptdf.K, vptdf.work_ba_col)
-        buscount = size(vptdf, 1)
-        ref_bus_positions = get_ref_bus_position(vptdf)
-        if !isempty(vptdf.dist_slack) && length(ref_bus_positions) != 1
-            error(
-                "Distributed slack is not supported for systems with multiple reference buses.",
-            )
-        elseif isempty(vptdf.dist_slack) && length(ref_bus_positions) < buscount
-            @inbounds for i in eachindex(valid_ix)
-                vptdf.temp_data[valid_ix[i]] = lin_solve[i]
-            end
-            vptdf.cache[row] = copy(vptdf.temp_data)
-        elseif length(vptdf.dist_slack) == buscount
-            @inbounds for i in eachindex(valid_ix)
-                vptdf.temp_data[valid_ix[i]] = lin_solve[i]
-            end
-            # Use pre-computed normalized slack array for efficiency
-            adjustment = dot(vptdf.temp_data, vptdf.dist_slack_normalized)
-            vptdf.cache[row] = vptdf.temp_data .- adjustment
-        else
-            error("Distributed bus specification doesn't match the number of buses.")
-        end
-
-        if get_tol(vptdf) > eps()
-            vptdf.cache[row] = sparsify(vptdf.cache[row], get_tol(vptdf))
-        end
-
-        return vptdf.cache[row][column]
+    return cached_row_lookup(
+        vptdf.cache, vptdf.cache_lock, row, column, get_tol(vptdf),
+    ) do
+        _compute_ptdf_row(vptdf, row)
     end
 end
 
