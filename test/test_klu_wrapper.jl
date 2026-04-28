@@ -384,6 +384,81 @@ end
     @test isapprox(y, x, atol = 1e-9)
 end
 
+@testset "KLU wrapper: pool acquire!/refactor TOCTOU does not deadlock" begin
+    # Regression for the acquire! TOCTOU race: an acquirer that passes the
+    # validity check, then yields, must not hang on `take!` if a concurrent
+    # admin op kills the pool before the take. Today the kill pushes
+    # sentinels into the channel for every worker, so the blocked acquirer
+    # picks one up, re-pushes for the next waiter, and throws.
+    n = 4
+    A = SparseArrays.spdiagm(0 => fill(2.0, n),
+        1 => fill(0.1, n - 1), -1 => fill(0.1, n - 1))
+    pool = PNM.KLULinSolvePool(A; nworkers = 1)
+    Asingular = SparseArrays.spdiagm(0 => zeros(n),
+        1 => fill(0.1, n - 1), -1 => fill(0.1, n - 1))
+
+    acq_started = Base.Event()
+    acquirer = Threads.@spawn begin
+        notify(acq_started)
+        sleep(0.05)  # let admin op invalidate the pool
+        PNM.with_worker(pool) do _, _
+        end
+    end
+    wait(acq_started)
+    sleep(0.01)  # let acquirer pass validity check
+    try
+        PNM.numeric_refactor!(pool, Asingular)
+    catch
+    end
+    # Without the fix the acquirer would hang forever on `take!`.
+    @test timedwait(() -> istaskdone(acquirer), 5.0) == :ok
+    @test_throws Exception fetch(acquirer)
+
+    # Recovery via reset! drains the leftover sentinels and restores the
+    # pool. Subsequent `with_worker` calls succeed.
+    Agood = SparseArrays.spdiagm(0 => fill(3.0, n),
+        1 => fill(0.2, n - 1), -1 => fill(0.2, n - 1))
+    PNM.reset!(pool, Agood)
+    @test PNM.n_valid(pool) == 1
+    x = randn(n)
+    b = Agood * x
+    y = PNM.with_worker(pool) do cache, _idx
+        out = copy(b)
+        PNM.solve!(cache, out)
+        return out
+    end
+    @test isapprox(y, x, atol = 1e-9)
+end
+
+@testset "KLU wrapper: concurrent numeric_refactor! does not deadlock" begin
+    # Regression for the admin-vs-admin deadlock: two concurrent
+    # `numeric_refactor!` calls used to drain the same workers and could
+    # deadlock if the second call's drain raced the first call's put-back.
+    # The internal `admin_lock` now serializes admin ops.
+    n = 6
+    A = SparseArrays.spdiagm(0 => fill(2.0, n),
+        1 => fill(0.1, n - 1), -1 => fill(0.1, n - 1))
+    pool = PNM.KLULinSolvePool(A; nworkers = 2)
+    A2 = SparseArrays.spdiagm(0 => fill(3.0, n),
+        1 => fill(0.2, n - 1), -1 => fill(0.2, n - 1))
+    t1 = Threads.@spawn PNM.numeric_refactor!(pool, A2)
+    t2 = Threads.@spawn PNM.numeric_refactor!(pool, A2)
+    @test timedwait(() ->
+            istaskdone(t1) && istaskdone(t2), 5.0) == :ok
+    fetch(t1)
+    fetch(t2)
+    @test PNM.n_valid(pool) == 2
+
+    x = randn(n)
+    b = A2 * x
+    y = PNM.with_worker(pool) do cache, _idx
+        out = copy(b)
+        PNM.solve!(cache, out)
+        return out
+    end
+    @test isapprox(y, x, atol = 1e-9)
+end
+
 @testset "KLU wrapper: pool numeric_refactor! blocks for in-flight worker" begin
     # Regression for the non-blocking-drain bug: with `_drain_available!`
     # using `isready`, a worker checked out at the moment of the refactor

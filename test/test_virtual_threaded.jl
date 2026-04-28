@@ -1,7 +1,6 @@
 @testset "VirtualMODF parallel getindex via @spawn" begin
     sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     vlodf = VirtualLODF(sys5)
-    ptdf_ref = PTDF(sys5)
     nworkers = max(2, min(Threads.nthreads(), 4))
     vmodf = VirtualMODF(sys5; nworkers = nworkers)
     @test PNM.nworkers(vmodf) == nworkers
@@ -17,20 +16,17 @@
         vmodf.contingency_cache[ctg_uuid] = ctg
     end
 
-    # Build (monitored, contingency) work items.
     work = Tuple{Int, Base.UUID}[]
     for e in 1:n_arcs, m in 1:n_arcs
         push!(work, (m, Base.UUID(UInt128(e))))
     end
 
-    # Reference: serial computation of each row.
     serial_results = Dict{Tuple{Int, Base.UUID}, Vector{Float64}}()
     for (m, uuid) in work
         ctg = vmodf.contingency_cache[uuid]
         serial_results[(m, uuid)] = vmodf[m, ctg.modification]
     end
 
-    # Reset caches and recompute in parallel via @spawn.
     PNM.clear_caches!(vmodf)
     futures = map(work) do (m, uuid)
         Threads.@spawn begin
@@ -49,47 +45,86 @@
     end
 end
 
-@testset "VirtualPTDF threaded getindex (single-task @spawn)" begin
-    # VirtualPTDF is not yet pool-backed; concurrent getindex on the same
-    # instance races on its shared work_ba_col/temp_data scratch and the
-    # underlying KLULinSolveCache. This test exercises the API via @spawn
-    # but funnels work through one task at a time so it stays correct.
-    sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
-    vptdf = VirtualPTDF(sys5)
-    arcs = vptdf.axes[1]
+@testset "VirtualPTDF concurrent getindex matches serial baseline" begin
+    # Pool-backed VirtualPTDF must produce identical results regardless of
+    # whether rows are queried serially or under contention. With per-worker
+    # scratch and a cache_lock, parallel queries cannot corrupt each other.
+    rts = PSB.build_system(PSB.PSISystems, "RTS_GMLC_DA_sys")
+    nworkers = max(2, min(Threads.nthreads(), 4))
+    vptdf_serial = VirtualPTDF(rts; nworkers = nworkers)
+    arcs = collect(vptdf_serial.axes[1])
+    n_query = min(length(arcs), 80)
+    query_arcs = arcs[1:n_query]
 
-    serial = [copy(vptdf[arc, :]) for arc in arcs]
+    serial = [copy(vptdf_serial[a, :]) for a in query_arcs]
 
-    # New instance to clear the row cache.
-    vptdf2 = VirtualPTDF(sys5)
-    parallel = Vector{Vector{Float64}}(undef, length(arcs))
-    fut = Threads.@spawn for i in eachindex(arcs)
-        parallel[i] = copy(vptdf2[arcs[i], :])
+    vptdf_par = VirtualPTDF(rts; nworkers = nworkers)
+    parallel = Vector{Vector{Float64}}(undef, n_query)
+    Threads.@threads :dynamic for i in 1:n_query
+        parallel[i] = copy(vptdf_par[query_arcs[i], :])
     end
-    fetch(fut)
 
-    for i in eachindex(arcs)
-        @test isapprox(parallel[i], serial[i], atol = 1e-10)
+    for i in 1:n_query
+        @test isapprox(parallel[i], serial[i], atol = 1e-9)
     end
 end
 
-@testset "VirtualLODF threaded getindex (single-task @spawn)" begin
-    # Same caveat as VirtualPTDF: not yet pool-backed. Funnel through one task.
-    sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
-    vlodf = VirtualLODF(sys5)
-    arcs = vlodf.axes[1]
+@testset "VirtualLODF concurrent getindex matches serial baseline" begin
+    # Pool-backed VirtualLODF: same correctness guarantee as VirtualPTDF.
+    rts = PSB.build_system(PSB.PSISystems, "RTS_GMLC_DA_sys")
+    nworkers = max(2, min(Threads.nthreads(), 4))
+    vlodf_serial = VirtualLODF(rts; nworkers = nworkers)
+    arcs = collect(vlodf_serial.axes[1])
+    n_query = min(length(arcs), 80)
+    query_arcs = arcs[1:n_query]
 
-    serial = [copy(vlodf[arc, :]) for arc in arcs]
+    serial = [copy(vlodf_serial[a, :]) for a in query_arcs]
 
-    vlodf2 = VirtualLODF(sys5)
-    parallel = Vector{Vector{Float64}}(undef, length(arcs))
-    fut = Threads.@spawn for i in eachindex(arcs)
-        parallel[i] = copy(vlodf2[arcs[i], :])
+    vlodf_par = VirtualLODF(rts; nworkers = nworkers)
+    parallel = Vector{Vector{Float64}}(undef, n_query)
+    Threads.@threads :dynamic for i in 1:n_query
+        parallel[i] = copy(vlodf_par[query_arcs[i], :])
     end
-    fetch(fut)
 
-    for i in eachindex(arcs)
-        @test isapprox(parallel[i], serial[i], atol = 1e-10)
+    for i in 1:n_query
+        @test isapprox(parallel[i], serial[i], atol = 1e-9)
+    end
+end
+
+@testset "VirtualLODF concurrent get_partial_lodf_row matches serial baseline" begin
+    # _getindex_partial used to be marked NOT thread-safe; pool migration
+    # makes it parallel-safe. Verify under real contention with non-bridge
+    # arcs (bridge arcs island the network and produce NaN by design).
+    rts = PSB.build_system(PSB.PSISystems, "RTS_GMLC_DA_sys")
+    nworkers = max(2, min(Threads.nthreads(), 4))
+    vlodf_serial = VirtualLODF(rts; nworkers = nworkers)
+    n_arcs = size(vlodf_serial, 1)
+
+    arc_indices = Int[]
+    for i in 1:n_arcs
+        if abs(vlodf_serial.PTDF_A_diag[i] - 1.0) >= 1e-3
+            push!(arc_indices, i)
+            length(arc_indices) >= 60 && break
+        end
+    end
+    @test !isempty(arc_indices)
+
+    serial = Vector{Vector{Float64}}(undef, length(arc_indices))
+    for (k, i) in enumerate(arc_indices)
+        b = vlodf_serial.arc_susceptances[i]
+        serial[k] = PNM.get_partial_lodf_row(vlodf_serial, i, -b)
+    end
+
+    vlodf_par = VirtualLODF(rts; nworkers = nworkers)
+    parallel = Vector{Vector{Float64}}(undef, length(arc_indices))
+    Threads.@threads :dynamic for k in eachindex(arc_indices)
+        i = arc_indices[k]
+        b = vlodf_par.arc_susceptances[i]
+        parallel[k] = PNM.get_partial_lodf_row(vlodf_par, i, -b)
+    end
+
+    for k in eachindex(arc_indices)
+        @test isapprox(parallel[k], serial[k], atol = 1e-9)
     end
 end
 
@@ -104,7 +139,6 @@ end
     vmodf = VirtualMODF(rts; nworkers = nw)
     @test PNM.n_valid(vmodf.K) == nw
 
-    # Pick up to 4 bridge arcs (PTDF_A_diag ≈ 1.0 ⇒ removal islands the network).
     bridge_arcs = Int[]
     for e in eachindex(vmodf.PTDF_A_diag)
         if abs(vmodf.PTDF_A_diag[e] - 1.0) < 1e-6
@@ -128,19 +162,12 @@ end
     end
     results = [fetch(f) for f in futures]
 
-    # Each row must be finite — the Woodbury kernel must handle bridge outages
-    # without producing NaN/Inf or letting a libklu solve crash a worker.
     for r in results
         @test all(isfinite, r)
     end
 
-    # The headline assertion: every worker still holds a valid factorization
-    # after the parallel islanding workload. A regression that lets a singular
-    # solve corrupt a worker's numeric handle (the original PSI Windows crash
-    # mode) would surface here as `n_valid(vmodf.K) < nw`.
     @test PNM.n_valid(vmodf.K) == nw
 
-    # Pool keeps serving solves for non-islanding contingencies.
     PNM.clear_caches!(vmodf)
     benign_arc = findfirst(d -> abs(d) < 0.5, vmodf.PTDF_A_diag)
     @test benign_arc !== nothing
@@ -151,5 +178,79 @@ end
     )
     benign_result = vmodf[1, benign_mod]
     @test all(isfinite, benign_result)
+    @test PNM.n_valid(vmodf.K) == nw
+end
+
+@testset "VirtualMODF concurrent getindex on RTS matches serial baseline" begin
+    # Replaces the @spawn-per-item c_sys5 case with real contention on a
+    # bigger system. Threads.@threads :dynamic schedules work across
+    # multiple OS threads simultaneously, exercising the pool under load.
+    rts = PSB.build_system(PSB.PSISystems, "RTS_GMLC_DA_sys")
+    nw = max(2, min(Threads.nthreads(), 4))
+    vmodf_serial = VirtualMODF(rts; nworkers = nw)
+
+    n_arcs = length(vmodf_serial.axes[1])
+    contingency_arcs = Int[]
+    for e in eachindex(vmodf_serial.PTDF_A_diag)
+        # skip arcs that island the network (PTDF_A_diag ≈ 1.0)
+        if abs(vmodf_serial.PTDF_A_diag[e] - 1.0) >= 1e-3
+            push!(contingency_arcs, e)
+            length(contingency_arcs) >= 8 && break
+        end
+    end
+    @test !isempty(contingency_arcs)
+
+    mods = map(contingency_arcs) do e
+        b_e = vmodf_serial.arc_susceptances[e]
+        NetworkModification("rts_outage_$(e)", [ArcModification(e, -b_e)])
+    end
+    monitored_set = collect(1:min(n_arcs, 40))
+    work = [(m, mod) for mod in mods for m in monitored_set]
+
+    serial = [vmodf_serial[m, mod] for (m, mod) in work]
+
+    vmodf_par = VirtualMODF(rts; nworkers = nw)
+    parallel = Vector{Vector{Float64}}(undef, length(work))
+    Threads.@threads :dynamic for i in eachindex(work)
+        m, mod = work[i]
+        parallel[i] = vmodf_par[m, mod]
+    end
+
+    for i in eachindex(work)
+        @test isapprox(parallel[i], serial[i], atol = 1e-9)
+    end
+    @test PNM.n_valid(vmodf_par.K) == nw
+end
+
+@testset "VirtualMODF clear_caches! racing with getindex stays correct" begin
+    # `clear_caches!` empties Woodbury and row caches under their respective
+    # locks; concurrent getindex must either see the cached row or
+    # recompute it cleanly — never crash and never return non-finite values.
+    sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    nw = max(2, min(Threads.nthreads(), 4))
+    vmodf = VirtualMODF(sys5; nworkers = nw)
+    n_arcs = length(vmodf.axes[1])
+
+    e = 1
+    b_e = vmodf.arc_susceptances[e]
+    mod = NetworkModification("clear_race", [ArcModification(e, -b_e)])
+
+    stop = Threads.Atomic{Bool}(false)
+    clearer = Threads.@spawn begin
+        while !stop[]
+            PNM.clear_caches!(vmodf)
+            sleep(0.001)
+        end
+    end
+
+    queries = 0
+    for _ in 1:200, m in 1:n_arcs
+        row = vmodf[m, mod]
+        @test all(isfinite, row)
+        queries += 1
+    end
+    stop[] = true
+    fetch(clearer)
+    @test queries > 0
     @test PNM.n_valid(vmodf.K) == nw
 end
