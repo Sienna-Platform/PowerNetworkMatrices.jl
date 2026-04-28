@@ -59,7 +59,11 @@ function get_ward_reduction(
     all_buses = subnetwork_bus_axis
     subnetwork_bus_indices = [bus_lookup[x] for x in all_buses]
     subnetwork_bus_lookup = Dict(bus => ix for (ix, bus) in enumerate(all_buses))
-    subnetwork_data = data[subnetwork_bus_indices, subnetwork_bus_indices]
+    # Promote to ComplexF64 for the KLU factorizations below; libklu only
+    # exposes `klu_l_*` (double) and `klu_zl_*` (complex double) entry points.
+    subnetwork_data = SparseArrays.SparseMatrixCSC{ComplexF64, Int}(
+        data[subnetwork_bus_indices, subnetwork_bus_indices],
+    )
     boundary_buses = collect(intersect(boundary_buses, Set(all_buses)))
 
     external_buses = setdiff(all_buses, study_buses)
