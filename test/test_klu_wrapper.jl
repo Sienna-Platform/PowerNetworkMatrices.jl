@@ -383,3 +383,61 @@ end
     end
     @test isapprox(y, x, atol = 1e-9)
 end
+
+@testset "KLU wrapper: pool numeric_refactor! blocks for in-flight worker" begin
+    # Regression for the non-blocking-drain bug: with `_drain_available!`
+    # using `isready`, a worker checked out at the moment of the refactor
+    # would be silently skipped and continue serving solves with the stale
+    # factorization. The fix makes the drain block on `take!` until every
+    # valid worker is back in the pool's hand, so this test:
+    #   1. holds a worker via `with_worker` from a spawned task,
+    #   2. fires `numeric_refactor!` with a different matrix from another
+    #      task and asserts that it has not completed while the holder is
+    #      still in the critical section,
+    #   3. releases the holder, drives parallel solves, and verifies every
+    #      result is consistent with the new matrix (not the old).
+    n = 30
+    A = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 1.0,
+        1 => fill(0.1, n - 1), -1 => fill(0.1, n - 1))
+    pool = PNM.KLULinSolvePool(A; nworkers = 2)
+
+    holder_started = Base.Event()
+    holder_release = Base.Event()
+    holder = Threads.@spawn PNM.with_worker(pool) do _cache, _idx
+        notify(holder_started)
+        wait(holder_release)
+    end
+    wait(holder_started)
+
+    A2 = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 5.0,
+        1 => fill(0.2, n - 1), -1 => fill(0.2, n - 1))
+    refactor_task = Threads.@spawn PNM.numeric_refactor!(pool, A2)
+
+    # Give the refactor task time to drain available workers and block on
+    # `take!` for the held one. Without the blocking drain it would have
+    # completed by now.
+    sleep(0.2)
+    @test !istaskdone(refactor_task)
+
+    notify(holder_release)
+    fetch(holder)
+    fetch(refactor_task)
+
+    # Drive enough parallel solves that every worker — including the
+    # previously-held one — is exercised. With the bug, that worker would
+    # still hold A's factor and produce wrong answers against A2 RHS.
+    nrhs = 32
+    Xs = [randn(n) for _ in 1:nrhs]
+    Bs = [A2 * x for x in Xs]
+    Ys = Vector{Vector{Float64}}(undef, nrhs)
+    Threads.@threads for k in 1:nrhs
+        PNM.with_worker(pool) do cache, _idx
+            y = copy(Bs[k])
+            PNM.solve!(cache, y)
+            Ys[k] = y
+        end
+    end
+    for k in 1:nrhs
+        @test isapprox(Ys[k], Xs[k], atol = 1e-9)
+    end
+end

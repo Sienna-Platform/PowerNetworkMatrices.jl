@@ -109,8 +109,11 @@ end
 """
     numeric_refactor!(pool, A)
 
-Refresh the numeric factorization on every worker. Blocks until all workers
-are idle, then dispatches by failure rate:
+Refresh the numeric factorization on every currently-valid worker. Blocks
+until all valid workers are idle (i.e., have been returned to the pool by
+their holders), then dispatches by failure rate. Admin operations
+(`numeric_refactor!` and `reset!`) must be serialized vs each other by the
+caller. Failure rates:
 
 - `0` failures: all workers refreshed, pool unchanged.
 - `1 .. ⌊n/2⌋` failures (degraded mode): failed workers are held out of the
@@ -188,12 +191,16 @@ end
     reset!(pool, A) -> pool
 
 Drop the prior factorization on every worker and rebuild from scratch via
-`full_factor!(worker, A)` (free → analyze → factor). Use to recover a pool
-that has workers with a failed factorization — including the case where
-`numeric_refactor!` threw because every worker failed on a singular matrix.
-The caller is responsible for passing a matrix `A` that is expected to
-factor cleanly; workers that still fail after the reset keep a failed
-factorization.
+`full_factor!(worker, A)` (free → analyze → factor). Blocks until every
+currently-valid worker has been returned to the pool before touching any
+factorization state, then refreshes every worker (including ones flagged
+as failed). Use to recover a pool that has workers with a failed
+factorization — including the case where `numeric_refactor!` threw because
+every worker failed on a singular matrix. The caller is responsible for
+passing a matrix `A` that is expected to factor cleanly; workers that
+still fail after the reset keep a failed factorization. Admin operations
+(`numeric_refactor!` and `reset!`) must be serialized vs each other by the
+caller.
 """
 function reset!(pool::KLULinSolvePool{Tv},
     A::SparseMatrixCSC{Tv, Int}) where {Tv}
@@ -234,13 +241,20 @@ end
 
 # --- internal helpers ---
 
-# Drain every index currently in `available`. The caller is responsible for
-# ensuring no other thread is racing to acquire workers (refactor and reset
-# both run as serialized administrative operations).
+# Drain every currently-valid worker from `available`, blocking on each
+# `take!` until the worker has been returned by its holder. Failed workers
+# (`pool.valid[i] == false`) are intentionally held out of the channel and
+# are already in the pool's exclusive ownership, so they are not part of
+# the drain count. The `pool.valid` snapshot is taken under `state_lock`
+# for consistency; admin operations (`numeric_refactor!`, `reset!`) must
+# still be serialized vs each other by the caller, but solves running
+# through `with_worker` no longer race against the refactor — the drain
+# waits for them.
 function _drain_available!(pool::KLULinSolvePool)
-    drained = Int[]
-    while isready(pool.available)
-        push!(drained, take!(pool.available))
+    n_to_drain = @lock pool.state_lock count(pool.valid)
+    drained = Vector{Int}(undef, n_to_drain)
+    for i in 1:n_to_drain
+        drained[i] = take!(pool.available)
     end
     return drained
 end
