@@ -37,6 +37,8 @@ export KLULinSolveCache,
     acquire!,
     release!,
     nworkers,
+    n_valid,
+    reset!,
     is_factored
 
 include("klu_jll_bindings.jl")

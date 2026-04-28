@@ -71,7 +71,7 @@ import LinearAlgebra: LAPACK.getrf!, LAPACK.getrs!
 import Preferences
 
 include("KLUWrapper/KLUWrapper.jl")
-using .KLUWrapper:
+import .KLUWrapper:
     KLULinSolveCache,
     KLULinSolvePool,
     klu_factorize,
@@ -88,6 +88,8 @@ using .KLUWrapper:
     acquire!,
     release!,
     nworkers,
+    n_valid,
+    reset!,
     is_factored
 
 include("linalg_settings.jl")

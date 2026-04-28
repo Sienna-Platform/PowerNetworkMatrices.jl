@@ -20,6 +20,12 @@ mutable struct KLULinSolveCache{Tv <: Union{Float64, ComplexF64}}
     numeric::NumericPtr
     reuse_symbolic::Bool
     check_pattern::Bool
+    # Bounded reusable scratch for `solve_sparse!`. Lazy-grown on first call so
+    # the wrapper's working set stays O(n*block) instead of O(n*nrhs); see
+    # `solve_sparse_rhs.jl`. Each cache owns its own buffer, so a
+    # `KLULinSolvePool` worker is thread-safe by construction.
+    scratch::Matrix{Tv}
+    col_map::Vector{Int64}
 end
 
 @inline _dim(cache::KLULinSolveCache) = Int64(length(cache.colptr) - 1)
@@ -93,9 +99,29 @@ function KLULinSolveCache(
         convert(SymbolicPtr, C_NULL),
         convert(NumericPtr, C_NULL),
         reuse_symbolic, check_pattern,
+        Matrix{Tv}(undef, 0, 0),
+        Int64[],
     )
     finalizer(Base.finalize, cache)
     return cache
+end
+
+"""
+    _ensure_scratch!(cache, block) -> Nothing
+
+Ensure `cache.scratch` is at least `n × block` and `cache.col_map` length
+`block`. Grows in place; reuses across `solve_sparse!` calls.
+"""
+@inline function _ensure_scratch!(cache::KLULinSolveCache{Tv}, block::Int) where {Tv}
+    n = _dim(cache)
+    s = cache.scratch
+    if size(s, 1) != n || size(s, 2) < block
+        cache.scratch = Matrix{Tv}(undef, n, block)
+    end
+    if length(cache.col_map) < block
+        resize!(cache.col_map, block)
+    end
+    return nothing
 end
 
 function Base.finalize(cache::KLULinSolveCache{Tv}) where {Tv}
@@ -118,9 +144,11 @@ end
     Arowval = rowvals(A)
     if length(Acolptr) != length(cache.colptr) ||
        length(Arowval) != length(cache.rowval)
-        throw(ArgumentError(
-            "Cannot $op: matrix has different sparsity structure (length).",
-        ))
+        throw(
+            ArgumentError(
+                "Cannot $op: matrix has different sparsity structure (length).",
+            ),
+        )
     end
     # Increment-compare-decrement: avoids allocating a 1-indexed copy.
     cache.colptr .+= 1
@@ -183,9 +211,11 @@ function symbolic_refactor!(cache::KLULinSolveCache{Tv},
     if cache.check_pattern
         n = _dim(cache)
         if size(A, 1) != n || size(A, 2) != n
-            throw(DimensionMismatch(
-                "Cannot refactor: cache is $(n)×$(n) but A is $(size(A)).",
-            ))
+            throw(
+                DimensionMismatch(
+                    "Cannot refactor: cache is $(n)×$(n) but A is $(size(A)).",
+                ),
+            )
         end
         _check_pattern_match(cache, A, "symbolic_refactor")
     end
