@@ -212,18 +212,21 @@ function _apply_woodbury_correction_impl(
     return copy(temp_data)
 end
 
-# Outer dispatchers: VirtualPTDF uses its single shared scratch; VirtualMODF
-# acquires per-worker scratch from its KLULinSolvePool. The VirtualMODF
-# methods are defined in virtual_modf_calculations.jl alongside the struct.
+# Outer dispatchers: VirtualPTDF and VirtualMODF both acquire a solver and
+# matched per-worker scratch via `with_solver` / `with_worker`. The
+# VirtualMODF methods are defined in virtual_modf_calculations.jl alongside
+# the struct.
 
 function _compute_woodbury_factors(
     mat::VirtualPTDF,
     modifications::Tuple{Vararg{ArcModification}},
 )::WoodburyFactors
-    return _compute_woodbury_factors_impl(
-        mat.K, mat.work_ba_col, mat.temp_data,
-        mat.BA, mat.arc_susceptances, mat.valid_ix, modifications,
-    )
+    return with_solver(mat) do K_solver, work_ba_col, temp_data
+        _compute_woodbury_factors_impl(
+            K_solver, work_ba_col, temp_data,
+            mat.BA, mat.arc_susceptances, mat.valid_ix, modifications,
+        )
+    end
 end
 
 function _apply_woodbury_correction(
@@ -231,8 +234,10 @@ function _apply_woodbury_correction(
     monitored_idx::Int,
     wf::WoodburyFactors,
 )::Vector{Float64}
-    return _apply_woodbury_correction_impl(
-        mat.K, mat.work_ba_col, mat.temp_data,
-        mat.BA, mat.arc_susceptances, mat.valid_ix, monitored_idx, wf,
-    )
+    return with_solver(mat) do K_solver, work_ba_col, temp_data
+        _apply_woodbury_correction_impl(
+            K_solver, work_ba_col, temp_data,
+            mat.BA, mat.arc_susceptances, mat.valid_ix, monitored_idx, wf,
+        )
+    end
 end
