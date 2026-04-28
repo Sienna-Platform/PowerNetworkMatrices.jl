@@ -19,10 +19,26 @@ mutable struct KLULinSolvePool{Tv <: Union{Float64, ComplexF64}}
     # handle is in an undefined state; the worker is held out of `available`
     # until `reset!` (or auto-reset) restores it. Mutations are guarded by
     # `state_lock`; reads from `acquire!` use the lock so that a concurrent
-    # refactor cannot mix observed status with channel state.
+    # refactor cannot mix observed status with channel state. Reads of
+    # individual elements are always done under `state_lock` — never as a
+    # bare load — to avoid the multi-element Vector{Bool} memory-model
+    # ambiguity (Julia issue #32455).
     valid::Vector{Bool}
     state_lock::ReentrantLock
+    # Serializes admin operations (`numeric_refactor!`, `reset!`) against
+    # each other. The original contract required the caller to serialize
+    # admin ops; the lock now enforces it. Lock ordering: take `admin_lock`
+    # first, `state_lock` inside.
+    admin_lock::ReentrantLock
 end
+
+# Sentinel pushed into `pool.available` when an admin op leaves the pool
+# fully dead (every worker has a failed factorization). An acquirer that
+# receives the sentinel re-pushes it (so the next blocked waiter unblocks
+# in turn) and throws a clear error rather than holding a corrupted worker
+# or hanging on `take!`. Drained by `reset!` before the pool is brought
+# back to life. Negative because valid worker indices are always >= 1.
+const _POOL_DEAD_SENTINEL = -1
 
 # Auto-reset is triggered when more than this fraction of workers fail to
 # refactor (and the failure is not unanimous — the unanimous case is treated
@@ -35,7 +51,11 @@ Base.eltype(::Type{KLULinSolvePool{Tv}}) where {Tv} = Tv
 Base.length(pool::KLULinSolvePool) = length(pool.workers)
 nworkers(pool::KLULinSolvePool) = length(pool.workers)
 
-"""Number of workers currently holding a valid factorization."""
+"""
+Number of workers currently holding a valid factorization. Diagnostic only —
+the count is sampled under `state_lock` but may be stale by the time the
+caller reads the return value, so do not branch on it for serialization.
+"""
 function n_valid(pool::KLULinSolvePool)
     @lock pool.state_lock count(pool.valid)
 end
@@ -65,8 +85,11 @@ function KLULinSolvePool(
         put!(available, w)
     end
     pool = KLULinSolvePool{Tv}(workers, available, fill(true, nworkers),
-        ReentrantLock())
-    finalizer(Base.finalize, pool)
+        ReentrantLock(), ReentrantLock())
+    # Per-cache finalizers (registered in `klu_factorize`) free libklu
+    # handles on GC. The pool needs no separate finalizer: when the pool is
+    # unreachable, `pool.workers` is GC'd and each cache's finalizer fires
+    # exactly once.
     return pool
 end
 
@@ -85,6 +108,15 @@ function acquire!(pool::KLULinSolvePool)
         )
     end
     idx = take!(pool.available)
+    if idx <= 0
+        # Pool died while we were blocked on `take!`. Re-push the sentinel
+        # so the next blocked waiter unblocks too, then throw.
+        put!(pool.available, _POOL_DEAD_SENTINEL)
+        error(
+            "KLULinSolvePool: all workers have a failed factorization. " *
+            "Call `reset!(pool, A)` with a known-good matrix to recover.",
+        )
+    end
     return pool.workers[idx], idx
 end
 
@@ -111,9 +143,9 @@ end
 
 Refresh the numeric factorization on every currently-valid worker. Blocks
 until all valid workers are idle (i.e., have been returned to the pool by
-their holders), then dispatches by failure rate. Admin operations
-(`numeric_refactor!` and `reset!`) must be serialized vs each other by the
-caller. Failure rates:
+their holders), then dispatches by failure rate. Concurrent admin
+operations (`numeric_refactor!` / `reset!`) are serialized internally via
+`pool.admin_lock`. Failure rates:
 
 - `0` failures: all workers refreshed, pool unchanged.
 - `1 .. ⌊n/2⌋` failures (degraded mode): failed workers are held out of the
@@ -128,63 +160,64 @@ caller. Failure rates:
 - `n` failures (every worker): the matrix is treated as fundamentally bad;
   no auto-reset is attempted (`full_factor!` would just fail again on the
   same matrix). All workers are flagged as failed factorizations, no workers
-  are returned to the channel, and the first error is thrown. Recover by
-  calling `reset!(pool, A_known_good)`.
+  are returned to the channel, and the first error is thrown. Acquirers
+  blocked on `take!` are unblocked with a sentinel so they throw a clear
+  error instead of hanging. Recover by calling `reset!(pool, A_known_good)`.
 """
 function numeric_refactor!(pool::KLULinSolvePool{Tv},
     A::SparseMatrixCSC{Tv, Int}) where {Tv}
-    n = nworkers(pool)
-    @lock pool.state_lock begin
-        any(pool.valid) || error(
-            "KLULinSolvePool: all workers have a failed factorization; " *
-            "call `reset!` first.",
-        )
-    end
-
-    drained = _drain_available!(pool)
-    failed_idxs = Int[]
-    first_err = Ref{Any}(nothing)
-
-    for idx in drained
-        try
-            numeric_refactor!(pool.workers[idx], A)
-        catch e
-            push!(failed_idxs, idx)
-            first_err[] === nothing && (first_err[] = e)
+    @lock pool.admin_lock begin
+        n = nworkers(pool)
+        @lock pool.state_lock begin
+            any(pool.valid) || error(
+                "KLULinSolvePool: all workers have a failed factorization; " *
+                "call `reset!` first.",
+            )
         end
-    end
 
-    n_failed = length(failed_idxs)
+        drained = _drain_available!(pool)
+        failed_idxs = Int[]
+        first_err = Ref{Any}(nothing)
 
-    if n_failed == 0
-        _return_all!(pool, drained, true)
-        return pool
-    end
+        for idx in drained
+            try
+                numeric_refactor!(pool.workers[idx], A)
+            catch e
+                push!(failed_idxs, idx)
+                first_err[] === nothing && (first_err[] = e)
+            end
+        end
 
-    if n_failed == n
-        # Matrix is bad; do not retry. Flag all as failed factorizations
-        # and surface the error.
-        _set_validity!(pool, drained, false)
+        n_failed = length(failed_idxs)
+
+        if n_failed == 0
+            _set_valid_and_return!(pool, drained)
+            return pool
+        end
+
+        if n_failed == n
+            # Matrix is bad; do not retry. Flag all as failed factorizations
+            # and surface the error. Sentinels unblock any acquirers waiting
+            # on `take!`.
+            _kill_pool!(pool)
+            throw(first_err[])
+        end
+
+        if n_failed > POOL_RESET_THRESHOLD * n
+            @warn "KLULinSolvePool: $(n_failed)/$(n) workers failed refactor; " *
+                  "triggering auto-reset"
+            return _auto_reset!(pool, A, drained)
+        end
+
+        # Degraded: minority failed. Keep survivors in rotation; held-out
+        # failed workers wait for `reset!` to recover.
+        survivors = filter(idx -> idx ∉ failed_idxs, drained)
+        _set_validity!(pool, failed_idxs, false)
+        _set_valid_and_return!(pool, survivors)
+        @warn "KLULinSolvePool degraded: $(n_failed)/$(n) workers failed " *
+              "refactor; pool operating with $(n - n_failed) workers"
         throw(first_err[])
     end
-
-    if n_failed > POOL_RESET_THRESHOLD * n
-        @warn "KLULinSolvePool: $(n_failed)/$(n) workers failed refactor; " *
-              "triggering auto-reset"
-        return _auto_reset!(pool, A, drained)
-    end
-
-    # Degraded: minority failed. Keep survivors in rotation; held-out failed
-    # workers wait for `reset!` to recover.
-    survivors = filter(idx -> idx ∉ failed_idxs, drained)
-    _set_validity!(pool, failed_idxs, false)
-    _set_validity!(pool, survivors, true)
-    for idx in survivors
-        put!(pool.available, idx)
-    end
-    @warn "KLULinSolvePool degraded: $(n_failed)/$(n) workers failed " *
-          "refactor; pool operating with $(n - n_failed) workers"
-    throw(first_err[])
 end
 
 """
@@ -198,45 +231,51 @@ as failed). Use to recover a pool that has workers with a failed
 factorization — including the case where `numeric_refactor!` threw because
 every worker failed on a singular matrix. The caller is responsible for
 passing a matrix `A` that is expected to factor cleanly; workers that
-still fail after the reset keep a failed factorization. Admin operations
-(`numeric_refactor!` and `reset!`) must be serialized vs each other by the
-caller.
+still fail after the reset keep a failed factorization. Concurrent admin
+operations (`numeric_refactor!` / `reset!`) are serialized internally via
+`pool.admin_lock`.
 """
 function reset!(pool::KLULinSolvePool{Tv},
     A::SparseMatrixCSC{Tv, Int}) where {Tv}
-    n = nworkers(pool)
-    _drain_available!(pool)  # discards return value: we touch every worker
+    @lock pool.admin_lock begin
+        n = nworkers(pool)
+        _drain_available!(pool)  # waits for in-flight valid workers
+        # If the pool was previously dead, sentinels may still be in the
+        # channel. Drain them so future `acquire!` calls consume valid
+        # indices instead.
+        _drain_sentinels!(pool)
 
-    failed_idxs = Int[]
-    first_err = Ref{Any}(nothing)
+        failed_idxs = Int[]
+        first_err = Ref{Any}(nothing)
 
-    for idx in 1:n
-        try
-            full_factor!(pool.workers[idx], A)
-        catch e
-            push!(failed_idxs, idx)
-            first_err[] === nothing && (first_err[] = e)
+        for idx in 1:n
+            try
+                full_factor!(pool.workers[idx], A)
+            catch e
+                push!(failed_idxs, idx)
+                first_err[] === nothing && (first_err[] = e)
+            end
         end
-    end
 
-    survivors = filter(idx -> idx ∉ failed_idxs, 1:n)
-    _set_validity!(pool, failed_idxs, false)
-    _set_validity!(pool, survivors, true)
-    for idx in survivors
-        put!(pool.available, idx)
-    end
+        survivors = filter(idx -> idx ∉ failed_idxs, 1:n)
+        _set_validity!(pool, failed_idxs, false)
+        _set_valid_and_return!(pool, survivors)
 
-    if length(failed_idxs) == n
-        error(
-            "KLULinSolvePool reset failed: every worker still has a failed " *
-            "factorization. Underlying error: $(first_err[])",
-        )
-    elseif !isempty(failed_idxs)
-        @warn "KLULinSolvePool reset partially recovered: " *
-              "$(length(failed_idxs))/$(n) workers still have a failed " *
-              "factorization"
+        if length(failed_idxs) == n
+            # Reset itself failed for every worker: pool stays dead.
+            # Push sentinels so any blocked acquirers don't hang.
+            _push_dead_sentinels!(pool)
+            error(
+                "KLULinSolvePool reset failed: every worker still has a failed " *
+                "factorization. Underlying error: $(first_err[])",
+            )
+        elseif !isempty(failed_idxs)
+            @warn "KLULinSolvePool reset partially recovered: " *
+                  "$(length(failed_idxs))/$(n) workers still have a failed " *
+                  "factorization"
+        end
+        return pool
     end
-    return pool
 end
 
 # --- internal helpers ---
@@ -245,11 +284,10 @@ end
 # `take!` until the worker has been returned by its holder. Failed workers
 # (`pool.valid[i] == false`) are intentionally held out of the channel and
 # are already in the pool's exclusive ownership, so they are not part of
-# the drain count. The `pool.valid` snapshot is taken under `state_lock`
-# for consistency; admin operations (`numeric_refactor!`, `reset!`) must
-# still be serialized vs each other by the caller, but solves running
-# through `with_worker` no longer race against the refactor — the drain
-# waits for them.
+# the drain count. Sentinels (`<= 0`) are not counted as valid; they live
+# in the channel only between a kill and the next `reset!`. The `pool.valid`
+# snapshot is taken under `state_lock` for consistency; the `take!` loop
+# blocks outside the lock so concurrent `release!` calls can land.
 function _drain_available!(pool::KLULinSolvePool)
     n_to_drain = @lock pool.state_lock count(pool.valid)
     drained = Vector{Int}(undef, n_to_drain)
@@ -257,6 +295,44 @@ function _drain_available!(pool::KLULinSolvePool)
         drained[i] = take!(pool.available)
     end
     return drained
+end
+
+# Drain any leftover dead-pool sentinels from `pool.available`. Caller
+# must hold `pool.admin_lock` and have already drained valid workers, so
+# the channel contains only sentinels (admin_lock + drain-first guarantees
+# no valid index can land here).
+function _drain_sentinels!(pool::KLULinSolvePool)
+    @lock pool.state_lock begin
+        while isready(pool.available)
+            v = take!(pool.available)
+            v <= 0 || error(
+                "KLULinSolvePool internal invariant: positive worker index " *
+                "in channel during sentinel drain (got $(v)). admin_lock " *
+                "and prior _drain_available! should have made this impossible.",
+            )
+        end
+    end
+    return nothing
+end
+
+# Push one sentinel per worker into `pool.available`. Channel capacity is
+# `nworkers`, and the channel is empty when this is called (the caller has
+# just drained it), so all puts succeed immediately.
+function _push_dead_sentinels!(pool::KLULinSolvePool)
+    @lock pool.state_lock begin
+        for _ in 1:nworkers(pool)
+            put!(pool.available, _POOL_DEAD_SENTINEL)
+        end
+    end
+    return nothing
+end
+
+# Mark every worker as invalid and push sentinels for any blocked acquirers.
+# Caller must hold `pool.admin_lock`.
+function _kill_pool!(pool::KLULinSolvePool)
+    @lock pool.state_lock fill!(pool.valid, false)
+    _push_dead_sentinels!(pool)
+    return nothing
 end
 
 function _set_validity!(pool::KLULinSolvePool, idxs, value::Bool)
@@ -268,10 +344,16 @@ function _set_validity!(pool::KLULinSolvePool, idxs, value::Bool)
     return nothing
 end
 
-function _return_all!(pool::KLULinSolvePool, idxs, valid::Bool)
-    _set_validity!(pool, idxs, valid)
-    if valid
+# Mark `idxs` as valid and return them to the channel under a single
+# `state_lock` window so concurrent observers never see `valid[i] == true`
+# without `i` being in the channel (the atomicity gap that `_set_validity!`
+# + a separate `put!` loop used to expose). Safe to hold the lock across
+# `put!` because the channel has capacity = `nworkers` and the caller
+# guarantees no more than `nworkers` puts are made — `put!` never blocks.
+function _set_valid_and_return!(pool::KLULinSolvePool, idxs)
+    @lock pool.state_lock begin
         for idx in idxs
+            pool.valid[idx] = true
             put!(pool.available, idx)
         end
     end
@@ -280,7 +362,8 @@ end
 
 # Re-run `full_factor!` on every drained worker. Returns the pool on full
 # success; throws on partial or total failure (after returning whatever
-# survivors are still valid to the channel).
+# survivors are still valid to the channel). Caller must hold
+# `pool.admin_lock`.
 function _auto_reset!(pool::KLULinSolvePool{Tv},
     A::SparseMatrixCSC{Tv, Int},
     drained::Vector{Int}) where {Tv}
@@ -297,9 +380,12 @@ function _auto_reset!(pool::KLULinSolvePool{Tv},
 
     survivors = filter(idx -> idx ∉ reset_failed, drained)
     _set_validity!(pool, reset_failed, false)
-    _set_validity!(pool, survivors, true)
-    for idx in survivors
-        put!(pool.available, idx)
+    _set_valid_and_return!(pool, survivors)
+
+    if length(reset_failed) == length(drained)
+        # Auto-reset killed the pool entirely. Push sentinels so any
+        # acquirers blocked on `take!` are unblocked with a clear error.
+        _push_dead_sentinels!(pool)
     end
 
     if !isempty(reset_failed)

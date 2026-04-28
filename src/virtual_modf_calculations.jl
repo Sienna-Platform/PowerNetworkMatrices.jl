@@ -1,4 +1,15 @@
 """
+Internal pairing of a per-modification `RowCache` with the lock that
+guards its reads, writes, and copies. Lets queries against different
+modifications run in parallel instead of contending on a single global
+lock.
+"""
+struct _LockedRowCache
+    cache::RowCache
+    lock::ReentrantLock
+end
+
+"""
 The Virtual Multiple Outage Distribution Factor (VirtualMODF) structure computes
 post-contingency PTDF rows lazily for registered contingencies using the
 Woodbury matrix identity (van Dijk et al. Eq. 29).
@@ -39,8 +50,18 @@ Caching is two-tiered:
         Resolved contingencies keyed by outage UUID.
 - `woodbury_cache::Dict{NetworkModification, WoodburyFactors}`:
         Precomputed Woodbury factors keyed by modification.
-- `row_caches::Dict{NetworkModification, RowCache}`:
-        One RowCache per modification, keyed by modification.
+- `woodbury_inflight::Dict{NetworkModification, Base.Event}`:
+        In-flight Woodbury computations, used to deduplicate concurrent
+        first-time queries for the same modification. Guarded by
+        `woodbury_cache_lock`. The first thread to query a fresh
+        modification claims the slot, computes the factors, populates
+        `woodbury_cache`, and `notify`s the event; concurrent waiters
+        block on the event instead of recomputing.
+- `row_caches::Dict{NetworkModification, _LockedRowCache}`:
+        One `RowCache` per modification, paired with its own lock. The outer
+        `row_caches_lock` only guards inserts/clears of this dict; the per-mod
+        lock guards reads/writes of the corresponding cache so that queries
+        against different modifications run in parallel.
 - `subnetwork_axes::Dict{Int, Ax}`:
         Maps reference bus indices to subnetwork axes.
 - `tol::Base.RefValue{Float64}`:
@@ -71,8 +92,12 @@ struct VirtualMODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
     valid_ix::Vector{Int}
     contingency_cache::Dict{Base.UUID, ContingencySpec}
     woodbury_cache::Dict{NetworkModification, WoodburyFactors}
+    # In-flight set: shares `woodbury_cache_lock` with `woodbury_cache`.
+    # Concurrent first-time queries for the same modification observe the
+    # event here and `wait` instead of redundantly recomputing.
+    woodbury_inflight::Dict{NetworkModification, Base.Event}
     woodbury_cache_lock::ReentrantLock
-    row_caches::Dict{NetworkModification, RowCache}
+    row_caches::Dict{NetworkModification, _LockedRowCache}
     row_caches_lock::ReentrantLock
     subnetwork_axes::Dict{Int, Ax}
     tol::Base.RefValue{Float64}
@@ -237,8 +262,9 @@ function VirtualMODF(
         valid_ix,
         Dict{Base.UUID, ContingencySpec}(),
         Dict{NetworkModification, WoodburyFactors}(),
+        Dict{NetworkModification, Base.Event}(),
         ReentrantLock(),
-        Dict{NetworkModification, RowCache}(),
+        Dict{NetworkModification, _LockedRowCache}(),
         ReentrantLock(),
         subnetwork_axes,
         Ref(tol),
@@ -315,26 +341,60 @@ end
     _get_woodbury_factors(vmodf, mod) -> WoodburyFactors
 
 Compute and cache the Woodbury factors for a network modification. Safe to
-call from multiple threads: the cache is guarded by `vmodf.woodbury_cache_lock`,
-and the underlying solve uses a per-worker pool worker.
+call from multiple threads: `vmodf.woodbury_cache_lock` guards both the
+cache and an in-flight set, so concurrent first-time queries for the same
+modification observe a single shared computation. The first caller claims
+the slot, performs the KLU solves, and `notify`s waiters on completion;
+others block on the event and pick up the result from the cache. Failure
+in the owner is propagated by clearing the in-flight slot, notifying
+waiters, and rethrowing — waiters then loop and either see a winner or
+become the next owner themselves.
 """
 function _get_woodbury_factors(
     vmodf::VirtualMODF,
     mod::NetworkModification,
 )
-    @lock vmodf.woodbury_cache_lock begin
-        haskey(vmodf.woodbury_cache, mod) && return vmodf.woodbury_cache[mod]
-    end
-    wf = _compute_woodbury_factors(vmodf, mod.arc_modifications)
-    @lock vmodf.woodbury_cache_lock begin
-        # Another thread may have populated the entry while we computed.
-        existing = get(vmodf.woodbury_cache, mod, nothing)
-        if existing !== nothing
-            return existing
+    while true
+        cached, event, is_owner = @lock vmodf.woodbury_cache_lock begin
+            wf = get(vmodf.woodbury_cache, mod, nothing)
+            if wf !== nothing
+                (wf, nothing, false)
+            else
+                pending = get(vmodf.woodbury_inflight, mod, nothing)
+                if pending !== nothing
+                    (nothing, pending, false)
+                else
+                    ev = Base.Event()
+                    vmodf.woodbury_inflight[mod] = ev
+                    (nothing, ev, true)
+                end
+            end
         end
-        vmodf.woodbury_cache[mod] = wf
+
+        cached === nothing || return cached
+
+        if !is_owner
+            wait(event)
+            continue
+        end
+
+        my_event = event
+        try
+            wf = _compute_woodbury_factors(vmodf, mod.arc_modifications)
+            @lock vmodf.woodbury_cache_lock vmodf.woodbury_cache[mod] = wf
+            return wf
+        finally
+            # Only retract the in-flight slot if it still references our
+            # event: `clear_all_caches!` plus a subsequent claim by another
+            # thread would otherwise let us delete a stranger's event.
+            @lock vmodf.woodbury_cache_lock begin
+                if get(vmodf.woodbury_inflight, mod, nothing) === my_event
+                    delete!(vmodf.woodbury_inflight, mod)
+                end
+            end
+            notify(my_event)
+        end
     end
-    return wf
 end
 
 """
@@ -361,19 +421,25 @@ end
 # --- Row cache management ---
 
 """
-    _get_or_create_row_cache(vmodf, mod) -> RowCache
+    _get_or_create_row_cache(vmodf, mod) -> _LockedRowCache
 
-Get or create the per-modification RowCache. Guarded by
-`vmodf.row_caches_lock` for parallel access.
+Get or create the per-modification `RowCache` paired with its dedicated
+lock. The outer `vmodf.row_caches_lock` is held only briefly to look up
+or insert the entry; callers use the returned per-mod lock for all
+hit/miss/store operations on the cache so that queries against different
+modifications do not contend on a single global lock.
 """
 function _get_or_create_row_cache(vmodf::VirtualMODF, mod::NetworkModification)
     @lock vmodf.row_caches_lock begin
-        if !haskey(vmodf.row_caches, mod)
-            row_size = length(vmodf.temp_data[1]) * sizeof(Float64)
-            vmodf.row_caches[mod] =
-                RowCache(vmodf.max_cache_size_bytes, Set{Int}(), row_size)
-        end
-        return vmodf.row_caches[mod]
+        existing = get(vmodf.row_caches, mod, nothing)
+        existing === nothing || return existing
+        row_size = length(vmodf.temp_data[1]) * sizeof(Float64)
+        entry = _LockedRowCache(
+            RowCache(vmodf.max_cache_size_bytes, Set{Int}(), row_size),
+            ReentrantLock(),
+        )
+        vmodf.row_caches[mod] = entry
+        return entry
     end
 end
 
@@ -390,20 +456,28 @@ function Base.getindex(
     monitored_idx::Int,
     mod::NetworkModification,
 )
-    row_cache = _get_or_create_row_cache(vmodf, mod)
+    entry = _get_or_create_row_cache(vmodf, mod)
+    row_cache = entry.cache
+    cache_lock = entry.lock
 
-    @lock vmodf.row_caches_lock begin
-        haskey(row_cache, monitored_idx) && return copy(row_cache[monitored_idx])
-    end
+    # Copy outside the lock — copies are O(n_buses) and would otherwise
+    # block other readers on this contingency.
+    cached = @lock cache_lock get(row_cache.temp_cache, monitored_idx, nothing)
+    cached === nothing || return copy(cached)
 
     row = _compute_modf_entry(vmodf, monitored_idx, mod)
     stored = get_tol(vmodf) > eps() ? sparsify(row, get_tol(vmodf)) : row
 
-    @lock vmodf.row_caches_lock begin
-        haskey(row_cache, monitored_idx) && return copy(row_cache[monitored_idx])
-        row_cache[monitored_idx] = stored
-        return copy(row_cache[monitored_idx])
+    cached_row = @lock cache_lock begin
+        existing = get(row_cache.temp_cache, monitored_idx, nothing)
+        if existing === nothing
+            row_cache[monitored_idx] = stored
+            stored
+        else
+            existing
+        end
     end
+    return copy(cached_row)
 end
 
 """
@@ -458,13 +532,18 @@ function Base.getindex(
     outage::PSY.Outage,
 )
     outage_uuid = IS.get_uuid(outage)
-    if !haskey(vmodf.contingency_cache, outage_uuid)
-        error(
-            "Outage (UUID=$outage_uuid) is not registered. " *
-            "Construct VirtualMODF with the system containing this outage.",
-        )
+    # Read under `woodbury_cache_lock` to pair with the locked `empty!` in
+    # `clear_all_caches!` — without it, a concurrent clear could rehash the
+    # underlying Dict mid-lookup.
+    ctg = @lock vmodf.woodbury_cache_lock begin
+        if !haskey(vmodf.contingency_cache, outage_uuid)
+            error(
+                "Outage (UUID=$outage_uuid) is not registered. " *
+                "Construct VirtualMODF with the system containing this outage.",
+            )
+        end
+        vmodf.contingency_cache[outage_uuid]
     end
-    ctg = vmodf.contingency_cache[outage_uuid]
     return vmodf[monitored, ctg.modification]
 end
 
@@ -506,8 +585,17 @@ Use `clear_caches!` instead to preserve contingency registrations while
 freeing computation cache memory.
 """
 function clear_all_caches!(vmodf::VirtualMODF)
-    empty!(vmodf.contingency_cache)
-    @lock vmodf.woodbury_cache_lock empty!(vmodf.woodbury_cache)
+    # `contingency_cache` is emptied under `woodbury_cache_lock` to pair with
+    # the locked read in the `Outage`-keyed `getindex`; without the lock a
+    # concurrent query could observe a torn Dict state. The in-flight set is
+    # cleared too — owner threads still holding their event reference will
+    # skip the now-mismatched delete via the identity check, so dropping
+    # entries here can't clobber another thread's claim.
+    @lock vmodf.woodbury_cache_lock begin
+        empty!(vmodf.contingency_cache)
+        empty!(vmodf.woodbury_cache)
+        empty!(vmodf.woodbury_inflight)
+    end
     @lock vmodf.row_caches_lock empty!(vmodf.row_caches)
     return
 end
