@@ -56,19 +56,19 @@ end
     # but funnels work through one task at a time so it stays correct.
     sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     vptdf = VirtualPTDF(sys5)
-    n_arcs = size(vptdf, 1)
+    arcs = vptdf.axes[1]
 
-    serial = [copy(vptdf[i, :]) for i in 1:n_arcs]
+    serial = [copy(vptdf[arc, :]) for arc in arcs]
 
     # New instance to clear the row cache.
     vptdf2 = VirtualPTDF(sys5)
-    parallel = Vector{Vector{Float64}}(undef, n_arcs)
-    fut = Threads.@spawn for i in 1:n_arcs
-        parallel[i] = copy(vptdf2[i, :])
+    parallel = Vector{Vector{Float64}}(undef, length(arcs))
+    fut = Threads.@spawn for i in eachindex(arcs)
+        parallel[i] = copy(vptdf2[arcs[i], :])
     end
     fetch(fut)
 
-    for i in 1:n_arcs
+    for i in eachindex(arcs)
         @test isapprox(parallel[i], serial[i], atol = 1e-10)
     end
 end
@@ -77,18 +77,79 @@ end
     # Same caveat as VirtualPTDF: not yet pool-backed. Funnel through one task.
     sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     vlodf = VirtualLODF(sys5)
-    n_arcs = size(vlodf, 1)
+    arcs = vlodf.axes[1]
 
-    serial = [copy(vlodf[i, :]) for i in 1:n_arcs]
+    serial = [copy(vlodf[arc, :]) for arc in arcs]
 
     vlodf2 = VirtualLODF(sys5)
-    parallel = Vector{Vector{Float64}}(undef, n_arcs)
-    fut = Threads.@spawn for i in 1:n_arcs
-        parallel[i] = copy(vlodf2[i, :])
+    parallel = Vector{Vector{Float64}}(undef, length(arcs))
+    fut = Threads.@spawn for i in eachindex(arcs)
+        parallel[i] = copy(vlodf2[arcs[i], :])
     end
     fetch(fut)
 
-    for i in 1:n_arcs
+    for i in eachindex(arcs)
         @test isapprox(parallel[i], serial[i], atol = 1e-10)
     end
+end
+
+@testset "VirtualMODF: parallel islanding contingencies on RTS keep pool healthy" begin
+    # Bridge-arc outages disconnect the network and exercise the
+    # `_compute_modf_entry` → `_compute_woodbury_factors` → `_solve_factorization`
+    # path that crashed PowerSimulations on Windows. With the pool, a
+    # `Threads.@spawn` per (monitored, contingency) work item must not corrupt
+    # any worker's factorization — i.e. `n_valid(pool) == nworkers` after.
+    rts = PSB.build_system(PSB.PSISystems, "RTS_GMLC_DA_sys")
+    nw = max(2, min(Threads.nthreads(), 4))
+    vmodf = VirtualMODF(rts; nworkers = nw)
+    @test PNM.n_valid(vmodf.K) == nw
+
+    # Pick up to 4 bridge arcs (PTDF_A_diag ≈ 1.0 ⇒ removal islands the network).
+    bridge_arcs = Int[]
+    for e in eachindex(vmodf.PTDF_A_diag)
+        if abs(vmodf.PTDF_A_diag[e] - 1.0) < 1e-6
+            push!(bridge_arcs, e)
+            length(bridge_arcs) >= 4 && break
+        end
+    end
+    @test !isempty(bridge_arcs)
+
+    island_mods = map(bridge_arcs) do e
+        b_e = vmodf.arc_susceptances[e]
+        NetworkModification("rts_island_arc_$(e)", [ArcModification(e, -b_e)])
+    end
+
+    n_arcs = length(vmodf.axes[1])
+    monitored_set = collect(1:min(n_arcs, 40))
+    work = [(m, mod) for mod in island_mods for m in monitored_set]
+
+    futures = map(work) do (m, mod)
+        Threads.@spawn vmodf[m, mod]
+    end
+    results = [fetch(f) for f in futures]
+
+    # Each row must be finite — the Woodbury kernel must handle bridge outages
+    # without producing NaN/Inf or letting a libklu solve crash a worker.
+    for r in results
+        @test all(isfinite, r)
+    end
+
+    # The headline assertion: every worker still holds a valid factorization
+    # after the parallel islanding workload. A regression that lets a singular
+    # solve corrupt a worker's numeric handle (the original PSI Windows crash
+    # mode) would surface here as `n_valid(vmodf.K) < nw`.
+    @test PNM.n_valid(vmodf.K) == nw
+
+    # Pool keeps serving solves for non-islanding contingencies.
+    PNM.clear_caches!(vmodf)
+    benign_arc = findfirst(d -> abs(d) < 0.5, vmodf.PTDF_A_diag)
+    @test benign_arc !== nothing
+    b_benign = vmodf.arc_susceptances[benign_arc]
+    benign_mod = NetworkModification(
+        "rts_benign_outage",
+        [ArcModification(benign_arc, -0.1 * b_benign)],
+    )
+    benign_result = vmodf[1, benign_mod]
+    @test all(isfinite, benign_result)
+    @test PNM.n_valid(vmodf.K) == nw
 end
