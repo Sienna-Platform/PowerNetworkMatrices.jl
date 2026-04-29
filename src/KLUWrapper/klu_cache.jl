@@ -70,7 +70,9 @@ runs `klu_l_defaults`, but does **not** factorize. Call `full_factor!`
 (or `symbolic_factor!` followed by `numeric_refactor!`) before `solve!`.
 
 A finalizer frees libklu handles on GC; call `Base.finalize(cache)` to
-release them eagerly.
+release them eagerly. Releasing the handles leaves Julia-side state intact,
+so the cache can be re-factorized via `symbolic_factor!`/`numeric_refactor!`
+or `full_factor!`.
 """
 function KLULinSolveCache(
     A::SparseMatrixCSC{Tv, Int};
@@ -102,7 +104,7 @@ function KLULinSolveCache(
         Matrix{Tv}(undef, 0, 0),
         Int64[],
     )
-    finalizer(Base.finalize, cache)
+    finalizer(_free_klu_handles!, cache)
     return cache
 end
 
@@ -124,7 +126,14 @@ Ensure `cache.scratch` is at least `n × block` and `cache.col_map` length
     return nothing
 end
 
-function Base.finalize(cache::KLULinSolveCache{Tv}) where {Tv}
+"""
+Release the libklu numeric and symbolic handles held by `cache`, leaving the
+Julia-side fields (`colptr`, `rowval`, `common`, `scratch`, `col_map`) intact
+so the cache remains structurally valid and re-factorable. Idempotent: a
+second call hits the `C_NULL` guards. Used both by `symbolic_factor!`
+mid-life (drop old handles before re-analyzing) and by the GC finalizer.
+"""
+function _free_klu_handles!(cache::KLULinSolveCache{Tv}) where {Tv}
     if cache.numeric != C_NULL
         num_ref = Ref(cache.numeric)
         _free_numeric!(Tv, num_ref, cache.common)
@@ -137,6 +146,12 @@ function Base.finalize(cache::KLULinSolveCache{Tv}) where {Tv}
     end
     return nothing
 end
+
+# Public eager-release entry point. Overload of `Base.finalize` so callers can
+# trigger handle release without waiting for GC; delegates to the internal
+# helper to keep the GC-end-of-life semantics distinct from the in-method
+# "drop old handles before re-analyze" use inside `symbolic_factor!`.
+Base.finalize(cache::KLULinSolveCache) = _free_klu_handles!(cache)
 
 @inline function _check_pattern_match(cache::KLULinSolveCache,
     A::SparseMatrixCSC, op::AbstractString)
@@ -178,7 +193,7 @@ function symbolic_factor!(cache::KLULinSolveCache{Tv},
             "Cannot factor: cache is $(n)×$(n) but A is $(size(A)).",
         ))
     end
-    Base.finalize(cache)
+    _free_klu_handles!(cache)
 
     Acolptr = getcolptr(A)
     Arowval = rowvals(A)

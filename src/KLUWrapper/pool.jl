@@ -398,10 +398,18 @@ function _auto_reset!(pool::KLULinSolvePool{Tv},
     return pool
 end
 
-"""Free every worker's libklu handles. Idempotent."""
-function Base.finalize(pool::KLULinSolvePool)
+"""
+Release every worker's libklu handles. Idempotent. Workers' Julia-side state
+is left intact, mirroring the per-cache contract.
+"""
+function _free_klu_handles!(pool::KLULinSolvePool)
     for cache in pool.workers
-        Base.finalize(cache)
+        _free_klu_handles!(cache)
     end
     return nothing
 end
+
+# Public eager-release entry point at the pool level. Delegates to the
+# internal helper for the same naming-vs-semantics reason as the cache
+# overload.
+Base.finalize(pool::KLULinSolvePool) = _free_klu_handles!(pool)
