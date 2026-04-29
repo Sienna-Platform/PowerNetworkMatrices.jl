@@ -261,7 +261,7 @@ end
         collect(keys(nrd_d2.direct_branch_map)),
         collect(keys(nrd_d2.parallel_branch_map)),
     )
-    # Compare results for buses that are present in the reduced system 
+    # Compare results for buses that are present in the reduced system
     buses_to_compare = collect(keys(nrd_d2.bus_reduction_map))
     for branch in valid_outage_branches
         outage = get_supplemental_attributes(branch)[1]
@@ -369,5 +369,53 @@ end
         ctg_uuid = outage.internal.uuid
         ctg = get_registered_contingencies(vmodf)[ctg_uuid]
         @test ctg.modification.arc_modifications[1].delta_b <= 0.0
+    end
+end
+
+using Random
+
+@testset "VirtualMODF P2 access pattern is parallel-safe" begin
+    # This test mirrors the access pattern PowerSimulations uses in
+    # `add_post_contingency_flow_expressions!`: many concurrent tasks query
+    # `vmodf[arc, contingency_spec]` across DIFFERENT contingencies. The
+    # test forces nworkers=4 so the per-worker scratch path is exercised
+    # even when CI runs under JULIA_NUM_THREADS=1.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    line_names = ["Line1", "Line2", "Line9", "Line10", "Line12"]
+    for line_name in line_names
+        line = PSY.get_component(PSY.ACTransmission, sys, line_name)
+        outage = PSY.GeometricDistributionForcedOutage(;
+            mean_time_to_recovery = 10,
+            outage_transition_probability = 0.99,
+        )
+        PSY.add_supplemental_attribute!(sys, line, outage)
+    end
+
+    vmodf = PowerNetworkMatrices.VirtualMODF(sys; nworkers = 4)
+    registered = PowerNetworkMatrices.get_registered_contingencies(vmodf)
+    @test !isempty(registered)
+    ctgs = collect(values(registered))
+    arc_axis = PowerNetworkMatrices.get_arc_axis(vmodf)
+    @test !isempty(arc_axis)
+
+    n_arcs = min(length(arc_axis), 20)
+    work = [(arc, ctg) for arc in arc_axis[1:n_arcs] for ctg in ctgs]
+    Random.shuffle!(Random.MersenneTwister(42), work)
+
+    # Serial baseline.
+    serial = [copy(vmodf[a, c]) for (a, c) in work]
+
+    # Five iterations of parallel access, each starting from a clean cache,
+    # to flush scheduling-dependent races.
+    for iter in 1:5
+        PowerNetworkMatrices.clear_caches!(vmodf)
+        parallel = Vector{Vector{Float64}}(undef, length(work))
+        Threads.@threads :dynamic for i in eachindex(work)
+            a, c = work[i]
+            parallel[i] = copy(vmodf[a, c])
+        end
+        for i in eachindex(work)
+            @test parallel[i] ≈ serial[i]
+        end
     end
 end
