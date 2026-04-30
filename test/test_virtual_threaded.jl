@@ -69,6 +69,48 @@ end
     end
 end
 
+@testset "VirtualPTDF concurrent getindex on c_sys5 — small-system pool stress" begin
+    # PowerSimulations' Phase A change moved `vptdf[arc, :]` inside a
+    # `Threads.@spawn` block, so many tasks now solve concurrently for the
+    # same VirtualPTDF. On c_sys5 (5 buses, ~6 arcs) with `nworkers=3` and
+    # `JULIA_NUM_THREADS=4`, PSI saw a single TaskFailedException that did
+    # not reproduce in subsequent dozens of runs. This test exercises the
+    # exact configuration aggressively from the PNM side: small system,
+    # cold-cache first-fill repeated many times, multiple nworkers values
+    # including the boundary cases (nworkers=1, oversubscription).
+    if Threads.nthreads() < 2
+        @info "Skipping: requires Threads.nthreads() ≥ 2 to exercise concurrent getindex."
+        return
+    end
+
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+
+    # Serial baseline computed once with nworkers=1 — guarantees the
+    # comparison values are not themselves affected by any concurrent solve.
+    baseline = VirtualPTDF(sys; nworkers = 1)
+    arc_axis = PNM.get_arc_axis(baseline)
+    @test !isempty(arc_axis)
+    serial = [copy(baseline[arc, :]) for arc in arc_axis]
+
+    # 50 cold-cache iterations × multiple nworkers settings. Each iteration
+    # constructs a fresh VirtualPTDF, so the row cache is cold when the
+    # parallel `@threads` queries fire — exercising the first-fill race
+    # path that's structurally different from PNM's RTS-scale tests.
+    n_iters = 50
+    for nworkers in (1, 3, 4, 8)
+        for iter in 1:n_iters
+            vptdf = VirtualPTDF(sys; nworkers = nworkers)
+            parallel = Vector{Vector{Float64}}(undef, length(arc_axis))
+            Threads.@threads :dynamic for i in eachindex(arc_axis)
+                parallel[i] = copy(vptdf[arc_axis[i], :])
+            end
+            for i in eachindex(arc_axis)
+                @test isapprox(parallel[i], serial[i], atol = 1e-9)
+            end
+        end
+    end
+end
+
 @testset "VirtualLODF concurrent getindex matches serial baseline" begin
     # Pool-backed VirtualLODF: same correctness guarantee as VirtualPTDF.
     rts = PSB.build_system(PSB.PSISystems, "RTS_GMLC_DA_sys")

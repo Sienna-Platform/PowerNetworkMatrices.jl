@@ -26,6 +26,7 @@ pages = OrderedDict(
     "Reference" => Any[
         "Matrix Overview" => "reference/network_matrices_overview.md",
         "Public API" => "reference/public.md",
+        "Internals" => "reference/internals.md",
     ],
 )
 
