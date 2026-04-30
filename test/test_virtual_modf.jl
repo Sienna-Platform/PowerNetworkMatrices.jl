@@ -1,3 +1,5 @@
+using Random
+
 @testset "VirtualMODF construction" begin
     # Test construction with a simple system (no outages)
     sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
@@ -223,7 +225,7 @@ end
     row2 = vmodf[2, ctg]
     # Both rows should be cached now
     @test !isempty(vmodf.row_caches)
-    cache = vmodf.row_caches[ctg.modification]
+    cache = vmodf.row_caches[ctg.modification].cache
     @test haskey(cache, 1)
     @test haskey(cache, 2)
 
@@ -261,7 +263,7 @@ end
         collect(keys(nrd_d2.direct_branch_map)),
         collect(keys(nrd_d2.parallel_branch_map)),
     )
-    # Compare results for buses that are present in the reduced system 
+    # Compare results for buses that are present in the reduced system
     buses_to_compare = collect(keys(nrd_d2.bus_reduction_map))
     for branch in valid_outage_branches
         outage = get_supplemental_attributes(branch)[1]
@@ -369,5 +371,131 @@ end
         ctg_uuid = outage.internal.uuid
         ctg = get_registered_contingencies(vmodf)[ctg_uuid]
         @test ctg.modification.arc_modifications[1].delta_b <= 0.0
+    end
+end
+
+# Helper for the parallel-safety testsets below: registers a fixed set of line
+# outages on c_sys14 and returns (sys, line_names).
+function _build_c_sys14_with_outages()
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    line_names = ["Line1", "Line2", "Line9", "Line10", "Line12"]
+    for line_name in line_names
+        line = PSY.get_component(PSY.ACTransmission, sys, line_name)
+        outage = PSY.GeometricDistributionForcedOutage(;
+            mean_time_to_recovery = 10,
+            outage_transition_probability = 0.9999,
+        )
+        PSY.add_supplemental_attribute!(sys, line, outage)
+    end
+    return sys, line_names
+end
+
+@testset "VirtualMODF concurrent getindex across different contingencies matches serial baseline" begin
+    # Mirrors the access pattern PowerSimulations uses in
+    # `add_post_contingency_flow_expressions!`: many concurrent tasks query
+    # `vmodf[arc, contingency_spec]` across DIFFERENT contingencies, so each
+    # task's first query for its ctg races on `woodbury_inflight`. nworkers=4
+    # forces the per-worker scratch path even when CI happens to run on fewer
+    # OS threads. Skipped under JULIA_NUM_THREADS=1 because @threads :dynamic
+    # degenerates to serial there and the test reduces to a tautology.
+    if Threads.nthreads() < 2
+        @info "Skipping: requires Threads.nthreads() ≥ 2 to exercise concurrent getindex."
+        return
+    end
+
+    sys, _ = _build_c_sys14_with_outages()
+    vmodf = PowerNetworkMatrices.VirtualMODF(sys; nworkers = 4)
+    registered = PowerNetworkMatrices.get_registered_contingencies(vmodf)
+    @test !isempty(registered)
+    ctgs = collect(values(registered))
+    arc_axis = PowerNetworkMatrices.get_arc_axis(vmodf)
+    @test !isempty(arc_axis)
+
+    # Cap arc count so test runtime stays bounded if c_sys14's arc list grows
+    # in the future. With 5 contingencies, 20 arcs gives 100 work items per
+    # iteration — enough parallelism on a 4-core CI without dominating runtime.
+    n_arcs = min(length(arc_axis), 20)
+    work = [(arc, ctg) for arc in arc_axis[1:n_arcs] for ctg in ctgs]
+    Random.shuffle!(Random.MersenneTwister(42), work)
+
+    # Serial baseline.
+    serial = [copy(vmodf[a, c]) for (a, c) in work]
+
+    # Five iterations of parallel access, each starting from a clean cache,
+    # to flush scheduling-dependent races.
+    for iter in 1:5
+        PowerNetworkMatrices.clear_caches!(vmodf)
+        parallel = Vector{Vector{Float64}}(undef, length(work))
+        Threads.@threads :dynamic for i in eachindex(work)
+            a, c = work[i]
+            parallel[i] = copy(vmodf[a, c])
+        end
+        for i in eachindex(work)
+            @test parallel[i] ≈ serial[i]
+        end
+    end
+end
+
+@testset "VirtualMODF concurrent getindex on the SAME (arc, ctg) is consistent" begin
+    # Complements the previous testset: there, each (arc, ctg) pair appears
+    # once in the work list, so only `_get_woodbury_factors`' first-call race
+    # is exercised. Here, many tasks race on the SAME (arc, ctg), which
+    # exercises the row-cache double-insert path: after Woodbury is in cache,
+    # N tasks all reach `_get_or_create_row_cache` and `_compute_modf_entry`
+    # for an empty row cache, racing the cache_lock + cache-population path.
+    if Threads.nthreads() < 2
+        @info "Skipping: requires Threads.nthreads() ≥ 2 to exercise concurrent getindex."
+        return
+    end
+
+    sys, _ = _build_c_sys14_with_outages()
+    vmodf = PowerNetworkMatrices.VirtualMODF(sys; nworkers = 4)
+    registered = PowerNetworkMatrices.get_registered_contingencies(vmodf)
+    arc_axis = PowerNetworkMatrices.get_arc_axis(vmodf)
+    arc = first(arc_axis)
+    ctg = first(values(registered))
+
+    serial_value = copy(vmodf[arc, ctg])
+
+    # 64 tasks racing on one cache slot.
+    n_tasks = 64
+    for iter in 1:5
+        PowerNetworkMatrices.clear_caches!(vmodf)
+        parallel = Vector{Vector{Float64}}(undef, n_tasks)
+        Threads.@threads :dynamic for i in 1:n_tasks
+            parallel[i] = copy(vmodf[arc, ctg])
+        end
+        for i in 1:n_tasks
+            @test parallel[i] ≈ serial_value
+        end
+    end
+end
+
+@testset "VirtualMODF concurrent getindex with nworkers=1 is consistent" begin
+    # Boundary case: with a single pool worker, all parallel tasks serialize
+    # through one KLULinSolveCache. Verifies the channel-based mutex behaves
+    # correctly under contention even when the test is run on >1 OS thread,
+    # and that the test setup itself does not assume nworkers > 1.
+    if Threads.nthreads() < 2
+        @info "Skipping: requires Threads.nthreads() ≥ 2 to exercise concurrent getindex."
+        return
+    end
+
+    sys, _ = _build_c_sys14_with_outages()
+    vmodf = PowerNetworkMatrices.VirtualMODF(sys; nworkers = 1)
+    registered = PowerNetworkMatrices.get_registered_contingencies(vmodf)
+    ctgs = collect(values(registered))
+    arc_axis = PowerNetworkMatrices.get_arc_axis(vmodf)
+    work = [(arc, ctg) for arc in arc_axis[1:min(end, 10)] for ctg in ctgs]
+
+    serial = [copy(vmodf[a, c]) for (a, c) in work]
+    PowerNetworkMatrices.clear_caches!(vmodf)
+    parallel = Vector{Vector{Float64}}(undef, length(work))
+    Threads.@threads :dynamic for i in eachindex(work)
+        a, c = work[i]
+        parallel[i] = copy(vmodf[a, c])
+    end
+    for i in eachindex(work)
+        @test parallel[i] ≈ serial[i]
     end
 end

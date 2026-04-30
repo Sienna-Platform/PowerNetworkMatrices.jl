@@ -59,7 +59,11 @@ function get_ward_reduction(
     all_buses = subnetwork_bus_axis
     subnetwork_bus_indices = [bus_lookup[x] for x in all_buses]
     subnetwork_bus_lookup = Dict(bus => ix for (ix, bus) in enumerate(all_buses))
-    subnetwork_data = data[subnetwork_bus_indices, subnetwork_bus_indices]
+    # Promote to ComplexF64 for the KLU factorizations below; libklu only
+    # exposes `klu_l_*` (double) and `klu_zl_*` (complex double) entry points.
+    subnetwork_data = SparseArrays.SparseMatrixCSC{ComplexF64, Int}(
+        data[subnetwork_bus_indices, subnetwork_bus_indices],
+    )
     boundary_buses = collect(intersect(boundary_buses, Set(all_buses)))
 
     external_buses = setdiff(all_buses, study_buses)
@@ -74,18 +78,18 @@ function get_ward_reduction(
         @error "no boundary buses found; cannot make bus_reduction_map based on impedance based criteria. mapping all external buses to the first reference bus ($first_ref_study_bus)"
         bus_reduction_map_index[first_ref_study_bus] = Set(external_buses)
     else
-        K = klu(subnetwork_data)
+        K = klu_factorize(subnetwork_data)
         boundary_bus_indices = [subnetwork_bus_lookup[x] for x in boundary_buses]
         boundary_bus_numbers = collect(boundary_buses)
         n_boundary = length(boundary_buses)
-        e = zeros(ComplexF64, n_buses)
+        E = SparseArrays.sparse(
+            boundary_bus_indices,
+            collect(1:n_boundary),
+            ones(ComplexF64, n_boundary),
+            n_buses, n_boundary,
+        )
         Z_boundary_cols = Matrix{ComplexF64}(undef, n_buses, n_boundary)
-        # Solve one column of Z per boundary bus
-        for (j, b_idx) in enumerate(boundary_bus_indices)
-            fill!(e, zero(ComplexF64))
-            e[b_idx] = one(ComplexF64)
-            Z_boundary_cols[:, j] = K \ e
-        end
+        solve_sparse!(K, E; out = Z_boundary_cols)
 
         for b in external_buses
             row_index = subnetwork_bus_lookup[b]
@@ -109,9 +113,9 @@ function get_ward_reduction(
         boundary_bus_indices,
     ]
 
-    # Eq. (2.16) from  https://core.ac.uk/download/pdf/79564835.pdf
-    y_eq =
-        y_be * KLU.solve!(klu(y_ee), Matrix{Complex{Float64}}(y_eb))
+    # Eq. (2.16) from https://core.ac.uk/download/pdf/79564835.pdf.
+    y_ee_cache = klu_factorize(y_ee)
+    y_eq = y_be * solve_sparse(y_ee_cache, y_eb)
     #Loop upper diagonal of Yeq
     for ix in 1:length(boundary_buses)
         for jx in ix:length(boundary_buses)

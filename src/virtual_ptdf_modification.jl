@@ -11,9 +11,10 @@ The returned `WoodburyFactors` can be reused across multiple monitored
 arcs, making this the recommended path for optimization loops where
 factors are computed once per modification and many rows are queried.
 
-!!! warning
-    Not thread-safe. Mutates scratch vectors in `vptdf`. Do not call
-    concurrently on the same `VirtualPTDF` instance.
+!!! note
+    Parallel-safe on the KLU backend: scratch is per-worker and the solve
+    is routed through `KLULinSolvePool`. The AppleAccelerate backend
+    serializes through an internal lock — safe but not parallel.
 
 $(TYPEDSIGNATURES)
 """
@@ -31,9 +32,10 @@ Compute the post-modification PTDF row for a monitored arc using
 precomputed Woodbury factors. Accepts either an integer arc index
 or a `Tuple{Int, Int}` bus pair.
 
-!!! warning
-    Not thread-safe. Mutates scratch vectors in `vptdf`. Do not call
-    concurrently on the same `VirtualPTDF` instance.
+!!! note
+    Parallel-safe on the KLU backend: scratch is per-worker and the solve
+    is routed through `KLULinSolvePool`. The AppleAccelerate backend
+    serializes through an internal lock — safe but not parallel.
 
 $(TYPEDSIGNATURES)
 """

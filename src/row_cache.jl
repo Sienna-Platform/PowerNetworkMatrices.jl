@@ -176,3 +176,34 @@ function check_cache_size!(cache::RowCache; new_add::Bool = false)
     end
     return
 end
+
+"""
+    cached_row_lookup(compute_row, cache, cache_lock, row, column, tol) -> value
+
+Shared cache-fast-path / compute / double-checked-insert pattern used by
+`VirtualPTDF._getindex` and `VirtualLODF._getindex`. Acquires `cache_lock`
+to test for a hit, runs `compute_row` outside the lock on a miss
+(KLU solves dominate the cost), then takes the lock again to insert. A
+concurrent producer that wins the insert race wins; the other side
+returns the winner's row. The signature places `compute_row` first so
+callers can use `do … end` block syntax.
+"""
+function cached_row_lookup(
+    compute_row,
+    cache::RowCache,
+    cache_lock::ReentrantLock,
+    row::Int,
+    column::Union{Int, Colon},
+    tol::Float64,
+)
+    @lock cache_lock begin
+        haskey(cache, row) && return cache.temp_cache[row][column]
+    end
+    row_data = compute_row()
+    stored = tol > eps() ? sparsify(row_data, tol) : row_data
+    @lock cache_lock begin
+        haskey(cache, row) && return cache.temp_cache[row][column]
+        cache[row] = stored
+        return cache[row][column]
+    end
+end

@@ -137,33 +137,30 @@ function _calculate_PTDF_matrix_KLU(
     dist_slack::Vector{Float64})
     linecount = size(BA, 2)
     buscount = size(BA, 1)
-
-    ABA = calculate_ABA_matrix(A, BA, ref_bus_positions)
-    K = klu(ABA)
-    # initialize matrices for evaluation
-    valid_ix = setdiff(1:buscount, ref_bus_positions)
-    PTDFm_t = zeros(buscount, linecount)
-    copyto!(PTDFm_t, BA)
     if !isempty(dist_slack) && length(ref_bus_positions) != 1
         error(
             "Distributed slack is not supported for systems with multiple reference buses.",
         )
-    elseif isempty(dist_slack) && length(ref_bus_positions) < buscount
-        PTDFm_t[valid_ix, :] = KLU.solve!(K, PTDFm_t[valid_ix, :])
-        PTDFm_t[collect(ref_bus_positions), :] .= 0.0
-        return PTDFm_t
-    elseif length(dist_slack) == buscount
-        @info "Distributed bus"
-        PTDFm_t[valid_ix, :] = KLU.solve!(K, PTDFm_t[valid_ix, :])
-        PTDFm_t[collect(ref_bus_positions), :] .= 0.0
-        slack_array = dist_slack / sum(dist_slack)
-        slack_array = reshape(slack_array, 1, buscount)
-        return PTDFm_t .- (slack_array * PTDFm_t)
-    else
+    end
+    if !isempty(dist_slack) && length(dist_slack) != buscount
         error("Distributed bus specification doesn't match the number of buses.")
     end
+    length(ref_bus_positions) < buscount || error(
+        "All buses are reference buses; PTDF is not defined.",
+    )
 
-    return
+    ABA = calculate_ABA_matrix(A, BA, ref_bus_positions)
+    cache = klu_factorize(ABA)
+    valid_ix = setdiff(1:buscount, ref_bus_positions)
+    PTDFm_t = zeros(buscount, linecount)
+    solve_sparse!(cache, BA[valid_ix, :]; out = view(PTDFm_t, valid_ix, :))
+    PTDFm_t[collect(ref_bus_positions), :] .= 0.0
+
+    isempty(dist_slack) && return PTDFm_t
+
+    @info "Distributed bus"
+    slack_array = reshape(dist_slack ./ sum(dist_slack), 1, buscount)
+    return PTDFm_t .- (slack_array * PTDFm_t)
 end
 
 function _binfo_check(binfo::Int)

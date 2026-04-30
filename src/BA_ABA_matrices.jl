@@ -159,7 +159,7 @@ power flow analysis, sensitivity calculations, and linear power system studies.
         Mapping from reference bus numbers to their corresponding subnetwork axes
 - `ref_bus_position::Vector{Int}`:
         Vector containing the original indices of reference buses before matrix reduction
-- `K::F <: Union{Nothing, KLU.KLUFactorization{Float64, Int}}`:
+- `K::F <: Union{Nothing, KLULinSolveCache{Float64}}`:
         Optional KLU factorization object for efficient linear system solving. Nothing if unfactorized
 - `network_reduction_data::NetworkReductionData`:
         Container for network reduction information applied during matrix construction
@@ -179,7 +179,7 @@ power flow analysis, sensitivity calculations, and linear power system studies.
 struct ABA_Matrix{
     Ax <: NTuple{2, Vector},
     L <: NTuple{2, Dict},
-    F <: Union{Nothing, KLU.KLUFactorization{Float64, Int}},
+    F <: Union{Nothing, KLULinSolveCache{Float64}},
 } <: PowerNetworkMatrix{Float64}
     data::SparseArrays.SparseMatrixCSC{Float64, Int}
     axes::Ax
@@ -295,7 +295,7 @@ function ABA_Matrix(ybus::Ybus; factorize::Bool = false)
     bus_ax_ref = make_ax_ref(axes[1])
     lookup = (bus_ax_ref, bus_ax_ref)
     if factorize
-        K = klu(ABA)
+        K = klu_factorize(ABA)
     else
         K = nothing
     end
@@ -339,7 +339,7 @@ function factorize(ABA::ABA_Matrix{Ax, L, Nothing}) where {Ax, L <: NTuple{2, Di
         deepcopy(ABA.lookup),
         deepcopy(ABA.subnetwork_axes),
         deepcopy(ABA.ref_bus_position),
-        klu(ABA.data),
+        klu_factorize(ABA.data),
         deepcopy(ABA.network_reduction_data),
     )
     return ABA_lu
@@ -358,7 +358,7 @@ Check if an ABA_Matrix has been factorized (i.e., contains LU factorization matr
 """
 is_factorized(ABA::ABA_Matrix{Ax, L, Nothing}) where {Ax, L <: NTuple{2, Dict}} = false
 is_factorized(
-    ABA::ABA_Matrix{Ax, L, KLU.KLUFactorization{Float64, Int}},
+    ABA::ABA_Matrix{Ax, L, <:KLULinSolveCache{Float64}},
 ) where {Ax, L <: NTuple{2, Dict}} = true
 
 # get_index functions: BA_Matrix stores the transposed matrix, thus get index

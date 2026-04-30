@@ -64,13 +64,33 @@ import DataStructures: SortedDict
 import SparseArrays
 import SparseArrays: rowvals, nzrange
 import HDF5
-import KLU: klu
-import KLU
 import LinearAlgebra
 import LinearAlgebra: BLAS.gemm
 import LinearAlgebra: ldiv!, mul!, I, dot
 import LinearAlgebra: LAPACK.getrf!, LAPACK.getrs!
 import Preferences
+
+include("KLUWrapper/KLUWrapper.jl")
+import .KLUWrapper:
+    KLULinSolveCache,
+    KLULinSolvePool,
+    klu_factorize,
+    symbolic_factor!,
+    symbolic_refactor!,
+    numeric_refactor!,
+    full_factor!,
+    full_refactor!,
+    solve!,
+    tsolve!,
+    solve_sparse!,
+    solve_sparse,
+    with_worker,
+    acquire!,
+    release!,
+    nworkers,
+    n_valid,
+    reset!,
+    is_factored
 
 include("linalg_settings.jl")
 
