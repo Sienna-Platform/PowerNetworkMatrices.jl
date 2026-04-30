@@ -63,12 +63,10 @@ function solve_sparse!(
         end
 
         if npack > 0
-            ok = @klu_gc_preserve scratch cache begin
-                _solve_call(
-                    Tv, cache.symbolic, cache.numeric, n, Int64(npack),
-                    pointer(scratch), cache.common,
-                )
-            end
+            ok = _solve_call(
+                Tv, cache.symbolic, cache.numeric, n, Int64(npack),
+                pointer(scratch), cache.common,
+            )
             ok == 0 && klu_throw(cache.common[], "klu_solve (sparse RHS)")
 
             for k in 1:npack

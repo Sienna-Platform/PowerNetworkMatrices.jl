@@ -17,12 +17,22 @@ function solve!(cache::KLULinSolveCache{Tv},
     ))
     nrhs = Int64(size(B, 2))
     nrhs == 0 && return B
-    ok = @klu_gc_preserve B cache begin
-        _solve_call(
-            Tv, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common,
-        )
+    # Snapshot the inputs KLU validates on entry. `klu_l_solve` returns FALSE
+    # with `Common->status == KLU_INVALID` when any of {Numeric, Symbolic, B}
+    # is NULL, when `ldim < Numeric->n`, or when `nrhs < 0`. Capturing the
+    # observed values *before* the ccall lets a Windows-only failure under
+    # the parallel `KLULinSolvePool` path identify which precondition KLU
+    # rejected. Negligible overhead (a few field loads) on the hot path.
+    pre_numeric = cache.numeric
+    pre_symbolic = cache.symbolic
+    pre_b_ptr = pointer(B)
+    ok = _solve_call(
+        Tv, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common,
+    )
+    if ok == 0
+        @error "KLU klu_solve precondition snapshot" tid = Threads.threadid() ldim_n = Int(n) nrhs = Int(nrhs) pre_numeric_null = (pre_numeric == C_NULL) pre_symbolic_null = (pre_symbolic == C_NULL) pre_b_null = (pre_b_ptr == C_NULL) post_numeric_null = (cache.numeric == C_NULL) post_symbolic_null = (cache.symbolic == C_NULL) status = Int(cache.common[].status)
+        klu_throw(cache.common[], "klu_solve")
     end
-    ok == 0 && klu_throw(cache.common[], "klu_solve")
     return B
 end
 
@@ -46,12 +56,10 @@ function tsolve!(cache::KLULinSolveCache{Tv},
     ))
     nrhs = Int64(size(B, 2))
     nrhs == 0 && return B
-    ok = @klu_gc_preserve B cache begin
-        _tsolve_call(
-            Tv, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common;
-            conjugate = conjugate,
-        )
-    end
+    ok = _tsolve_call(
+        Tv, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common;
+        conjugate = conjugate,
+    )
     ok == 0 && klu_throw(cache.common[], "klu_tsolve")
     return B
 end

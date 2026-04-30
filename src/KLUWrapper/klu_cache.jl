@@ -204,11 +204,9 @@ function symbolic_factor!(cache::KLULinSolveCache{Tv},
     copyto!(cache.rowval, Arowval)
     cache.rowval .-= 1
 
-    sym = @klu_gc_preserve cache begin
-        klu_l_analyze(
-            Int64(n), pointer(cache.colptr), pointer(cache.rowval), cache.common,
-        )
-    end
+    sym = klu_l_analyze(
+        Int64(n), pointer(cache.colptr), pointer(cache.rowval), cache.common,
+    )
     sym == C_NULL && klu_throw(cache.common[], "klu_l_analyze")
     cache.symbolic = sym
     return cache
@@ -252,22 +250,18 @@ function numeric_refactor!(cache::KLULinSolveCache{Tv},
         "KLULinSolveCache: call symbolic_factor! before numeric_refactor!.",
     )
     if cache.numeric == C_NULL
-        num = @klu_gc_preserve cache A begin
-            _factor_call(
-                Tv, pointer(cache.colptr), pointer(cache.rowval),
-                pointer(nonzeros(A)), cache.symbolic, cache.common,
-            )
-        end
+        num = _factor_call(
+            Tv, pointer(cache.colptr), pointer(cache.rowval),
+            pointer(nonzeros(A)), cache.symbolic, cache.common,
+        )
         num == C_NULL && klu_throw(cache.common[], "klu_factor")
         cache.numeric = num
     else
         cache.check_pattern && _check_pattern_match(cache, A, "numeric_refactor")
-        ok = @klu_gc_preserve cache A begin
-            _refactor_call(
-                Tv, pointer(cache.colptr), pointer(cache.rowval),
-                pointer(nonzeros(A)), cache.symbolic, cache.numeric, cache.common,
-            )
-        end
+        ok = _refactor_call(
+            Tv, pointer(cache.colptr), pointer(cache.rowval),
+            pointer(nonzeros(A)), cache.symbolic, cache.numeric, cache.common,
+        )
         ok != 1 && klu_throw(cache.common[], "klu_refactor")
     end
     return cache
