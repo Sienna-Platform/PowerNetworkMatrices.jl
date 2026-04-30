@@ -17,9 +17,11 @@ function solve!(cache::KLULinSolveCache{Tv},
     ))
     nrhs = Int64(size(B, 2))
     nrhs == 0 && return B
-    ok = _solve_call(
-        Tv, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common,
-    )
+    ok = @klu_gc_preserve B cache begin
+        _solve_call(
+            Tv, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common,
+        )
+    end
     ok == 0 && klu_throw(cache.common[], "klu_solve")
     return B
 end
@@ -44,10 +46,12 @@ function tsolve!(cache::KLULinSolveCache{Tv},
     ))
     nrhs = Int64(size(B, 2))
     nrhs == 0 && return B
-    ok = _tsolve_call(
-        Tv, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common;
-        conjugate = conjugate,
-    )
+    ok = @klu_gc_preserve B cache begin
+        _tsolve_call(
+            Tv, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common;
+            conjugate = conjugate,
+        )
+    end
     ok == 0 && klu_throw(cache.common[], "klu_tsolve")
     return B
 end
