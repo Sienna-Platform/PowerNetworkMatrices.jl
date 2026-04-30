@@ -30,6 +30,15 @@ mutable struct KLULinSolvePool{Tv <: Union{Float64, ComplexF64}}
     # admin ops; the lock now enforces it. Lock ordering: take `admin_lock`
     # first, `state_lock` inside.
     admin_lock::ReentrantLock
+    # Per-worker debug counter. `with_worker` increments on acquire and
+    # decrements on release; the post-increment value should always be 1.
+    # If it ever observes >1 we have two tasks holding the same worker
+    # concurrently — a violation of the channel-gated exclusivity assumption
+    # and a likely cause of libklu memory corruption (concurrent solves on
+    # one Numeric corrupt its internal `Xwork`). Logged via `@error` so it
+    # surfaces once it ever happens; not enforced via `@assert` so the
+    # diagnostic does not mask the original failure.
+    in_use::Vector{Threads.Atomic{Int}}
 end
 
 # Sentinel pushed into `pool.available` when an admin op leaves the pool
@@ -84,8 +93,9 @@ function KLULinSolvePool(
     for w in 1:nworkers
         put!(available, w)
     end
+    in_use = [Threads.Atomic{Int}(0) for _ in 1:nworkers]
     pool = KLULinSolvePool{Tv}(workers, available, fill(true, nworkers),
-        ReentrantLock(), ReentrantLock())
+        ReentrantLock(), ReentrantLock(), in_use)
     # Per-cache finalizers (registered in `klu_factorize`) free libklu
     # handles on GC. The pool needs no separate finalizer: when the pool is
     # unreachable, `pool.workers` is GC'd and each cache's finalizer fires
@@ -131,9 +141,20 @@ when `f` returns or throws.
 """
 function with_worker(f, pool::KLULinSolvePool)
     cache, idx = acquire!(pool)
+    # Diagnostic: detect concurrent use of the same worker. The post-increment
+    # value should be 1 if exclusivity holds. Anything higher means another
+    # task acquired the same `idx` while this one still holds it, which would
+    # be a pool-level race and the most likely explanation for libklu memory
+    # corruption observed under parallel solves on Windows.
+    holders = Threads.atomic_add!(pool.in_use[idx], 1) + 1
+    if holders > 1
+        @error "KLULinSolvePool worker collision: idx held by multiple tasks" tid =
+            Threads.threadid() idx = idx holders = holders cache_id = objectid(cache)
+    end
     try
         return f(cache, idx)
     finally
+        Threads.atomic_sub!(pool.in_use[idx], 1)
         release!(pool, idx)
     end
 end
