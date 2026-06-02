@@ -574,14 +574,15 @@ end
     vmodf = VirtualMODF(sys5)
     n_arcs = length(PNM.get_arc_axis(vmodf))
 
-    # `getfield` bypasses the `getproperty` hook under test.
-    @test isempty(getfield(vmodf, :PTDF_A_diag))
+    # `PTDF_A_diag` is lazily stored on the shared core; read it directly off
+    # the core (`getfield` bypasses the `getproperty` hook under test).
+    @test isempty(getfield(getfield(vmodf, :core), :PTDF_A_diag))
 
     diag1 = @test_logs (:info, r"Computing.*PTDF_A_diag.*first access") (
         :info, r"Computed.*PTDF_A_diag",
     ) vmodf.PTDF_A_diag
     @test length(diag1) == n_arcs
-    @test !isempty(getfield(vmodf, :PTDF_A_diag))
+    @test !isempty(getfield(getfield(vmodf, :core), :PTDF_A_diag))
 
     # Second read is a cache hit: same identity, no further logs.
     diag2 = @test_logs min_level = Logging.Info vmodf.PTDF_A_diag
