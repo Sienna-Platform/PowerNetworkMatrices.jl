@@ -44,7 +44,7 @@
             !PSY.get_available(source) && continue
             bus = PSY.get_bus(source)
             bus_ix = bus_lookup[PSY.get_number(bus)]
-            bus_activepower_injection[bus_ix] += PSY.get_active_power(source)
+            bus_activepower_injection[bus_ix] += PSY.get_active_power(source, PSY.SU)
         end
         bus_activepower_withdrawals = zeros(Float64, n_buses)
         loads = PSY.get_components(x -> !isa(x, PSY.FixedAdmittance), PSY.ElectricLoad, sys)
@@ -52,7 +52,7 @@
             !PSY.get_available(l) && continue
             bus = PSY.get_bus(l)
             bus_ix = bus_lookup[PSY.get_number(bus)]
-            bus_activepower_withdrawals[bus_ix] += PSY.get_active_power(l)
+            bus_activepower_withdrawals[bus_ix] += PSY.get_active_power(l, PSY.SU)
         end
         power_injection =
             deepcopy(bus_activepower_injection - bus_activepower_withdrawals)
@@ -139,7 +139,7 @@ end
                 !PSY.get_available(source) && continue
                 bus = PSY.get_bus(source)
                 bus_ix = bus_lookup[PSY.get_number(bus)]
-                bus_activepower_injection[bus_ix] += PSY.get_active_power(source)
+                bus_activepower_injection[bus_ix] += PSY.get_active_power(source, PSY.SU)
             end
             bus_activepower_withdrawals = zeros(Float64, n_buses)
             loads =
@@ -148,7 +148,7 @@ end
                 !PSY.get_available(l) && continue
                 bus = PSY.get_bus(l)
                 bus_ix = bus_lookup[PSY.get_number(bus)]
-                bus_activepower_withdrawals[bus_ix] += PSY.get_active_power(l)
+                bus_activepower_withdrawals[bus_ix] += PSY.get_active_power(l, PSY.SU)
             end
             power_injection =
                 deepcopy(bus_activepower_injection - bus_activepower_withdrawals)

@@ -313,8 +313,8 @@ end
 end
 
 function _set_zero_impedance!(branch)
-    set_r!(branch, 0.0)
-    set_x!(branch, 1e-5)
+    set_r!(branch, 0.0 * PSY.SU)
+    set_x!(branch, 1e-5 * PSY.SU)
 end
 
 @testset "ZeroImpedanceBranchReduction: chained bus merge" begin
@@ -337,8 +337,8 @@ end
 @testset "ZeroImpedanceBranchReduction: transformer arcs are excluded" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     t = get_component(Transformer2W, sys, "Trans4")  # from=7, to=8
-    set_r!(t, 0.0)
-    set_x!(t, 1e-5)
+    set_r!(t, 0.0 * PSY.SU)
+    set_x!(t, 1e-5 * PSY.SU)
 
     ybus = Ybus(sys)
     nrd = ybus.network_reduction_data
@@ -399,8 +399,8 @@ end
     # makes it qualify and bus 3 merges into bus 2.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     line = get_component(Line, sys, "Line3")
-    set_r!(line, 0.0)
-    set_x!(line, 1e-3)  # susceptance ≈ 1 / 1e-3 = 1e3
+    set_r!(line, 0.0 * PSY.SU)
+    set_x!(line, 1e-3 * PSY.SU)  # susceptance ≈ 1 / 1e-3 = 1e3
 
     ybus_default = Ybus(sys)
     @test 3 ∈ PNM.get_bus_axis(ybus_default)
@@ -423,8 +423,8 @@ end
     # drops below the threshold, so the branch is retained instead.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     line = get_component(Line, sys, "Line3")  # bus 2 → 3
-    set_r!(line, 0.0)
-    set_x!(line, 0.0)
+    set_r!(line, 0.0 * PSY.SU)
+    set_x!(line, 0.0 * PSY.SU)
 
     ybus_default = Ybus(sys)
     @test 3 ∉ PNM.get_bus_axis(ybus_default)  # merged with the default tiny substitute reactance

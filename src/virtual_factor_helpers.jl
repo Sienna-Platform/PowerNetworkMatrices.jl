@@ -97,12 +97,12 @@ function _extract_branch_susceptances_by_arc(
         if haskey(nr_data.parallel_branch_map, arc)
             bp = nr_data.parallel_branch_map[arc]
             result[j] = Float64[
-                get_series_susceptance(branch) for branch in bp.branches
+                get_series_susceptance(branch, PSY.SU) for branch in bp.branches
             ]
         elseif haskey(nr_data.series_branch_map, arc)
             bs = nr_data.series_branch_map[arc]
             result[j] = Float64[
-                get_series_susceptance(segment) for segment in bs
+                get_series_susceptance(segment, PSY.SU) for segment in bs
             ]
         else
             result[j] = [arc_b]

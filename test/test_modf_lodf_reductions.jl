@@ -11,22 +11,14 @@ pair as a 2-circuit parallel group, enabling N-2 parallel-circuit tests.
 """
 function _clone_transformer_with_name(xfmr::PSY.TapTransformer, new_name::String)
     old_arc = PSY.get_arc(xfmr)
-    new_arc = PSY.Arc(; from = old_arc.from, to = old_arc.to)
-    return PSY.TapTransformer(;
-        name = new_name,
-        available = PSY.get_available(xfmr),
-        active_power_flow = PSY.get_active_power_flow(xfmr),
-        reactive_power_flow = PSY.get_reactive_power_flow(xfmr),
-        arc = new_arc,
-        r = PSY.get_r(xfmr),
-        x = PSY.get_x(xfmr),
-        primary_shunt = PSY.get_primary_shunt(xfmr),
-        tap = PSY.get_tap(xfmr),
-        rating = PSY.get_rating(xfmr),
-        base_power = PSY.get_base_power(xfmr),
-        base_voltage_primary = PSY.get_base_voltage_primary(xfmr),
-        base_voltage_secondary = PSY.get_base_voltage_secondary(xfmr),
-    )
+    # Deep-copy to reproduce every electrical parameter exactly (avoids re-reading
+    # each field in a particular unit basis), then give it a fresh identity, name,
+    # and an arc that shares the original buses rather than the deep-copied ones.
+    clone = deepcopy(xfmr)
+    clone.internal = IS.InfrastructureSystemsInternal()
+    PSY.set_name!(clone, new_name)
+    PSY.set_arc!(clone, PSY.Arc(; from = old_arc.from, to = old_arc.to))
+    return clone
 end
 
 """
@@ -244,7 +236,7 @@ end
     @testset "parallel single-circuit" begin
         arc_tuple, arc_idx = _find_non_islanding_arc(vmodf, nrd.parallel_branch_map)
         parallel = nrd.parallel_branch_map[arc_tuple]
-        b_circuit = PSY.get_series_susceptance(first(parallel.branches))
+        b_circuit = PSY.get_series_susceptance(first(parallel.branches), PSY.SU)
         delta_b = -b_circuit
         verify_modf_lodf_identity(vmodf, vlodf, ptdf, arc_idx, delta_b)
     end
@@ -267,7 +259,7 @@ end
     @testset "parallel single-circuit" begin
         arc_tuple, arc_idx = _find_non_islanding_arc(vmodf, nrd.parallel_branch_map)
         parallel = nrd.parallel_branch_map[arc_tuple]
-        b_circuit = PSY.get_series_susceptance(first(parallel.branches))
+        b_circuit = PSY.get_series_susceptance(first(parallel.branches), PSY.SU)
         delta_b = -b_circuit
         verify_modf_lodf_identity(vmodf, vlodf, ptdf, arc_idx, delta_b)
     end
@@ -291,7 +283,7 @@ end
     @testset "parallel single-circuit" begin
         arc_tuple, arc_idx = _find_non_islanding_arc(vmodf, nrd.parallel_branch_map)
         parallel = nrd.parallel_branch_map[arc_tuple]
-        b_circuit = PSY.get_series_susceptance(first(parallel.branches))
+        b_circuit = PSY.get_series_susceptance(first(parallel.branches), PSY.SU)
         delta_b = -b_circuit
         verify_modf_lodf_identity(vmodf, vlodf, ptdf, arc_idx, delta_b)
     end
@@ -323,7 +315,7 @@ end
     @testset "parallel single-circuit" begin
         arc_tuple, arc_idx = _find_non_islanding_arc(vmodf, nrd.parallel_branch_map)
         parallel = nrd.parallel_branch_map[arc_tuple]
-        b_circuit = PSY.get_series_susceptance(first(parallel.branches))
+        b_circuit = PSY.get_series_susceptance(first(parallel.branches), PSY.SU)
         delta_b = -b_circuit
         verify_modf_lodf_identity(vmodf, vlodf, ptdf, arc_idx, delta_b)
     end

@@ -131,9 +131,13 @@ end
     )
     existing_line_susceptance = PSY.get_series_susceptance(
         ptdf_2.network_reduction_data.direct_branch_map[(101, 102)],
+        PSY.SU,
     )
+    # The ward equivalent is a detached synthetic branch storing system-base
+    # impedance; read it back with device base (identity).
     ward_line_susceptance = PSY.get_series_susceptance(
         ptdf_2.network_reduction_data.added_arc_impedance_map[(101, 102)],
+        PSY.DU,
     )
     ward_multiplier =
         existing_line_susceptance / (existing_line_susceptance + ward_line_susceptance)

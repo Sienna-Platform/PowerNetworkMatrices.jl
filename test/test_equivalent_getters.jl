@@ -34,6 +34,12 @@
         rating = 150.0,  # rating
         angle_limits = (min = -π / 2, max = π / 2),
     )
+    # Attach the branches so the system-base getters (e.g. the susceptance
+    # weighting in get_impedance_averaged_rating) can resolve the system base.
+    # These lines carry round, illustrative values, so skip data validation.
+    PSY.add_component!(sys, line1; skip_validation = true)
+    PSY.add_component!(sys, line2; skip_validation = true)
+
     # Create BranchesParallel
     bp = PNM.BranchesParallel([line1, line2])
 
@@ -88,7 +94,7 @@ end
     rating3 = PNM.get_equivalent_rating(PNM.ThreeWindingTransformerWinding(trf, 3))
     # Should return winding-specific rating if non-zero, else transformer rating
     expected_rating3 =
-        trf.rating_tertiary == 0.0 ? PSY.get_rating(trf) : trf.rating_tertiary
+        trf.rating_tertiary == 0.0 ? PSY.get_rating(trf, PSY.DU) : trf.rating_tertiary
     @test rating3 == expected_rating3
 
     set_available_secondary!(trf, false)

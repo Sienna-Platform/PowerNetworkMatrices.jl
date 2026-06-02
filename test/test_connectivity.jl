@@ -127,17 +127,26 @@ end
         irreducible_buses = Set(collect(1:14)),
     )
 
+    # The three constructions agree to floating-point noise. Compare with an
+    # absolute tolerance: many entries are physically zero, so a relative
+    # tolerance (the `≈`/isapprox default) is meaningless there, and the dense
+    # and on-demand paths drift by a few ULPs run-to-run on the IS4/psy6 stack.
+    atol = 1e-10
     for i in ptdf_1.axes[1], j in ptdf_1.axes[2]
-        @test ptdf_1[j, i] == ptdf_2[j, i] == ptdf_3[j, i]
+        @test isapprox(ptdf_1[j, i], ptdf_2[j, i]; atol = atol) &&
+              isapprox(ptdf_2[j, i], ptdf_3[j, i]; atol = atol)
     end
     for i in lodf_1.axes[1], j in lodf_1.axes[2]
-        @test lodf_1[i, j] == lodf_2[i, j] == lodf_3[i, j]
+        @test isapprox(lodf_1[i, j], lodf_2[i, j]; atol = atol) &&
+              isapprox(lodf_2[i, j], lodf_3[i, j]; atol = atol)
     end
     for i in vptdf_1.axes[1], j in vptdf_1.axes[2]
-        @test vptdf_1[i, j] == vptdf_2[i, j] == vptdf_3[i, j]
+        @test isapprox(vptdf_1[i, j], vptdf_2[i, j]; atol = atol) &&
+              isapprox(vptdf_2[i, j], vptdf_3[i, j]; atol = atol)
     end
     for i in vlodf_1.axes[1], j in vlodf_1.axes[2]
-        @test vlodf_1[i, j] == vlodf_2[i, j] == vlodf_3[i, j]
+        @test isapprox(vlodf_1[i, j], vlodf_2[i, j]; atol = atol) &&
+              isapprox(vlodf_2[i, j], vlodf_3[i, j]; atol = atol)
     end
 end
 

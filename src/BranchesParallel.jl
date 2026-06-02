@@ -73,15 +73,18 @@ function compute_parallel_multiplier(
     b_branch = 0.0
     for br in parallel_branch_set
         if PSY.get_name(br) == branch_name
-            b_branch += PSY.get_series_susceptance(br)
+            b_branch += PSY.get_series_susceptance(br, PSY.SU)
         end
-        b_total += PSY.get_series_susceptance(br)
+        b_total += PSY.get_series_susceptance(br, PSY.SU)
     end
     return b_branch / b_total
 end
 
-function get_series_susceptance(segment::AbstractBranchesParallel)
-    return sum(get_series_susceptance(branch) for branch in segment.branches)
+function get_series_susceptance(
+    segment::AbstractBranchesParallel,
+    units::IS.AbstractUnitSystem,
+)
+    return sum(get_series_susceptance(branch, units) for branch in segment.branches)
 end
 
 function get_equivalent_physical_branch_parameters(bp::AbstractBranchesParallel)
@@ -129,7 +132,12 @@ physically splits across a parallel group. Throws `ArgumentError` if the total
 series susceptance is zero or non-finite.
 """
 function get_impedance_averaged_rating(bp::AbstractBranchesParallel)
-    b_total = sum(PSY.get_series_susceptance, bp.branches)
+    # The susceptance weights must share a consistent impedance base across the
+    # group, so use system base (SU) like the sibling `compute_parallel_multiplier`.
+    # Within a parallel group (a single bus pair) this equals the natural-units
+    # weighting; device base would mix bases when the branches differ in base power.
+    # Requires the branches to be attached to a system.
+    b_total = sum(PSY.get_series_susceptance(br, PSY.SU) for br in bp.branches)
     if !isfinite(b_total) || iszero(b_total)
         throw(
             ArgumentError(
@@ -138,7 +146,7 @@ function get_impedance_averaged_rating(bp::AbstractBranchesParallel)
         )
     end
     return sum(
-        PSY.get_series_susceptance(br) / b_total * get_equivalent_rating(br)
+        PSY.get_series_susceptance(br, PSY.SU) / b_total * get_equivalent_rating(br)
         for br in bp.branches
     )
 end

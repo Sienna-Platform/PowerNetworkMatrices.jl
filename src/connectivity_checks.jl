@@ -83,24 +83,30 @@ function find_connected_components(sys::PSY.System)
     return find_connected_components(a.data, a.lookup[1])
 end
 
-# this function extends the PowerModels.jl implementation to accept an adjacency matrix and bus lookup
-function find_connected_components(M, bus_lookup::Dict{Int64, Int64})
-    pm_buses = Dict([i => Dict("bus_type" => 1, "bus_i" => b) for (i, b) in bus_lookup])
-
-    arcs = findall((LinearAlgebra.UpperTriangular(M) - LinearAlgebra.I) .!= 0)
-    pm_branches = Dict([
-        i => Dict("f_bus" => a[1], "t_bus" => a[2], "br_status" => 1) for
-        (i, a) in enumerate(arcs)
-    ],)
-
-    data = Dict("bus" => pm_buses, "branch" => pm_branches)
-    cc = PSY.calc_connected_components(data)
-    bus_decode = Dict(value => key for (key, value) in bus_lookup)
-    connected_components = Vector{Set{Int64}}()
-    for c in cc
-        push!(connected_components, Set([bus_decode[b] for b in c]))
+# Group bus numbers into connected components of the graph whose edges are the
+# off-diagonal nonzeros of `M`. This replaces the former PowerModels.jl
+# `calc_connected_components` round-trip, which PowerSystems no longer re-exports.
+function find_connected_components(
+    M::SparseArrays.SparseMatrixCSC,
+    bus_lookup::Dict{Int64, Int64},
+)
+    n = length(bus_lookup)
+    bus_decode = Dict(index => bus_number for (bus_number, index) in bus_lookup)
+    uf = collect(1:n)
+    rows = SparseArrays.rowvals(M)
+    for col in 1:n
+        for k in SparseArrays.nzrange(M, col)
+            row = rows[k]
+            # Any off-diagonal nonzero is an undirected edge; ignore self-loops.
+            row != col && union_sets!(uf, col, row)
+        end
     end
-    return Set(connected_components)
+    components = Dict{Int, Set{Int64}}()
+    for index in 1:n
+        root = get_representative(uf, index)
+        push!(get!(() -> Set{Int64}(), components, root), bus_decode[index])
+    end
+    return Set(values(components))
 end
 
 function dfs_connectivity(M, ::Vector{PSY.ACBus}, bus_lookup::Dict{Int64, Int64})

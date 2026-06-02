@@ -134,6 +134,14 @@ end
         winding_group_number = WindingGroupNumber.GROUP_11,
     )
 
+    # Attach the branches to a system so the unit-aware getters used by
+    # ybus_branch_entries can resolve the system base.
+    sys = System(100.0)
+    add_component!(sys, bus1)
+    add_component!(sys, bus2)
+    add_component!(sys, line)
+    add_component!(sys, tap)
+
     # Homogeneous group dispatches to BranchesParallel{Line}.
     bp_homog = PNM.BranchesParallel([line])
     @test bp_homog isa PNM.BranchesParallel{PSY.Line}

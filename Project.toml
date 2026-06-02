@@ -20,6 +20,10 @@ Pardiso = "46dd5b70-b6fb-5a00-ae2d-e8fea33afaf2"
 [extensions]
 MKLPardisoExt = "Pardiso"
 
+[sources]
+InfrastructureSystems = {url = "https://github.com/NREL-Sienna/InfrastructureSystems.jl", rev = "IS4"}
+PowerSystems = {url = "https://github.com/NREL-Sienna/PowerSystems.jl", rev = "psy6"}
+
 [compat]
 DataStructures = "^0.19"
 DocStringExtensions = "~0.8, ~0.9"

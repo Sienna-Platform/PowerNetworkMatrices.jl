@@ -9,7 +9,7 @@ function _compute_parallel_partial_ybus_delta(
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
     for br in bp.branches
-        b_circuit = get_series_susceptance(br)
+        b_circuit = get_series_susceptance(br, PSY.SU)
         if isapprox(-b_circuit, delta_b; atol = YBUS_DELTA_TOL, rtol = 0)
             Y11, Y12, Y21, Y22 = ybus_branch_entries(br)
             return (YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
@@ -35,7 +35,7 @@ function _compute_arc_ybus_delta(
 )::NTuple{4, YBUS_ELTYPE}
     if haskey(nr.direct_branch_map, arc_tuple)
         br = nr.direct_branch_map[arc_tuple]
-        b_arc = get_series_susceptance(br)
+        b_arc = get_series_susceptance(br, PSY.SU)
         Y11, Y12, Y21, Y22 = ybus_branch_entries(br)
         if isapprox(delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
             return (YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
@@ -47,7 +47,7 @@ function _compute_arc_ybus_delta(
         end
     elseif haskey(nr.parallel_branch_map, arc_tuple)
         bp = nr.parallel_branch_map[arc_tuple]
-        b_arc = get_series_susceptance(bp)
+        b_arc = get_series_susceptance(bp, PSY.SU)
         if isapprox(delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
             Y11, Y12, Y21, Y22 = ybus_branch_entries(bp)
             return (YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
@@ -57,7 +57,7 @@ function _compute_arc_ybus_delta(
         end
     elseif haskey(nr.series_branch_map, arc_tuple)
         series_chain = nr.series_branch_map[arc_tuple]
-        b_arc = get_series_susceptance(series_chain)
+        b_arc = get_series_susceptance(series_chain, PSY.SU)
         if isapprox(delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
             Y11, Y12, Y21, Y22 = ybus_branch_entries(series_chain)
             return (YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
@@ -70,7 +70,7 @@ function _compute_arc_ybus_delta(
         end
     elseif haskey(nr.transformer3W_map, arc_tuple)
         tr = nr.transformer3W_map[arc_tuple]
-        b_arc = get_series_susceptance(tr)
+        b_arc = get_series_susceptance(tr, PSY.SU)
         if !isapprox(delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
             error(
                 "Partial Ybus delta is not supported on 3-winding transformer arcs. " *
@@ -245,7 +245,7 @@ function _classify_outage_component!(
         push!(direct_mods, ArcModification(arc_idx, -b_arc, dy11, dy12, dy21, dy22))
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
-        b_circuit = PSY.get_series_susceptance(component)
+        b_circuit = PSY.get_series_susceptance(component, PSY.SU)
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_circuit)
         push!(parallel_mods, ArcModification(arc_idx, -b_circuit, dy11, dy12, dy21, dy22))
     elseif tag === :series
@@ -299,8 +299,8 @@ function _classify_outage_component!(
 )
     bus_ix = get_bus_index(component, bus_lookup, nr)
     Y =
-        PSY.get_impedance_active_power(component) -
-        im * PSY.get_impedance_reactive_power(component)
+        PSY.get_impedance_active_power(component, PSY.SU) -
+        im * PSY.get_impedance_reactive_power(component, PSY.SU)
     push!(shunt_mods, ShuntModification(bus_ix, YBUS_ELTYPE(-Y)))
     push!(component_names, PSY.get_name(component))
     return
@@ -375,7 +375,7 @@ function _classify_branch_modification(
         return [ArcModification(arc_idx, -b_arc, dy11, dy12, dy21, dy22)]
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
-        b_circuit = PSY.get_series_susceptance(branch)
+        b_circuit = PSY.get_series_susceptance(branch, PSY.SU)
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_circuit)
         return [ArcModification(arc_idx, -b_circuit, dy11, dy12, dy21, dy22)]
     elseif tag === :series

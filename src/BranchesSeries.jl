@@ -104,8 +104,9 @@ Base.length(bs::BranchesSeries) =
 
 Base.eltype(::Type{BranchesSeries}) = PSY.ACTransmission
 
-function get_series_susceptance(series_chain::BranchesSeries)
-    series_susceptances_sum = sum(inv(get_series_susceptance(x)) for x in series_chain)
+function get_series_susceptance(series_chain::BranchesSeries, units::IS.AbstractUnitSystem)
+    series_susceptances_sum =
+        sum(inv(get_series_susceptance(x, units)) for x in series_chain)
     total_susceptance = 1 / series_susceptances_sum
     return total_susceptance
 end
@@ -145,7 +146,7 @@ _series_member_rating(branch::PSY.ACTransmission) = get_equivalent_rating(branch
 Return the rating for PSY.ACTransmission branches.
 """
 function get_equivalent_rating(bs::PSY.ACTransmission)
-    return PSY.get_rating(bs)
+    return PSY.get_rating(bs, PSY.DU)
 end
 
 """
@@ -154,7 +155,8 @@ end
 Rating is assumed to be max_flow for GenericArcImpedance.
 """
 function get_equivalent_rating(bs::PSY.GenericArcImpedance)
-    return PSY.get_max_flow(bs)
+    # Detached synthetic ward equivalent: read the stored value with device base.
+    return PSY.get_max_flow(bs, PSY.DU)
 end
 
 """
@@ -174,12 +176,12 @@ end
 Return the emergency rating for PSY.ACTransmission branches.
 """
 function get_equivalent_emergency_rating(branch::PSY.ACTransmission)
-    if isnothing(PSY.get_rating_b(branch))
+    if isnothing(PSY.get_rating_b(branch, PSY.DU))
         @debug "Branch $(get_name(branch)) has no 'rating_b' defined. Post-contingency limit is going to be set using normal-operation rating.
             \n Consider including post-contingency limits using set_rating_b!()."
-        return PSY.get_rating(branch)
+        return PSY.get_rating(branch, PSY.DU)
     end
-    return PSY.get_rating_b(branch)
+    return PSY.get_rating_b(branch, PSY.DU)
 end
 
 """
@@ -189,7 +191,7 @@ Return the emergency rating for PSY.GenericArcImpedance.
 """
 function get_equivalent_emergency_rating(branch::PSY.GenericArcImpedance)
     @debug "GenericArcImpedance $(get_name(branch)) has no emergency rating. Using max_flow as a proxy instead."
-    return PSY.get_max_flow(branch)
+    return PSY.get_max_flow(branch, PSY.DU)
 end
 
 """
