@@ -63,10 +63,6 @@ function _invert_woodbury_W(
     return W_inv, is_island
 end
 
-_get_BA(m::VirtualPTDF) = m.BA
-_get_arc_susceptances(m::VirtualPTDF) = m.arc_susceptances
-_get_valid_ix(m::VirtualPTDF) = m.valid_ix
-
 """
     _compute_woodbury_factors_impl(K, work_ba_col, temp_data, BA, arc_sus,
                                    valid_ix, modifications) -> WoodburyFactors
@@ -225,24 +221,48 @@ function _apply_woodbury_correction_impl(
     return copy(temp_data)
 end
 
-# Outer dispatchers: VirtualPTDF and VirtualMODF both acquire a solver and
-# matched per-worker scratch via `with_solver` / `with_worker`. The
-# VirtualMODF methods are defined in virtual_modf_calculations.jl alongside
-# the struct.
+# Outer dispatchers. The single implementation operates on the shared
+# `VirtualFactorCore`; the `Virtual{PTDF, MODF}` wrappers forward to it (the
+# VirtualMODF forwards live in virtual_modf_calculations.jl). Both acquire the
+# solver and the single scratch slot via `with_solver`.
 
+function _compute_woodbury_factors(
+    core::VirtualFactorCore,
+    modifications::Tuple{Vararg{ArcModification}},
+)::WoodburyFactors
+    return with_solver(
+        core.K, core.work_ba_col, core.temp_data, core.solver_lock,
+    ) do K_solver, work_ba_col, temp_data
+        _compute_woodbury_factors_impl(
+            K_solver, work_ba_col, temp_data,
+            core.BA, core.arc_susceptances, core.valid_ix, core.bus_to_valid_idx,
+            modifications,
+        )
+    end
+end
+
+function _apply_woodbury_correction(
+    core::VirtualFactorCore,
+    monitored_idx::Int,
+    wf::WoodburyFactors,
+)::Vector{Float64}
+    return with_solver(
+        core.K, core.work_ba_col, core.temp_data, core.solver_lock,
+    ) do K_solver, work_ba_col, temp_data
+        _apply_woodbury_correction_impl(
+            K_solver, work_ba_col, temp_data,
+            core.BA, core.arc_susceptances, core.valid_ix, core.bus_to_valid_idx,
+            monitored_idx, wf,
+        )
+    end
+end
+
+# VirtualPTDF forwards to the shared core method.
 function _compute_woodbury_factors(
     mat::VirtualPTDF,
     modifications::Tuple{Vararg{ArcModification}},
 )::WoodburyFactors
-    return with_solver(
-        mat.K, mat.work_ba_col, mat.temp_data, mat.solver_lock,
-    ) do K_solver, work_ba_col, temp_data
-        _compute_woodbury_factors_impl(
-            K_solver, work_ba_col, temp_data,
-            mat.BA, mat.arc_susceptances, mat.valid_ix, mat.bus_to_valid_idx,
-            modifications,
-        )
-    end
+    return _compute_woodbury_factors(get_core(mat), modifications)
 end
 
 function _apply_woodbury_correction(
@@ -250,13 +270,5 @@ function _apply_woodbury_correction(
     monitored_idx::Int,
     wf::WoodburyFactors,
 )::Vector{Float64}
-    return with_solver(
-        mat.K, mat.work_ba_col, mat.temp_data, mat.solver_lock,
-    ) do K_solver, work_ba_col, temp_data
-        _apply_woodbury_correction_impl(
-            K_solver, work_ba_col, temp_data,
-            mat.BA, mat.arc_susceptances, mat.valid_ix, mat.bus_to_valid_idx,
-            monitored_idx, wf,
-        )
-    end
+    return _apply_woodbury_correction(get_core(mat), monitored_idx, wf)
 end
