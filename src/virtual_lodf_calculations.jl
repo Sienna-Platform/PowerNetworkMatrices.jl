@@ -71,23 +71,35 @@ function Base.getproperty(vlodf::VirtualLODF, name::Symbol)
        name === :cache_lock
         return getfield(vlodf, name)
     end
-    name === :PTDF_A_diag && return get_PTDF_A_diag(getfield(vlodf, :core))
+    name === :PTDF_A_diag && return get_PTDF_A_diag(get_core(vlodf))
     name === :branch_susceptances_by_arc &&
-        return get_branch_susceptances_by_arc(getfield(vlodf, :core))
-    return getproperty(getfield(vlodf, :core), name)
+        return get_branch_susceptances_by_arc(get_core(vlodf))
+    return getproperty(get_core(vlodf), name)
 end
 
+# Field getters. `getfield` is confined to these (and the `getproperty` hook
+# above), so the rest of the file reads the wrapper's own fields through proper
+# accessors instead of `getfield`.
+get_core(M::VirtualLODF) = getfield(M, :core)
+get_inv_PTDF_A_diag(M::VirtualLODF) = getfield(M, :inv_PTDF_A_diag)
+get_dist_slack(M::VirtualLODF) = getfield(M, :dist_slack)
+get_subnetwork_axes(M::VirtualLODF) = getfield(M, :subnetwork_axes)
+get_cache(M::VirtualLODF) = getfield(M, :cache)
+get_cache_lock(M::VirtualLODF) = getfield(M, :cache_lock)
+
+# `axes`/`lookup` are wrapper fields (arc×arc form, distinct from the core's
+# arc×bus form), so these accessors read them directly.
 get_axes(M::VirtualLODF) = getfield(M, :axes)
 get_lookup(M::VirtualLODF) = getfield(M, :lookup)
-get_ref_bus(M::VirtualLODF) = sort!(collect(keys(getfield(M, :subnetwork_axes))))
+get_ref_bus(M::VirtualLODF) = sort!(collect(keys(get_subnetwork_axes(M))))
 get_ref_bus_position(M::VirtualLODF) =
-    [get_bus_lookup(M)[x] for x in keys(getfield(M, :subnetwork_axes))]
-get_network_reduction_data(M::VirtualLODF) = get_network_reduction_data(getfield(M, :core))
-get_arc_lookup(M::VirtualLODF) = getfield(M, :lookup)[1]
-get_system_uuid(M::VirtualLODF) = get_system_uuid(getfield(M, :core))
-_get_BA(M::VirtualLODF) = _get_BA(getfield(M, :core))
-_get_arc_susceptances(M::VirtualLODF) = _get_arc_susceptances(getfield(M, :core))
-_get_valid_ix(M::VirtualLODF) = _get_valid_ix(getfield(M, :core))
+    [get_bus_lookup(M)[x] for x in keys(get_subnetwork_axes(M))]
+get_network_reduction_data(M::VirtualLODF) = get_network_reduction_data(get_core(M))
+get_arc_lookup(M::VirtualLODF) = get_lookup(M)[1]
+get_system_uuid(M::VirtualLODF) = get_system_uuid(get_core(M))
+_get_BA(M::VirtualLODF) = _get_BA(get_core(M))
+_get_arc_susceptances(M::VirtualLODF) = _get_arc_susceptances(get_core(M))
+_get_valid_ix(M::VirtualLODF) = _get_valid_ix(get_core(M))
 
 function Base.show(io::IO, ::MIME{Symbol("text/plain")}, array::VirtualLODF)
     summary(io, array)
@@ -210,7 +222,7 @@ function VirtualLODF(
     persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}(),
 )
     return VirtualLODF(
-        getfield(vptdf, :core);
+        get_core(vptdf);
         dist_slack = dist_slack,
         max_cache_size = max_cache_size,
         persistent_arcs = persistent_arcs,
@@ -223,17 +235,22 @@ end
 Checks if the VirtualLODF holds any stored state.
 """
 function Base.isempty(vlodf::VirtualLODF)
-    for name in (:inv_PTDF_A_diag, :dist_slack, :axes, :lookup, :subnetwork_axes, :cache)
-        isempty(getfield(vlodf, name)) && return true
-    end
+    isempty(get_inv_PTDF_A_diag(vlodf)) && return true
+    isempty(get_dist_slack(vlodf)) && return true
+    isempty(get_axes(vlodf)) && return true
+    isempty(get_lookup(vlodf)) && return true
+    isempty(get_subnetwork_axes(vlodf)) && return true
+    isempty(get_cache(vlodf)) && return true
     return false
 end
 
 """
 Shows the size of the whole LODF matrix, not the number of rows stored.
 """
-Base.size(vlodf::VirtualLODF) =
-    (size(getfield(vlodf, :core).BA, 2), size(getfield(vlodf, :core).BA, 2))
+function Base.size(vlodf::VirtualLODF)
+    n_arcs = size(get_core(vlodf).BA, 2)
+    return (n_arcs, n_arcs)
+end
 
 """
 Gives the cartesian indexes of the LODF matrix.
@@ -247,8 +264,8 @@ end
 # Compute the LODF row for `row`. Pure computation: no cache reads/writes, no
 # tolerance application.
 function _compute_lodf_row(vlodf::VirtualLODF, row::Int)::Vector{Float64}
-    core = getfield(vlodf, :core)
-    inv_PTDF_A_diag = getfield(vlodf, :inv_PTDF_A_diag)
+    core = get_core(vlodf)
+    inv_PTDF_A_diag = get_inv_PTDF_A_diag(vlodf)
     return with_solver(
         core.K, core.work_ba_col, core.temp_data, core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
@@ -283,7 +300,7 @@ function _getindex(
     column::Union{Int, Colon},
 )
     return cached_row_lookup(
-        getfield(vlodf, :cache), getfield(vlodf, :cache_lock), row, column, get_tol(vlodf),
+        get_cache(vlodf), get_cache_lock(vlodf), row, column, get_tol(vlodf),
     ) do
         _compute_lodf_row(vlodf, row)
     end
@@ -321,15 +338,15 @@ Base.setindex!(::VirtualLODF, _, ::CartesianIndex) =
 Get the cached LODF row data from a [`VirtualLODF`](@ref) matrix, mapping row
 indices to lazily computed row vectors.
 """
-get_lodf_data(mat::VirtualLODF) = getfield(mat, :cache).temp_cache
+get_lodf_data(mat::VirtualLODF) = get_cache(mat).temp_cache
 
 function get_arc_axis(mat::VirtualLODF)
-    return getfield(mat, :axes)[1]
+    return get_axes(mat)[1]
 end
 
 """ Gets the tolerance used for sparsifying the rows of the VirtualLODF matrix"""
 function get_tol(mat::VirtualLODF)
-    return get_tol(getfield(mat, :core))
+    return get_tol(get_core(mat))
 end
 
 """
@@ -352,7 +369,7 @@ function _getindex_partial(
     arc_idx::Int,
     delta_b::Float64,
 )::Vector{Float64}
-    core = getfield(vlodf, :core)
+    core = get_core(vlodf)
     n_arcs = size(core.BA, 2)
 
     # Zero change means zero redistribution.
@@ -442,6 +459,6 @@ function get_partial_lodf_row(
     arc::Tuple{Int, Int},
     delta_b::Float64,
 )
-    arc_idx = getfield(vlodf, :lookup)[1][arc]
+    arc_idx = get_lookup(vlodf)[1][arc]
     return _getindex_partial(vlodf, arc_idx, delta_b)
 end

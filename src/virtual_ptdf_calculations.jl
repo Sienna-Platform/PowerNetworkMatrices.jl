@@ -55,24 +55,33 @@ function Base.getproperty(vptdf::VirtualPTDF, name::Symbol)
        name === :cache_lock
         return getfield(vptdf, name)
     end
-    return getproperty(getfield(vptdf, :core), name)
+    return getproperty(get_core(vptdf), name)
 end
 
+# Field getters. `getfield` is confined to these (and the `getproperty` hook
+# above), so the rest of the file reads the wrapper's own fields through proper
+# accessors instead of `getfield`.
+get_core(M::VirtualPTDF) = getfield(M, :core)
+get_cache(M::VirtualPTDF) = getfield(M, :cache)
+get_cache_lock(M::VirtualPTDF) = getfield(M, :cache_lock)
+get_dist_slack(M::VirtualPTDF) = getfield(M, :dist_slack)
+get_dist_slack_normalized(M::VirtualPTDF) = getfield(M, :dist_slack_normalized)
+
 # Accessors forward to the core.
-get_axes(M::VirtualPTDF) = get_axes(getfield(M, :core))
-get_lookup(M::VirtualPTDF) = get_lookup(getfield(M, :core))
-get_ref_bus(M::VirtualPTDF) = get_ref_bus(getfield(M, :core))
-get_ref_bus_position(M::VirtualPTDF) = get_ref_bus_position(getfield(M, :core))
-get_network_reduction_data(M::VirtualPTDF) = get_network_reduction_data(getfield(M, :core))
-get_bus_lookup(M::VirtualPTDF) = get_bus_lookup(getfield(M, :core))
-get_arc_lookup(M::VirtualPTDF) = get_arc_lookup(getfield(M, :core))
-get_system_uuid(M::VirtualPTDF) = get_system_uuid(getfield(M, :core))
-get_arc_axis(M::VirtualPTDF) = get_arc_axis(getfield(M, :core))
-get_bus_axis(M::VirtualPTDF) = get_bus_axis(getfield(M, :core))
-get_tol(M::VirtualPTDF) = get_tol(getfield(M, :core))
-_get_BA(M::VirtualPTDF) = _get_BA(getfield(M, :core))
-_get_arc_susceptances(M::VirtualPTDF) = _get_arc_susceptances(getfield(M, :core))
-_get_valid_ix(M::VirtualPTDF) = _get_valid_ix(getfield(M, :core))
+get_axes(M::VirtualPTDF) = get_axes(get_core(M))
+get_lookup(M::VirtualPTDF) = get_lookup(get_core(M))
+get_ref_bus(M::VirtualPTDF) = get_ref_bus(get_core(M))
+get_ref_bus_position(M::VirtualPTDF) = get_ref_bus_position(get_core(M))
+get_network_reduction_data(M::VirtualPTDF) = get_network_reduction_data(get_core(M))
+get_bus_lookup(M::VirtualPTDF) = get_bus_lookup(get_core(M))
+get_arc_lookup(M::VirtualPTDF) = get_arc_lookup(get_core(M))
+get_system_uuid(M::VirtualPTDF) = get_system_uuid(get_core(M))
+get_arc_axis(M::VirtualPTDF) = get_arc_axis(get_core(M))
+get_bus_axis(M::VirtualPTDF) = get_bus_axis(get_core(M))
+get_tol(M::VirtualPTDF) = get_tol(get_core(M))
+_get_BA(M::VirtualPTDF) = _get_BA(get_core(M))
+_get_arc_susceptances(M::VirtualPTDF) = _get_arc_susceptances(get_core(M))
+_get_valid_ix(M::VirtualPTDF) = _get_valid_ix(get_core(M))
 
 function Base.show(io::IO, ::MIME{Symbol("text/plain")}, array::VirtualPTDF)
     summary(io, array)
@@ -238,15 +247,15 @@ Checks if the VirtualPTDF holds any stored state (a populated cache or a
 distributed-slack specification).
 """
 function Base.isempty(vptdf::VirtualPTDF)
-    isempty(getfield(vptdf, :dist_slack)) || return false
-    isempty(getfield(vptdf, :cache)) || return false
+    isempty(get_dist_slack(vptdf)) || return false
+    isempty(get_cache(vptdf)) || return false
     return true
 end
 
 """
 Gives the size of the whole PTDF matrix, not the number of rows stored.
 """
-Base.size(vptdf::VirtualPTDF) = size(getfield(vptdf, :core).BA)
+Base.size(vptdf::VirtualPTDF) = size(get_core(vptdf).BA)
 
 """
 Gives the cartesian indexes of the PTDF matrix (same as the BA one).
@@ -258,9 +267,9 @@ if isdefined(Base, :print_array) # 0.7 and later
 end
 
 function _compute_ptdf_row(vptdf::VirtualPTDF, row::Int)::Vector{Float64}
-    core = getfield(vptdf, :core)
-    dist_slack = getfield(vptdf, :dist_slack)
-    dist_slack_normalized = getfield(vptdf, :dist_slack_normalized)
+    core = get_core(vptdf)
+    dist_slack = get_dist_slack(vptdf)
+    dist_slack_normalized = get_dist_slack_normalized(vptdf)
     buscount = size(core.BA, 1)
     ref_bus_positions = get_ref_bus_position(core)
     if !isempty(dist_slack) && length(ref_bus_positions) != 1
@@ -309,7 +318,7 @@ function _getindex(
     column::Union{Int, Colon},
 )
     return cached_row_lookup(
-        getfield(vptdf, :cache), getfield(vptdf, :cache_lock), row, column, get_tol(vptdf),
+        get_cache(vptdf), get_cache_lock(vptdf), row, column, get_tol(vptdf),
     ) do
         _compute_ptdf_row(vptdf, row)
     end
@@ -354,4 +363,4 @@ Get the cached PTDF row data from a [`VirtualPTDF`](@ref) matrix.
 
 Returns a dictionary mapping row indices to lazily computed row vectors.
 """
-get_ptdf_data(mat::VirtualPTDF) = getfield(mat, :cache).temp_cache
+get_ptdf_data(mat::VirtualPTDF) = get_cache(mat).temp_cache

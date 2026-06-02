@@ -16,9 +16,9 @@
     vlodf_s = VirtualLODF(vptdf_s)
 
     @testset "single shared factorization" begin
-        core = getfield(vptdf_s, :core)
-        @test getfield(vmodf_s, :core) === core
-        @test getfield(vlodf_s, :core) === core
+        core = PNM.get_core(vptdf_s)
+        @test PNM.get_core(vmodf_s) === core
+        @test PNM.get_core(vlodf_s) === core
         # Same underlying factorization and matrices (identity, not just ==).
         @test vmodf_s.K === core.K
         @test vlodf_s.K === core.K
@@ -44,10 +44,10 @@
 
     @testset "PTDF_A_diag is shared and consistent" begin
         # Building vlodf_s forced the raw diagonal onto the shared core.
-        @test !isempty(getfield(getfield(vptdf_s, :core), :PTDF_A_diag))
+        @test !isempty(PNM.get_core(vptdf_s).PTDF_A_diag)
         @test PNM.get_PTDF_A_diag(vmodf_s) ≈ PNM.get_PTDF_A_diag(vmodf_i) atol = 1e-10
         # MODF reads the same cached vector that LODF populated on the core.
-        @test PNM.get_PTDF_A_diag(vmodf_s) === getfield(vptdf_s, :core).PTDF_A_diag
+        @test PNM.get_PTDF_A_diag(vmodf_s) === PNM.get_core(vptdf_s).PTDF_A_diag
     end
 
     @testset "MODF post-contingency rows match independent build" begin

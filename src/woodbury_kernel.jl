@@ -262,7 +262,7 @@ function _compute_woodbury_factors(
     mat::VirtualPTDF,
     modifications::Tuple{Vararg{ArcModification}},
 )::WoodburyFactors
-    return _compute_woodbury_factors(getfield(mat, :core), modifications)
+    return _compute_woodbury_factors(get_core(mat), modifications)
 end
 
 function _apply_woodbury_correction(
@@ -270,5 +270,5 @@ function _apply_woodbury_correction(
     monitored_idx::Int,
     wf::WoodburyFactors,
 )::Vector{Float64}
-    return _apply_woodbury_correction(getfield(mat, :core), monitored_idx, wf)
+    return _apply_woodbury_correction(get_core(mat), monitored_idx, wf)
 end

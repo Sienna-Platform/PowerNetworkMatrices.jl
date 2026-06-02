@@ -65,28 +65,38 @@ function Base.getproperty(vmodf::VirtualMODF, name::Symbol)
        name === :max_cache_size_bytes
         return getfield(vmodf, name)
     end
-    name === :PTDF_A_diag && return get_PTDF_A_diag(getfield(vmodf, :core))
+    name === :PTDF_A_diag && return get_PTDF_A_diag(get_core(vmodf))
     name === :branch_susceptances_by_arc &&
-        return get_branch_susceptances_by_arc(getfield(vmodf, :core))
-    return getproperty(getfield(vmodf, :core), name)
+        return get_branch_susceptances_by_arc(get_core(vmodf))
+    return getproperty(get_core(vmodf), name)
 end
 
 # --- Accessors ---
 
-get_axes(M::VirtualMODF) = get_axes(getfield(M, :core))
-get_lookup(M::VirtualMODF) = get_lookup(getfield(M, :core))
-get_ref_bus(M::VirtualMODF) = get_ref_bus(getfield(M, :core))
-get_ref_bus_position(M::VirtualMODF) = get_ref_bus_position(getfield(M, :core))
-get_network_reduction_data(M::VirtualMODF) = get_network_reduction_data(getfield(M, :core))
-get_arc_lookup(M::VirtualMODF) = get_arc_lookup(getfield(M, :core))
-get_bus_lookup(M::VirtualMODF) = get_bus_lookup(getfield(M, :core))
-get_arc_axis(M::VirtualMODF) = get_arc_axis(getfield(M, :core))
-get_bus_axis(M::VirtualMODF) = get_bus_axis(getfield(M, :core))
-get_tol(M::VirtualMODF) = get_tol(getfield(M, :core))
-get_system_uuid(M::VirtualMODF) = get_system_uuid(getfield(M, :core))
-_get_BA(M::VirtualMODF) = _get_BA(getfield(M, :core))
-_get_arc_susceptances(M::VirtualMODF) = _get_arc_susceptances(getfield(M, :core))
-_get_valid_ix(M::VirtualMODF) = _get_valid_ix(getfield(M, :core))
+# Field getters. `getfield` is confined to these (and the `getproperty` hook
+# above), so the rest of the file reads the wrapper's own fields through proper
+# accessors instead of `getfield`.
+get_core(M::VirtualMODF) = getfield(M, :core)
+get_dist_slack(M::VirtualMODF) = getfield(M, :dist_slack)
+get_contingency_cache(M::VirtualMODF) = getfield(M, :contingency_cache)
+get_woodbury_cache(M::VirtualMODF) = getfield(M, :woodbury_cache)
+get_row_caches(M::VirtualMODF) = getfield(M, :row_caches)
+get_max_cache_size_bytes(M::VirtualMODF) = getfield(M, :max_cache_size_bytes)
+
+get_axes(M::VirtualMODF) = get_axes(get_core(M))
+get_lookup(M::VirtualMODF) = get_lookup(get_core(M))
+get_ref_bus(M::VirtualMODF) = get_ref_bus(get_core(M))
+get_ref_bus_position(M::VirtualMODF) = get_ref_bus_position(get_core(M))
+get_network_reduction_data(M::VirtualMODF) = get_network_reduction_data(get_core(M))
+get_arc_lookup(M::VirtualMODF) = get_arc_lookup(get_core(M))
+get_bus_lookup(M::VirtualMODF) = get_bus_lookup(get_core(M))
+get_arc_axis(M::VirtualMODF) = get_arc_axis(get_core(M))
+get_bus_axis(M::VirtualMODF) = get_bus_axis(get_core(M))
+get_tol(M::VirtualMODF) = get_tol(get_core(M))
+get_system_uuid(M::VirtualMODF) = get_system_uuid(get_core(M))
+_get_BA(M::VirtualMODF) = _get_BA(get_core(M))
+_get_arc_susceptances(M::VirtualMODF) = _get_arc_susceptances(get_core(M))
+_get_valid_ix(M::VirtualMODF) = _get_valid_ix(get_core(M))
 
 """
 $(TYPEDSIGNATURES)
@@ -94,14 +104,14 @@ $(TYPEDSIGNATURES)
 Return `H[e, e]` for each arc `e`. Triggers the core's lazy compute on first
 call and returns the cached vector thereafter.
 """
-get_PTDF_A_diag(vmodf::VirtualMODF) = get_PTDF_A_diag(getfield(vmodf, :core))
+get_PTDF_A_diag(vmodf::VirtualMODF) = get_PTDF_A_diag(get_core(vmodf))
 
 # Woodbury kernel outer dispatchers forward to the shared core method.
 function _compute_woodbury_factors(
     mat::VirtualMODF,
     modifications::Tuple{Vararg{ArcModification}},
 )::WoodburyFactors
-    return _compute_woodbury_factors(getfield(mat, :core), modifications)
+    return _compute_woodbury_factors(get_core(mat), modifications)
 end
 
 function _apply_woodbury_correction(
@@ -109,7 +119,7 @@ function _apply_woodbury_correction(
     monitored_idx::Int,
     wf::WoodburyFactors,
 )::Vector{Float64}
-    return _apply_woodbury_correction(getfield(mat, :core), monitored_idx, wf)
+    return _apply_woodbury_correction(get_core(mat), monitored_idx, wf)
 end
 
 """
@@ -117,7 +127,7 @@ end
 
 Return the cached contingency registrations for inspection.
 """
-get_registered_contingencies(vmodf::VirtualMODF) = getfield(vmodf, :contingency_cache)
+get_registered_contingencies(vmodf::VirtualMODF) = get_contingency_cache(vmodf)
 
 # --- Base interface ---
 
@@ -127,17 +137,17 @@ function Base.show(io::IO, ::MIME{Symbol("text/plain")}, array::VirtualMODF)
     println(io, ":")
     print(
         io,
-        "VirtualMODF with $(length(getfield(array, :contingency_cache))) registered contingencies",
+        "VirtualMODF with $(length(get_contingency_cache(array))) registered contingencies",
     )
     return
 end
 
 function Base.isempty(vmodf::VirtualMODF)
-    return isempty(getfield(vmodf, :contingency_cache))
+    return isempty(get_contingency_cache(vmodf))
 end
 
 function Base.size(vmodf::VirtualMODF)
-    core = getfield(vmodf, :core)
+    core = get_core(vmodf)
     return (length(core.axes[1]), length(core.axes[2]))
 end
 
@@ -263,7 +273,7 @@ two objects share the same [`VirtualFactorCore`](@ref), so the ABA matrix is
 factorized only once.
 """
 function VirtualMODF(vptdf::VirtualPTDF, sys::PSY.System; kwargs...)
-    return VirtualMODF(getfield(vptdf, :core), sys; kwargs...)
+    return VirtualMODF(get_core(vptdf), sys; kwargs...)
 end
 
 """
@@ -324,7 +334,7 @@ Resolve an Outage supplemental attribute to a ContingencySpec and cache it.
 Delegates to `NetworkModification(mat, sys, outage)` for the resolution logic.
 """
 function _register_outage!(vmodf::VirtualMODF, sys::PSY.System, outage::PSY.Outage)
-    contingency_cache = getfield(vmodf, :contingency_cache)
+    contingency_cache = get_contingency_cache(vmodf)
     outage_uuid = IS.get_uuid(outage)
     if haskey(contingency_cache, outage_uuid)
         @warn "Outage with UUID $(outage_uuid) is already registered; skipping."
@@ -350,7 +360,7 @@ function _get_woodbury_factors(vmodf::VirtualMODF, mod::NetworkModification)
     # Use the do-block form, NOT `get!(dict, key, default)`: Julia evaluates
     # function arguments eagerly, so the 3-arg form would run the M KLU solves
     # on every call (cache hit included), defeating the cache.
-    return get!(getfield(vmodf, :woodbury_cache), mod) do
+    return get!(get_woodbury_cache(vmodf), mod) do
         _compute_woodbury_factors(vmodf, mod.arc_modifications)
     end
 end
@@ -381,9 +391,9 @@ Uses per-modification RowCache for LRU-eviction caching.
 $(TYPEDSIGNATURES)
 """
 function Base.getindex(vmodf::VirtualMODF, monitored_idx::Int, mod::NetworkModification)
-    core = getfield(vmodf, :core)
-    row_caches = getfield(vmodf, :row_caches)
-    max_bytes = getfield(vmodf, :max_cache_size_bytes)
+    core = get_core(vmodf)
+    row_caches = get_row_caches(vmodf)
+    max_bytes = get_max_cache_size_bytes(vmodf)
     tol = get_tol(vmodf)
     return @lock core.solver_lock begin
         rc = get!(row_caches, mod) do
@@ -459,8 +469,8 @@ The outage must have been registered at VirtualMODF construction time.
 $(TYPEDSIGNATURES)
 """
 function Base.getindex(vmodf::VirtualMODF, monitored::Int, outage::PSY.Outage)
-    core = getfield(vmodf, :core)
-    contingency_cache = getfield(vmodf, :contingency_cache)
+    core = get_core(vmodf)
+    contingency_cache = get_contingency_cache(vmodf)
     outage_uuid = IS.get_uuid(outage)
     # Pair with the locked `empty!` in `clear_all_caches!`; without it, a
     # concurrent clear could rehash `contingency_cache` mid-lookup.
@@ -493,10 +503,10 @@ Clear Woodbury and row caches. Does NOT clear the contingency registration
 cache — registered outages remain valid and can be queried again.
 """
 function clear_caches!(vmodf::VirtualMODF)
-    core = getfield(vmodf, :core)
+    core = get_core(vmodf)
     @lock core.solver_lock begin
-        empty!(getfield(vmodf, :woodbury_cache))
-        empty!(getfield(vmodf, :row_caches))
+        empty!(get_woodbury_cache(vmodf))
+        empty!(get_row_caches(vmodf))
     end
     return
 end
@@ -510,11 +520,11 @@ the `VirtualMODF` object is effectively empty and cannot be queried. Use
 computation cache memory.
 """
 function clear_all_caches!(vmodf::VirtualMODF)
-    core = getfield(vmodf, :core)
+    core = get_core(vmodf)
     @lock core.solver_lock begin
-        empty!(getfield(vmodf, :contingency_cache))
-        empty!(getfield(vmodf, :woodbury_cache))
-        empty!(getfield(vmodf, :row_caches))
+        empty!(get_contingency_cache(vmodf))
+        empty!(get_woodbury_cache(vmodf))
+        empty!(get_row_caches(vmodf))
     end
     return
 end
