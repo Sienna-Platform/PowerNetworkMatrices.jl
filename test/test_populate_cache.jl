@@ -8,15 +8,15 @@
     v_lazy = VirtualPTDF(sys; linear_solver = solver)
     v_pop = VirtualPTDF(sys; linear_solver = solver)
 
-    n_arcs = length(v_pop.axes[1])
+    n_arcs = length(PNM.get_arc_axis(v_pop))
     arc_idxs = collect(1:min(6, n_arcs))
 
     @test populate_cache(v_pop, arc_idxs) === nothing
 
     for i in arc_idxs
         # Row is resident and pinned after population
-        @test haskey(v_pop.cache.temp_cache, i)
-        @test i ∈ v_pop.cache.persistent_cache_keys
+        @test haskey(PNM.get_cache(v_pop).temp_cache, i)
+        @test i ∈ PNM.get_cache(v_pop).persistent_cache_keys
         # Batched multi-RHS solve must agree with one-at-a-time lazy compute
         @test isapprox(v_pop[i, :], v_lazy[i, :]; atol = 1e-10)
     end
@@ -27,11 +27,11 @@ end
     v_lazy = VirtualPTDF(sys)
     v_pop = VirtualPTDF(sys)
 
-    arc_tuples = collect(keys(v_pop.lookup[1]))[1:4]
+    arc_tuples = collect(keys(PNM.get_arc_lookup(v_pop)))[1:4]
     populate_cache(v_pop, arc_tuples)
     for a in arc_tuples
-        idx = v_pop.lookup[1][a]
-        @test idx ∈ v_pop.cache.persistent_cache_keys
+        idx = PNM.get_arc_lookup(v_pop)[a]
+        @test idx ∈ PNM.get_cache(v_pop).persistent_cache_keys
         @test isapprox(v_pop[a, :], v_lazy[a, :]; atol = 1e-10)
     end
 end
@@ -41,12 +41,12 @@ end
     v = VirtualPTDF(sys)
     # Warm a row lazily (not pinned yet)
     _ = v[1, :]
-    @test haskey(v.cache.temp_cache, 1)
-    @test 1 ∉ v.cache.persistent_cache_keys
+    @test haskey(PNM.get_cache(v).temp_cache, 1)
+    @test 1 ∉ PNM.get_cache(v).persistent_cache_keys
     # populate_cache must pin it without recomputing incorrectly
     populate_cache(v, [1, 2])
-    @test 1 ∈ v.cache.persistent_cache_keys
-    @test 2 ∈ v.cache.persistent_cache_keys
+    @test 1 ∈ PNM.get_cache(v).persistent_cache_keys
+    @test 2 ∈ PNM.get_cache(v).persistent_cache_keys
 end
 
 @testset "populate_cache VirtualLODF: batched solve matches lazy getindex" for solver in
@@ -59,13 +59,13 @@ end
     v_lazy = VirtualLODF(sys; linear_solver = solver)
     v_pop = VirtualLODF(sys; linear_solver = solver)
 
-    n_arcs = length(v_pop.axes[1])
+    n_arcs = length(PNM.get_arc_axis(v_pop))
     arc_idxs = collect(1:min(6, n_arcs))
 
     populate_cache(v_pop, arc_idxs)
     for i in arc_idxs
-        @test haskey(v_pop.cache.temp_cache, i)
-        @test i ∈ v_pop.cache.persistent_cache_keys
+        @test haskey(PNM.get_cache(v_pop).temp_cache, i)
+        @test i ∈ PNM.get_cache(v_pop).persistent_cache_keys
         @test isapprox(v_pop[i, :], v_lazy[i, :]; atol = 1e-10)
         # Self-element convention preserved by the batched path
         @test v_pop[i, i] == -1.0
@@ -88,8 +88,8 @@ end
             uuid,
             NetworkModification("populate_ctg_$e", [ArcModification(e, -b_e)]),
         )
-        v_pop.contingency_cache[uuid] = ctg
-        v_lazy.contingency_cache[uuid] = ctg
+        PNM.get_contingency_cache(v_pop)[uuid] = ctg
+        PNM.get_contingency_cache(v_lazy)[uuid] = ctg
         push!(ctgs, ctg)
     end
 
@@ -97,9 +97,9 @@ end
 
     for ctg in ctgs
         mod = ctg.modification
-        @test haskey(v_pop.woodbury_cache, mod)
-        @test haskey(v_pop.row_caches, mod)
-        rc = v_pop.row_caches[mod]
+        @test haskey(PNM.get_woodbury_cache(v_pop), mod)
+        @test haskey(PNM.get_row_caches(v_pop), mod)
+        rc = PNM.get_row_caches(v_pop)[mod]
         for m in monitored
             @test haskey(rc, m)
             @test m ∈ rc.persistent_cache_keys
@@ -119,13 +119,13 @@ end
         uuid,
         NetworkModification("populate_tuple_ctg", [ArcModification(e, -b_e)]),
     )
-    vmodf.contingency_cache[uuid] = ctg
+    PNM.get_contingency_cache(vmodf)[uuid] = ctg
 
     # Monitor by arc bus-pair tuple
-    mon_tuple = vmodf.axes[1][2]
+    mon_tuple = PNM.get_arc_axis(vmodf)[2]
     populate_cache(vmodf, [ctg]; monitored = [mon_tuple])
-    m_idx = vmodf.lookup[1][mon_tuple]
-    @test haskey(vmodf.row_caches[ctg.modification], m_idx)
+    m_idx = PNM.get_arc_lookup(vmodf)[mon_tuple]
+    @test haskey(PNM.get_row_caches(vmodf)[ctg.modification], m_idx)
 
     # Unregistered UUID must error clearly
     @test_throws ErrorException populate_cache(
