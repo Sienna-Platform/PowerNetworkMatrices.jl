@@ -602,33 +602,6 @@ function _ybus!(
     y12::Vector{YBUS_ELTYPE},
     y21::Vector{YBUS_ELTYPE},
     y22::Vector{YBUS_ELTYPE},
-    br::PSY.DynamicBranch,
-    num_bus::Dict{Int, Int},
-    branch_ix::Int,
-    fb::Vector{Int},
-    tb::Vector{Int},
-    nr::NetworkReductionData,
-)
-    _ybus!(
-        y11,
-        y12,
-        y21,
-        y22,
-        br.branch,
-        num_bus,
-        branch_ix,
-        fb,
-        tb,
-        nr,
-    )
-    return
-end
-
-function _ybus!(
-    y11::Vector{YBUS_ELTYPE},
-    y12::Vector{YBUS_ELTYPE},
-    y21::Vector{YBUS_ELTYPE},
-    y22::Vector{YBUS_ELTYPE},
     br::PSY.ThreeWindingTransformer,
     num_bus::Dict{Int, Int},
     offset_ix::Int,
