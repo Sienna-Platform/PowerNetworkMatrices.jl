@@ -30,7 +30,11 @@ _solve_multi_rhs!(
     out::Matrix{Float64},
 ) = AccelerateWrapper.solve_sparse!(K, B, out)
 
-# Generic fallback for any other factorization backend: solve column-by-column.
+# Generic fallback for any other factorization backend: solve column-by-column
+# through the single-RHS `_solve_factorization` seam (the documented extension
+# point for new solver backends). Errors clearly when the backend implements
+# neither a batched `solve_sparse!` nor `_solve_factorization`, instead of
+# surfacing a raw MethodError.
 function _solve_multi_rhs!(
     K,
     B::SparseArrays.SparseMatrixCSC{Float64, Int},
@@ -38,6 +42,11 @@ function _solve_multi_rhs!(
 )
     n = size(B, 1)
     col = zeros(n)
+    applicable(_solve_factorization, K, col) || error(
+        "Factorization backend $(typeof(K)) supports neither a batched " *
+        "`solve_sparse!` nor a single-RHS `_solve_factorization`; extend one of " *
+        "them to use `populate_cache` with this backend.",
+    )
     @inbounds for j in axes(B, 2)
         fill!(col, 0.0)
         for p in SparseArrays.nzrange(B, j)
@@ -121,19 +130,25 @@ function populate_cache(vptdf::VirtualPTDF, components)
     if !isempty(new_rows)
         sol = @lock core.solver_lock _solve_arc_columns(core, new_rows)
         valid_ix = core.valid_ix
+        # Build each row outside the cache lock (the scatter, dist-slack, and
+        # sparsify dominate); take cache_lock only for the double-check + insert,
+        # matching the `cached_row_lookup` pattern.
+        stored_rows = Vector{RowCacheValue}(undef, length(new_rows))
+        full = zeros(buscount)
+        for (j, _) in enumerate(new_rows)
+            fill!(full, 0.0)
+            @inbounds for i in eachindex(valid_ix)
+                full[valid_ix[i]] = sol[i, j]
+            end
+            if use_dist_slack
+                full .-= dot(full, dist_slack_normalized)
+            end
+            stored_rows[j] = tol > eps() ? sparsify(full, tol) : copy(full)
+        end
         @lock cache_lock begin
-            full = zeros(buscount)
             for (j, r) in enumerate(new_rows)
                 haskey(cache, r) && continue  # lost a race; keep the winner
-                fill!(full, 0.0)
-                @inbounds for i in eachindex(valid_ix)
-                    full[valid_ix[i]] = sol[i, j]
-                end
-                if use_dist_slack
-                    full .-= dot(full, dist_slack_normalized)
-                end
-                stored = tol > eps() ? sparsify(full, tol) : copy(full)
-                set_persistent_row!(cache, r, stored)
+                set_persistent_row!(cache, r, stored_rows[j])
             end
         end
     end
@@ -189,12 +204,16 @@ function populate_cache(vlodf::VirtualLODF, components)
         @inbounds for (j, r) in enumerate(new_rows)
             lodf_cols[r, j] = -1.0                  # self-element convention
         end
+        # Build each row outside the cache lock; take cache_lock only to insert.
+        stored_rows = Vector{RowCacheValue}(undef, length(new_rows))
+        for j in eachindex(new_rows)
+            row = lodf_cols[:, j]
+            stored_rows[j] = tol > eps() ? sparsify(row, tol) : row
+        end
         @lock cache_lock begin
             for (j, r) in enumerate(new_rows)
                 haskey(cache, r) && continue
-                row = lodf_cols[:, j]
-                stored = tol > eps() ? sparsify(row, tol) : row
-                set_persistent_row!(cache, r, stored)
+                set_persistent_row!(cache, r, stored_rows[j])
             end
         end
     end
@@ -227,6 +246,13 @@ function _resolve_modification(vmodf::VirtualMODF, uuid::Base.UUID)
     )
     return contingency_cache[uuid].modification
 end
+
+# Resolve a monitored arc identifier to its row index. Tuples go through
+# `_monitored_arc_index` so an arc that was reduced away yields VirtualMODF's
+# descriptive error instead of a raw KeyError.
+_resolve_monitored_index(::VirtualMODF, m::Integer) = Int(m)
+_resolve_monitored_index(vmodf::VirtualMODF, m::Tuple{Int, Int}) =
+    _monitored_arc_index(vmodf, m)
 
 """
     _woodbury_factors_from_base(base_full, BA, arc_sus, modifications, n_bus) -> WoodburyFactors
@@ -353,7 +379,7 @@ $(TYPEDSIGNATURES)
 function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
     mods =
         unique(NetworkModification[_resolve_modification(vmodf, c) for c in contingencies])
-    mon_idx = unique(Int[_resolve_arc_index(vmodf, m) for m in monitored])
+    mon_idx = unique(Int[_resolve_monitored_index(vmodf, m) for m in monitored])
     (isempty(mods) || isempty(mon_idx)) && return nothing
 
     core = get_core(vmodf)

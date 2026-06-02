@@ -1,3 +1,7 @@
+# Value type stored per cached row: a dense row, or a sparsified row when a
+# tolerance is applied.
+const RowCacheValue = Union{Vector{Float64}, SparseArrays.SparseVector{Float64}}
+
 """
 Structure used for saving the rows of the Virtual PTDF and LODF matrix.
 
