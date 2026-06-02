@@ -31,7 +31,11 @@ _solve_multi_rhs!(
 ) = AccelerateWrapper.solve_sparse!(K, B, out)
 
 # Generic fallback for any other factorization backend: solve column-by-column.
-function _solve_multi_rhs!(K, B::SparseArrays.SparseMatrixCSC{Float64, Int}, out::Matrix{Float64})
+function _solve_multi_rhs!(
+    K,
+    B::SparseArrays.SparseMatrixCSC{Float64, Int},
+    out::Matrix{Float64},
+)
     n = size(B, 1)
     col = zeros(n)
     @inbounds for j in axes(B, 2)
@@ -347,7 +351,8 @@ pinned, so subsequent `vmodf[monitored, contingency]` queries are cache hits.
 $(TYPEDSIGNATURES)
 """
 function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
-    mods = unique(NetworkModification[_resolve_modification(vmodf, c) for c in contingencies])
+    mods =
+        unique(NetworkModification[_resolve_modification(vmodf, c) for c in contingencies])
     mon_idx = unique(Int[_resolve_arc_index(vmodf, m) for m in monitored])
     (isempty(mods) || isempty(mon_idx)) && return nothing
 
@@ -386,7 +391,13 @@ function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
 
         for mod in mods
             wf = get!(woodbury_cache, mod) do
-                _woodbury_factors_from_base(base_full, BA, arc_sus, mod.arc_modifications, n_bus)
+                _woodbury_factors_from_base(
+                    base_full,
+                    BA,
+                    arc_sus,
+                    mod.arc_modifications,
+                    n_bus,
+                )
             end
             rc = get!(row_caches, mod) do
                 RowCache(max_bytes, Set{Int}(), n_bus * sizeof(Float64))
