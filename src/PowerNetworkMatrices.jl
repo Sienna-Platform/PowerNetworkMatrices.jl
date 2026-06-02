@@ -41,6 +41,7 @@ export factorize
 export get_post_modification_ptdf_row
 export get_system_uuid
 export is_factorized
+export populate_cache
 
 export depth_first_search
 export find_subnetworks
@@ -147,6 +148,7 @@ include("woodbury_kernel.jl")
 include("virtual_ptdf_modification.jl")
 include("modf_reduction_consistency.jl")
 include("virtual_modf_calculations.jl")
+include("populate_cache.jl")
 include("system_utils.jl")
 include("serialization.jl")
 

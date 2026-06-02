@@ -129,6 +129,63 @@ function Base.getindex(
 end
 
 """
+Stores `val` for `key` and pins `key` so it is never evicted by LRU.
+
+Used by `populate_cache` to bulk-fill rows computed via multi-RHS solves and
+guarantee they stay warm for later queries. Unlike `setindex!`, this never
+triggers `purge_one!`: pinned rows are added to `persistent_cache_keys`, and a
+cache populated beyond `max_num_keys` simply grows (callers should warn via
+[`warn_if_over_capacity`](@ref)).
+
+# Arguments
+- `cache::RowCache`:
+        cache where the row vector is stored and pinned.
+- `key::Int`:
+        row number (enumerated branch index) for the row vector.
+- `val`:
+        the row vector (dense `Vector{Float64}` or sparsified `SparseVector{Float64}`).
+"""
+function set_persistent_row!(
+    cache::RowCache{T},
+    key::Int,
+    val::T,
+) where {T <: Union{Vector{Float64}, SparseArrays.SparseVector{Float64}}}
+    if !haskey(cache.temp_cache, key)
+        push!(cache.access_order, key)
+    end
+    cache.temp_cache[key] = val
+    push!(cache.persistent_cache_keys, key)
+    return
+end
+
+"""
+Pin an already-stored `key` so a row populated lazily is also protected from
+eviction. No-op for keys absent from `temp_cache`.
+"""
+function pin_row!(cache::RowCache, key::Int)
+    haskey(cache.temp_cache, key) && push!(cache.persistent_cache_keys, key)
+    return
+end
+
+"""
+    warn_if_over_capacity(cache::RowCache)
+
+Emit a single warning when the cache holds more rows than `max_num_keys`. This
+happens when `populate_cache` pins more rows than the configured
+`max_cache_size` can hold; the pinned rows remain resident (never evicted), so
+the only risk is higher memory use.
+"""
+function warn_if_over_capacity(cache::RowCache)
+    if length(cache.temp_cache) > cache.max_num_keys
+        @warn "populate_cache pinned $(length(cache.temp_cache)) rows, exceeding " *
+              "the cache capacity (max_num_keys = $(cache.max_num_keys)). Pinned " *
+              "rows are not evicted; increase `max_cache_size` to avoid memory " *
+              "pressure." maxlog = 1
+    end
+    return
+end
+
+"""
 Shows the number of rows stored in cache
 """
 function Base.length(cache::RowCache)
