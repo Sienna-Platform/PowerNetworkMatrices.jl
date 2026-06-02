@@ -1611,6 +1611,7 @@ function _remap_merged_bus_in_branch_maps!(
         push!(arcs_to_insert, new_arc => val)
     end
     for (new_arc, val) in arcs_to_insert
+        reverse_new_arc = (new_arc[2], new_arc[1])
         if haskey(nr.direct_branch_map, new_arc)
             existing = pop!(nr.direct_branch_map, new_arc)
             @debug "Bus merge collision on direct arc $new_arc: promoting $(get_name(existing)) and $(get_name(val)) to a parallel group."
@@ -1624,6 +1625,21 @@ function _remap_merged_bus_in_branch_maps!(
         elseif haskey(nr.parallel_branch_map, new_arc)
             @debug "Bus merge collision on direct arc $new_arc: adding $(get_name(val)) to existing parallel group."
             _push_parallel_branch!(nr.parallel_branch_map, new_arc, val)
+        elseif haskey(nr.direct_branch_map, reverse_new_arc)
+            # The remapped arc is anti-parallel to an existing direct entry 
+            # Normalize to the already-established key so the pair is stored as a single parallel group.
+            existing = pop!(nr.direct_branch_map, reverse_new_arc)
+            @debug "Bus merge created anti-parallel collision: remapped arc $new_arc conflicts with existing $reverse_new_arc; promoting $(get_name(existing)) and $(get_name(val)) to a parallel group under $reverse_new_arc."
+            if haskey(nr.parallel_branch_map, reverse_new_arc)
+                _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, existing)
+                _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, val)
+            else
+                nr.parallel_branch_map[reverse_new_arc] =
+                    _make_parallel_branch_pair(existing, val, reverse_new_arc)
+            end
+        elseif haskey(nr.parallel_branch_map, reverse_new_arc)
+            @debug "Bus merge created anti-parallel collision: remapped arc $new_arc conflicts with existing parallel group at $reverse_new_arc; adding $(get_name(val)) to that group."
+            _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, val)
         else
             nr.direct_branch_map[new_arc] = val
         end
@@ -1644,6 +1660,7 @@ function _remap_merged_bus_in_branch_maps!(
         push!(parallel_to_insert, new_arc => val)
     end
     for (new_arc, val) in parallel_to_insert
+        reverse_new_arc = (new_arc[2], new_arc[1])
         if haskey(nr.parallel_branch_map, new_arc)
             @debug "Bus merge collision on parallel arc $new_arc: merging incoming group ($(length(val)) branch(es)) into existing group."
             # Merge: push all branches from the incoming group into the existing group.
@@ -1656,6 +1673,16 @@ function _remap_merged_bus_in_branch_maps!(
             existing = pop!(nr.direct_branch_map, new_arc)
             nr.parallel_branch_map[new_arc] = val
             _push_parallel_branch!(nr.parallel_branch_map, new_arc, existing)
+        elseif haskey(nr.parallel_branch_map, reverse_new_arc)
+            @debug "Bus merge created anti-parallel collision on parallel arc $new_arc ↔ $reverse_new_arc: merging incoming group into existing group at $reverse_new_arc."
+            for br in val
+                _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, br)
+            end
+        elseif haskey(nr.direct_branch_map, reverse_new_arc)
+            @debug "Bus merge created anti-parallel collision on parallel arc $new_arc ↔ $reverse_new_arc: absorbing existing direct branch into incoming group, stored under $reverse_new_arc."
+            existing = pop!(nr.direct_branch_map, reverse_new_arc)
+            nr.parallel_branch_map[reverse_new_arc] = val
+            _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, existing)
         else
             nr.parallel_branch_map[new_arc] = val
         end
