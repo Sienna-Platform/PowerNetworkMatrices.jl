@@ -52,8 +52,10 @@ function _solve_multi_rhs!(
         for p in SparseArrays.nzrange(B, j)
             col[SparseArrays.rowvals(B)[p]] = SparseArrays.nonzeros(B)[p]
         end
-        _solve_factorization(K, col)
-        copyto!(view(out, :, j), col)
+        # Capture the return: KLU/Accelerate solve in place and return `col`,
+        # but a future backend may return a fresh vector, so read the result.
+        result = _solve_factorization(K, col)
+        copyto!(view(out, :, j), result)
     end
     return out
 end
@@ -360,7 +362,7 @@ batched multi-RHS solves.
 
 `contingencies` may mix `NetworkModification`, `ContingencySpec`, registered
 `PSY.Outage`, and registered outage UUIDs. `monitored` is an iterable of arc
-identifiers (integer indices, bus-pair tuples, or branch names).
+identifiers (integer indices or bus-pair tuples).
 
 The acceleration comes from a single batched solve over the union of all arcs
 referenced — every contingency's modified arcs plus every monitored arc. Because
@@ -377,11 +379,6 @@ pinned, so subsequent `vmodf[monitored, contingency]` queries are cache hits.
 $(TYPEDSIGNATURES)
 """
 function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
-    mods =
-        unique(NetworkModification[_resolve_modification(vmodf, c) for c in contingencies])
-    mon_idx = unique(Int[_resolve_monitored_index(vmodf, m) for m in monitored])
-    (isempty(mods) || isempty(mon_idx)) && return nothing
-
     core = get_core(vmodf)
     row_caches = get_row_caches(vmodf)
     woodbury_cache = get_woodbury_cache(vmodf)
@@ -392,6 +389,15 @@ function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
     arc_sus = core.arc_susceptances
 
     @lock core.solver_lock begin
+        # Resolve under the lock: `_resolve_modification` reads `contingency_cache`
+        # for UUID/Outage inputs, so resolving here (not before the lock) matches
+        # `getindex` and avoids racing with `clear_all_caches!`.
+        mods = unique(
+            NetworkModification[_resolve_modification(vmodf, c) for c in contingencies],
+        )
+        mon_idx = unique(Int[_resolve_monitored_index(vmodf, m) for m in monitored])
+        (isempty(mods) || isempty(mon_idx)) && return nothing
+
         # Union of all arcs needing a pre-contingency solve: monitored arcs and
         # every contingency's modified arcs.
         arc_set = Set{Int}(mon_idx)
