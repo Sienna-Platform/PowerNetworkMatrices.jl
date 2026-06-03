@@ -22,7 +22,7 @@ MKLPardisoExt = "Pardiso"
 
 [sources]
 InfrastructureSystems = {url = "https://github.com/NREL-Sienna/InfrastructureSystems.jl", rev = "IS4"}
-PowerSystems = {url = "https://github.com/NREL-Sienna/PowerSystems.jl", rev = "psy6"}
+PowerSystems = {url = "https://github.com/NREL-Sienna/PowerSystems.jl", rev = "lk/remove-dynamic-br"}
 
 [compat]
 DataStructures = "^0.19"

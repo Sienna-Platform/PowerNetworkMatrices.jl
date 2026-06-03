@@ -5,7 +5,6 @@ struct YbusACBranches
     tap_transformers::Vector{PSY.TapTransformer}
     phase_shifting_transformers::Vector{PSY.PhaseShiftingTransformer}
     transformer2w::Vector{PSY.Transformer2W}
-    dynamic_branches::Vector{PSY.DynamicBranch}
     breaker_switches::Vector{PSY.DiscreteControlledACBranch}
 end
 
@@ -16,7 +15,6 @@ function Base.length(b::YbusACBranches)::Int
            length(b.tap_transformers) +
            length(b.phase_shifting_transformers) +
            length(b.transformer2w) +
-           length(b.dynamic_branches) +
            length(b.breaker_switches)
 end
 
@@ -54,7 +52,6 @@ function _get_ybus_two_terminal_ac_branches(sys::PSY.System)::YbusACBranches
         Vector{PSY.TapTransformer}(),
         Vector{PSY.PhaseShiftingTransformer}(),
         Vector{PSY.Transformer2W}(),
-        Vector{PSY.DynamicBranch}(),
         Vector{PSY.DiscreteControlledACBranch}(),
     )
     _populate_ybus_branch_vector!(branches.lines, sys)
@@ -63,7 +60,6 @@ function _get_ybus_two_terminal_ac_branches(sys::PSY.System)::YbusACBranches
     _populate_ybus_branch_vector!(branches.tap_transformers, sys)
     _populate_ybus_branch_vector!(branches.phase_shifting_transformers, sys)
     _populate_ybus_branch_vector!(branches.transformer2w, sys)
-    _populate_ybus_branch_vector!(branches.dynamic_branches, sys)
     _populate_ybus_branch_vector!(branches.breaker_switches, sys)
     return branches
 end
@@ -78,7 +74,6 @@ function _foreach_ybus_branch(
     ix = _foreach_typed_branches(f, branches.tap_transformers, ix)
     ix = _foreach_typed_branches(f, branches.phase_shifting_transformers, ix)
     ix = _foreach_typed_branches(f, branches.transformer2w, ix)
-    ix = _foreach_typed_branches(f, branches.dynamic_branches, ix)
     ix = _foreach_typed_branches(f, branches.breaker_switches, ix)
     return ix
 end

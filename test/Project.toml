@@ -11,7 +11,6 @@ Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 Pardiso = "46dd5b70-b6fb-5a00-ae2d-e8fea33afaf2"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 PowerFlowFileParser = "bed98974-b02e-5e2f-9ee0-a103f5c450dd"
-PowerNetworkMatrices = "bed98974-b02a-5e2f-9fe0-a103f5c450dd"
 PowerSystemCaseBuilder = "f00506e0-b84f-492a-93c2-c0a9afc4364e"
 PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
@@ -21,10 +20,10 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TimeSeries = "9e3dc215-6440-5c97-bce1-76c03772f85e"
 
 [sources]
-InfrastructureSystems = {url = "https://github.com/NREL-Sienna/InfrastructureSystems.jl", rev = "IS4"}
-PowerFlowFileParser = {url = "https://github.com/NREL-Sienna/PowerFlowFileParser.jl", rev = "main"}
-PowerSystemCaseBuilder = {url = "https://github.com/NREL-Sienna/PowerSystemCaseBuilder.jl", rev = "psy6"}
-PowerSystems = {url = "https://github.com/NREL-Sienna/PowerSystems.jl", rev = "psy6"}
+InfrastructureSystems = {rev = "IS4", url = "https://github.com/NREL-Sienna/InfrastructureSystems.jl"}
+PowerFlowFileParser = {rev = "main", url = "https://github.com/NREL-Sienna/PowerFlowFileParser.jl"}
+PowerSystemCaseBuilder = {rev = "psy6", url = "https://github.com/NREL-Sienna/PowerSystemCaseBuilder.jl"}
+PowerSystems = {rev = "lk/remove-dynamic-br", url = "https://github.com/NREL-Sienna/PowerSystems.jl"}
 
 [compat]
 julia = "^1.10"
