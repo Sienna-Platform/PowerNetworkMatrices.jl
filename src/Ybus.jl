@@ -207,8 +207,11 @@ function _push_parallel_branch_dispatch!(
     br::PSY.ACTransmission,
 )
     @warn "Mismatch in parallel device types for arc $(arc_tuple). This could indicate issues in the network data."
-    parallel_branch_map[arc_tuple] =
-        MixedBranchesParallel(PSY.ACTransmission[existing.branches..., br])
+    parallel_branch_map[arc_tuple] = MixedBranchesParallel(
+        PSY.ACTransmission[existing.branches..., br],
+        existing.arc_key,
+        nothing,
+    )
     return
 end
 
@@ -451,6 +454,16 @@ function ybus_branch_entries(
     return (Y11, Y12, Y21, Y22)
 end
 
+# A single branch has unambiguous orientation; this `nr` overload lets callers iterating
+# heterogeneous segments (single branches and parallel groups) pass `nr` uniformly.
+function ybus_branch_entries(
+    br::PSY.ACTransmission,
+    ::NetworkReductionData;
+    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+)
+    return ybus_branch_entries(br; min_x_eps = min_x_eps)
+end
+
 function ybus_branch_entries(
     br::PSY.GenericArcImpedance;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
@@ -469,27 +482,39 @@ function ybus_branch_entries(
 end
 
 function ybus_branch_entries(
-    parallel_br::AbstractBranchesParallel;
+    parallel_br::AbstractBranchesParallel,
+    nr::NetworkReductionData;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
-    arc = get_arc_tuple(first(parallel_br))
-    Y11 = Y12 = Y21 = Y22 = zero(YBUS_ELTYPE)
+    # A bus merge can fold an anti-parallel branch into the group; swap its 2x2 so the
+    # equivalent is correct in the key's frame for asymmetric branches (transformers).
+    reference = get_arc_tuple(parallel_br, nr)
+    # Accumulate in ComplexF64 (the per-branch entry type): keeps the sum type-stable and
+    # full-precision; callers narrow to YBUS_ELTYPE when storing.
+    Y11 = Y12 = Y21 = Y22 = zero(ComplexF64)
     for br in parallel_br
-        # All branches in BranchesParallel are have the same orientation when constructed in add_to_branch_maps!
         (y11, y12, y21, y22) = ybus_branch_entries(br)
-        Y11 += y11
-        Y12 += y12
-        Y21 += y21
-        Y22 += y22
+        if get_arc_tuple(br, nr) != reference
+            Y11 += y22
+            Y12 += y21
+            Y21 += y12
+            Y22 += y11
+        else
+            Y11 += y11
+            Y12 += y12
+            Y21 += y21
+            Y22 += y22
+        end
     end
     return (Y11, Y12, Y21, Y22)
 end
 
 function ybus_branch_entries(
-    br::BranchesSeries;
+    br::BranchesSeries,
+    nr::NetworkReductionData;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
-    ybus_chain = _build_chain_ybus(br)
+    ybus_chain = _build_chain_ybus(br, nr)
     ybus_reduced = _reduce_internal_nodes(ybus_chain)
     return ybus_reduced[1, 1], ybus_reduced[1, 2], ybus_reduced[2, 1], ybus_reduced[2, 2]
 end
@@ -1484,6 +1509,27 @@ function _merge_ybus_buses!(
         _accumulate_csc_row_into!(adjacency_data, i, j)
         _accumulate_csc_col_into!(adjacency_data, i, j)
     end
+    # Anti-parallel branches cancel in the signed adjacency (+1/-1 sum to 0) and get dropped
+    # by `dropzeros!`, hiding a real edge from DegreeTwoReduction. The complex Ybus data sums
+    # and never cancels, so re-derive each surviving bus's adjacency from it.
+    for surviving_bus in Set(values(merged_bus_pairs))
+        _repair_merged_adjacency!(adjacency_data, data, bus_lookup[surviving_bus])
+    end
+    return
+end
+
+function _repair_merged_adjacency!(
+    adjacency_data::SparseArrays.SparseMatrixCSC{Int8, Int},
+    data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int},
+    i::Int,
+)
+    drows = SparseArrays.rowvals(data)
+    for k in SparseArrays.nzrange(data, i)
+        r = drows[k]
+        r == i && continue
+        iszero(adjacency_data[i, r]) && (adjacency_data[i, r] = one(Int8))
+        iszero(adjacency_data[r, i]) && (adjacency_data[r, i] = -one(Int8))
+    end
     return
 end
 
@@ -1611,6 +1657,7 @@ function _remap_merged_bus_in_branch_maps!(
         push!(arcs_to_insert, new_arc => val)
     end
     for (new_arc, val) in arcs_to_insert
+        reverse_new_arc = (new_arc[2], new_arc[1])
         if haskey(nr.direct_branch_map, new_arc)
             existing = pop!(nr.direct_branch_map, new_arc)
             @debug "Bus merge collision on direct arc $new_arc: promoting $(get_name(existing)) and $(get_name(val)) to a parallel group."
@@ -1624,6 +1671,21 @@ function _remap_merged_bus_in_branch_maps!(
         elseif haskey(nr.parallel_branch_map, new_arc)
             @debug "Bus merge collision on direct arc $new_arc: adding $(get_name(val)) to existing parallel group."
             _push_parallel_branch!(nr.parallel_branch_map, new_arc, val)
+        elseif haskey(nr.direct_branch_map, reverse_new_arc)
+            # The remapped arc is anti-parallel to an existing direct entry 
+            # Normalize to the already-established key so the pair is stored as a single parallel group.
+            existing = pop!(nr.direct_branch_map, reverse_new_arc)
+            @debug "Bus merge created anti-parallel collision: remapped arc $new_arc conflicts with existing $reverse_new_arc; promoting $(get_name(existing)) and $(get_name(val)) to a parallel group under $reverse_new_arc."
+            if haskey(nr.parallel_branch_map, reverse_new_arc)
+                _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, existing)
+                _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, val)
+            else
+                nr.parallel_branch_map[reverse_new_arc] =
+                    _make_parallel_branch_pair(existing, val, reverse_new_arc)
+            end
+        elseif haskey(nr.parallel_branch_map, reverse_new_arc)
+            @debug "Bus merge created anti-parallel collision: remapped arc $new_arc conflicts with existing parallel group at $reverse_new_arc; adding $(get_name(val)) to that group."
+            _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, val)
         else
             nr.direct_branch_map[new_arc] = val
         end
@@ -1644,6 +1706,7 @@ function _remap_merged_bus_in_branch_maps!(
         push!(parallel_to_insert, new_arc => val)
     end
     for (new_arc, val) in parallel_to_insert
+        reverse_new_arc = (new_arc[2], new_arc[1])
         if haskey(nr.parallel_branch_map, new_arc)
             @debug "Bus merge collision on parallel arc $new_arc: merging incoming group ($(length(val)) branch(es)) into existing group."
             # Merge: push all branches from the incoming group into the existing group.
@@ -1656,6 +1719,20 @@ function _remap_merged_bus_in_branch_maps!(
             existing = pop!(nr.direct_branch_map, new_arc)
             nr.parallel_branch_map[new_arc] = val
             _push_parallel_branch!(nr.parallel_branch_map, new_arc, existing)
+        elseif haskey(nr.parallel_branch_map, reverse_new_arc)
+            @debug "Bus merge created anti-parallel collision on parallel arc $new_arc ↔ $reverse_new_arc: merging incoming group into existing group at $reverse_new_arc."
+            for br in val
+                _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, br)
+            end
+        elseif haskey(nr.direct_branch_map, reverse_new_arc)
+            @debug "Bus merge created anti-parallel collision on parallel arc $new_arc ↔ $reverse_new_arc: absorbing existing direct branch into incoming group, stored under $reverse_new_arc."
+            existing = pop!(nr.direct_branch_map, reverse_new_arc)
+            # Put the key-oriented branch first so the group's reference orientation is the key.
+            nr.parallel_branch_map[reverse_new_arc] =
+                _make_parallel_branch_pair(existing, first(val), reverse_new_arc)
+            for br in Iterators.drop(val, 1)
+                _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, br)
+            end
         else
             nr.parallel_branch_map[new_arc] = val
         end
@@ -1845,7 +1922,7 @@ function _modify_removed_arc_connections!(
 )
     for (arc, bus) in removed_arc_to_surviving_bus
         arc_entry = _get_entry(arc, nrd_old)
-        y11, _, _, y22 = ybus_branch_entries(arc_entry)
+        y11, _, _, y22 = ybus_branch_entries(arc_entry, nrd_old)
         if arc[1] == bus
             data[bus_lookup[arc[1]], bus_lookup[arc[1]]] -= y11
         elseif arc[2] == bus
@@ -1884,7 +1961,7 @@ function _add_series_branches_to_ybus!(
             _get_chain_data(equivalent_arc, series_map_entry, nrd)
         ordered_bus_indices = [bus_lookup[x] for x in ordered_bus_numbers]
         equivalent_arc_indices = (ordered_bus_indices[1], ordered_bus_indices[end])
-        ybus_isolated_d2_chain = _build_chain_ybus(series_map_entry)
+        ybus_isolated_d2_chain = _build_chain_ybus(series_map_entry, nrd)
         ybus_boundary_isolated_d2_chain = _reduce_internal_nodes(ybus_isolated_d2_chain)
         _apply_d2_chain_ybus!(
             data,
@@ -1915,7 +1992,7 @@ function _add_series_branches_to_ybus!(
             _get_chain_data(equivalent_arc, series_map_entry, nrd)
         ordered_bus_indices = [bus_lookup[x] for x in ordered_bus_numbers]
         equivalent_arc_indices = (ordered_bus_indices[1], ordered_bus_indices[end])
-        ybus_isolated_d2_chain = _build_chain_ybus(series_map_entry)
+        ybus_isolated_d2_chain = _build_chain_ybus(series_map_entry, nrd)
         ybus_boundary_isolated_d2_chain = _reduce_internal_nodes(ybus_isolated_d2_chain)
         _apply_d2_chain_ybus!(
             data,
@@ -1980,6 +2057,7 @@ end
 
 function _build_chain_ybus(
     series_chain::BranchesSeries,
+    nr::NetworkReductionData,
 )
     segment_orientations = series_chain.segment_orientations
     fb = Vector{Int}()
@@ -1999,6 +2077,7 @@ function _build_chain_ybus(
             tb,
             ix,
             segment_orientations[ix],
+            nr,
         )
     end
     return Matrix(
@@ -2060,6 +2139,7 @@ function add_segment_to_ybus!(
     tb::Vector{Int},
     ix::Int,
     segment_orientation::Symbol,
+    nr::NetworkReductionData,
 )
     (Y11, Y12, Y21, Y22) = ybus_branch_entries(segment)
     push!(fb, ix)
@@ -2129,9 +2209,25 @@ function add_segment_to_ybus!(
     tb::Vector{Int},
     ix::Int,
     segment_orientation::Symbol,
+    nr::NetworkReductionData,
 )
-    for branch in segment
-        add_segment_to_ybus!(branch, y11, y12, y21, y22, fb, tb, ix, segment_orientation)
+    # Use the group's orientation-correct equivalent block (via `nr`) rather than summing
+    # members with one shared orientation, which mis-handles an anti-parallel asymmetric member.
+    (Y11, Y12, Y21, Y22) = ybus_branch_entries(segment, nr)
+    push!(fb, ix)
+    push!(tb, ix + 1)
+    if segment_orientation == :FromTo
+        push!(y11, Y11)
+        push!(y12, Y12)
+        push!(y21, Y21)
+        push!(y22, Y22)
+    elseif segment_orientation == :ToFrom
+        push!(y11, Y22)
+        push!(y12, Y21)
+        push!(y21, Y12)
+        push!(y22, Y11)
+    else
+        error("Invalid segment orientation $(segment_orientation)")
     end
     return
 end

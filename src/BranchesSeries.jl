@@ -110,21 +110,6 @@ function get_series_susceptance(series_chain::BranchesSeries)
     return total_susceptance
 end
 
-function get_equivalent_physical_branch_parameters(bs::BranchesSeries)
-    if isnothing(bs.equivalent_ybus)
-        populate_equivalent_ybus!(bs)
-    end
-    equivalent_ybus = bs.equivalent_ybus
-    return _get_equivalent_physical_branch_parameters(equivalent_ybus)
-end
-
-function populate_equivalent_ybus!(bs::BranchesSeries)
-    ybus_series_chain = _build_chain_ybus(bs)
-    equivalent_ybus = _reduce_internal_nodes(ybus_series_chain)
-    bs.equivalent_ybus = equivalent_ybus
-    return
-end
-
 """
     get_equivalent_rating(bs::BranchesSeries)
 
