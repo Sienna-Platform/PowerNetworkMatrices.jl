@@ -560,3 +560,127 @@ end
     @test all(isfinite, BA_Matrix(yb).data.nzval)
     @test all(isfinite, ABA_Matrix(yb; factorize = false).data.nzval)
 end
+
+@testset "ZeroImpedanceBranchReduction: anti-parallel merge keeps a bus's degree" begin
+    # Regression: ZIB L13 merges bus 3 into bus 1, making L23 anti-parallel to L12; their
+    # signed-adjacency entries cancel and hide the 1-2 edge. Without the repair, D2 wrongly
+    # folds bus 2 (looks degree-2) and IncidenceMatrix then KeyErrors on the orphaned arc.
+    sys = System(100.0)
+    buses = ACBus[]
+    for i in 1:5
+        b = ACBus(;
+            number = i,
+            name = "b$i",
+            available = true,
+            bustype = i == 1 ? ACBusTypes.REF : ACBusTypes.PV,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        add_component!(sys, b)
+        push!(buses, b)
+    end
+    function _mk_line(name, f, t, x)
+        arc = Arc(; from = buses[f], to = buses[t])
+        add_component!(sys, arc)
+        add_component!(
+            sys,
+            Line(;
+                name = name,
+                available = true,
+                active_power_flow = 0.0,
+                reactive_power_flow = 0.0,
+                arc = arc,
+                r = 0.0,
+                x = x,
+                b = (from = 0.0, to = 0.0),
+                rating = 1.0,
+                angle_limits = (min = -1.5, max = 1.5),
+            ),
+        )
+    end
+    _mk_line("L12", 1, 2, 0.1)
+    _mk_line("L23", 2, 3, 0.1)
+    _mk_line("L13", 1, 3, 1e-5)   # zero-impedance: merges bus 3 into bus 1
+    _mk_line("L24", 2, 4, 0.1)
+    _mk_line("L25", 2, 5, 0.1)
+    _mk_line("L14", 1, 4, 0.1)    # keeps bus 1 connected after bus 2's neighbors
+
+    ybus = Ybus(
+        sys;
+        irreducible_buses = [1, 4, 5],
+        network_reductions = NetworkReduction[DegreeTwoReduction()],
+    )
+    nr = ybus.network_reduction_data
+    # Bus 2 stays degree-3 (1 via the parallel group, plus 4 and 5), so it is not folded.
+    @test 2 ∉ nr.removed_buses
+    @test 2 ∈ PNM.get_bus_axis(ybus)
+    # Every arc endpoint must resolve, i.e. IncidenceMatrix builds without a KeyError.
+    @test IncidenceMatrix(ybus) isa IncidenceMatrix
+end
+
+@testset "anti-parallel asymmetric group: orientation-correct equivalent Ybus" begin
+    # Regression: ZIB merges bus 3 into bus 1, making asymmetric L2 (b.from != b.to)
+    # anti-parallel to L1. The equivalent must swap L2's 2x2 into the key frame; the old
+    # positional sum gave a wrong Y11. Oracle: the independently merged ybus.data.
+    sys = System(100.0)
+    buses = ACBus[]
+    for i in 1:3
+        b = ACBus(;
+            number = i,
+            name = "b$i",
+            available = true,
+            bustype = i == 1 ? ACBusTypes.REF : ACBusTypes.PV,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        add_component!(sys, b)
+        push!(buses, b)
+    end
+    function _mk_line(name, f, t, x, b_from)
+        arc = Arc(; from = buses[f], to = buses[t])
+        add_component!(sys, arc)
+        add_component!(
+            sys,
+            Line(;
+                name = name,
+                available = true,
+                active_power_flow = 0.0,
+                reactive_power_flow = 0.0,
+                arc = arc,
+                r = 0.0,
+                x = x,
+                b = (from = b_from, to = 0.0),
+                rating = 1.0,
+                angle_limits = (min = -1.5, max = 1.5),
+            ),
+        )
+    end
+    _mk_line("L1", 1, 2, 0.1, 0.0)     # symmetric
+    _mk_line("L2", 2, 3, 0.2, 0.3)     # asymmetric shunt; anti-parallel after the merge
+    _mk_line("ZIB", 1, 3, 1e-5, 0.0)   # zero-impedance: merges bus 3 into bus 1
+
+    ybus = Ybus(sys)
+    nr = ybus.network_reduction_data
+    @test length(nr.parallel_branch_map) == 1
+    key, bp = first(nr.parallel_branch_map)
+    bl = ybus.lookup[1]
+    ip = bl[key[1]]
+    iq = bl[key[2]]
+
+    aware = PNM.ybus_branch_entries(bp, nr)
+    # Oracle: ybus.data is built by accumulation (an independent code path).
+    @test aware[1] ≈ ybus.data[ip, ip]
+    @test aware[2] ≈ ybus.data[ip, iq]
+    @test aware[3] ≈ ybus.data[iq, ip]
+    @test aware[4] ≈ ybus.data[iq, iq]
+    # The old orientation-blind positional sum mis-places the reversed member's self admittance.
+    blind11 = zero(eltype(ybus.data))
+    for br in bp.branches
+        blind11 += PNM.ybus_branch_entries(br)[1]
+    end
+    @test !isapprox(blind11, ybus.data[ip, ip])
+end
