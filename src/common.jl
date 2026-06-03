@@ -118,13 +118,18 @@ function get_arc_tuple(br::PSY.ACTransmission, nr::NetworkReductionData)
     get_arc_tuple(PSY.get_arc(br), nr)
 end
 
-# Parallel branches: all oriented in same direction, so just take arc of first.
+# Canonical orientation is the stored `arc_key` (set at construction), remapped through `nr`;
+# anti-parallel members may exist post-merge, so do not rely on member order.
 function get_arc_tuple(br::AbstractBranchesParallel, nr::NetworkReductionData)
-    get_arc_tuple(PSY.get_arc(first(br)), nr)
+    reverse_bus_search_map = get_reverse_bus_search_map(nr)
+    return (
+        get(reverse_bus_search_map, br.arc_key[1], br.arc_key[1]),
+        get(reverse_bus_search_map, br.arc_key[2], br.arc_key[2]),
+    )
 end
 
 function get_arc_tuple(br::AbstractBranchesParallel)
-    return get_arc_tuple(PSY.get_arc(first(br)))
+    return br.arc_key
 end
 
 function get_arc_tuple(br::PSY.ACTransmission)
@@ -335,6 +340,37 @@ function _get_equivalent_physical_branch_parameters(equivalent_ybus::Matrix{YBUS
     g_to = real(y_22 - y_l)
     b_to = imag(y_22 - y_l)
     return EquivalentBranch(r, x, g_from, b_from, g_to, b_to, tap, shift)
+end
+
+# `get_equivalent_physical_branch_parameters` / `populate_equivalent_ybus!` live here (rather
+# than in BranchesParallel.jl / BranchesSeries.jl) because they take a `NetworkReductionData`,
+# which is defined in a file included after those two.
+function populate_equivalent_ybus!(
+    bp::AbstractBranchesParallel,
+    nr::NetworkReductionData,
+)
+    Y11, Y12, Y21, Y22 = ybus_branch_entries(bp, nr)
+    bp.equivalent_ybus = YBUS_ELTYPE[Y11 Y12; Y21 Y22]
+    return
+end
+
+function populate_equivalent_ybus!(
+    bs::BranchesSeries,
+    nr::NetworkReductionData,
+)
+    ybus_series_chain = _build_chain_ybus(bs, nr)
+    bs.equivalent_ybus = _reduce_internal_nodes(ybus_series_chain)
+    return
+end
+
+function get_equivalent_physical_branch_parameters(
+    segment::Union{AbstractBranchesParallel, BranchesSeries},
+    nr::NetworkReductionData,
+)
+    if isnothing(segment.equivalent_ybus)
+        populate_equivalent_ybus!(segment, nr)
+    end
+    return _get_equivalent_physical_branch_parameters(segment.equivalent_ybus)
 end
 
 is_a_reduction(::PSY.ACTransmission) = false
