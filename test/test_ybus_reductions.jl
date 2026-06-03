@@ -684,3 +684,100 @@ end
     end
     @test !isapprox(blind11, ybus.data[ip, ip])
 end
+
+@testset "anti-parallel asymmetric group: phase-shifting transformer member" begin
+    # Regression: a PhaseShiftingTransformer makes both diagonals (tap: Y11 != Y22) and
+    # off-diagonals (phase shift: Y12 != Y21) asymmetric. When ZIB merges bus 3 into bus 1
+    # the transformer goes anti-parallel to L1, so the equivalent must swap its full 2x2 into
+    # the key frame. Unlike the shunt-only case above, here the off-diagonal swap matters too.
+    sys = System(100.0)
+    buses = ACBus[]
+    for i in 1:3
+        bustype = ACBusTypes.PV
+        if i == 1
+            bustype = ACBusTypes.REF
+        end
+        b = ACBus(;
+            number = i,
+            name = "b$i",
+            available = true,
+            bustype = bustype,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        add_component!(sys, b)
+        push!(buses, b)
+    end
+    function _mk_line(name, f, t, x)
+        arc = Arc(; from = buses[f], to = buses[t])
+        add_component!(sys, arc)
+        add_component!(
+            sys,
+            Line(;
+                name = name,
+                available = true,
+                active_power_flow = 0.0,
+                reactive_power_flow = 0.0,
+                arc = arc,
+                r = 0.0,
+                x = x,
+                b = (from = 0.0, to = 0.0),
+                rating = 1.0,
+                angle_limits = (min = -1.5, max = 1.5),
+            ),
+        )
+    end
+    _mk_line("L1", 1, 2, 0.1)        # symmetric
+    _mk_line("ZIB", 1, 3, 1e-5)      # zero-impedance: merges bus 3 into bus 1
+    # Asymmetric member oriented (2, 3); becomes anti-parallel to L1 after the merge. tap != 1
+    # breaks Y11 == Y22 and α != 0 breaks Y12 == Y21, so the whole block must be reoriented.
+    arc = Arc(; from = buses[2], to = buses[3])
+    add_component!(sys, arc)
+    add_component!(
+        sys,
+        PSY.PhaseShiftingTransformer(;
+            name = "PST",
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            arc = arc,
+            r = 0.0,
+            x = 0.2,
+            primary_shunt = Complex(0.0, 0.3),
+            tap = 1.05,
+            α = 0.15,
+            rating = 1.0,
+            base_power = 100.0,
+        ),
+    )
+
+    ybus = Ybus(sys)
+    nr = ybus.network_reduction_data
+    @test length(nr.parallel_branch_map) == 1
+    key, bp = first(nr.parallel_branch_map)
+    bl = ybus.lookup[1]
+    ip = bl[key[1]]
+    iq = bl[key[2]]
+
+    aware = PNM.ybus_branch_entries(bp, nr)
+    # The phase shift makes the equivalent itself off-diagonal-asymmetric.
+    @test !isapprox(aware[2], aware[3])
+    # Oracle: ybus.data is built by accumulation (an independent code path).
+    @test aware[1] ≈ ybus.data[ip, ip]
+    @test aware[2] ≈ ybus.data[ip, iq]
+    @test aware[3] ≈ ybus.data[iq, ip]
+    @test aware[4] ≈ ybus.data[iq, iq]
+    # The old orientation-blind positional sum mis-places both the self admittance (tap) and
+    # the off-diagonal (phase shift) of the reversed member.
+    blind11 = zero(eltype(ybus.data))
+    blind12 = zero(eltype(ybus.data))
+    for br in bp.branches
+        entries = PNM.ybus_branch_entries(br)
+        blind11 += entries[1]
+        blind12 += entries[2]
+    end
+    @test !isapprox(blind11, ybus.data[ip, ip])
+    @test !isapprox(blind12, ybus.data[ip, iq])
+end

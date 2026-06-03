@@ -9,14 +9,31 @@ using PowerSystemCaseBuilder
 using Logging
 
 configure_logging(; console_level = Logging.Error)
+
+# Number of timing samples collected per metric (after a warm-up). Reporting the median and
+# range over several samples makes the comparison robust to one-off noise on shared CI
+# runners, which a single timing is very sensitive to.
+const N_SAMPLES = 5
+
 systems = [
     (MatpowerTestSystems, "matpower_ACTIVSg2000_sys"),
     (PSSEParsingTestSystems, "Base_Eastern_Interconnect_515GW"),
 ]
 
-function record_time(label, time)
+# Warm up once (compilation), then collect `n` warm samples of `f()`.
+function sample_times(f; n = N_SAMPLES)
+    f()
+    times = Vector{Float64}(undef, n)
+    for i in 1:n
+        GC.gc()
+        times[i] = @elapsed f()
+    end
+    return times
+end
+
+function record_samples(label, times)
     open("execute_time_$(ARGS[1]).csv", "a") do io
-        write(io, "$(label),$(time)\n")
+        write(io, "$(label),$(join(times, ";"))\n")
     end
 end
 
@@ -38,10 +55,7 @@ for (group, name) in systems
     end
     if build_ptdf
         try
-            _, time_build_ptdf1, _, _ = @timed PTDF(sys)
-            record_time("$(name)-Build PTDF First", time_build_ptdf1)
-            _, time_build_ptdf2, _, _ = @timed PTDF(sys)
-            record_time("$(name)-Build PTDF Second", time_build_ptdf2)
+            record_samples("$(name)-Build PTDF", sample_times(() -> PTDF(sys)))
         catch e
             @error exception = (e, catch_backtrace())
             record_failure("$(name)-Build PTDF")
@@ -49,20 +63,14 @@ for (group, name) in systems
     end
 
     try
-        _, time_build_ybus1, _, _ = @timed Ybus(sys)
-        record_time("$(name)-Build Ybus First", time_build_ybus1)
-        _, time_build_ybus2, _, _ = @timed Ybus(sys)
-        record_time("$(name)-Build Ybus Second", time_build_ybus2)
+        record_samples("$(name)-Build Ybus", sample_times(() -> Ybus(sys)))
     catch e
         @error exception = (e, catch_backtrace())
         record_failure("$(name)-Build Ybus")
     end
     if build_lodf
         try
-            _, time_build_LODF1, _, _ = @timed LODF(sys)
-            record_time("$(name)-Build LODF First", time_build_LODF1)
-            _, time_build_LODF2, _, _ = @timed LODF(sys)
-            record_time("$(name)-Build LODF Second", time_build_LODF2)
+            record_samples("$(name)-Build LODF", sample_times(() -> LODF(sys)))
         catch e
             @error exception = (e, catch_backtrace())
             record_failure("$(name)-Build LODF")
@@ -80,24 +88,31 @@ for (group, name) in systems
                 )
                 add_supplemental_attribute!(modf_sys, branch, outage)
             end
-            _, time_build_modf1, _, _ = @timed VirtualMODF(modf_sys)
-            record_time("$(name)-Build VirtualMODF First", time_build_modf1)
-            vmodf = nothing
-            _, time_build_modf2, _, _ = @timed begin
-                vmodf = VirtualMODF(modf_sys)
-            end
-            record_time("$(name)-Build VirtualMODF Second", time_build_modf2)
-            # Time querying rows for the first registered contingency
+            record_samples(
+                "$(name)-Build VirtualMODF",
+                sample_times(() -> VirtualMODF(modf_sys)),
+            )
+            vmodf = VirtualMODF(modf_sys)
             ctgs = collect(values(get_registered_contingencies(vmodf)))
             if !isempty(ctgs)
-                ctg = first(ctgs)
                 n_query = min(10, length(vmodf.axes[1]))
-                _, time_query, _, _ = @timed begin
+                query = ctg -> begin
                     for m in 1:n_query
                         vmodf[m, ctg]
                     end
                 end
-                record_time("$(name)-VirtualMODF Query $(n_query) rows", time_query)
+                # Sample distinct contingencies so each timing is a fresh Woodbury solve
+                # rather than a row-cache hit on the same contingency.
+                query_ctgs = collect(Iterators.take(ctgs, N_SAMPLES + 1))
+                if length(query_ctgs) >= 2
+                    query(first(query_ctgs))  # warm up (compilation)
+                    qtimes = Float64[]
+                    for ctg in query_ctgs[2:end]
+                        GC.gc()
+                        push!(qtimes, @elapsed query(ctg))
+                    end
+                    record_samples("$(name)-VirtualMODF Query $(n_query) rows", qtimes)
+                end
             end
         catch e
             @error exception = (e, catch_backtrace())
@@ -106,24 +121,24 @@ for (group, name) in systems
     end
     try
         A = IncidenceMatrix(sys)
-        _, time_radial, _, _ =
-            @timed PowerNetworkMatrices.get_reduction(A, sys, RadialReduction())
-        record_time("$(name)-Radial network reduction First", time_radial)
-        _, time_radial2, _, _ =
-            @timed PowerNetworkMatrices.get_reduction(A, sys, RadialReduction())
-        record_time("$(name)-Radial network reduction Second", time_radial2)
+        record_samples(
+            "$(name)-Radial network reduction",
+            sample_times(
+                () -> PowerNetworkMatrices.get_reduction(A, sys, RadialReduction()),
+            ),
+        )
     catch e
         @error exception = (e, catch_backtrace())
         record_failure("$(name)-Radial network reduction")
     end
     try
         A = AdjacencyMatrix(sys)
-        _, time_degreetwo, _, _ =
-            @timed PowerNetworkMatrices.get_reduction(A, sys, DegreeTwoReduction())
-        record_time("$(name)-Degree two network reduction First", time_degreetwo)
-        _, time_degreetwo2, _, _ =
-            @timed PowerNetworkMatrices.get_reduction(A, sys, DegreeTwoReduction())
-        record_time("$(name)-Degree two network reduction Second", time_degreetwo2)
+        record_samples(
+            "$(name)-Degree two network reduction",
+            sample_times(
+                () -> PowerNetworkMatrices.get_reduction(A, sys, DegreeTwoReduction()),
+            ),
+        )
     catch e
         @error exception = (e, catch_backtrace())
         record_failure("$(name)-Degree two network reduction")
