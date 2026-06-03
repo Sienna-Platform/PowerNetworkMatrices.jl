@@ -144,3 +144,52 @@ end
         monitored = [1],
     )
 end
+
+@testset "populate_cache: shared VirtualFactorCore (common ABA factorization)" begin
+    sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+
+    # One factorization (VirtualFactorCore) shared across PTDF/LODF/MODF wrappers.
+    vptdf = VirtualPTDF(Ybus(sys5))
+    vlodf = VirtualLODF(vptdf)
+    vmodf = VirtualMODF(vptdf, sys5; automatically_register_outages = false)
+    core = PNM.get_core(vptdf)
+    @test PNM.get_core(vlodf) === core
+    @test PNM.get_core(vmodf) === core
+
+    # Independent references — each builds its own factorization.
+    vptdf_i = VirtualPTDF(sys5)
+    vlodf_i = VirtualLODF(sys5)
+    vmodf_i = VirtualMODF(sys5; automatically_register_outages = false)
+
+    arc_lookup = PNM.get_arc_lookup(vptdf)
+    arcs = PNM.get_arc_axis(vptdf)[1:min(4, length(arc_lookup))]
+
+    # Warm PTDF and LODF rows through the common factorization.
+    populate_cache(vptdf, arcs)
+    populate_cache(vlodf, arcs)
+    for a in arcs
+        @test isapprox(vptdf[a, :], vptdf_i[a, :]; atol = 1e-10)
+        @test isapprox(vlodf[a, :], vlodf_i[a, :]; atol = 1e-10)
+    end
+
+    # MODF on the shared core: register one contingency in both and populate.
+    e = 1
+    b_e = PNM._get_arc_susceptances(vmodf)[e]
+    uuid = Base.UUID(UInt128(7300))
+    ctg = ContingencySpec(
+        uuid,
+        NetworkModification("shared_core_ctg", [ArcModification(e, -b_e)]),
+    )
+    PNM.get_contingency_cache(vmodf)[uuid] = ctg
+    PNM.get_contingency_cache(vmodf_i)[uuid] = ctg
+
+    monitored = collect(1:min(4, size(vmodf, 1)))
+    populate_cache(vmodf, [ctg]; monitored = monitored)
+    for m in monitored
+        @test isapprox(vmodf[m, ctg], vmodf_i[m, ctg]; atol = 1e-8)
+    end
+
+    # populate_cache reused the single shared factorization — it never rebuilt it.
+    @test PNM.get_core(vlodf).K === core.K
+    @test PNM.get_core(vmodf).K === core.K
+end
