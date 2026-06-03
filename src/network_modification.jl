@@ -1,3 +1,30 @@
+# `delta_b` removes the arc's entire series susceptance (a full outage).
+_is_full_outage(delta_b::Float64, b_arc::Float64) =
+    isapprox(delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
+
+# Negated Pi-model entries: the delta that cancels the arc's contribution (full outage).
+function _negated_pi_model(entries::NTuple{4, <:Complex})::NTuple{4, YBUS_ELTYPE}
+    return (
+        YBUS_ELTYPE(-entries[1]),
+        YBUS_ELTYPE(-entries[2]),
+        YBUS_ELTYPE(-entries[3]),
+        YBUS_ELTYPE(-entries[4]),
+    )
+end
+
+# Scaled Pi-model entries: the delta for a partial susceptance change on a direct arc.
+function _scaled_pi_model(
+    entries::NTuple{4, <:Complex},
+    scale::Float64,
+)::NTuple{4, YBUS_ELTYPE}
+    return (
+        YBUS_ELTYPE(scale * entries[1]),
+        YBUS_ELTYPE(scale * entries[2]),
+        YBUS_ELTYPE(scale * entries[3]),
+        YBUS_ELTYPE(scale * entries[4]),
+    )
+end
+
 """
     _compute_parallel_partial_ybus_delta(bp, delta_b) -> NTuple{4, YBUS_ELTYPE}
 
@@ -9,11 +36,8 @@ function _compute_parallel_partial_ybus_delta(
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
     for br in bp.branches
-        b_circuit = get_series_susceptance(br)
-        if isapprox(-b_circuit, delta_b; atol = YBUS_DELTA_TOL, rtol = 0)
-            Y11, Y12, Y21, Y22 = ybus_branch_entries(br)
-            return (YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
-                YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22))
+        if _is_full_outage(delta_b, get_series_susceptance(br))
+            return _negated_pi_model(ybus_branch_entries(br))
         end
     end
     error(
@@ -22,11 +46,67 @@ function _compute_parallel_partial_ybus_delta(
     )
 end
 
+# Direct arc: full outage negates the Pi-model; otherwise scale it by `delta_b / b_arc`.
+function _direct_arc_ybus_delta(
+    br::PSY.ACTransmission,
+    delta_b::Float64,
+)::NTuple{4, YBUS_ELTYPE}
+    b_arc = get_series_susceptance(br)
+    entries = ybus_branch_entries(br)
+    if _is_full_outage(delta_b, b_arc)
+        return _negated_pi_model(entries)
+    end
+    return _scaled_pi_model(entries, delta_b / b_arc)
+end
+
+# Parallel group: full outage negates the equivalent; a partial outage drops one circuit.
+function _parallel_arc_ybus_delta(
+    bp::AbstractBranchesParallel,
+    nr::NetworkReductionData,
+    delta_b::Float64,
+)::NTuple{4, YBUS_ELTYPE}
+    if _is_full_outage(delta_b, get_series_susceptance(bp))
+        return _negated_pi_model(ybus_branch_entries(bp, nr))
+    end
+    return _compute_parallel_partial_ybus_delta(bp, delta_b)
+end
+
+# Series-reduced arc: only full outage of the equivalent chain is supported.
+function _series_arc_ybus_delta(
+    series_chain::BranchesSeries,
+    nr::NetworkReductionData,
+    arc_tuple::Tuple{Int, Int},
+    delta_b::Float64,
+)::NTuple{4, YBUS_ELTYPE}
+    if !_is_full_outage(delta_b, get_series_susceptance(series_chain))
+        error(
+            "Partial Ybus delta is not supported on series-reduced arcs. " *
+            "Arc $(arc_tuple), Δb=$(delta_b).",
+        )
+    end
+    return _negated_pi_model(ybus_branch_entries(series_chain, nr))
+end
+
+# 3-winding transformer arc: only full outage of the winding is supported.
+function _transformer3W_arc_ybus_delta(
+    tr::ThreeWindingTransformerWinding,
+    arc_tuple::Tuple{Int, Int},
+    delta_b::Float64,
+)::NTuple{4, YBUS_ELTYPE}
+    if !_is_full_outage(delta_b, get_series_susceptance(tr))
+        error(
+            "Partial Ybus delta is not supported on 3-winding transformer arcs. " *
+            "Arc $(arc_tuple), Δb=$(delta_b).",
+        )
+    end
+    return _negated_pi_model(ybus_branch_entries(tr))
+end
+
 """
     _compute_arc_ybus_delta(nr, arc_tuple, delta_b) -> NTuple{4, YBUS_ELTYPE}
 
-Compute the Pi-model Ybus delta `(ΔY11, ΔY12, ΔY21, ΔY22)` for an arc modification.
-Dispatches on the branch map that contains `arc_tuple` and handles full vs partial outages.
+Compute the Pi-model Ybus delta `(ΔY11, ΔY12, ΔY21, ΔY22)` for an arc modification by
+dispatching to the per-map handler that owns `arc_tuple`.
 """
 function _compute_arc_ybus_delta(
     nr::NetworkReductionData,
@@ -34,58 +114,27 @@ function _compute_arc_ybus_delta(
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
     if haskey(nr.direct_branch_map, arc_tuple)
-        br = nr.direct_branch_map[arc_tuple]
-        b_arc = get_series_susceptance(br)
-        Y11, Y12, Y21, Y22 = ybus_branch_entries(br)
-        if isapprox(delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
-            return (YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
-                YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22))
-        else
-            scale = delta_b / b_arc
-            return (YBUS_ELTYPE(scale * Y11), YBUS_ELTYPE(scale * Y12),
-                YBUS_ELTYPE(scale * Y21), YBUS_ELTYPE(scale * Y22))
-        end
+        return _direct_arc_ybus_delta(nr.direct_branch_map[arc_tuple], delta_b)
     elseif haskey(nr.parallel_branch_map, arc_tuple)
-        bp = nr.parallel_branch_map[arc_tuple]
-        b_arc = get_series_susceptance(bp)
-        if isapprox(delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
-            Y11, Y12, Y21, Y22 = ybus_branch_entries(bp)
-            return (YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
-                YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22))
-        else
-            return _compute_parallel_partial_ybus_delta(bp, delta_b)
-        end
+        return _parallel_arc_ybus_delta(nr.parallel_branch_map[arc_tuple], nr, delta_b)
     elseif haskey(nr.series_branch_map, arc_tuple)
-        series_chain = nr.series_branch_map[arc_tuple]
-        b_arc = get_series_susceptance(series_chain)
-        if isapprox(delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
-            Y11, Y12, Y21, Y22 = ybus_branch_entries(series_chain)
-            return (YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
-                YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22))
-        else
-            error(
-                "Partial Ybus delta is not supported on series-reduced arcs. " *
-                "Arc $(arc_tuple), Δb=$(delta_b).",
-            )
-        end
+        return _series_arc_ybus_delta(
+            nr.series_branch_map[arc_tuple],
+            nr,
+            arc_tuple,
+            delta_b,
+        )
     elseif haskey(nr.transformer3W_map, arc_tuple)
-        tr = nr.transformer3W_map[arc_tuple]
-        b_arc = get_series_susceptance(tr)
-        if !isapprox(delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
-            error(
-                "Partial Ybus delta is not supported on 3-winding transformer arcs. " *
-                "Arc $(arc_tuple), Δb=$(delta_b).",
-            )
-        end
-        Y11, Y12, Y21, Y22 = ybus_branch_entries(tr)
-        return (YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
-            YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22))
-    else
-        error(
-            "Arc $(arc_tuple) not found in any network reduction map. " *
-            "Cannot compute Ybus Pi-model delta.",
+        return _transformer3W_arc_ybus_delta(
+            nr.transformer3W_map[arc_tuple],
+            arc_tuple,
+            delta_b,
         )
     end
+    error(
+        "Arc $(arc_tuple) not found in any network reduction map. " *
+        "Cannot compute Ybus Pi-model delta.",
+    )
 end
 
 """
