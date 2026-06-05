@@ -66,8 +66,9 @@ callers can issue requests concurrently; the libklu work runs one at a time.
         Guards `cache` reads/writes for parallel `getindex` callers.
 - `subnetworks::Dict{Int, Set{Int}}`:
         Dictionary containing the subsets of buses defining the different subnetwork of the system.
-- `tol::Base.RefValue{Float64}`:
-        Tolerance related to scarification and values to drop.
+- `tol::SparsificationCutoff`:
+        Resolved per-row sparsification rule (absolute cutoff for a `Float64`
+        `tol`, relative cutoff for an [`AutoTolerance`](@ref)).
 - `network_reduction::NetworkReduction`:
         Structure containing the details of the network reduction applied when computing the matrix
 - `work_ba_col::Vector{Vector{Float64}}`:
@@ -91,7 +92,7 @@ struct VirtualLODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}, K} <:
     cache::RowCache
     cache_lock::ReentrantLock
     subnetwork_axes::Dict{Int, Ax}
-    tol::Base.RefValue{Float64}
+    tol::SparsificationCutoff
     network_reduction_data::NetworkReductionData
     work_ba_col::Vector{Vector{Float64}}
     # Serializes solves on this cache. `with_solver` always acquires it,
@@ -276,7 +277,7 @@ function VirtualLODF(
     sys::PSY.System;
     dist_slack::Vector{Float64} = Float64[],
     linear_solver::String = _default_linear_solver(),
-    tol::Float64 = eps(),
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}(),
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
@@ -302,6 +303,10 @@ function VirtualLODF(
     ABA = calculate_ABA_matrix(A.data, BA.data, Set(ref_bus_positions))
     K = _create_factorization(solver, ABA)
     bus_ax = get_bus_axis(A)
+
+    # Resolve the per-row sparsification rule once: a Float64 becomes an absolute
+    # cutoff, an AutoTolerance a relative cutoff (κ logged via the reused K).
+    cutoff = _resolve_virtual_cutoff(tol, K, ABA, SparseArrays.nonzeros(BA.data))
 
     valid_ix = setdiff(1:length(bus_ax), ref_bus_positions)
     # PTDF diagonal precompute runs serially on the dispatcher thread.
@@ -347,7 +352,7 @@ function VirtualLODF(
         empty_cache,
         ReentrantLock(),
         subnetwork_axes,
-        Ref(tol),
+        cutoff,
         Ymatrix.network_reduction_data,
         work_ba_col,
         ReentrantLock(),
@@ -421,7 +426,7 @@ function _getindex(
     column::Union{Int, Colon},
 )
     return cached_row_lookup(
-        vlodf.cache, vlodf.cache_lock, row, column, get_tol(vlodf),
+        vlodf.cache, vlodf.cache_lock, row, column, vlodf.tol,
     ) do
         _compute_lodf_row(vlodf, row)
     end
@@ -481,9 +486,11 @@ function get_arc_axis(mat::VirtualLODF)
     return mat.axes[1]
 end
 
-""" Gets the tolerance used for sparsifying the rows of the VirtualLODF matrix"""
+""" Gets the tolerance used for sparsifying the rows of the VirtualLODF matrix.
+Returns the absolute cutoff for a `Float64` `tol`, or the relative fraction for
+an `AutoTolerance`."""
 function get_tol(mat::VirtualLODF)
-    return mat.tol[]
+    return cutoff_value(mat.tol)
 end
 
 """

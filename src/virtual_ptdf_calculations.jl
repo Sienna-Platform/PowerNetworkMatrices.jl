@@ -59,8 +59,9 @@ JuMP-side work (in callers) parallelizes freely.
         Guards `cache` reads/writes for parallel `getindex` callers.
 - `subnetworks::Dict{Int, Set{Int}}`:
         Dictionary containing the subsets of buses defining the different subnetwork of the system.
-- `tol::Base.RefValue{Float64}`:
-        Tolerance related to scarification and values to drop.
+- `tol::SparsificationCutoff`:
+        Resolved per-row sparsification rule (absolute cutoff for a `Float64`
+        `tol`, relative cutoff for an [`AutoTolerance`](@ref)).
 - `network_reduction::NetworkReduction`:
         Structure containing the details of the network reduction applied when computing the matrix
 - `work_ba_col::Vector{Vector{Float64}}`:
@@ -89,7 +90,7 @@ struct VirtualPTDF{Ax, L <: NTuple{2, Dict}, K} <:
     cache::RowCache
     cache_lock::ReentrantLock
     subnetwork_axes::Dict{Int, Ax}
-    tol::Base.RefValue{Float64}
+    tol::SparsificationCutoff
     network_reduction_data::NetworkReductionData
     work_ba_col::Vector{Vector{Float64}}
     solver_lock::ReentrantLock
@@ -144,7 +145,7 @@ function VirtualPTDF(
     sys::PSY.System;
     dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(),
     linear_solver::String = _default_linear_solver(),
-    tol::Float64 = eps(),
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}(),
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
@@ -218,7 +219,7 @@ function VirtualPTDF(
     ybus::Ybus;
     dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(),
     linear_solver::String = _default_linear_solver(),
-    tol::Float64 = eps(),
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}(),
     system_uuid::Union{Base.UUID, Nothing} = nothing,
@@ -257,6 +258,10 @@ function VirtualPTDF(
     # Create factorization based on solver type dispatch.
     K = _create_factorization(solver, ABA)
 
+    # Resolve the per-row sparsification rule once: a Float64 becomes an absolute
+    # cutoff, an AutoTolerance a relative cutoff (κ logged via the reused K).
+    cutoff = _resolve_virtual_cutoff(tol, K, ABA, SparseArrays.nonzeros(BA.data))
+
     # Pre-compute normalized distributed slack for efficiency
     if !isempty(dist_slack_vector)
         dist_slack_normalized = dist_slack_vector / sum(dist_slack_vector)
@@ -290,7 +295,7 @@ function VirtualPTDF(
         empty_cache,
         ReentrantLock(),
         subnetwork_axes,
-        Ref(tol),
+        cutoff,
         ybus.network_reduction_data,
         work_ba_col,
         ReentrantLock(),
@@ -395,7 +400,7 @@ function _getindex(
     column::Union{Int, Colon},
 )
     return cached_row_lookup(
-        vptdf.cache, vptdf.cache_lock, row, column, get_tol(vptdf),
+        vptdf.cache, vptdf.cache_lock, row, column, vptdf.tol,
     ) do
         _compute_ptdf_row(vptdf, row)
     end
@@ -465,7 +470,9 @@ function get_bus_axis(ptdf::VirtualPTDF)
     return ptdf.axes[2]
 end
 
-""" Gets the tolerance used for sparsifying the rows of the VirtualPTDF matrix"""
+""" Gets the tolerance used for sparsifying the rows of the VirtualPTDF matrix.
+Returns the absolute cutoff for a `Float64` `tol`, or the relative fraction for
+an `AutoTolerance`."""
 function get_tol(vptdf::VirtualPTDF)
-    return vptdf.tol[]
+    return cutoff_value(vptdf.tol)
 end
