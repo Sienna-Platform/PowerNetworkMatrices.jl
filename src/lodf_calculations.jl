@@ -277,19 +277,46 @@ where A is the incidence matrix and PTDF is the power transfer distribution fact
 - Diagonal elements are always -1.0 representing complete flow loss on outaged lines
 - For very large systems, consider using "MKLPardiso" solver with appropriate chunk size
 """
+# Numeric/default tol: original PTDF-based route, unchanged behavior.
+function _lodf_from_system(
+    tol::Float64,
+    A::IncidenceMatrix,
+    BA::BA_Matrix,
+    Ymatrix::Ybus,
+    linear_solver::String,
+)
+    # Keep the intermediate PTDF dense (tol = eps()); the from-PTDF LODF needs an
+    # unsparsified PTDF for accuracy, and only the LODF itself is sparsified.
+    ptdf = PTDF(A, BA; tol = eps())
+    return LODF(A, ptdf; linear_solver = linear_solver, tol = tol)
+end
+
+# AutoTolerance: build a factorized ABA so conditioning is available, then use
+# the KLU-only ABA/BA constructor.
+function _lodf_from_system(
+    spec::AutoTolerance,
+    A::IncidenceMatrix,
+    BA::BA_Matrix,
+    Ymatrix::Ybus,
+    ::String,
+)
+    ABA = ABA_Matrix(Ymatrix; factorize = true)
+    return LODF(A, ABA, BA; tol = spec)
+end
+
 function LODF(
     sys::PSY.System;
     linear_solver::String = _default_linear_solver(),
-    tol::Float64 = eps(),
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
     kwargs...,
 )
     Ymatrix = Ybus(sys; network_reductions = network_reductions, kwargs...)
     A = IncidenceMatrix(Ymatrix)
     BA = BA_Matrix(Ymatrix)
-    ptdf = PTDF(A, BA)
-    # Ybus consumed `kwargs...`; don't re-forward to the (A, ptdf) constructor.
-    return LODF(A, ptdf; linear_solver = linear_solver, tol = tol)
+    # Numeric tol keeps the PTDF route (unchanged); an AutoTolerance needs ABA for
+    # conditioning, so route it through the factorized-ABA constructor.
+    return _lodf_from_system(tol, A, BA, Ymatrix, linear_solver)
 end
 
 """
@@ -346,7 +373,7 @@ function LODF(
     A::IncidenceMatrix,
     PTDFm::PTDF;
     linear_solver::String = _default_linear_solver(),
-    tol::Float64 = eps(),
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
 )
     solver = resolve_linear_solver(linear_solver)
     subnetwork_axes = make_arc_arc_subnetwork_axes(A)
@@ -367,14 +394,15 @@ function LODF(
     end
     ax_ref = make_ax_ref(get_arc_axis(A))
 
-    if tol > eps()
+    tol_value = _dense_tol(tol)
+    if tol_value > eps()
         lodf_t = _buildlodf(A.data, PTDFm_data, solver)
         return LODF(
-            sparsify(lodf_t, tol),
+            _restore_lodf_diagonal!(sparsify(lodf_t, tol_value)),
             (get_arc_axis(A), get_arc_axis(A)),
             (ax_ref, ax_ref),
             subnetwork_axes,
-            Ref(tol),
+            Ref(tol_value),
             A.network_reduction_data,
         )
     end
@@ -383,7 +411,7 @@ function LODF(
         (get_arc_axis(A), get_arc_axis(A)),
         (ax_ref, ax_ref),
         subnetwork_axes,
-        Ref(tol),
+        Ref(tol_value),
         A.network_reduction_data,
     )
 end
@@ -449,7 +477,7 @@ function LODF(
     ABA::ABA_Matrix,
     BA::BA_Matrix;
     linear_solver::String = "KLU",
-    tol::Float64 = eps(),
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
 )
     # NOTE: ABA.K is always a KLU factorization, so this constructor is
     # KLU-only regardless of the `linear_solver` argument. The kwarg is kept
@@ -466,25 +494,31 @@ function LODF(
     solver = resolve_linear_solver(linear_solver)
     subnetwork_axes = make_arc_arc_subnetwork_axes(A)
     ax_ref = make_ax_ref(get_arc_axis(A))
-    if tol > eps()
-        lodf_t = _buildlodf(A.data, ABA.K, BA.data, Set(get_ref_bus_position(A)), solver)
-        return LODF(
-            sparsify(lodf_t, tol),
-            (get_arc_axis(A), get_arc_axis(A)),
-            (ax_ref, ax_ref),
-            subnetwork_axes,
-            Ref(tol),
-            A.network_reduction_data,
-        )
+    lodf_t = _buildlodf(A.data, ABA.K, BA.data, Set(get_ref_bus_position(A)), solver)
+    tol_value = _dense_tol(tol)
+    if tol_value > eps()
+        lodf_t = _restore_lodf_diagonal!(sparsify(lodf_t, tol_value))
     end
     return LODF(
-        _buildlodf(A.data, ABA.K, BA.data, Set(get_ref_bus_position(A)), solver),
+        lodf_t,
         (get_arc_axis(A), get_arc_axis(A)),
         (ax_ref, ax_ref),
         subnetwork_axes,
-        Ref(tol),
+        Ref(tol_value),
         A.network_reduction_data,
     )
+end
+
+# The LODF diagonal is structurally -1.0 (complete flow loss on the outaged arc).
+# A tol >= 1.0 (large meshed network where scale = max|LODF| > 1) would let
+# `droptol!` remove it, so re-assert the diagonal after sparsification.
+function _restore_lodf_diagonal!(lodf::SparseArrays.SparseMatrixCSC{Float64, Int})
+    for i in axes(lodf, 1)
+        if iszero(lodf[i, i])
+            lodf[i, i] = -1.0
+        end
+    end
+    return lodf
 end
 
 ############################################################
