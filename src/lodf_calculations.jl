@@ -398,7 +398,7 @@ function LODF(
     if tol_value > eps()
         lodf_t = _buildlodf(A.data, PTDFm_data, solver)
         return LODF(
-            _restore_lodf_diagonal!(sparsify(lodf_t, tol_value)),
+            _sparsify_lodf(lodf_t, tol_value),
             (get_arc_axis(A), get_arc_axis(A)),
             (ax_ref, ax_ref),
             subnetwork_axes,
@@ -497,7 +497,7 @@ function LODF(
     lodf_t = _buildlodf(A.data, ABA.K, BA.data, Set(get_ref_bus_position(A)), solver)
     tol_value = _dense_tol(tol)
     if tol_value > eps()
-        lodf_t = _restore_lodf_diagonal!(sparsify(lodf_t, tol_value))
+        lodf_t = _sparsify_lodf(lodf_t, tol_value)
     end
     return LODF(
         lodf_t,
@@ -511,14 +511,13 @@ end
 
 # The LODF diagonal is structurally -1.0 (complete flow loss on the outaged arc).
 # A tol >= 1.0 (large meshed network where scale = max|LODF| > 1) would let
-# `droptol!` remove it, so re-assert the diagonal after sparsification.
-function _restore_lodf_diagonal!(lodf::SparseArrays.SparseMatrixCSC{Float64, Int})
-    for i in axes(lodf, 1)
-        if iszero(lodf[i, i])
-            lodf[i, i] = -1.0
-        end
-    end
-    return lodf
+# `droptol!` remove it. Rather than sparsify and patch each dropped diagonal back
+# (N CSC insertions, each O(nnz)), zero the dense diagonal so `droptol!` only
+# touches off-diagonals, then re-add the structural -I in a single
+# sparse-plus-UniformScaling merge.
+function _sparsify_lodf(lodf_t::Matrix{Float64}, tol::Float64)
+    lodf_t[LinearAlgebra.diagind(lodf_t)] .= 0.0
+    return sparsify(lodf_t, tol) - LinearAlgebra.I
 end
 
 ############################################################

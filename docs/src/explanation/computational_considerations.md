@@ -18,7 +18,7 @@ The PTDF and LODF are obtained by solving against the reduced susceptance matrix
 To recover sparsity we apply a **tolerance** and drop entries below it (`droptol!`). The size of that cutoff is the question this package answers automatically. Every PTDF/LODF constructor takes a `tol` keyword:
 
 ```julia
-tol::Union{Float64,AutoTolerance} = AutoTolerance()
+tol::Union{Float64, AutoTolerance} = AutoTolerance()
 ```
 
   - A **`Float64`** is an explicit, *absolute* cutoff: any entry with `|x| ≤ tol` is dropped. Use it to pin an exact result (`tol = eps()`) or to sparsify by a fixed number. This is the backward-compatible path.
