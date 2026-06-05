@@ -291,9 +291,7 @@ end
 
 """
 Return a sparse vector given a dense one by dropping elements whose absolute
-value is below a certain tolerance.
-
-Uses optimized `droptol!` for better performance compared to element-wise iteration.
+value is at or below a certain tolerance (keeps `abs(x) > tol`).
 
 # Arguments
 - `dense_array::Vector{Float64}`:
@@ -302,9 +300,26 @@ Uses optimized `droptol!` for better performance compared to element-wise iterat
         tolerance.
 """
 function sparsify(dense_array::Vector{Float64}, tol::Float64)
-    sparse_array = SparseArrays.sparsevec(dense_array)
-    SparseArrays.droptol!(sparse_array, tol)
-    return sparse_array
+    # Count-then-fill: allocate the SparseVector at exactly the survivor count
+    # instead of materializing every nonzero (`sparsevec`) and then compacting
+    # (`droptol!`). On the VirtualPTDF/LODF row path an almost-dense row collapses
+    # to a sparse one, so this avoids an O(n) over-allocation per cached row.
+    nnz = 0
+    @inbounds for v in dense_array
+        abs(v) > tol && (nnz += 1)
+    end
+    nzind = Vector{Int}(undef, nnz)
+    nzval = Vector{Float64}(undef, nnz)
+    k = 0
+    @inbounds for i in eachindex(dense_array)
+        v = dense_array[i]
+        if abs(v) > tol
+            k += 1
+            nzind[k] = i
+            nzval[k] = v
+        end
+    end
+    return SparseArrays.SparseVector(length(dense_array), nzind, nzval)
 end
 
 """
