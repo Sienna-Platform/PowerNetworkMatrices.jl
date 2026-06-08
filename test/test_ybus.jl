@@ -77,6 +77,24 @@
     end
 end
 
+@testset "Test Ybus with single bus not numbered 1" begin
+    sys_single = System(100.0)
+    bus = ACBus(;
+        number = 5,
+        name = "Bus5",
+        available = true,
+        bustype = ACBusTypes.REF,
+        angle = 0.0,
+        magnitude = 1.0,
+        voltage_limits = (min = 0.9, max = 1.05),
+        base_voltage = 100.0,
+    )
+    add_component!(sys_single, bus)
+    ybus_single = Ybus(sys_single)
+    @test size(ybus_single) == (1, 1)
+    @test PNM.get_ref_bus(ybus_single) == [5]
+end
+
 @testset "Test modification of units base when constructing Ybus" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     PSY.set_units_base_system!(sys, "NATURAL_UNITS")
