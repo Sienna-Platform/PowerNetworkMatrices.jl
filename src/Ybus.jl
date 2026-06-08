@@ -1119,7 +1119,7 @@ function Ybus(
             @warn "More than one island found; Network is not connected"
         end
     else
-        subnetworks = Dict{Int, Set{Int}}(bus_lookup[1] => Set(bus_ax))
+        subnetworks = Dict{Int, Set{Int}}(only(bus_ax) => Set(bus_ax))
     end
     subnetwork_axes = _make_bus_subnetwork_axes(subnetworks)
     arc_subnetwork_axis = _make_arc_subnetwork_axis(subnetworks, nr)
