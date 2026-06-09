@@ -93,17 +93,14 @@ end
 function _sigfigs(v::Float64, maxs::Int, rtol::Float64)
     (iszero(v) || !isfinite(v)) && return 0
     av = abs(v)
-    e = floor(Int, log10(av))                 # decade of the leading digit
     for s in 1:maxs
-        factor = 10.0^(s - 1 - e)
-        vr = round(av * factor) / factor
-        abs(vr - av) <= rtol * av && return s
+        abs(round(av; sigdigits = s) - av) <= rtol * av && return s
     end
     return maxs
 end
 
-# Linear-interpolated quantile of an already-sorted integer vector. Avoids a
-# Statistics dependency for the one place we need a quantile.
+# Linear-interpolated quantile of an already-sorted integer vector. Avoids
+# declaring Statistics as a direct dependency for the one place we need a quantile.
 function _quantile_sorted(v::Vector{Int}, q::Float64)
     n = length(v)
     n == 1 && return Float64(v[1])
@@ -115,19 +112,22 @@ function _quantile_sorted(v::Vector{Int}, q::Float64)
 end
 
 """
-    discover_data_precision(susceptances; q = 0.5, maxsig = 12, rtol = 1e-9) -> Float64
+    discover_data_precision(susceptances; q = 0.5, maxsig = 10, rtol = 1e-9) -> Float64
 
 Estimate relative data precision from branch susceptances `b_k`. Recovers the
 reactances `x_k = 1/b_k` (the susceptance hides the original precision; the
 reciprocal does not), counts the significant figures of each, and returns
 `0.5·10^(-(s-1))` at the `q`-quantile of those counts, clamped to `[eps, 1e-2]`.
-Full-precision data (e.g. computed equivalent branches) reads `maxsig` figures
-and collapses to the arithmetic floor.
+`maxsig` is coupled to `rtol`: rounding to `s` figures has a worst-case relative
+error of `0.5·10^(1-s)`, so the first `s` accepted by `rtol = 1e-9` is `s = 10`
+and no genuine data resolves beyond it. Full-precision data (e.g. computed
+equivalent branches) therefore reads the `maxsig = 10` cap and yields the tightest
+precision `0.5·10^(-9) = 5e-10`.
 """
 function discover_data_precision(
     susceptances::AbstractVector{Float64};
     q::Float64 = 0.5,
-    maxsig::Int = 12,
+    maxsig::Int = 10,
     rtol::Float64 = 1e-9,
 )
     counts = Int[]
