@@ -118,11 +118,10 @@ Estimate relative data precision from branch susceptances `b_k`. Recovers the
 reactances `x_k = 1/b_k` (the susceptance hides the original precision; the
 reciprocal does not), counts the significant figures of each, and returns
 `0.5·10^(-(s-1))` at the `q`-quantile of those counts, clamped to `[eps, 1e-2]`.
-`maxsig` is coupled to `rtol`: rounding to `s` figures has a worst-case relative
-error of `0.5·10^(1-s)`, so the first `s` accepted by `rtol = 1e-9` is `s = 10`
-and no genuine data resolves beyond it. Full-precision data (e.g. computed
-equivalent branches) therefore reads the `maxsig = 10` cap and yields the tightest
-precision `0.5·10^(-9) = 5e-10`.
+`maxsig` is coupled to `rtol`: rounding to `s` figures carries a relative error of
+`0.5·10^(1-s)`, so `rtol = 1e-9` first accepts `s = 10` and no real data resolves
+further. Full-precision data (e.g. computed equivalent branches) hits this `maxsig`
+cap and yields the tightest precision `5e-10`.
 """
 function discover_data_precision(
     susceptances::AbstractVector{Float64};

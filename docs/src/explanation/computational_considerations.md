@@ -39,6 +39,18 @@ Sparsification only matters at scale, so `AutoTolerance` acts only where it pays
 
 For very large studies, prefer the [`VirtualPTDF`](@ref)/[`VirtualLODF`](@ref) variants: they compute rows on demand and, with the default `AutoTolerance`, store each one sparsely.
 
+#### Accuracy and limitations
+
+Sparsification trades exactness for memory, and the relative per-row rule has consequences worth understanding before you rely on a sparsified matrix for a sensitive calculation. Each dropped entry is below `α · max|row|` (`α ≤ 1e-2`, and typically `α ≈ δ ≈ 5e-4`), so the dominant sensitivities are never touched — but the following hold:
+
+  - **The error is one-signed, not zero-mean.** A dropped entry is set to exactly zero, never rounded, so each row's total mass strictly decreases. When you sum many small entries of a row (for example, aggregating a flow contribution across many buses), the truncation errors accumulate in the same direction instead of cancelling. The bias is bounded by `(number of dropped entries) · α · max|row|`.
+
+  - **The cutoff is per row, so global invariants are not preserved.** Each row is sparsified against *its own* peak, with no coupling between rows or columns, so quantities depending on cross-row or cross-column structure — Kirchhoff's current law, a column sum, or the *difference* of two entries — are not conserved. The sharp case is two buses `j, k` both far from branch `i`: `PTDF[i,j]` and `PTDF[i,k]` may be similar in magnitude yet fall on opposite sides of the cutoff. Each *absolute* error stays below the threshold, but the *relative* error on the (tiny) difference `PTDF[i,j] − PTDF[i,k]` can approach 100%.
+  - **Auto-discovered precision assumes a power-of-10 base.** With `data_precision = :auto`, `δ` counts the significant figures of the branch reactances. Decimal significant-figure counts are invariant under multiplication by a power of ten (the conventional 100 MVA base) but **not** under an arbitrary impedance base: data converted by a non-power-of-10 base (e.g. `Z_base = kV²/MVA = 190.44 Ω`) reads more figures than it carries, so `:auto` *over-estimates* precision. The direction is safe — a smaller `α`, hence *less* aggressive dropping — but on such data prefer an explicit `data_precision`.
+  - **Contingency (Woodbury) corrections do not amplify the error.** In [`VirtualMODF`](@ref) the cutoff is applied to the *final* post-contingency row, after the exact Woodbury solve; the correction is computed from exact factorization solves, never sparsified rows. The error stays bounded by the cutoff however near-critical (near-islanding) the contingency is, even when the Woodbury update is severely ill-conditioned. Verified directly in the test suite.
+
+When you need an exact result — to preserve KCL, to difference two small sensitivities, or to validate against a reference — pass a `Float64` `tol`: use `tol = eps()` for an unsparsified matrix, or a deliberate fixed cutoff for a reproducible absolute tolerance. `AutoTolerance` is the memory-versus-accuracy lever; the explicit `Float64` paths remain available for when exactness matters more than size.
+
 ### Matrix Sizes
 
 A system with $N_b$ buses and $N_a$ arcs has matrix dimensions:
