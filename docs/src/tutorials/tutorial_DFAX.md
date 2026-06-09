@@ -252,11 +252,20 @@ mitigation under the relevant TLR / CMP procedure.
 When the contingency `C` contains more than one element, the closed-form
 LODF expansion of the OTDF section no longer applies — there is no scalar
 `LODF[m, c]` when `c` is itself a set. The unified formula still applies,
-and `VirtualMODF` is built to handle it directly. Pass a vector of arc
-tuples to `NetworkModification`:
+and `VirtualMODF` is built to handle it directly. Build the multi-element
+modification by merging the `arc_modifications` of each single-arc
+`NetworkModification` into one combined object:
 
 ```@repl tutorial_DFAX
-ctg_n2 = NetworkModification(vmodf, [(113, 215), (123, 217)]);  # AB2 and AB3 outaged
+mod_ab2 = NetworkModification(vmodf, (113, 215));    # AB2 outage
+mod_ab3 = NetworkModification(vmodf, (123, 217));    # AB3 outage
+
+ctg_n2 = NetworkModification(
+    "AB2_and_AB3_out",
+    vcat(collect(mod_ab2.arc_modifications),
+         collect(mod_ab3.arc_modifications)),
+);
+
 row_n2 = vmodf[m, ctg_n2];
 
 flowgate_dfax_n2 =
@@ -289,14 +298,18 @@ ill-defined case of monitoring an outaged element:
 ```@repl tutorial_DFAX
 monitored = [(107, 203), (113, 215), (123, 217)];   # AB1, AB2, AB3
 
+ctg_ab2 = NetworkModification(vmodf, (113, 215));
+ctg_ab3 = NetworkModification(vmodf, (123, 217));
+ctg_ab2_ab3 = NetworkModification(
+    "AB2_and_AB3_out",
+    vcat(collect(ctg_ab2.arc_modifications),
+         collect(ctg_ab3.arc_modifications)),
+);
+
 contingencies = [
-    ("AB2 out", Set([(113, 215)]), NetworkModification(vmodf, (113, 215))),
-    ("AB3 out", Set([(123, 217)]), NetworkModification(vmodf, (123, 217))),
-    (
-        "AB2 & AB3 out",
-        Set([(113, 215), (123, 217)]),
-        NetworkModification(vmodf, [(113, 215), (123, 217)]),
-    ),
+    ("AB2 out", Set([(113, 215)]), ctg_ab2),
+    ("AB3 out", Set([(123, 217)]), ctg_ab3),
+    ("AB2 & AB3 out", Set([(113, 215), (123, 217)]), ctg_ab2_ab3),
 ];
 
 rows = NamedTuple[]
