@@ -194,6 +194,9 @@ Computed from van Dijk et al. Eq. 29:
 - `arc_indices::Vector{Int}`: Arc indices of modified arcs
 - `delta_b::Vector{Float64}`: Susceptance changes per modified arc
 - `is_islanding::Bool`: Whether this contingency islands the network
+- `bus_island_labels::Vector{Int}`: Post-contingency connected-component label per
+  bus position, used to force entries of buses disconnected from the monitored arc
+  to exactly zero. Empty unless `is_islanding`.
 """
 struct WoodburyFactors
     Z::Matrix{Float64}
@@ -201,4 +204,5 @@ struct WoodburyFactors
     arc_indices::Vector{Int}
     delta_b::Vector{Float64}
     is_islanding::Bool
+    bus_island_labels::Vector{Int}
 end
