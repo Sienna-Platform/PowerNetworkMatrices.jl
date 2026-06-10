@@ -8,7 +8,8 @@ License, v. 2.0.
 """
 
 """ Type PowerNetworkMatrix gathers all the different types of Matrices considered in this package """
-abstract type PowerNetworkMatrix{T} <: AbstractArray{T, 2} end
+abstract type PowerNetworkMatrix{T} <:
+              IS.InfrastructureMatrices.AbstractInfrastructureNetworkMatrix{T} end
 
 """
 Evaluates the map linking the system's buses and branches.

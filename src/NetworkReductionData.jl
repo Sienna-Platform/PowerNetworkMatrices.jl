@@ -135,7 +135,8 @@ network reduction algorithms.
 - `filters_applied::Dict{Type, Function}`: Filters applied when populating branch maps by type
 - `direct_branch_name_map::Dict{String, Tuple{Int, Int}}`: Lazily filled, maps branch names to their corresponding arc tuples for direct branches
 """
-@kwdef mutable struct NetworkReductionData
+@kwdef mutable struct NetworkReductionData <:
+              IS.InfrastructureMatrices.AbstractInfrastructureNetworkReductionData
     irreducible_buses::Set{Int} = Set{Int}() # Buses that are not reduced in the network reduction
     bus_reduction_map::Dict{Int, Set{Int}} = Dict{Int, Set{Int}}() # Maps reduced bus to the set of buses it was reduced to
     reverse_bus_search_map::Dict{Int, Int} = Dict{Int, Int}()
