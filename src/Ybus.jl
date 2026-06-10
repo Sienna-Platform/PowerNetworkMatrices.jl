@@ -465,6 +465,30 @@ function ybus_branch_entries(
 end
 
 function ybus_branch_entries(
+    br::PSY.TwoWindingTransformer,
+    ::NetworkReductionData;
+    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+)
+    return ybus_branch_entries(
+        br,
+        _get_impedance_correction_factor(br);
+        min_x_eps = min_x_eps,
+    )
+end
+
+function ybus_branch_entries(
+    br::ThreeWindingTransformerWinding,
+    ::NetworkReductionData;
+    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+)
+    return ybus_branch_entries(
+        br,
+        _get_impedance_correction_factor(br);
+        min_x_eps = min_x_eps,
+    )
+end
+
+function ybus_branch_entries(
     br::PSY.GenericArcImpedance;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
@@ -619,7 +643,8 @@ end
 
 """Ybus entries for a `Transformer2W`, `TapTransformer`, or `PhaseShiftingTransformer`."""
 function ybus_branch_entries(
-    br::PSY.TwoWindingTransformer, correction::Float64;
+    br::PSY.TwoWindingTransformer,
+    correction::Float64;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
     Y_t = 1 / ((PSY.get_r(br) + PSY.get_x(br) * 1im) * correction)
@@ -660,7 +685,8 @@ end
 
 """Ybus branch entries for an arc in the wye model of a `ThreeWindingTransformer`."""
 function ybus_branch_entries(
-    tp::ThreeWindingTransformerWinding, correction::Float64;
+    tp::ThreeWindingTransformerWinding,
+    correction::Float64;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
     br = get_transformer(tp)
@@ -752,9 +778,8 @@ function _ybus!(
     fb::Vector{Int},
     tb::Vector{Int},
     nr::NetworkReductionData,
-    adj::SparseArrays.SparseMatrixCSC{Int8, Int},
 )
-    add_branch_entries_to_indexing_maps!(num_bus, branch_ix, nr, fb, tb, adj, br)
+    add_branch_entries_to_indexing_maps!(num_bus, branch_ix, nr, fb, tb, br)
     Y11, Y12, Y21, Y22 = ybus_branch_entries(br, correction)
     y11[branch_ix] = Y11
     y12[branch_ix] = Y12
@@ -776,7 +801,7 @@ function _ybus!(
     tb::Vector{Int},
     nr::NetworkReductionData,
 )
-    _ybus!(y11, y12, y21, y22, br.branch, correction, num_bus, branch_ix, fb, tb, nr, adj)
+    _ybus!(y11, y12, y21, y22, br.branch, correction, num_bus, branch_ix, fb, tb, nr)
     return
 end
 
@@ -792,7 +817,6 @@ function _ybus!(
     tb::Vector{Int},
     ix::Int,
     nr::NetworkReductionData,
-    adj::SparseArrays.SparseMatrixCSC{Int8, Int},
     c1::Float64,
     c2::Float64,
     c3::Float64,
@@ -947,7 +971,6 @@ function _buildybus!(
             fb,
             tb,
             network_reduction_data,
-            adj,
         )
     end
 
@@ -976,7 +999,6 @@ function _buildybus!(
             tb,
             ix,
             network_reduction_data,
-            adj,
             c1,
             c2,
             c3,

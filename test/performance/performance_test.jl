@@ -79,7 +79,10 @@ for (group, name) in systems
         end
     else
         try
-            record_samples("$(name)-Build VirtualPTDF", sample_times(() -> VirtualPTDF(sys)))
+            record_samples(
+                "$(name)-Build VirtualPTDF",
+                sample_times(() -> VirtualPTDF(sys)),
+            )
             vptdf = VirtualPTDF(sys)
             n_arcs = length(vptdf.axes[1])
             n_query = min(10, n_arcs)
