@@ -1,29 +1,10 @@
 """
     RadialReduction <: NetworkReduction
 
-Network reduction algorithm that eliminates radial (dangling) buses and their associated branches
-from the power network. Radial buses are leaf nodes with only one connection that do not affect
-the electrical behavior of the rest of the network.
-
-# Fields
-- `irreducible_buses::Vector{Int}`: List of bus numbers that should not be eliminated even if they are radial
-
-# Examples
-```julia
-# Create radial reduction with no protected buses
-reduction = RadialReduction()
-
-# Create radial reduction protecting specific buses
-reduction = RadialReduction(irreducible_buses=[101, 205])
-
-# Apply to system
-ybus = Ybus(system; network_reductions=[reduction])
-```
+Eliminates leaf (degree-1) buses and their branches. Protect specific buses via
+`Ybus(sys; irreducible_buses=...)`.
 """
-@kwdef struct RadialReduction <: NetworkReduction
-    irreducible_buses::Vector{Int} = Vector{Int}()
-end
-get_irreducible_buses(nr::RadialReduction) = nr.irreducible_buses
+@kwdef struct RadialReduction <: NetworkReduction end
 
 """
 Pre-compute a mapping from each row (branch) in a CSC sparse matrix to its two column
@@ -36,12 +17,14 @@ by that branch.
 function _build_row_to_cols(A::SparseArrays.SparseMatrixCSC{Int8, Int}, buscount::Int)
     n_rows = size(A, 1)
     row_first_col = zeros(Int, n_rows)
-    row_to_cols = Vector{Tuple{Int, Int}}(undef, n_rows)
+    # `(0, 0)` sentinel for rows lacking a second bus column (e.g. a self-loop arc
+    # whose incidence entries cancel), which would otherwise be read undefined.
+    row_to_cols = fill((0, 0), n_rows)
     Arowval = SparseArrays.rowvals(A)
     for col in 1:buscount
         for k in SparseArrays.nzrange(A, col)
             row = Arowval[k]
-            if row_first_col[row] == 0
+            if iszero(row_first_col[row])
                 row_first_col[row] = col
             else
                 row_to_cols[row] = (row_first_col[row], col)
@@ -143,6 +126,8 @@ function calculate_radial_arcs(
     end
     for row in 1:n_arcs
         c1, c2 = row_to_cols[row]
+        # Sentinel rows (a self-loop arc, no second bus column) add no graph edge.
+        (iszero(c1) || iszero(c2)) && continue
         push!(adj[c1], (c2, row))
         push!(adj[c2], (c1, row))
     end
@@ -182,7 +167,7 @@ function calculate_radial_arcs(
             end
         end
 
-        if parent == 0
+        if iszero(parent)
             continue
         end
 

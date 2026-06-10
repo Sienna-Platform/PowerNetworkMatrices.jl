@@ -12,8 +12,6 @@ Concrete implementations include:
 """
 abstract type NetworkReduction end
 
-get_irreducible_buses(::NetworkReduction) = Set{Int}()
-
 function Base.:(==)(x::T1, y::T1) where {T1 <: NetworkReduction}
     for field in fieldnames(T1)
         if getfield(x, field) != getfield(y, field)

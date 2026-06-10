@@ -3,7 +3,10 @@ function _basic_test_ward_reduction(sys, study_buses)
     wr = get_network_reduction_data(ybus)
     @test isa(wr, NetworkReductionData)
     @test get_reductions(wr) ==
-          PNM.ReductionContainer(; ward_reduction = WardReduction(study_buses))
+          PNM.ReductionContainer(;
+        ward_reduction = WardReduction(study_buses),
+        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(),
+    )
     external_buses =
         setdiff([get_number(x) for x in get_components(ACBus, sys)], study_buses)
     @test !isempty(wr.added_admittance_map)

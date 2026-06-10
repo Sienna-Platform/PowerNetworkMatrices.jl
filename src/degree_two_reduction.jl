@@ -1,34 +1,17 @@
 """
     DegreeTwoReduction <: NetworkReduction
 
-Network reduction algorithm that eliminates buses with exactly two connections by combining
-the incident branches into a single equivalent branch. This reduction preserves the electrical
-characteristics of the network while simplifying its topology.
+Folds degree-2 buses into equivalent series branches. Additionally protects
+system-derived buses (static-injection hosts, HVDC terminals, area-interchange
+and `TransmissionInterface` endpoints) on top of any user set passed via
+`Ybus(sys; irreducible_buses=...)`.
 
 # Fields
-- `irreducible_buses::Vector{Int}`: List of bus numbers that should not be eliminated even if they have degree two
-- `reduce_reactive_power_injectors::Bool`: Whether to reduce buses with reactive power injections (default: true)
-
-# Examples
-```julia
-# Create degree-two reduction with default settings
-reduction = DegreeTwoReduction()
-
-# Create degree-two reduction protecting specific buses
-reduction = DegreeTwoReduction(irreducible_buses=[101, 205])
-
-# Create reduction that preserves buses with reactive power injections
-reduction = DegreeTwoReduction(reduce_reactive_power_injectors=false)
-
-# Apply to system
-ybus = Ybus(system; network_reductions=[reduction])
-```
+- `reduce_reactive_power_injectors::Bool = true`
 """
 @kwdef struct DegreeTwoReduction <: NetworkReduction
-    irreducible_buses::Vector{Int} = Vector{Int}()
     reduce_reactive_power_injectors::Bool = true
 end
-get_irreducible_buses(nr::DegreeTwoReduction) = nr.irreducible_buses
 get_reduce_reactive_power_injectors(nr::DegreeTwoReduction) =
     nr.reduce_reactive_power_injectors
 

@@ -1,11 +1,16 @@
 abstract type AbstractBranchesParallel <: PSY.ACTransmission end
 
+# `arc_key` is the group's canonical arc in original bus numbers (the seed member's
+# orientation). It is remapped with `nr` on read, so orientation no longer depends on the
+# order of `branches`.
 mutable struct BranchesParallel{T <: PSY.ACTransmission} <: AbstractBranchesParallel
     branches::Vector{T}
+    arc_key::Tuple{Int, Int}
     equivalent_ybus::Union{Matrix{YBUS_ELTYPE}, Nothing}
 
     function BranchesParallel{T}(
         branches::Vector{T},
+        arc_key::Tuple{Int, Int},
         equivalent_ybus::Union{Matrix{YBUS_ELTYPE}, Nothing},
     ) where {T <: PSY.ACTransmission}
         if !isconcretetype(T)
@@ -14,21 +19,23 @@ mutable struct BranchesParallel{T <: PSY.ACTransmission} <: AbstractBranchesPara
                 "Use MixedBranchesParallel for groups with mixed branch types. Got T=$T.",
             )
         end
-        return new{T}(branches, equivalent_ybus)
+        return new{T}(branches, arc_key, equivalent_ybus)
     end
 end
 
 function BranchesParallel(branches::Vector{T}) where {T <: PSY.ACTransmission}
-    return BranchesParallel{T}(branches, nothing)
+    return BranchesParallel{T}(branches, get_arc_tuple(first(branches)), nothing)
 end
 
 mutable struct MixedBranchesParallel <: AbstractBranchesParallel
     branches::Vector{PSY.ACTransmission}
+    arc_key::Tuple{Int, Int}
     equivalent_ybus::Union{Matrix{YBUS_ELTYPE}, Nothing}
 end
 
 function MixedBranchesParallel(branches::Vector{<:PSY.ACTransmission})
-    return MixedBranchesParallel(Vector{PSY.ACTransmission}(branches), nothing)
+    typed = Vector{PSY.ACTransmission}(branches)
+    return MixedBranchesParallel(typed, get_arc_tuple(first(typed)), nothing)
 end
 
 function add_branch!(bp::BranchesParallel{T}, branch::T) where {T <: PSY.ACTransmission}
@@ -84,19 +91,9 @@ function get_series_susceptance(segment::AbstractBranchesParallel)
     return sum(get_series_susceptance(branch) for branch in segment.branches)
 end
 
-function get_equivalent_physical_branch_parameters(bp::AbstractBranchesParallel)
-    if isnothing(bp.equivalent_ybus)
-        populate_equivalent_ybus!(bp)
-    end
-    equivalent_ybus = bp.equivalent_ybus
-    return _get_equivalent_physical_branch_parameters(equivalent_ybus)
-end
-
-function populate_equivalent_ybus!(bp::AbstractBranchesParallel)
-    Y11, Y12, Y21, Y22 = ybus_branch_entries(bp)
-    bp.equivalent_ybus = YBUS_ELTYPE[Y11 Y12; Y21 Y22]
-    return
-end
+# `get_equivalent_physical_branch_parameters` / `populate_equivalent_ybus!` for parallel and
+# series groups live in common.jl, which is included after NetworkReductionData so `nr` can be
+# typed.
 
 """
     get_sum_of_max_rating(bp::AbstractBranchesParallel)

@@ -288,7 +288,8 @@ function LODF(
     A = IncidenceMatrix(Ymatrix)
     BA = BA_Matrix(Ymatrix)
     ptdf = PTDF(A, BA)
-    return LODF(A, ptdf; linear_solver = linear_solver, tol = tol, kwargs...)
+    # Ybus consumed `kwargs...`; don't re-forward to the (A, ptdf) constructor.
+    return LODF(A, ptdf; linear_solver = linear_solver, tol = tol)
 end
 
 """

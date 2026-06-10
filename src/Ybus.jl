@@ -145,8 +145,8 @@ removed to reduce computational complexity.
 
 # Examples
 ```julia
-ybus = Ybus(system)
-reduction = RadialReduction(irreducible_buses=[101, 205])
+ybus = Ybus(system; irreducible_buses=Set([101, 205]))
+reduction = RadialReduction()
 reduction_data = get_reduction(ybus, system, reduction)
 ```
 
@@ -207,8 +207,11 @@ function _push_parallel_branch_dispatch!(
     br::PSY.ACTransmission,
 )
     @warn "Mismatch in parallel device types for arc $(arc_tuple). This could indicate issues in the network data."
-    parallel_branch_map[arc_tuple] =
-        MixedBranchesParallel(PSY.ACTransmission[existing.branches..., br])
+    parallel_branch_map[arc_tuple] = MixedBranchesParallel(
+        PSY.ACTransmission[existing.branches..., br],
+        existing.arc_key,
+        nothing,
+    )
     return
 end
 
@@ -367,9 +370,10 @@ function add_branch_entries_to_ybus!(
     y21::Vector{YBUS_ELTYPE},
     y22::Vector{YBUS_ELTYPE},
     branch_ix::Int,
-    br::PSY.ACTransmission,
+    br::PSY.ACTransmission;
+    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
-    Y11, Y12, Y21, Y22 = ybus_branch_entries(br)
+    Y11, Y12, Y21, Y22 = ybus_branch_entries(br; min_x_eps = min_x_eps)
     y11[branch_ix] = Y11
     y12[branch_ix] = Y12
     y21[branch_ix] = Y21
@@ -384,15 +388,14 @@ end
         nr::NetworkReductionData,
         fb::Vector{Int},
         tb::Vector{Int},
-        adj::SparseArrays.SparseMatrixCSC{Int8, Int},
         br::PSY.ACTransmission
     )
 
 Update indexing structures when adding an AC transmission branch to the Y-bus.
 
 This function handles the bookkeeping required when adding a branch: updates network
-reduction mappings, sets adjacency matrix entries, and records from/to bus indices
-for the branch in the Y-bus construction vectors.
+reduction mappings and records from/to bus indices for the branch in the Y-bus
+construction vectors.
 
 # Arguments
 - `num_bus::Dict{Int, Int}`: Mapping from bus numbers to matrix indices
@@ -400,12 +403,10 @@ for the branch in the Y-bus construction vectors.
 - `nr::NetworkReductionData`: Network reduction data to update
 - `fb::Vector{Int}`: Vector of from-bus indices
 - `tb::Vector{Int}`: Vector of to-bus indices
-- `adj::SparseArrays.SparseMatrixCSC{Int8, Int}`: Adjacency matrix
 - `br::PSY.ACTransmission`: AC transmission branch to add
 
 # Implementation Details
 - Calls `add_to_branch_maps!()` to update reduction mappings
-- Updates adjacency matrix with branch connectivity
 - Records bus indices in from/to vectors for sparse matrix construction
 """
 function add_branch_entries_to_indexing_maps!(
@@ -414,14 +415,11 @@ function add_branch_entries_to_indexing_maps!(
     nr::NetworkReductionData,
     fb::Vector{Int},
     tb::Vector{Int},
-    adj::SparseArrays.SparseMatrixCSC{Int8, Int},
     br::PSY.ACTransmission,
 )
     arc = PSY.get_arc(br)
     add_to_branch_maps!(nr, arc, br)
     bus_from_no, bus_to_no = get_bus_indices(arc, num_bus, nr)
-    adj[bus_from_no, bus_to_no] = 1
-    adj[bus_to_no, bus_from_no] = -1
     fb[branch_ix] = bus_from_no
     tb[branch_ix] = bus_to_no
     return
@@ -431,13 +429,17 @@ _get_shunt(br::PSY.ACTransmission, node::Symbol) =
     PSY.get_g(br)[node] + 1im * PSY.get_b(br)[node]
 _get_shunt(::PSY.DiscreteControlledACBranch, ::Symbol) = zero(YBUS_ELTYPE)
 
-"""Ybus entries for a `Line` or a `DiscreteControlledACBranch`."""
-function ybus_branch_entries(br::PSY.ACTransmission)
+"""Ybus entries for a `Line` or `DiscreteControlledACBranch`. `min_x_eps` substitutes
+for `x` when `r == x == 0`; sister methods accept and ignore it for uniform dispatch."""
+function ybus_branch_entries(
+    br::PSY.ACTransmission;
+    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+)
     r = PSY.get_r(br)
     x = PSY.get_x(br)
     if r == 0.0 && x == 0.0
-        @warn "Branch $(PSY.get_name(br)) has r=0.0 and x=0.0; substituting x=$(ZERO_IMPEDANCE_X_EPSILON) to avoid division by zero. This branch will be reduced by ZeroImpedanceBranchReduction."
-        x = ZERO_IMPEDANCE_X_EPSILON
+        @warn "Branch $(PSY.get_name(br)) has r=0.0 and x=0.0; substituting x=$(min_x_eps) to avoid division by zero. This branch will be reduced by ZeroImpedanceBranchReduction unless its endpoints are irreducible."
+        x = min_x_eps
     end
     Y_l = (1 / (r + x * 1im))
     Y11 = Y_l + _get_shunt(br, :from)
@@ -452,7 +454,20 @@ function ybus_branch_entries(br::PSY.ACTransmission)
     return (Y11, Y12, Y21, Y22)
 end
 
-function ybus_branch_entries(br::PSY.GenericArcImpedance)
+# A single branch has unambiguous orientation; this `nr` overload lets callers iterating
+# heterogeneous segments (single branches and parallel groups) pass `nr` uniformly.
+function ybus_branch_entries(
+    br::PSY.ACTransmission,
+    ::NetworkReductionData;
+    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+)
+    return ybus_branch_entries(br; min_x_eps = min_x_eps)
+end
+
+function ybus_branch_entries(
+    br::PSY.GenericArcImpedance;
+    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+)
     Y_l = (1 / (PSY.get_r(br) + PSY.get_x(br) * 1im))
     Y11 = Y_l
     if !isfinite(Y11) || !isfinite(Y_l)
@@ -466,22 +481,40 @@ function ybus_branch_entries(br::PSY.GenericArcImpedance)
     return (Y11, Y12, Y21, Y22)
 end
 
-function ybus_branch_entries(parallel_br::AbstractBranchesParallel)
-    arc = get_arc_tuple(first(parallel_br))
-    Y11 = Y12 = Y21 = Y22 = zero(YBUS_ELTYPE)
+function ybus_branch_entries(
+    parallel_br::AbstractBranchesParallel,
+    nr::NetworkReductionData;
+    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+)
+    # A bus merge can fold an anti-parallel branch into the group; swap its 2x2 so the
+    # equivalent is correct in the key's frame for asymmetric branches (transformers).
+    reference = get_arc_tuple(parallel_br, nr)
+    # Accumulate in ComplexF64 (the per-branch entry type): keeps the sum type-stable and
+    # full-precision; callers narrow to YBUS_ELTYPE when storing.
+    Y11 = Y12 = Y21 = Y22 = zero(ComplexF64)
     for br in parallel_br
-        # All branches in BranchesParallel are have the same orientation when constructed in add_to_branch_maps!
         (y11, y12, y21, y22) = ybus_branch_entries(br)
-        Y11 += y11
-        Y12 += y12
-        Y21 += y21
-        Y22 += y22
+        if get_arc_tuple(br, nr) != reference
+            Y11 += y22
+            Y12 += y21
+            Y21 += y12
+            Y22 += y11
+        else
+            Y11 += y11
+            Y12 += y12
+            Y21 += y21
+            Y22 += y22
+        end
     end
     return (Y11, Y12, Y21, Y22)
 end
 
-function ybus_branch_entries(br::BranchesSeries)
-    ybus_chain = _build_chain_ybus(br)
+function ybus_branch_entries(
+    br::BranchesSeries,
+    nr::NetworkReductionData;
+    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+)
+    ybus_chain = _build_chain_ybus(br, nr)
     ybus_reduced = _reduce_internal_nodes(ybus_chain)
     return ybus_reduced[1, 1], ybus_reduced[1, 2], ybus_reduced[2, 1], ybus_reduced[2, 2]
 end
@@ -585,7 +618,10 @@ function _get_impedance_correction_factor(br::PSY.TwoWindingTransformer)
 end
 
 """Ybus entries for a `Transformer2W`, `TapTransformer`, or `PhaseShiftingTransformer`."""
-function ybus_branch_entries(br::PSY.TwoWindingTransformer, correction::Float64)
+function ybus_branch_entries(
+    br::PSY.TwoWindingTransformer, correction::Float64;
+    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+)
     Y_t = 1 / ((PSY.get_r(br) + PSY.get_x(br) * 1im) * correction)
     tap = _get_tap(br) * exp(PSY.get_α(br) * 1im)
     c_tap = _get_tap(br) * exp(-1 * PSY.get_α(br) * 1im)
@@ -623,7 +659,10 @@ function _get_impedance_correction_factor(tp::ThreeWindingTransformerWinding)
 end
 
 """Ybus branch entries for an arc in the wye model of a `ThreeWindingTransformer`."""
-function ybus_branch_entries(tp::ThreeWindingTransformerWinding, correction::Float64)
+function ybus_branch_entries(
+    tp::ThreeWindingTransformerWinding, correction::Float64;
+    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+)
     br = get_transformer(tp)
     winding_number = get_winding_number(tp)
     if winding_number == 1
@@ -689,10 +728,15 @@ function _ybus!(
     fb::Vector{Int},
     tb::Vector{Int},
     nr::NetworkReductionData,
-    adj::SparseArrays.SparseMatrixCSC{Int8, Int},
 )
-    add_branch_entries_to_indexing_maps!(num_bus, branch_ix, nr, fb, tb, adj, br)
-    add_branch_entries_to_ybus!(y11, y12, y21, y22, branch_ix, br)
+    add_branch_entries_to_indexing_maps!(num_bus, branch_ix, nr, fb, tb, br)
+    # ZIBR's substitute reactance for r=x=0 branches; fall back if no spec on the NRD.
+    zir = get_zero_impedance_reduction(get_reductions(nr))
+    min_x_eps =
+        isnothing(zir) ? ZERO_IMPEDANCE_X_EPSILON :
+        get_minimum_retained_impedance(zir)
+    add_branch_entries_to_ybus!(y11, y12, y21, y22, branch_ix, br;
+        min_x_eps = min_x_eps)
     return
 end
 
@@ -731,7 +775,6 @@ function _ybus!(
     fb::Vector{Int},
     tb::Vector{Int},
     nr::NetworkReductionData,
-    adj::SparseArrays.SparseMatrixCSC{Int8, Int},
 )
     _ybus!(y11, y12, y21, y22, br.branch, correction, num_bus, branch_ix, fb, tb, nr, adj)
     return
@@ -764,8 +807,6 @@ function _ybus!(
     n_entries = 0
     if primary_available
         primary_ix, star_ix = get_bus_indices(primary_star_arc, num_bus, nr)
-        adj[primary_ix, star_ix] = 1
-        adj[star_ix, primary_ix] = -1
         fb[offset_ix + ix + n_entries] = primary_ix
         tb[offset_ix + ix + n_entries] = star_ix
         (Y11, Y12, Y21, Y22) =
@@ -778,8 +819,6 @@ function _ybus!(
     end
     if secondary_available
         secondary_ix, star_ix = get_bus_indices(secondary_star_arc, num_bus, nr)
-        adj[secondary_ix, star_ix] = 1
-        adj[star_ix, secondary_ix] = -1
         fb[offset_ix + ix + n_entries] = secondary_ix
         tb[offset_ix + ix + n_entries] = star_ix
         (Y11, Y12, Y21, Y22) =
@@ -792,8 +831,6 @@ function _ybus!(
     end
     if tertiary_available
         tertiary_ix, star_ix = get_bus_indices(tertiary_star_arc, num_bus, nr)
-        adj[tertiary_ix, star_ix] = 1
-        adj[star_ix, tertiary_ix] = -1
         fb[offset_ix + ix + n_entries] = tertiary_ix
         tb[offset_ix + ix + n_entries] = star_ix
         (Y11, Y12, Y21, Y22) =
@@ -864,7 +901,6 @@ end
 
 function _buildybus!(
     network_reduction_data::NetworkReductionData,
-    adj::SparseArrays.SparseMatrixCSC{Int8, Int},
     branches::YbusACBranches,
     transformer_3w::Vector{PSY.ThreeWindingTransformer},
     num_bus::Dict{Int, Int},
@@ -1046,20 +1082,71 @@ ybus = Ybus(system; include_constant_impedance_loads=false)
 - [`PTDF`](@ref): Power transfer distribution factors
 - [`LODF`](@ref): Line outage distribution factors
 """
+# Re-impose the original last-write-wins orientation (`adj[i,j]=1; adj[j,i]=-1` per
+# branch) for bus pairs carrying anti-parallel branches, whose +1/-1 contributions
+# cancel or flip in the summed (COO) adjacency. Entries are set explicitly, so a
+# cancelled position is restored to ±1 whether or not a zero was stored there —
+# guaranteeing the connection survives a later `dropzeros!`. Warns once per affected
+# bus pair.
+function _resolve_antiparallel_adjacency!(
+    adj::SparseArrays.SparseMatrixCSC{Int8, Int},
+    fb::Vector{Int},
+    tb::Vector{Int},
+    bus_ax::Vector{Int},
+)
+    last_orientation = Dict{Tuple{Int, Int}, Tuple{Int, Int}}()
+    antiparallel = Set{Tuple{Int, Int}}()
+    for k in eachindex(fb)
+        i = fb[k]
+        j = tb[k]
+        i == j && continue
+        canonical = minmax(i, j)
+        prev = get(last_orientation, canonical, (0, 0))
+        if !iszero(prev[1]) && prev != (i, j)
+            push!(antiparallel, canonical)
+        end
+        last_orientation[canonical] = (i, j)  # last write wins, matching the original
+    end
+    for canonical in antiparallel
+        i, j = last_orientation[canonical]
+        adj[i, j] = one(Int8)
+        adj[j, i] = -one(Int8)
+        @warn "Anti-parallel branches between buses $(bus_ax[i]) and $(bus_ax[j]) " *
+              "detected; retaining the last branch's orientation in the bus " *
+              "adjacency matrix used for connectivity checks."
+    end
+    return
+end
+
 function Ybus(
     sys::PSY.System;
     make_arc_admittance_matrices::Bool = false,
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
+    irreducible_buses = Set{Int}(),
+    zero_impedance_reduction::ZeroImpedanceBranchReduction =
+    ZeroImpedanceBranchReduction(),
     include_constant_impedance_loads = true,
     subnetwork_algorithm = iterative_union_find,
 )
+    # ZIBR is auto-applied below; reject it in user reductions to avoid double-apply.
+    for r in network_reductions
+        _reject_zibr_in_user_reductions(r)
+    end
     units_base = PSY.get_units_base(sys)
     if units_base != "SYSTEM_BASE"
         @warn "Setting the system unit base from $units_base to SYSTEM_BASE for matrix construction"
         PSY.set_units_base_system!(sys, "SYSTEM_BASE")
     end
+    user_irreducible = Set{Int}(irreducible_buses)
     ref_bus_numbers = Set{Int}()
-    nr = NetworkReductionData()
+    # Seed the user set and ZIBR spec into the container so every reduction step and
+    # the assembly path can read them.
+    nr = NetworkReductionData(;
+        reductions = ReductionContainer(;
+            user_irreducible_buses = user_irreducible,
+            zero_impedance_reduction = zero_impedance_reduction,
+        ),
+    )
     bus_reduction_map = get_bus_reduction_map(nr)
     reverse_bus_search_map = get_reverse_bus_search_map(nr)
 
@@ -1102,7 +1189,6 @@ function Ybus(
     y11, y12, y21, y22, ysh, fb, tb, sb =
         _buildybus!(
             nr,
-            adj,
             branches,
             transformer_3W,
             bus_lookup,
@@ -1111,6 +1197,39 @@ function Ybus(
             standard_loads,
             icd_map,
         )
+    # Build adjacency matrix from COO triplets in a single sparse() call to avoid
+    # ~2×branchcount structural insertions into a growing CSC matrix.
+    # Values: diagonal = +1, forward arc (from→to) = +1, reverse arc (to→from) = -1.
+    # Parallel branches (same orientation) produce duplicate (i,j) entries that sum;
+    # clamp back to ±1 via sign. Anti-parallel branches are reconciled separately below.
+    branchcount = length(fb)
+    adj_I = Vector{Int}(undef, busnumber + 2 * branchcount)
+    adj_J = Vector{Int}(undef, busnumber + 2 * branchcount)
+    adj_V = Vector{Int8}(undef, busnumber + 2 * branchcount)
+    @inbounds for k in 1:busnumber
+        adj_I[k] = k
+        adj_J[k] = k
+        adj_V[k] = one(Int8)
+    end
+    @inbounds for k in 1:branchcount
+        adj_I[busnumber + k] = fb[k]
+        adj_J[busnumber + k] = tb[k]
+        adj_V[busnumber + k] = one(Int8)
+        adj_I[busnumber + branchcount + k] = tb[k]
+        adj_J[busnumber + branchcount + k] = fb[k]
+        adj_V[busnumber + branchcount + k] = -one(Int8)
+    end
+    adj = SparseArrays.sparse(adj_I, adj_J, adj_V, busnumber, busnumber)
+    map!(sign, adj.nzval, adj.nzval)
+    # Anti-parallel bus pairs cancel to a zero in the summed adjacency. The diagonal is
+    # always +1, so any zero here flags such a cancellation. When that happens, re-impose
+    # ±1 (last-write-wins, matching the original incremental build) right now — before
+    # `adj` is used for connectivity or copied/`dropzeros!`-ed by AdjacencyMatrix — so the
+    # connection is never carried by a zero that could be eliminated. The check is a
+    # cheap scan of `adj.nzval` (no per-branch bookkeeping); `_resolve_*` sets the entries
+    # explicitly and emits the per-pair warning. (We use the zero as a signal here, but do
+    # not depend on it surviving downstream.)
+    any(iszero, adj.nzval) && _resolve_antiparallel_adjacency!(adj, fb, tb, bus_ax)
     ybus = SparseArrays.sparse(
         [fb; fb; tb; tb; sb],  # row indices
         [fb; tb; fb; tb; sb],  # column indices
@@ -1170,7 +1289,7 @@ function Ybus(
             @warn "More than one island found; Network is not connected"
         end
     else
-        subnetworks = Dict{Int, Set{Int}}(bus_lookup[1] => Set(bus_ax))
+        subnetworks = Dict{Int, Set{Int}}(only(bus_ax) => Set(bus_ax))
     end
     subnetwork_axes = _make_bus_subnetwork_axes(subnetworks)
     arc_subnetwork_axis = _make_arc_subnetwork_axis(subnetworks, nr)
@@ -1185,17 +1304,7 @@ function Ybus(
         arc_admittance_from_to,
         arc_admittance_to_from,
     )
-    all_irreducible = mapreduce(
-        get_irreducible_buses,
-        union,
-        network_reductions;
-        init = Set{Int}(),
-    )
-    ybus = build_reduced_ybus(
-        ybus,
-        sys,
-        ZeroImpedanceBranchReduction(; irreducible_buses = all_irreducible),
-    )
+    ybus = build_reduced_ybus(ybus, sys, zero_impedance_reduction)
     for nr in network_reductions
         ybus = build_reduced_ybus(ybus, sys, nr)
     end
@@ -1385,6 +1494,7 @@ function build_reduced_ybus(
         get_reductions(get_network_reduction_data(ybus)),
     )
     network_reduction_data = get_reduction(ybus, sys, network_reduction)
+    isempty(network_reduction_data) && return ybus
     return _apply_reduction(ybus, network_reduction_data)
 end
 
@@ -1533,18 +1643,12 @@ function _accumulate_csc_col_into!(
 )
     rows = SparseArrays.rowvals(M)
     vals = SparseArrays.nonzeros(M)
-    j_range_init = SparseArrays.nzrange(M, j)
-    isempty(j_range_init) && return
-    j_start = first(j_range_init)
-    j_len = length(j_range_init)
-    # Structural inserts into column i (which precedes j in CSC order) shift colptr[j]
-    # upward, invalidating any pre-captured range. Track cumulative shift in `offset` so
-    # the absolute position of entry idx in column j's backing store remains j_start + offset + idx.
-    offset = 0
-    for idx in 0:(j_len - 1)
-        k_j = j_start + offset + idx
-        r = rows[k_j]
-        v_j = vals[k_j]
+    # Snapshot column j up front. Structural inserts into column i shift the CSC backing
+    # store, and the shift direction depends on whether i precedes or follows j; iterating
+    # a captured copy of column j stays correct for either ordering. An offset-based version
+    # is only valid when i < j (for i > j it drops a mutual term, giving an asymmetric Ybus).
+    j_entries = [(rows[k], vals[k]) for k in SparseArrays.nzrange(M, j)]
+    for (r, v_j) in j_entries
         iszero(v_j) && continue
         found = false
         # Re-read i_range each iteration: a structural insert changes where column i lives.
@@ -1556,11 +1660,7 @@ function _accumulate_csc_col_into!(
                 break
             end
         end
-        if !found
-            before = M.colptr[i + 1]
-            M[r, i] += v_j
-            offset += M.colptr[i + 1] - before
-        end
+        found || (M[r, i] += v_j)
     end
     return
 end
@@ -1578,6 +1678,27 @@ function _merge_ybus_buses!(
         _accumulate_csc_col_into!(data, i, j)
         _accumulate_csc_row_into!(adjacency_data, i, j)
         _accumulate_csc_col_into!(adjacency_data, i, j)
+    end
+    # Anti-parallel branches cancel in the signed adjacency (+1/-1 sum to 0) and get dropped
+    # by `dropzeros!`, hiding a real edge from DegreeTwoReduction. The complex Ybus data sums
+    # and never cancels, so re-derive each surviving bus's adjacency from it.
+    for surviving_bus in Set(values(merged_bus_pairs))
+        _repair_merged_adjacency!(adjacency_data, data, bus_lookup[surviving_bus])
+    end
+    return
+end
+
+function _repair_merged_adjacency!(
+    adjacency_data::SparseArrays.SparseMatrixCSC{Int8, Int},
+    data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int},
+    i::Int,
+)
+    drows = SparseArrays.rowvals(data)
+    for k in SparseArrays.nzrange(data, i)
+        r = drows[k]
+        r == i && continue
+        iszero(adjacency_data[i, r]) && (adjacency_data[i, r] = one(Int8))
+        iszero(adjacency_data[r, i]) && (adjacency_data[r, i] = -one(Int8))
     end
     return
 end
@@ -1706,6 +1827,7 @@ function _remap_merged_bus_in_branch_maps!(
         push!(arcs_to_insert, new_arc => val)
     end
     for (new_arc, val) in arcs_to_insert
+        reverse_new_arc = (new_arc[2], new_arc[1])
         if haskey(nr.direct_branch_map, new_arc)
             existing = pop!(nr.direct_branch_map, new_arc)
             @debug "Bus merge collision on direct arc $new_arc: promoting $(get_name(existing)) and $(get_name(val)) to a parallel group."
@@ -1719,6 +1841,21 @@ function _remap_merged_bus_in_branch_maps!(
         elseif haskey(nr.parallel_branch_map, new_arc)
             @debug "Bus merge collision on direct arc $new_arc: adding $(get_name(val)) to existing parallel group."
             _push_parallel_branch!(nr.parallel_branch_map, new_arc, val)
+        elseif haskey(nr.direct_branch_map, reverse_new_arc)
+            # The remapped arc is anti-parallel to an existing direct entry 
+            # Normalize to the already-established key so the pair is stored as a single parallel group.
+            existing = pop!(nr.direct_branch_map, reverse_new_arc)
+            @debug "Bus merge created anti-parallel collision: remapped arc $new_arc conflicts with existing $reverse_new_arc; promoting $(get_name(existing)) and $(get_name(val)) to a parallel group under $reverse_new_arc."
+            if haskey(nr.parallel_branch_map, reverse_new_arc)
+                _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, existing)
+                _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, val)
+            else
+                nr.parallel_branch_map[reverse_new_arc] =
+                    _make_parallel_branch_pair(existing, val, reverse_new_arc)
+            end
+        elseif haskey(nr.parallel_branch_map, reverse_new_arc)
+            @debug "Bus merge created anti-parallel collision: remapped arc $new_arc conflicts with existing parallel group at $reverse_new_arc; adding $(get_name(val)) to that group."
+            _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, val)
         else
             nr.direct_branch_map[new_arc] = val
         end
@@ -1739,6 +1876,7 @@ function _remap_merged_bus_in_branch_maps!(
         push!(parallel_to_insert, new_arc => val)
     end
     for (new_arc, val) in parallel_to_insert
+        reverse_new_arc = (new_arc[2], new_arc[1])
         if haskey(nr.parallel_branch_map, new_arc)
             @debug "Bus merge collision on parallel arc $new_arc: merging incoming group ($(length(val)) branch(es)) into existing group."
             # Merge: push all branches from the incoming group into the existing group.
@@ -1751,6 +1889,20 @@ function _remap_merged_bus_in_branch_maps!(
             existing = pop!(nr.direct_branch_map, new_arc)
             nr.parallel_branch_map[new_arc] = val
             _push_parallel_branch!(nr.parallel_branch_map, new_arc, existing)
+        elseif haskey(nr.parallel_branch_map, reverse_new_arc)
+            @debug "Bus merge created anti-parallel collision on parallel arc $new_arc ↔ $reverse_new_arc: merging incoming group into existing group at $reverse_new_arc."
+            for br in val
+                _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, br)
+            end
+        elseif haskey(nr.direct_branch_map, reverse_new_arc)
+            @debug "Bus merge created anti-parallel collision on parallel arc $new_arc ↔ $reverse_new_arc: absorbing existing direct branch into incoming group, stored under $reverse_new_arc."
+            existing = pop!(nr.direct_branch_map, reverse_new_arc)
+            # Put the key-oriented branch first so the group's reference orientation is the key.
+            nr.parallel_branch_map[reverse_new_arc] =
+                _make_parallel_branch_pair(existing, first(val), reverse_new_arc)
+            for br in Iterators.drop(val, 1)
+                _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, br)
+            end
         else
             nr.parallel_branch_map[new_arc] = val
         end
@@ -1863,8 +2015,9 @@ function _apply_series_branch_maps!(nr::NetworkReductionData, nr_new::NetworkRed
 end
 
 """
-Updates both existing bus maps (forward and reverse) for a new reduction of bus b1 into bus b2. 
-Handles both the case where b2 is already reduced and the case where it is not. 
+Updates both existing bus maps (forward and reverse) for a new reduction of bus b1 into bus b2.
+Resolves each bus to its current root before merging so that the entire group previously
+associated with b1's root (not just b1 itself) is correctly transferred to b2's root.
 """
 function _update_bus_maps!(
     reverse_bus_search_map::Dict{Int, Int},
@@ -1872,29 +2025,21 @@ function _update_bus_maps!(
     b1_number::Int,
     b2_number::Int,
 )
-    if haskey(reverse_bus_search_map, b2_number)
-        reduced_b2_number = reverse_bus_search_map[b2_number]
-        s1 = get(bus_reduction_map, reduced_b2_number, Set{Int}())
-        s2 = union(
-            get(bus_reduction_map, b1_number, Set{Int}(b1_number)),
-            b1_number,
-        )
-        bus_reduction_map[reduced_b2_number] = union(s1, s2)
-        delete!(bus_reduction_map, b1_number)
-        for x in s2
-            reverse_bus_search_map[x] = reduced_b2_number
-        end
-    else
-        s1 = get(bus_reduction_map, b2_number, Set{Int}())
-        s2 = union(
-            get(bus_reduction_map, b1_number, Set{Int}(b1_number)),
-            b1_number,
-        )
-        bus_reduction_map[b2_number] = union(s1, s2)
-        delete!(bus_reduction_map, b1_number)
-        for x in s2
-            reverse_bus_search_map[x] = b2_number
-        end
+    b1_root = get(reverse_bus_search_map, b1_number, b1_number)
+    b2_root = get(reverse_bus_search_map, b2_number, b2_number)
+    b1_root == b2_root && return
+
+    # Collect b1_root plus every bus already reduced under it
+    s_moving = union(get(bus_reduction_map, b1_root, Set{Int}()), Set{Int}((b1_root,)))
+    b1_number != b1_root && push!(s_moving, b1_number)
+
+    # Merge into b2_root's group
+    bus_reduction_map[b2_root] =
+        union(get(bus_reduction_map, b2_root, Set{Int}()), s_moving)
+    delete!(bus_reduction_map, b1_root)
+
+    for x in s_moving
+        reverse_bus_search_map[x] = b2_root
     end
     return
 end
@@ -1947,7 +2092,7 @@ function _modify_removed_arc_connections!(
 )
     for (arc, bus) in removed_arc_to_surviving_bus
         arc_entry = _get_entry(arc, nrd_old)
-        y11, _, _, y22 = ybus_branch_entries(arc_entry)
+        y11, _, _, y22 = ybus_branch_entries(arc_entry, nrd_old)
         if arc[1] == bus
             data[bus_lookup[arc[1]], bus_lookup[arc[1]]] -= y11
         elseif arc[2] == bus
@@ -1986,7 +2131,7 @@ function _add_series_branches_to_ybus!(
             _get_chain_data(equivalent_arc, series_map_entry, nrd)
         ordered_bus_indices = [bus_lookup[x] for x in ordered_bus_numbers]
         equivalent_arc_indices = (ordered_bus_indices[1], ordered_bus_indices[end])
-        ybus_isolated_d2_chain = _build_chain_ybus(series_map_entry)
+        ybus_isolated_d2_chain = _build_chain_ybus(series_map_entry, nrd)
         ybus_boundary_isolated_d2_chain = _reduce_internal_nodes(ybus_isolated_d2_chain)
         _apply_d2_chain_ybus!(
             data,
@@ -2017,7 +2162,7 @@ function _add_series_branches_to_ybus!(
             _get_chain_data(equivalent_arc, series_map_entry, nrd)
         ordered_bus_indices = [bus_lookup[x] for x in ordered_bus_numbers]
         equivalent_arc_indices = (ordered_bus_indices[1], ordered_bus_indices[end])
-        ybus_isolated_d2_chain = _build_chain_ybus(series_map_entry)
+        ybus_isolated_d2_chain = _build_chain_ybus(series_map_entry, nrd)
         ybus_boundary_isolated_d2_chain = _reduce_internal_nodes(ybus_isolated_d2_chain)
         _apply_d2_chain_ybus!(
             data,
@@ -2082,6 +2227,7 @@ end
 
 function _build_chain_ybus(
     series_chain::BranchesSeries,
+    nr::NetworkReductionData,
 )
     segment_orientations = series_chain.segment_orientations
     fb = Vector{Int}()
@@ -2101,6 +2247,7 @@ function _build_chain_ybus(
             tb,
             ix,
             segment_orientations[ix],
+            nr,
         )
     end
     return Matrix(
@@ -2162,6 +2309,7 @@ function add_segment_to_ybus!(
     tb::Vector{Int},
     ix::Int,
     segment_orientation::Symbol,
+    nr::NetworkReductionData,
 )
     (Y11, Y12, Y21, Y22) = ybus_branch_entries(segment)
     push!(fb, ix)
@@ -2231,9 +2379,25 @@ function add_segment_to_ybus!(
     tb::Vector{Int},
     ix::Int,
     segment_orientation::Symbol,
+    nr::NetworkReductionData,
 )
-    for branch in segment
-        add_segment_to_ybus!(branch, y11, y12, y21, y22, fb, tb, ix, segment_orientation)
+    # Use the group's orientation-correct equivalent block (via `nr`) rather than summing
+    # members with one shared orientation, which mis-handles an anti-parallel asymmetric member.
+    (Y11, Y12, Y21, Y22) = ybus_branch_entries(segment, nr)
+    push!(fb, ix)
+    push!(tb, ix + 1)
+    if segment_orientation == :FromTo
+        push!(y11, Y11)
+        push!(y12, Y12)
+        push!(y21, Y21)
+        push!(y22, Y22)
+    elseif segment_orientation == :ToFrom
+        push!(y11, Y22)
+        push!(y12, Y21)
+        push!(y21, Y12)
+        push!(y22, Y11)
+    else
+        error("Invalid segment orientation $(segment_orientation)")
     end
     return
 end

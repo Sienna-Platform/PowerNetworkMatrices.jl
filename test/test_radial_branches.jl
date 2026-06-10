@@ -39,7 +39,10 @@
     @test length(rb.removed_buses) == 0
     @test rb.removed_arcs == Set([(7, 8), (8, 61)])
     @test get_reductions(rb) ==
-          PNM.ReductionContainer(; radial_reduction = RadialReduction())
+          PNM.ReductionContainer(;
+        radial_reduction = RadialReduction(),
+        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(),
+    )
 end
 
 @testset "Radial Branches Large" begin
@@ -83,11 +86,43 @@ end
     @test haskey(rr.reverse_bus_search_map, 17)
     ybus = Ybus(
         sys;
-        network_reductions = NetworkReduction[RadialReduction(;
-            irreducible_buses = [16, 17],
-        )],
+        network_reductions = NetworkReduction[RadialReduction()],
+        irreducible_buses = Set([16, 17]),
     )
     rr = get_network_reduction_data(ybus)
     @test !haskey(rr.reverse_bus_search_map, 16)
     @test !haskey(rr.reverse_bus_search_map, 17)
+end
+
+@testset "calculate_radial_arcs tolerates a self-loop arc (all-zero incidence row)" begin
+    # Regression: the MMWG case contains a self-loop branch (from == to). Its
+    # incidence row cancels to all zeros, so `_build_row_to_cols` never assigns
+    # `row_to_cols[row]`; the adjacency builder then read garbage and indexed
+    # `adj[0]` -> BoundsError. Model a 1-2-3-4 chain (bus 1 = reference) plus a
+    # self-loop on bus 2.
+    I = Int[]
+    J = Int[]
+    V = Int8[]
+    for (r, (f, t)) in enumerate([(1, 2), (2, 3), (3, 4)])
+        push!(I, r, r)
+        push!(J, f, t)
+        push!(V, Int8(1), Int8(-1))
+    end
+    # self-loop arc on bus 2 (row 4): +1 and -1 in the same column cancel to 0
+    push!(I, 4, 4)
+    push!(J, 2, 2)
+    push!(V, Int8(1), Int8(-1))
+    A = SparseArrays.dropzeros!(SparseArrays.sparse(I, J, V, 4, 4))
+    arc_map = Dict((1, 2) => 1, (2, 3) => 2, (3, 4) => 3, (2, 2) => 4)
+    bus_map = Dict(1 => 1, 2 => 2, 3 => 3, 4 => 4)
+    ref_bus_positions = Set([1])
+
+    bus_reduction_map, reverse_map, radial_arcs, final_arc_map =
+        PNM.calculate_radial_arcs(A, arc_map, bus_map, ref_bus_positions)
+
+    # The self-loop carries no connectivity and must not be treated as radial.
+    @test (2, 2) ∉ radial_arcs
+    # The 1-2-3-4 chain collapses toward the reference bus.
+    @test (3, 4) in radial_arcs
+    @test (2, 3) in radial_arcs
 end

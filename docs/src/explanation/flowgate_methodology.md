@@ -6,6 +6,10 @@ monitored transmission elements. It describes the mathematics behind the
 Woodbury-based computation and shows how to query distribution factors using
 the current API.
 
+For a hands-on walkthrough that maps every industry DFAX flavor (GSF, LSF,
+LODF, OTDF, transfer DFAX, flowgate DFAX, and N-k DFAX) onto the matrices
+this page describes, see the [Industry DFAX values](@ref) tutorial.
+
 ## Background
 
 A flowgate is a monitored transmission element paired with a contingency. The
