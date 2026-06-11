@@ -1,6 +1,8 @@
 module PowerNetworkMatrices
 
 export ABA_Matrix
+export AutoTolerance
+export discover_data_precision
 export AdjacencyMatrix
 export ArcAdmittanceMatrix
 export BA_Matrix
@@ -134,6 +136,7 @@ include("AdjacencyMatrix.jl")
 include("connectivity_checks.jl")
 include("subnetworks.jl")
 include("common.jl")
+include("auto_tolerance.jl")
 include("BA_ABA_matrices.jl")
 include("ptdf_calculations.jl")
 include("row_cache.jl")

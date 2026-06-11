@@ -60,8 +60,9 @@ cache and skips the recomputation.
         separate cache lock is needed.
 - `subnetwork_axes::Dict{Int, Ax}`:
         Maps reference bus indices to subnetwork axes.
-- `tol::Base.RefValue{Float64}`:
-        Tolerance for sparsification.
+- `tol::SparsificationCutoff`:
+        Resolved per-row sparsification rule (absolute cutoff for a `Float64`
+        `tol`, relative cutoff for an [`AutoTolerance`](@ref)).
 - `max_cache_size_bytes::Int`:
         Max cache size in bytes per contingency.
 - `network_reduction_data::NetworkReductionData`:
@@ -98,7 +99,7 @@ struct VirtualMODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}, K} <:
     woodbury_cache::Dict{NetworkModification, WoodburyFactors}
     row_caches::Dict{NetworkModification, RowCache}
     subnetwork_axes::Dict{Int, Ax}
-    tol::Base.RefValue{Float64}
+    tol::SparsificationCutoff
     max_cache_size_bytes::Int
     network_reduction_data::NetworkReductionData
     temp_data::Vector{Vector{Float64}}
@@ -117,7 +118,7 @@ get_arc_lookup(M::VirtualMODF) = M.lookup[1]
 get_bus_lookup(M::VirtualMODF) = M.lookup[2]
 get_arc_axis(mat::VirtualMODF) = mat.axes[1]
 get_bus_axis(mat::VirtualMODF) = mat.axes[2]
-get_tol(mat::VirtualMODF) = mat.tol[]
+get_tol(mat::VirtualMODF) = cutoff_value(mat.tol)
 get_system_uuid(M::VirtualMODF) = M.system_uuid
 
 function Base.getproperty(vmodf::VirtualMODF, name::Symbol)
@@ -268,7 +269,10 @@ reduced network, so a branch in a contingency must survive reduction.
 - `linear_solver::String = _default_linear_solver()`: Linear solver for the
         ABA factorization. Options: "KLU", "AppleAccelerate". Defaults to
         "AppleAccelerate" on macOS and "KLU" elsewhere.
-- `tol::Float64`: Tolerance for row sparsification (default: eps())
+- `tol::Union{Float64, AutoTolerance}`: Tolerance for row sparsification.
+        A `Float64` applies a fixed absolute cutoff; an [`AutoTolerance`](@ref)
+        (the default) applies a relative per-row cutoff so requested columns stay
+        sparse on large systems.
 - `max_cache_size::Int`: Max cache size in MiB per contingency (default: MAX_CACHE_SIZE_MiB)
 - `network_reductions::Vector{NetworkReduction}`: Network reductions to apply
 - `automatically_register_outages::Bool`: Register all system Outage attributes (default: true)
@@ -277,7 +281,7 @@ function VirtualMODF(
     sys::PSY.System;
     dist_slack::Vector{Float64} = Float64[],
     linear_solver::String = _default_linear_solver(),
-    tol::Float64 = eps(),
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
     irreducible_buses = Set{Int}(),
@@ -329,6 +333,10 @@ function VirtualMODF(
     ABA = calculate_ABA_matrix(A.data, BA.data, Set(ref_bus_positions))
     K = _create_factorization(solver, ABA)
 
+    # Resolve the per-row sparsification rule once: a Float64 becomes an absolute
+    # cutoff, an AutoTolerance a relative cutoff (κ logged via the reused K).
+    cutoff = _resolve_virtual_cutoff(tol, K, ABA, SparseArrays.nonzeros(BA.data))
+
     valid_ix = setdiff(1:length(bus_ax), ref_bus_positions)
     bus_to_valid_idx = _build_bus_to_valid_idx(length(bus_ax), valid_ix)
 
@@ -359,7 +367,7 @@ function VirtualMODF(
         Dict{NetworkModification, WoodburyFactors}(),
         Dict{NetworkModification, RowCache}(),
         subnetwork_axes,
-        Ref(tol),
+        cutoff,
         max_cache_bytes,
         Ymatrix.network_reduction_data,
         temp_data,
@@ -504,11 +512,7 @@ function Base.getindex(vmodf::VirtualMODF, monitored_idx::Int, mod::NetworkModif
             return copy(rc[monitored_idx])
         end
         row = _compute_modf_entry(vmodf, monitored_idx, mod)
-        if get_tol(vmodf) > eps()
-            stored = sparsify(row, get_tol(vmodf))
-        else
-            stored = row
-        end
+        stored = apply_cutoff(vmodf.tol, row)
         rc[monitored_idx] = stored
         copy(stored)
     end
