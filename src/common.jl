@@ -477,6 +477,17 @@ function _assert_not_phase_shifting(component::PSY.PhaseShiftingTransformer)
     )
 end
 
+# `PhaseShiftingTransformer3W` is a subtype of `ThreeWindingTransformer` but not of
+# `PhaseShiftingTransformer`, so it would otherwise reach the winding-decomposition
+# path and be modeled with susceptance deltas only, silently dropping the phase-shift
+# angle. Reject it explicitly to mirror the two-winding handling.
+function _assert_not_phase_shifting(component::PSY.PhaseShiftingTransformer3W)
+    return error(
+        "Contingencies on PhaseShiftingTransformer3W are not supported. " *
+        "Component: $(PSY.get_name(component)).",
+    )
+end
+
 """
     _segment_susceptance_after_outage(segment, tripped_set) -> Float64
 

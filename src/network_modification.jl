@@ -320,11 +320,14 @@ function _classify_outage_component!(
         b_arc = arc_susceptances[arc_idx]
         tr = nr.transformer3W_map[arc_tuple]
         Y11, Y12, Y21, Y22 = ybus_branch_entries(tr)
-        push!(direct_mods, ArcModification(
-            arc_idx, -b_arc,
-            YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
-            YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22),
-        ))
+        push!(
+            direct_mods,
+            ArcModification(
+                arc_idx, -b_arc,
+                YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
+                YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22),
+            ),
+        )
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
         b_circuit = PSY.get_series_susceptance(component)
@@ -419,6 +422,13 @@ function _classify_outage_component!(
     shunt_mods::Vector{ShuntModification},
     component_names::Vector{String},
 )
+    _assert_not_phase_shifting(component)
+    # An unavailable parent transformer is already out of service, so it cannot be
+    # outaged; skip it regardless of the per-winding availability flags. This mirrors
+    # the parent-then-winding gating used when building the Ybus.
+    if !PSY.get_available(component)
+        return
+    end
     for winding_num in 1:3
         winding = ThreeWindingTransformerWinding(component, winding_num)
         if !get_equivalent_available(winding)
@@ -463,13 +473,22 @@ function _classify_branch_modification(
     arc_susceptances::Vector{Float64},
     branch::PSY.ThreeWindingTransformer,
 )::Vector{ArcModification}
+    _assert_not_phase_shifting(branch)
+    # An unavailable parent transformer is already out of service and produces no
+    # modifications, irrespective of the per-winding availability flags.
+    if !PSY.get_available(branch)
+        return ArcModification[]
+    end
     mods = ArcModification[]
     for winding_num in 1:3
         winding = ThreeWindingTransformerWinding(branch, winding_num)
         if !get_equivalent_available(winding)
             continue
         end
-        append!(mods, _classify_branch_modification(nr, arc_lookup, arc_susceptances, winding))
+        append!(
+            mods,
+            _classify_branch_modification(nr, arc_lookup, arc_susceptances, winding),
+        )
     end
     return mods
 end
@@ -492,11 +511,13 @@ function _classify_branch_modification(
         b_arc = arc_susceptances[arc_idx]
         tr = nr.transformer3W_map[arc_tuple]
         Y11, Y12, Y21, Y22 = ybus_branch_entries(tr)
-        return [ArcModification(
-            arc_idx, -b_arc,
-            YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
-            YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22),
-        )]
+        return [
+            ArcModification(
+                arc_idx, -b_arc,
+                YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
+                YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22),
+            ),
+        ]
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
         b_circuit = PSY.get_series_susceptance(branch)

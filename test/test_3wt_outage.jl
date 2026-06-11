@@ -116,8 +116,10 @@ end
     sys2 = deepcopy(sys)
     trf2 = first(PSY.get_components(PSY.ThreeWindingTransformer, sys2))
     PSY.remove_component!(sys2, trf2)
-    star_bus = first(b for b in PSY.get_components(PSY.ACBus, sys2)
-    if PSY.get_number(b) == star_num)
+    star_bus = first(
+        b for b in PSY.get_components(PSY.ACBus, sys2)
+        if PSY.get_number(b) == star_num
+    )
     PSY.remove_component!(sys2, star_bus)
     ybus_ref = Ybus(sys2)
     ref_data = ybus_ref.data
