@@ -86,6 +86,8 @@ import .KLUWrapper:
     tsolve!,
     solve_sparse!,
     solve_sparse,
+    condest!,
+    rcond!,
     n_valid,
     is_factored
 
