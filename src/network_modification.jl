@@ -167,9 +167,67 @@ function NetworkModification(mat::PowerNetworkMatrix, branch::PSY.ACTransmission
     arc_sus = _get_arc_susceptances(mat)
     mods = _classify_branch_modification(nr, arc_lookup, arc_sus, branch)
     return NetworkModification(
-        PSY.get_name(branch),
+        get_name(branch),
         mods,
     )
+end
+
+"""
+$(TYPEDSIGNATURES)
+
+Construct a `NetworkModification` from a `ThreeWindingTransformer` component.
+Automatically decomposes the transformer into its three winding arcs and classifies
+each one. For a partial outage (single winding trip), use a
+`ThreeWindingTransformerWinding` instead.
+"""
+function NetworkModification(
+    mat::PowerNetworkMatrix,
+    branch::PSY.ThreeWindingTransformer,
+)
+    nr = get_network_reduction_data(mat)
+    arc_lookup = get_arc_lookup(mat)
+    arc_sus = _get_arc_susceptances(mat)
+    mods = _classify_branch_modification(nr, arc_lookup, arc_sus, branch)
+    return NetworkModification(
+        PSY.get_name(branch),
+        mods,
+        ShuntModification[],
+        _3wt_real_bus_islanding(mat, mods),
+    )
+end
+
+"""
+    _3wt_real_bus_islanding(mat, mods) -> Bool
+
+True if outaging the 3WT winding arcs `mods` disconnects a real (non-star) bus
+from its reference. A full 3WT outage always isolates the fictitious star bus,
+which is benign (it carries no injection); this flags only the case where a
+load/gen-bearing terminal also disconnects. The star bus is kept in the
+union-find so it connects its terminals in the baseline, but is excluded from
+the component count — a higher post-outage count means a real bus was islanded.
+"""
+function _3wt_real_bus_islanding(
+    mat::PowerNetworkMatrix,
+    mods::Vector{ArcModification},
+)
+    isempty(mods) && return false
+    arc_ax = get_arc_axis(mat)
+    bus_lookup = get_bus_lookup(mat)
+    nbus = length(get_bus_axis(mat))
+    star_idx = bus_lookup[arc_ax[mods[1].arc_index][2]]
+    removed = Set(m.arc_index for m in mods)
+
+    uf_before = collect(1:nbus)
+    uf_after = collect(1:nbus)
+    for (e, arc) in enumerate(arc_ax)
+        f = bus_lookup[arc[1]]
+        t = bus_lookup[arc[2]]
+        union_sets!(uf_before, f, t)
+        e in removed || union_sets!(uf_after, f, t)
+    end
+
+    _count(uf) = length(Set(get_representative(uf, b) for b in 1:nbus if b != star_idx))
+    return _count(uf_after) > _count(uf_before)
 end
 
 """
@@ -246,8 +304,22 @@ function NetworkModification(
     outage_uuid = IS.get_uuid(outage)
     ctg_name = isempty(component_names) ? string(outage_uuid) :
                join(component_names, "+")
-    return NetworkModification(ctg_name, mods, shunt_mods, false)
+
+    # A fully-outaged ThreeWindingTransformer isolates its star bus and may
+    # island a real terminal bus; flag that on `is_islanding`.
+    is_island = false
+    arc_ax = get_arc_axis(mat)
+    for component in all_components
+        _is_three_winding_transformer(component) || continue
+        star_num = get_arc_tuple(ThreeWindingTransformerWinding(component, 1))[2]
+        t3w_mods = [m for m in direct_mods if arc_ax[m.arc_index][2] == star_num]
+        is_island = is_island || _3wt_real_bus_islanding(mat, t3w_mods)
+    end
+    return NetworkModification(ctg_name, mods, shunt_mods, is_island)
 end
+
+_is_three_winding_transformer(::Any) = false
+_is_three_winding_transformer(::PSY.ThreeWindingTransformer) = true
 
 """
     _classify_outage_component!(nr, arc_lookup, arc_sus, bus_lookup, component, ...) -> nothing
@@ -287,11 +359,24 @@ function _classify_outage_component!(
 )
     tag, arc_tuple = _resolve_branch_arc(nr, component)
 
-    if tag === :direct || tag === :transformer3w
+    if tag === :direct
         arc_idx = arc_lookup[arc_tuple]
         b_arc = arc_susceptances[arc_idx]
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc)
         push!(direct_mods, ArcModification(arc_idx, -b_arc, dy11, dy12, dy21, dy22))
+    elseif tag === :transformer3w
+        arc_idx = arc_lookup[arc_tuple]
+        b_arc = arc_susceptances[arc_idx]
+        tr = nr.transformer3W_map[arc_tuple]
+        Y11, Y12, Y21, Y22 = ybus_branch_entries(tr)
+        push!(
+            direct_mods,
+            ArcModification(
+                arc_idx, -b_arc,
+                YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
+                YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22),
+            ),
+        )
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
         b_circuit = PSY.get_series_susceptance(component)
@@ -305,11 +390,11 @@ function _classify_outage_component!(
         end
         push!(series_components_by_arc[arc_idx], component)
     else
-        @info "Branch $(PSY.get_name(component)) not found in any reduction map. " *
+        @info "Branch $(get_name(component)) not found in any reduction map. " *
               "The component may have been eliminated by a radial reduction."
         return
     end
-    push!(component_names, PSY.get_name(component))
+    push!(component_names, get_name(component))
     return
 end
 
@@ -374,23 +459,38 @@ function _classify_outage_component!(
 end
 
 function _classify_outage_component!(
-    ::NetworkReductionData,
-    ::Dict,
-    ::Vector{Float64},
-    ::Dict{Int, Int},
+    nr::NetworkReductionData,
+    arc_lookup::Dict,
+    arc_susceptances::Vector{Float64},
+    bus_lookup::Dict{Int, Int},
     component::PSY.ThreeWindingTransformer,
-    ::Vector{ArcModification},
-    ::Vector{ArcModification},
-    ::Dict{Int, Vector{PSY.ACTransmission}},
-    ::Dict{Int, Tuple{Int, Int}},
-    ::Vector{ShuntModification},
-    ::Vector{String},
+    direct_mods::Vector{ArcModification},
+    parallel_mods::Vector{ArcModification},
+    series_components_by_arc::Dict{Int, Vector{PSY.ACTransmission}},
+    series_arc_tuples::Dict{Int, Tuple{Int, Int}},
+    shunt_mods::Vector{ShuntModification},
+    component_names::Vector{String},
 )
-    error(
-        "Outages on ThreeWindingTransformer components are not yet supported. " *
-        "Component: $(PSY.get_name(component)). " *
-        "Use individual ThreeWindingTransformerWinding arcs instead.",
-    )
+    _assert_not_phase_shifting(component)
+    # An unavailable parent transformer is already out of service, so it cannot be
+    # outaged; skip it regardless of the per-winding availability flags. This mirrors
+    # the parent-then-winding gating used when building the Ybus.
+    if !PSY.get_available(component)
+        return
+    end
+    for winding_num in 1:3
+        winding = ThreeWindingTransformerWinding(component, winding_num)
+        if !get_equivalent_available(winding)
+            continue
+        end
+        _classify_outage_component!(
+            nr, arc_lookup, arc_susceptances, bus_lookup, winding,
+            direct_mods, parallel_mods,
+            series_components_by_arc, series_arc_tuples,
+            shunt_mods, component_names,
+        )
+    end
+    return
 end
 
 """
@@ -409,6 +509,39 @@ function _classify_branch_modification(
     _assert_not_phase_shifting(branch)
 end
 
+"""
+    _classify_branch_modification(nr, arc_lookup, arc_susceptances, branch::PSY.ThreeWindingTransformer) -> Vector{ArcModification}
+
+Classify a `ThreeWindingTransformer` by decomposing it into its three winding arcs
+and classifying each one individually. Returns arc modifications for all windings
+present in the network.
+"""
+function _classify_branch_modification(
+    nr::NetworkReductionData,
+    arc_lookup::Dict,
+    arc_susceptances::Vector{Float64},
+    branch::PSY.ThreeWindingTransformer,
+)::Vector{ArcModification}
+    _assert_not_phase_shifting(branch)
+    # An unavailable parent transformer is already out of service and produces no
+    # modifications, irrespective of the per-winding availability flags.
+    if !PSY.get_available(branch)
+        return ArcModification[]
+    end
+    mods = ArcModification[]
+    for winding_num in 1:3
+        winding = ThreeWindingTransformerWinding(branch, winding_num)
+        if !get_equivalent_available(winding)
+            continue
+        end
+        append!(
+            mods,
+            _classify_branch_modification(nr, arc_lookup, arc_susceptances, winding),
+        )
+    end
+    return mods
+end
+
 function _classify_branch_modification(
     nr::NetworkReductionData,
     arc_lookup::Dict,
@@ -417,11 +550,23 @@ function _classify_branch_modification(
 )::Vector{ArcModification}
     tag, arc_tuple = _resolve_branch_arc(nr, branch)
 
-    if tag === :direct || tag === :transformer3w
+    if tag === :direct
         arc_idx = arc_lookup[arc_tuple]
         b_arc = arc_susceptances[arc_idx]
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc)
         return [ArcModification(arc_idx, -b_arc, dy11, dy12, dy21, dy22)]
+    elseif tag === :transformer3w
+        arc_idx = arc_lookup[arc_tuple]
+        b_arc = arc_susceptances[arc_idx]
+        tr = nr.transformer3W_map[arc_tuple]
+        Y11, Y12, Y21, Y22 = ybus_branch_entries(tr)
+        return [
+            ArcModification(
+                arc_idx, -b_arc,
+                YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
+                YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22),
+            ),
+        ]
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
         b_circuit = PSY.get_series_susceptance(branch)
@@ -434,7 +579,7 @@ function _classify_branch_modification(
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
         return [ArcModification(arc_idx, delta_b, dy11, dy12, dy21, dy22)]
     else
-        @info "Branch $(PSY.get_name(branch)) not found in any reduction map. " *
+        @info "Branch $(get_name(branch)) not found in any reduction map. " *
               "The component may have been eliminated by a radial reduction."
         return ArcModification[]
     end
