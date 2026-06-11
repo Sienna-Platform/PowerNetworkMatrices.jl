@@ -68,7 +68,13 @@ function get_reduction(
         get_user_irreducible_buses(get_reductions(network_reduction_data))
     validate_buses(A, user_irreducible)
     working_set = Set{Int}(user_irreducible)
-    union!(working_set, _system_derived_irreducible_buses(sys))
+    union!(
+        working_set,
+        _system_derived_irreducible_buses(
+            sys,
+            get_reduce_reactive_power_injectors(reduction),
+        ),
+    )
 
     exempt_bus_positions =
         Set(get_irreducible_indices(A, collect(working_set)))

@@ -7,7 +7,12 @@ and `TransmissionInterface` endpoints) on top of any user set passed via
 `Ybus(sys; irreducible_buses=...)`.
 
 # Fields
-- `reduce_reactive_power_injectors::Bool = true`
+- `reduce_reactive_power_injectors::Bool = true`: when `true`, buses whose only
+  injectors support reactive power (e.g. a `SynchronousCondenser`, or a purely
+  susceptive `FixedAdmittance`) are treated as reduction candidates. When `false`,
+  such reactive-only injector hosts are kept. Buses hosting an active-power
+  injector are always kept. Capability is read from the PowerSystems
+  `supports_active_power` / `supports_reactive_power` traits.
 """
 @kwdef struct DegreeTwoReduction <: NetworkReduction
     reduce_reactive_power_injectors::Bool = true
