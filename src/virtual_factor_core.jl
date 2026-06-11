@@ -32,7 +32,8 @@ single-scratch model.
 - `valid_ix::Vector{Int}`: non-reference bus indices.
 - `bus_to_valid_idx::Vector{Int}`: inverse of `valid_ix` (0 for reference buses).
 - `subnetwork_axes::Dict{Int, Ax}`: per-reference-bus subnetwork axes (bus form).
-- `tol::Base.RefValue{Float64}`: sparsification tolerance.
+- `tol::SparsificationCutoff`: resolved per-row sparsification rule (absolute
+  cutoff for a `Float64` `tol`, relative cutoff for an [`AutoTolerance`](@ref)).
 - `network_reduction_data::NetworkReductionData`: reduction maps.
 - `temp_data::Vector{Vector{Float64}}`: single-slot scratch (size n_buses).
 - `work_ba_col::Vector{Vector{Float64}}`: single-slot scratch (size n_valid).
@@ -53,7 +54,7 @@ struct VirtualFactorCore{Ax, L <: NTuple{2, Dict}, K}
     valid_ix::Vector{Int}
     bus_to_valid_idx::Vector{Int}
     subnetwork_axes::Dict{Int, Ax}
-    tol::Base.RefValue{Float64}
+    tol::SparsificationCutoff
     network_reduction_data::NetworkReductionData
     temp_data::Vector{Vector{Float64}}
     work_ba_col::Vector{Vector{Float64}}
@@ -76,7 +77,10 @@ get_ref_bus_position(c::VirtualFactorCore) =
     [get_bus_lookup(c)[x] for x in keys(c.subnetwork_axes)]
 get_network_reduction_data(c::VirtualFactorCore) = c.network_reduction_data
 get_system_uuid(c::VirtualFactorCore) = c.system_uuid
-get_tol(c::VirtualFactorCore) = c.tol[]
+# Resolved cutoff object (used for per-row sparsification); `get_tol` returns its
+# Float64 representative for display/serialization.
+get_cutoff(c::VirtualFactorCore) = c.tol
+get_tol(c::VirtualFactorCore) = cutoff_value(c.tol)
 
 # Woodbury / NetworkModification kernel accessors.
 _get_BA(c::VirtualFactorCore) = c.BA
@@ -147,7 +151,7 @@ constructs the incidence matrix, BA matrix, ABA matrix, and its factorization.
 function VirtualFactorCore(
     ybus::Ybus;
     linear_solver::String = _default_linear_solver(),
-    tol::Float64 = eps(),
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     system_uuid::Union{Base.UUID, Nothing} = nothing,
 )
     solver = resolve_linear_solver(linear_solver)
@@ -164,6 +168,10 @@ function VirtualFactorCore(
     end
 
     K = _create_factorization(solver, ABA)
+
+    # Resolve the per-row sparsification rule once: a Float64 becomes an absolute
+    # cutoff, an AutoTolerance a relative cutoff (κ logged via the reused K).
+    cutoff = _resolve_virtual_cutoff(tol, K, ABA, SparseArrays.nonzeros(BA.data))
 
     valid_ix = setdiff(1:length(bus_ax), ref_bus_positions)
     bus_to_valid_idx = _build_bus_to_valid_idx(length(bus_ax), valid_ix)
@@ -187,7 +195,7 @@ function VirtualFactorCore(
         valid_ix,
         bus_to_valid_idx,
         subnetwork_axes,
-        Ref(tol),
+        cutoff,
         ybus.network_reduction_data,
         temp_data,
         work_ba_col,

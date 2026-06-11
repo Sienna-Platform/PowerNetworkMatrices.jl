@@ -118,13 +118,18 @@ function get_arc_tuple(br::PSY.ACTransmission, nr::NetworkReductionData)
     get_arc_tuple(PSY.get_arc(br), nr)
 end
 
-# Parallel branches: all oriented in same direction, so just take arc of first.
+# Canonical orientation is the stored `arc_key` (set at construction), remapped through `nr`;
+# anti-parallel members may exist post-merge, so do not rely on member order.
 function get_arc_tuple(br::AbstractBranchesParallel, nr::NetworkReductionData)
-    get_arc_tuple(PSY.get_arc(first(br)), nr)
+    reverse_bus_search_map = get_reverse_bus_search_map(nr)
+    return (
+        get(reverse_bus_search_map, br.arc_key[1], br.arc_key[1]),
+        get(reverse_bus_search_map, br.arc_key[2], br.arc_key[2]),
+    )
 end
 
 function get_arc_tuple(br::AbstractBranchesParallel)
-    return get_arc_tuple(PSY.get_arc(first(br)))
+    return br.arc_key
 end
 
 function get_arc_tuple(br::PSY.ACTransmission)
@@ -286,9 +291,7 @@ end
 
 """
 Return a sparse vector given a dense one by dropping elements whose absolute
-value is below a certain tolerance.
-
-Uses optimized `droptol!` for better performance compared to element-wise iteration.
+value is at or below a certain tolerance (keeps `abs(x) > tol`).
 
 # Arguments
 - `dense_array::Vector{Float64}`:
@@ -297,9 +300,26 @@ Uses optimized `droptol!` for better performance compared to element-wise iterat
         tolerance.
 """
 function sparsify(dense_array::Vector{Float64}, tol::Float64)
-    sparse_array = SparseArrays.sparsevec(dense_array)
-    SparseArrays.droptol!(sparse_array, tol)
-    return sparse_array
+    # Count-then-fill: allocate the SparseVector at exactly the survivor count
+    # instead of materializing every nonzero (`sparsevec`) and then compacting
+    # (`droptol!`). On the VirtualPTDF/LODF row path an almost-dense row collapses
+    # to a sparse one, so this avoids an O(n) over-allocation per cached row.
+    nnz = 0
+    @inbounds for v in dense_array
+        abs(v) > tol && (nnz += 1)
+    end
+    nzind = Vector{Int}(undef, nnz)
+    nzval = Vector{Float64}(undef, nnz)
+    k = 0
+    @inbounds for i in eachindex(dense_array)
+        v = dense_array[i]
+        if abs(v) > tol
+            k += 1
+            nzind[k] = i
+            nzval[k] = v
+        end
+    end
+    return SparseArrays.SparseVector(length(dense_array), nzind, nzval)
 end
 
 """
@@ -335,6 +355,37 @@ function _get_equivalent_physical_branch_parameters(equivalent_ybus::Matrix{YBUS
     g_to = real(y_22 - y_l)
     b_to = imag(y_22 - y_l)
     return EquivalentBranch(r, x, g_from, b_from, g_to, b_to, tap, shift)
+end
+
+# `get_equivalent_physical_branch_parameters` / `populate_equivalent_ybus!` live here (rather
+# than in BranchesParallel.jl / BranchesSeries.jl) because they take a `NetworkReductionData`,
+# which is defined in a file included after those two.
+function populate_equivalent_ybus!(
+    bp::AbstractBranchesParallel,
+    nr::NetworkReductionData,
+)
+    Y11, Y12, Y21, Y22 = ybus_branch_entries(bp, nr)
+    bp.equivalent_ybus = YBUS_ELTYPE[Y11 Y12; Y21 Y22]
+    return
+end
+
+function populate_equivalent_ybus!(
+    bs::BranchesSeries,
+    nr::NetworkReductionData,
+)
+    ybus_series_chain = _build_chain_ybus(bs, nr)
+    bs.equivalent_ybus = _reduce_internal_nodes(ybus_series_chain)
+    return
+end
+
+function get_equivalent_physical_branch_parameters(
+    segment::Union{AbstractBranchesParallel, BranchesSeries},
+    nr::NetworkReductionData,
+)
+    if isnothing(segment.equivalent_ybus)
+        populate_equivalent_ybus!(segment, nr)
+    end
+    return _get_equivalent_physical_branch_parameters(segment.equivalent_ybus)
 end
 
 is_a_reduction(::PSY.ACTransmission) = false
@@ -473,6 +524,17 @@ _assert_not_phase_shifting(::PSY.ACTransmission) = nothing
 function _assert_not_phase_shifting(component::PSY.PhaseShiftingTransformer)
     return error(
         "Contingencies on PhaseShiftingTransformer are not supported. " *
+        "Component: $(PSY.get_name(component)).",
+    )
+end
+
+# `PhaseShiftingTransformer3W` is a subtype of `ThreeWindingTransformer` but not of
+# `PhaseShiftingTransformer`, so it would otherwise reach the winding-decomposition
+# path and be modeled with susceptance deltas only, silently dropping the phase-shift
+# angle. Reject it explicitly to mirror the two-winding handling.
+function _assert_not_phase_shifting(component::PSY.PhaseShiftingTransformer3W)
+    return error(
+        "Contingencies on PhaseShiftingTransformer3W are not supported. " *
         "Component: $(PSY.get_name(component)).",
     )
 end

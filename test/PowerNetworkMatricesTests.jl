@@ -2,7 +2,8 @@ module PowerNetworkMatricesTests
 
 using ReTest
 using Logging
-import LinearAlgebra: I
+using Random
+import LinearAlgebra: I, opnorm
 using PowerNetworkMatrices
 using TimeSeries
 using DelimitedFiles

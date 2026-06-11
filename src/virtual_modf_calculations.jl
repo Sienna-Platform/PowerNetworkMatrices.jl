@@ -93,6 +93,7 @@ get_bus_lookup(M::VirtualMODF) = get_bus_lookup(get_core(M))
 get_arc_axis(M::VirtualMODF) = get_arc_axis(get_core(M))
 get_bus_axis(M::VirtualMODF) = get_bus_axis(get_core(M))
 get_tol(M::VirtualMODF) = get_tol(get_core(M))
+get_cutoff(M::VirtualMODF) = get_cutoff(get_core(M))
 get_system_uuid(M::VirtualMODF) = get_system_uuid(get_core(M))
 _get_BA(M::VirtualMODF) = _get_BA(get_core(M))
 _get_arc_susceptances(M::VirtualMODF) = _get_arc_susceptances(get_core(M))
@@ -171,8 +172,12 @@ reduced network, so a branch in a contingency must survive reduction.
 # Keyword Arguments
 - `dist_slack::Vector{Float64}`: Distributed slack weights (default: empty)
 - `linear_solver::String = _default_linear_solver()`: Linear solver for the
-        ABA factorization.
-- `tol::Float64`: Tolerance for row sparsification (default: eps())
+        ABA factorization. Options: "KLU", "AppleAccelerate". Defaults to
+        "AppleAccelerate" on macOS and "KLU" elsewhere.
+- `tol::Union{Float64, AutoTolerance}`: Tolerance for row sparsification.
+        A `Float64` applies a fixed absolute cutoff; an [`AutoTolerance`](@ref)
+        (the default) applies a relative per-row cutoff so requested columns stay
+        sparse on large systems.
 - `max_cache_size::Int`: Max cache size in MiB per contingency (default: MAX_CACHE_SIZE_MiB)
 - `network_reductions::Vector{NetworkReduction}`: Network reductions to apply
 - `automatically_register_outages::Bool`: Register all system Outage attributes (default: true)
@@ -181,7 +186,7 @@ function VirtualMODF(
     sys::PSY.System;
     dist_slack::Vector{Float64} = Float64[],
     linear_solver::String = _default_linear_solver(),
-    tol::Float64 = eps(),
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
     irreducible_buses = Set{Int}(),
@@ -394,7 +399,7 @@ function Base.getindex(vmodf::VirtualMODF, monitored_idx::Int, mod::NetworkModif
     core = get_core(vmodf)
     row_caches = get_row_caches(vmodf)
     max_bytes = get_max_cache_size_bytes(vmodf)
-    tol = get_tol(vmodf)
+    cutoff = get_cutoff(vmodf)
     return @lock core.solver_lock begin
         rc = get!(row_caches, mod) do
             row_size = length(core.temp_data[1]) * sizeof(Float64)
@@ -404,11 +409,7 @@ function Base.getindex(vmodf::VirtualMODF, monitored_idx::Int, mod::NetworkModif
             return copy(rc[monitored_idx])
         end
         row = _compute_modf_entry(vmodf, monitored_idx, mod)
-        if tol > eps()
-            stored = sparsify(row, tol)
-        else
-            stored = row
-        end
+        stored = apply_cutoff(cutoff, row)
         rc[monitored_idx] = stored
         copy(stored)
     end

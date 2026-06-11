@@ -40,6 +40,9 @@ every libklu solve runs under `_LIBKLU_LOCK` (process-wide) and the core's
         Cache where LODF rows are stored.
 - `cache_lock::ReentrantLock`:
         Guards `cache` reads/writes for parallel `getindex` callers.
+
+The shared factorization, network reduction data, and the resolved sparsification
+cutoff all live in the [`VirtualFactorCore`](@ref).
 """
 struct VirtualLODF{
     Ax <: NTuple{2, Vector},
@@ -127,7 +130,7 @@ function VirtualLODF(
     sys::PSY.System;
     dist_slack::Vector{Float64} = Float64[],
     linear_solver::String = _default_linear_solver(),
-    tol::Float64 = eps(),
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}(),
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
@@ -300,7 +303,7 @@ function _getindex(
     column::Union{Int, Colon},
 )
     return cached_row_lookup(
-        get_cache(vlodf), get_cache_lock(vlodf), row, column, get_tol(vlodf),
+        get_cache(vlodf), get_cache_lock(vlodf), row, column, get_cutoff(vlodf),
     ) do
         _compute_lodf_row(vlodf, row)
     end
@@ -344,10 +347,14 @@ function get_arc_axis(mat::VirtualLODF)
     return get_axes(mat)[1]
 end
 
-""" Gets the tolerance used for sparsifying the rows of the VirtualLODF matrix"""
+""" Gets the tolerance used for sparsifying the rows of the VirtualLODF matrix.
+Returns the absolute cutoff for a `Float64` `tol`, or the relative fraction for
+an `AutoTolerance`."""
 function get_tol(mat::VirtualLODF)
     return get_tol(get_core(mat))
 end
+
+get_cutoff(mat::VirtualLODF) = get_cutoff(get_core(mat))
 
 """
     _getindex_partial(vlodf, arc_idx, delta_b) -> Vector{Float64}

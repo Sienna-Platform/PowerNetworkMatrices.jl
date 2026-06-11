@@ -147,7 +147,8 @@ end
     get_equivalent_available(tw::ThreeWindingTransformerWinding)
 
 Get the availability status for a specific winding of a three-winding transformer.
-Returns the availability status of the parent transformer.
+Returns the per-winding availability flag (`available_primary`/`secondary`/`tertiary`),
+which is independent of the parent transformer's own `available` flag.
 """
 function get_equivalent_available(tw::ThreeWindingTransformerWinding)
     tfw = get_transformer(tw)

@@ -253,11 +253,15 @@ miss-path computation as a `do … end` block:
 
 ```julia
 return cached_row_lookup(
-    vlodf.cache, vlodf.cache_lock, row, column, get_tol(vlodf),
+    vlodf.cache, vlodf.cache_lock, row, column, vlodf.tol,
 ) do
     _compute_lodf_row(vlodf, row)
 end
 ```
+
+`cutoff` is the resolved [`SparsificationCutoff`](@ref) stored on the matrix: an
+`AbsoluteCutoff` drops below a fixed value, a `RelativeCutoff` drops below
+`fraction · max|row|` so columns of large cases stay sparse.
 """
 function cached_row_lookup(
     compute_row,
@@ -265,13 +269,13 @@ function cached_row_lookup(
     cache_lock::ReentrantLock,
     row::Int,
     column::Union{Int, Colon},
-    tol::Float64,
+    cutoff::SparsificationCutoff,
 )
     @lock cache_lock begin
         haskey(cache, row) && return cache.temp_cache[row][column]
     end
     row_data = compute_row()
-    stored = tol > eps() ? sparsify(row_data, tol) : row_data
+    stored = apply_cutoff(cutoff, row_data)
     @lock cache_lock begin
         haskey(cache, row) && return cache.temp_cache[row][column]
         cache[row] = stored

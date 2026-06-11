@@ -63,6 +63,68 @@ function _invert_woodbury_W(
     return W_inv, is_island
 end
 
+# --- Islanding zero-forcing (shared by VirtualPTDF and VirtualMODF) -----------
+# When a contingency disconnects the network, the post-contingency sensitivity of
+# a monitored arc to an injection in a *different* component is exactly zero, but
+# the pinv-based Woodbury correction leaves the stale pre-contingency value there.
+# These helpers identify the disconnected buses by connectivity and zero them.
+
+# Connected-component label (a representative bus position) of every bus in the
+# post-contingency network: the base topology minus the arcs this modification
+# fully outages (post-contingency susceptance ≈ 0). A partially-reduced arc still
+# connects its buses, so it is kept. Reuses the package union-find over each kept
+# arc's endpoints (the ≤ 2 nonzeros of its `BA` column).
+function _post_contingency_bus_labels(
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    arc_sus::Vector{Float64},
+    modifications::Tuple{Vararg{ArcModification}},
+    n_bus::Int,
+)::Vector{Int}
+    removed = Set{Int}()
+    for m in modifications
+        if abs(arc_sus[m.arc_index] + m.delta_b) < MODF_ISLANDING_TOLERANCE
+            push!(removed, m.arc_index)
+        end
+    end
+
+    rv = SparseArrays.rowvals(BA)
+    uf = collect(1:n_bus)
+    for e in 1:size(BA, 2)
+        e in removed && continue
+        # Union the arc's endpoints (a BA column has 2 nonzeros; chain if more).
+        rng = SparseArrays.nzrange(BA, e)
+        @inbounds for k in first(rng):(last(rng) - 1)
+            union_sets!(uf, rv[k], rv[k + 1])
+        end
+    end
+    @inbounds for i in 1:n_bus
+        uf[i] = get_representative(uf, i)
+    end
+    return uf
+end
+
+# Force entries of buses disconnected from the monitored arc to exactly zero.
+# `labels` is empty for connected contingencies, making this a no-op.
+function _zero_islanded_entries!(
+    row::Vector{Float64},
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    monitored_idx::Int,
+    labels::Vector{Int},
+)
+    isempty(labels) && return row
+    # The monitored arc's component is identified by either of its endpoint buses.
+    rv = SparseArrays.rowvals(BA)
+    rng = SparseArrays.nzrange(BA, monitored_idx)
+    isempty(rng) && return row
+    monitored_label = labels[rv[first(rng)]]
+    @inbounds for j in eachindex(row)
+        if labels[j] != monitored_label
+            row[j] = 0.0
+        end
+    end
+    return row
+end
+
 """
     _compute_woodbury_factors_impl(K, work_ba_col, temp_data, BA, arc_sus,
                                    valid_ix, modifications) -> WoodburyFactors
@@ -141,11 +203,15 @@ function _compute_woodbury_factors_impl(
     # Pre-invert W (Val dispatch lets the compiler specialize M=1,2)
     W_inv, is_island = _invert_woodbury_W(W_mat, Val(M))
 
+    # Label post-contingency components only when islanding, so the correction can
+    # force entries of disconnected buses to exactly zero (see _zero_islanded_entries!).
+    labels = Int[]
     if is_island
         @debug "Contingency islands the network; using pinv-based Woodbury correction."
+        labels = _post_contingency_bus_labels(BA, arc_sus, modifications, n_bus)
     end
 
-    return WoodburyFactors(Z, W_inv, arc_indices, delta_b_vec, is_island)
+    return WoodburyFactors(Z, W_inv, arc_indices, delta_b_vec, is_island, labels)
 end
 
 """
@@ -218,6 +284,9 @@ function _apply_woodbury_correction_impl(
 
     # Post-modification PTDF row = b_mon_post · (z_m - correction)
     temp_data .*= b_mon
+    # Under islanding, force buses disconnected from the monitored arc to exactly
+    # zero (no-op when not islanding: `bus_island_labels` is empty).
+    _zero_islanded_entries!(temp_data, BA, monitored_idx, wf.bus_island_labels)
     return copy(temp_data)
 end
 

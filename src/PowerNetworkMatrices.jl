@@ -1,6 +1,8 @@
 module PowerNetworkMatrices
 
 export ABA_Matrix
+export AutoTolerance
+export discover_data_precision
 export AdjacencyMatrix
 export ArcAdmittanceMatrix
 export BA_Matrix
@@ -87,6 +89,8 @@ import .KLUWrapper:
     tsolve!,
     solve_sparse!,
     solve_sparse,
+    condest!,
+    rcond!,
     n_valid,
     is_factored
 
@@ -133,6 +137,7 @@ include("AdjacencyMatrix.jl")
 include("connectivity_checks.jl")
 include("subnetworks.jl")
 include("common.jl")
+include("auto_tolerance.jl")
 include("BA_ABA_matrices.jl")
 include("virtual_factor_helpers.jl")
 include("virtual_factor_core.jl")

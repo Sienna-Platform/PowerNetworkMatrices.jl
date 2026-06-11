@@ -352,7 +352,7 @@ where A is the incidence matrix and B is the susceptance matrix.
 function PTDF(sys::PSY.System;
     dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(),
     linear_solver = _default_linear_solver(),
-    tol::Float64 = eps(),
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     kwargs...,
 )
     ybus = Ybus(
@@ -422,7 +422,7 @@ where A is the incidence matrix and B is the susceptance matrix.
 function PTDF(ybus::Ybus;
     dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(),
     linear_solver = _default_linear_solver(),
-    tol::Float64 = eps(),
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
 )
     A = IncidenceMatrix(ybus)
     BA = BA_Matrix(ybus)
@@ -498,12 +498,29 @@ where:
 - **Large Systems**: Consider sparsification for memory efficiency
 - **Distributed Slack**: Provides more realistic modeling of generator response to load changes
 """
+# Build the dense PTDF matrix S and resolve its sparsification tolerance. A
+# numeric tol is an absolute cutoff; an AutoTolerance is a no-op (`_dense_tol`),
+# since the dense PTDF is the small-system path and must stay a dense
+# `Matrix{Float64}` (preserving `DC_PTDF_Matrix` and downstream dispatch). Pass a
+# `Float64` tol to sparsify a dense PTDF explicitly, or use VirtualPTDF at scale.
+function _dense_ptdf_with_tol(
+    tol::Union{Float64, AutoTolerance},
+    solver::LinearSolverType,
+    A::SparseArrays.SparseMatrixCSC{Int8, Int},
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    ref_bus_positions::Set{Int},
+    dist_slack::Vector{Float64},
+)
+    S = _buildptdf_from_matrices(A, BA, ref_bus_positions, dist_slack, solver)
+    return (S, _dense_tol(tol))
+end
+
 function PTDF(
     A::IncidenceMatrix,
     BA::BA_Matrix;
     dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(),
     linear_solver = _default_linear_solver(),
-    tol::Float64 = eps(),
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
 )
     dist_slack_vector = if !(isempty(dist_slack))
         redistribute_dist_slack(dist_slack, A, A.network_reduction_data)
@@ -519,20 +536,21 @@ function PTDF(
     A_matrix = A.data
     subnetwork_axes = BA.subnetwork_axes
     ref_bus_positions = get_ref_bus_position(BA)
-    S = _buildptdf_from_matrices(
+    S, tol_value = _dense_ptdf_with_tol(
+        tol,
+        solver,
         A_matrix,
         BA.data,
         Set(ref_bus_positions),
         dist_slack_vector,
-        solver,
     )
-    if tol > eps()
+    if tol_value > eps()
         return PTDF(
-            sparsify(S, tol),
+            sparsify(S, tol_value),
             axes,
             lookup,
             subnetwork_axes,
-            Ref(tol),
+            Ref(tol_value),
             BA.network_reduction_data,
         )
     else
@@ -541,7 +559,7 @@ function PTDF(
             axes,
             lookup,
             subnetwork_axes,
-            Ref(tol),
+            Ref(tol_value),
             BA.network_reduction_data,
         )
     end

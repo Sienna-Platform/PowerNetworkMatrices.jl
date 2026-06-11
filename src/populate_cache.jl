@@ -124,7 +124,7 @@ function populate_cache(vptdf::VirtualPTDF, components)
     if !use_dist_slack && !isempty(dist_slack)
         error("Distributed bus specification doesn't match the number of buses.")
     end
-    tol = get_tol(core)
+    cutoff = get_cutoff(core)
 
     # Only solve rows not already resident; existing rows are pinned below.
     new_rows = @lock cache_lock Int[r for r in rows if !haskey(cache, r)]
@@ -134,18 +134,19 @@ function populate_cache(vptdf::VirtualPTDF, components)
         valid_ix = core.valid_ix
         # Build each row outside the cache lock (the scatter, dist-slack, and
         # sparsify dominate); take cache_lock only for the double-check + insert,
-        # matching the `cached_row_lookup` pattern.
+        # matching the `cached_row_lookup` pattern. `apply_cutoff` returns `full`
+        # unchanged when the cutoff is a no-op, so allocate a fresh `full` per row
+        # to avoid aliasing the same buffer across stored rows.
         stored_rows = Vector{RowCacheValue}(undef, length(new_rows))
-        full = zeros(buscount)
         for (j, _) in enumerate(new_rows)
-            fill!(full, 0.0)
+            full = zeros(buscount)
             @inbounds for i in eachindex(valid_ix)
                 full[valid_ix[i]] = sol[i, j]
             end
             if use_dist_slack
                 full .-= dot(full, dist_slack_normalized)
             end
-            stored_rows[j] = tol > eps() ? sparsify(full, tol) : copy(full)
+            stored_rows[j] = apply_cutoff(cutoff, full)
         end
         @lock cache_lock begin
             for (j, r) in enumerate(new_rows)
@@ -187,7 +188,7 @@ function populate_cache(vlodf::VirtualLODF, components)
     cache = get_cache(vlodf)
     cache_lock = get_cache_lock(vlodf)
     inv_PTDF_A_diag = get_inv_PTDF_A_diag(vlodf)
-    tol = get_tol(core)
+    cutoff = get_cutoff(core)
     n_bus = length(core.temp_data[1])
 
     new_rows = @lock cache_lock Int[r for r in rows if !haskey(cache, r)]
@@ -210,7 +211,7 @@ function populate_cache(vlodf::VirtualLODF, components)
         stored_rows = Vector{RowCacheValue}(undef, length(new_rows))
         for j in eachindex(new_rows)
             row = lodf_cols[:, j]
-            stored_rows[j] = tol > eps() ? sparsify(row, tol) : row
+            stored_rows[j] = apply_cutoff(cutoff, row)
         end
         @lock cache_lock begin
             for (j, r) in enumerate(new_rows)
@@ -307,7 +308,13 @@ function _woodbury_factors_from_base(
 
     W_mat = LinearAlgebra.diagm(1.0 ./ delta_b_vec) + K_mat
     W_inv, is_island = _invert_woodbury_W(W_mat, Val(M))
-    return WoodburyFactors(Z, W_inv, arc_indices, delta_b_vec, is_island)
+    # Mirror `_compute_woodbury_factors_impl`: label post-contingency components
+    # only when islanding, so `_zero_islanded_entries!` can zero disconnected buses.
+    labels = Int[]
+    if is_island
+        labels = _post_contingency_bus_labels(BA, arc_sus, modifications, n_bus)
+    end
+    return WoodburyFactors(Z, W_inv, arc_indices, delta_b_vec, is_island, labels)
 end
 
 """
@@ -384,7 +391,7 @@ function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
     woodbury_cache = get_woodbury_cache(vmodf)
     max_bytes = get_max_cache_size_bytes(vmodf)
     n_bus = length(core.temp_data[1])
-    tol = get_tol(core)
+    cutoff = get_cutoff(core)
     BA = core.BA
     arc_sus = core.arc_susceptances
 
@@ -440,7 +447,7 @@ function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
                     continue
                 end
                 row = _woodbury_correction_from_base(base_full, BA, arc_sus, m, wf, n_bus)
-                stored = tol > eps() ? sparsify(row, tol) : row
+                stored = apply_cutoff(cutoff, row)
                 set_persistent_row!(rc, m, stored)
             end
             warn_if_over_capacity(rc)

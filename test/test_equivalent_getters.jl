@@ -144,7 +144,11 @@ function test_ybus_equivalence_branches_parallel(vector_branches)
     end
     bus1 = get_component(ACBus, sys_equivalent, "bus1")
     bus2 = get_component(ACBus, sys_equivalent, "bus2")
-    equivalent_pbranch = PNM.get_equivalent_physical_branch_parameters(branches_parallel)
+    equivalent_pbranch =
+        PNM.get_equivalent_physical_branch_parameters(
+            branches_parallel,
+            ybus.network_reduction_data,
+        )
     if PNM.get_equivalent_shift(equivalent_pbranch) == 0.0
         equivalent_branch = PSY.Line(;
             name = "equivalent_line",
@@ -243,7 +247,11 @@ function test_ybus_equivalence_branches_series(vector_branches)
     end
     bus1 = get_component(ACBus, sys_equivalent, "bus1")
     bus2 = get_component(ACBus, sys_equivalent, "bus2")
-    equivalent_pbranch = PNM.get_equivalent_physical_branch_parameters(branches_series)
+    equivalent_pbranch =
+        PNM.get_equivalent_physical_branch_parameters(
+            branches_series,
+            ybus.network_reduction_data,
+        )
     if PNM.get_equivalent_shift(equivalent_pbranch) == 0.0
         equivalent_branch = PSY.Line(;
             name = "equivalent_line",
@@ -402,15 +410,16 @@ end
 @testset "Compute equivalent physical parameters for WECC 240 bus" begin
     sys = PSB.build_system(PSYTestSystems, "psse_240_parsing_sys"; runchecks = false)
     ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
-    for branches_parallel in values(ybus.network_reduction_data.parallel_branch_map)
+    nr = ybus.network_reduction_data
+    for branches_parallel in values(nr.parallel_branch_map)
         @test isa(
-            PNM.get_equivalent_physical_branch_parameters(branches_parallel),
+            PNM.get_equivalent_physical_branch_parameters(branches_parallel, nr),
             PNM.EquivalentBranch,
         )
     end
-    for branches_series in values(ybus.network_reduction_data.series_branch_map)
+    for branches_series in values(nr.series_branch_map)
         @test isa(
-            PNM.get_equivalent_physical_branch_parameters(branches_series),
+            PNM.get_equivalent_physical_branch_parameters(branches_series, nr),
             PNM.EquivalentBranch,
         )
     end

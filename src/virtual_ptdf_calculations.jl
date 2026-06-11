@@ -35,6 +35,9 @@ simultaneously; their libklu work runs one at a time, while the JuMP-side work
         Cache where PTDF rows are stored.
 - `cache_lock::ReentrantLock`:
         Guards `cache` reads/writes for parallel `getindex` callers.
+
+The shared factorization, topology, subnetwork axes, network reduction data, and
+the resolved sparsification cutoff all live in the [`VirtualFactorCore`](@ref).
 """
 struct VirtualPTDF{Ax, L <: NTuple{2, Dict}, K} <:
        PowerNetworkMatrix{Float64}
@@ -79,6 +82,7 @@ get_system_uuid(M::VirtualPTDF) = get_system_uuid(get_core(M))
 get_arc_axis(M::VirtualPTDF) = get_arc_axis(get_core(M))
 get_bus_axis(M::VirtualPTDF) = get_bus_axis(get_core(M))
 get_tol(M::VirtualPTDF) = get_tol(get_core(M))
+get_cutoff(M::VirtualPTDF) = get_cutoff(get_core(M))
 _get_BA(M::VirtualPTDF) = _get_BA(get_core(M))
 _get_arc_susceptances(M::VirtualPTDF) = _get_arc_susceptances(get_core(M))
 _get_valid_ix(M::VirtualPTDF) = _get_valid_ix(get_core(M))
@@ -144,7 +148,7 @@ function VirtualPTDF(
     sys::PSY.System;
     dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(),
     linear_solver::String = _default_linear_solver(),
-    tol::Float64 = eps(),
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}(),
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
@@ -175,7 +179,7 @@ function VirtualPTDF(
     ybus::Ybus;
     dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(),
     linear_solver::String = _default_linear_solver(),
-    tol::Float64 = eps(),
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}(),
     system_uuid::Union{Base.UUID, Nothing} = nothing,
@@ -318,7 +322,7 @@ function _getindex(
     column::Union{Int, Colon},
 )
     return cached_row_lookup(
-        get_cache(vptdf), get_cache_lock(vptdf), row, column, get_tol(vptdf),
+        get_cache(vptdf), get_cache_lock(vptdf), row, column, get_cutoff(vptdf),
     ) do
         _compute_ptdf_row(vptdf, row)
     end
