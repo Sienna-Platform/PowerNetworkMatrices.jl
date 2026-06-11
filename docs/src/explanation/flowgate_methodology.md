@@ -146,6 +146,43 @@ contingency registrations, so subsequent queries will simply recompute. Use
 | `NetworkModification` | Contingency specification; keys the Woodbury and row caches in `VirtualMODF`    |
 | `ContingencySpec`     | Pairs a `PSY.Outage` UUID with its resolved `NetworkModification`               |
 
+## Ranking contingencies with flowgates
+
+`flowgates` ranks contingencies by rating-weighted impact: the outaged branch is assumed
+loaded to its rating, and each monitored branch's impact is the resulting flow shift as a
+fraction of that branch's own rating. It returns a vector of [`FlowgateResult`](@ref)
+NamedTuples, each carrying a `FixedForcedOutage` you can attach to the system.
+
+```julia
+using PowerNetworkMatrices
+import PowerSystems as PSY
+import PowerSystemCaseBuilder as PSB
+
+sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+lodf = LODF(sys)
+
+fgs = flowgates(lodf; top_n = 3)
+top = first(fgs)
+get_flowgate_contingency_branch(top)   # the most important contingency branch
+get_flowgate_monitored(top)            # most-impacted branches, most impacted first
+get_flowgate_impacts(top)              # impact as a fraction of each monitored branch's rating
+get_flowgate_score(top)                # importance score in [0, 1]
+
+# Attach the outage to study it (for arcs backed by a real branch; on a reduced network
+# the contingency branch may be an aggregated equivalent that cannot be attached):
+PSY.add_supplemental_attribute!(
+    sys,
+    get_flowgate_contingency_branch(top),
+    get_flowgate_outage(top),
+)
+```
+
+Retrieve a flowgate's parts through the `get_flowgate_*` getters rather than NamedTuple
+field access. The [Flowgates tutorial](../tutorials/tutorial_Flowgates.md) walks through
+selecting flowgates and adding their outages to a `System`. See the `flowgates` docstring for the full set of keyword
+arguments that control the radial filter, monitoring threshold, breadth weight, and
+effective-count mode.
+
 ## Limitations
 
   - The implementation assumes DC power flow (lossless, linearized). Voltage

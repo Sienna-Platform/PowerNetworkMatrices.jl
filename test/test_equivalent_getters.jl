@@ -78,6 +78,131 @@
     @test PSY.get_available(bs) == true
 end
 
+@testset "Rating helpers approximate unrated transformer members from base power" begin
+    # Transformer ratings are optional (Transformer2W/TapTransformer/PhaseShiftingTransformer
+    # have rating::Union{Nothing,Float64}). An unrated member is approximated from its base
+    # power, so every aggregate stays defined. The components must be attached to a system: the
+    # per-unitization reads the system base from the component's units settings.
+    sys = System(100.0)
+    bus1 = ACBus(;
+        number = 1,
+        name = "bus1",
+        available = true,
+        bustype = ACBusTypes.PQ,
+        angle = 0.0,
+        magnitude = 1.0,
+        voltage_limits = (min = 0.0, max = 2.0),
+        base_voltage = 1.0,
+        area = nothing,
+        load_zone = nothing,
+    )
+    bus2 = ACBus(;
+        number = 2,
+        name = "bus2",
+        available = true,
+        bustype = ACBusTypes.PQ,
+        angle = 0.0,
+        magnitude = 1.0,
+        voltage_limits = (min = 0.0, max = 2.0),
+        base_voltage = 1.0,
+        area = nothing,
+        load_zone = nothing,
+    )
+    add_component!(sys, bus1)
+    add_component!(sys, bus2)
+    arc = PSY.Arc(; from = bus1, to = bus2)
+    line_rated = PSY.Line(;
+        name = "rated_line",
+        available = true,
+        active_power_flow = 0.0,
+        reactive_power_flow = 0.0,
+        arc = arc,
+        r = 0.1,
+        x = 0.2,
+        b = (from = 0.01, to = 0.01),
+        g = (from = 0.0, to = 0.0),
+        rating = 100.0,
+        angle_limits = (min = -π / 2, max = π / 2),
+    )
+    tap_unrated = PSY.TapTransformer(;
+        name = "unrated_tap",
+        available = true,
+        active_power_flow = 0.0,
+        reactive_power_flow = 0.0,
+        arc = arc,
+        r = 0.01,
+        x = 0.1,
+        primary_shunt = 0.0 + 0.0im,
+        tap = 1.0,
+        rating = nothing,
+        base_power = 50.0,
+        winding_group_number = PSY.WindingGroupNumber.GROUP_11,
+    )
+    add_component!(sys, line_rated)
+    # PSY rejects an unrated transformer on validation; we add it deliberately to exercise the
+    # base-power fallback, so skip the rating check.
+    add_component!(sys, tap_unrated; skip_validation = true)
+
+    # The unrated transformer is approximated as base_power / system_base pu, with a warning.
+    expected_tap = 50.0 / PSY.get_system_base_power(tap_unrated)
+    tap_rating =
+        @test_logs (:warn,) match_mode = :any PNM.get_equivalent_rating(tap_unrated)
+    @test tap_rating ≈ expected_tap
+    line_rating = PNM.get_equivalent_rating(line_rated)
+
+    # (a) Parallel group with the unrated member: all three helpers are now defined.
+    mbp = PNM.MixedBranchesParallel([line_rated, tap_unrated])
+    @test PNM.get_sum_of_max_rating(mbp) ≈ line_rating + expected_tap
+    # N-1: sum - max(largest survivor); the rated line dominates.
+    @test PNM.get_single_element_contingency_rating(mbp) ≈ expected_tap
+    @test isfinite(PNM.get_impedance_averaged_rating(mbp)) &&
+          PNM.get_impedance_averaged_rating(mbp) > 0
+
+    # (b) Series chain with the unrated member: weakest-link rating is now defined.
+    bs_with_unrated = PNM.BranchesSeries()
+    PNM.add_branch!(bs_with_unrated, line_rated, :FromTo)
+    PNM.add_branch!(bs_with_unrated, tap_unrated, :FromTo)
+    @test PNM.get_equivalent_rating(bs_with_unrated) ≈ min(line_rating, expected_tap)
+
+    # All-rated equivalents are unchanged.
+    line_rated2 = PSY.Line(;
+        name = "rated_line2",
+        available = true,
+        active_power_flow = 0.0,
+        reactive_power_flow = 0.0,
+        arc = arc,
+        r = 0.2,
+        x = 0.4,
+        b = (from = 0.02, to = 0.02),
+        g = (from = 0.0, to = 0.0),
+        rating = 150.0,
+        angle_limits = (min = -π / 2, max = π / 2),
+    )
+    add_component!(sys, line_rated2)
+    bs_all_rated = PNM.BranchesSeries()
+    PNM.add_branch!(bs_all_rated, line_rated, :FromTo)
+    PNM.add_branch!(bs_all_rated, line_rated2, :FromTo)
+    @test PNM.get_equivalent_rating(bs_all_rated) ≈ min(line_rating, 150.0)
+
+    # Zero/non-finite total susceptance is a degenerate group, not a rating gap: it still
+    # returns nothing. A line with x = 0 yields a non-finite susceptance.
+    line_inf_b = PSY.Line(;
+        name = "inf_b_line",
+        available = true,
+        active_power_flow = 0.0,
+        reactive_power_flow = 0.0,
+        arc = arc,
+        r = 0.0,
+        x = 0.0,
+        b = (from = 0.0, to = 0.0),
+        g = (from = 0.0, to = 0.0),
+        rating = 80.0,
+        angle_limits = (min = -π / 2, max = π / 2),
+    )
+    bp_inf_b = PNM.BranchesParallel([line_inf_b])
+    @test isnothing(PNM.get_impedance_averaged_rating(bp_inf_b))
+end
+
 @testset "Equivalent getters for ThreeWindingTransformerWinding" begin
     # Create a test system with three-winding transformers
     sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")

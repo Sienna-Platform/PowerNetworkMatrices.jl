@@ -100,10 +100,20 @@ end
 
 Sum of the individual branch ratings, treating each circuit as independently loadable
 up to its own thermal limit. This is the least conservative aggregate and assumes
-unconstrained flow steering across the parallel group.
+unconstrained flow steering across the parallel group. Unrated transformer members are
+approximated from base power; returns `nothing` only if a member's rating is still
+undefined (a degenerate nested equivalent).
 """
 function get_sum_of_max_rating(bp::AbstractBranchesParallel)
-    return sum(get_equivalent_rating(branch) for branch in bp.branches)
+    total = 0.0
+    for branch in bp.branches
+        r = get_equivalent_rating(branch)
+        if isnothing(r)
+            return nothing
+        end
+        total += r
+    end
+    return total
 end
 
 """
@@ -111,9 +121,14 @@ end
 
 N-1 rating for the parallel group: the surviving capacity after the largest-rated
 circuit trips, ``\\sum_i S_i - \\max_i S_i``. For a group of one branch this is zero.
+Unrated transformer members are approximated from base power; returns `nothing` only if a
+member's rating is still undefined (a degenerate nested equivalent).
 """
 function get_single_element_contingency_rating(bp::AbstractBranchesParallel)
     ratings = get_equivalent_rating.(bp.branches)
+    if any(isnothing, ratings)
+        return nothing
+    end
     return sum(ratings) - maximum(ratings)
 end
 
@@ -122,22 +137,25 @@ end
 
 Susceptance-weighted average of individual branch ratings,
 ``\\sum_i f_i \\cdot S_i`` with ``f_i = b_i / \\sum_k b_k``. Reflects how DC flow
-physically splits across a parallel group. Throws `ArgumentError` if the total
-series susceptance is zero or non-finite.
+physically splits across a parallel group. Unrated transformer members are approximated
+from base power; returns `nothing` if total series susceptance is zero or non-finite
+(weights are undefined), or if a member's rating is still undefined (a degenerate nested
+equivalent).
 """
 function get_impedance_averaged_rating(bp::AbstractBranchesParallel)
     b_total = sum(PSY.get_series_susceptance, bp.branches)
     if !isfinite(b_total) || iszero(b_total)
-        throw(
-            ArgumentError(
-                "Cannot compute impedance-averaged rating: total series susceptance across the parallel group must be finite and non-zero.",
-            ),
-        )
+        return nothing
     end
-    return sum(
-        PSY.get_series_susceptance(br) / b_total * get_equivalent_rating(br)
-        for br in bp.branches
-    )
+    result = 0.0
+    for br in bp.branches
+        r = get_equivalent_rating(br)
+        if isnothing(r)
+            return nothing
+        end
+        result += PSY.get_series_susceptance(br) / b_total * r
+    end
+    return result
 end
 
 # Series-chain rating contribution for a parallel block: dispatch arm for

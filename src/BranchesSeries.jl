@@ -117,9 +117,21 @@ Calculate the rating for branches in series.
 Series chains can be composed of PSY.ACTransmission branches and parallel groups.
 For series circuits, the rating is limited by the weakest link: Rating_total = min(Rating1, Rating2, ..., Ratingn).
 Parallel members contribute their N-1 single-element-contingency rating.
+Unrated transformer members are approximated from base power; returns `nothing` only if a
+member's rating is still undefined (a degenerate nested equivalent).
 """
 function get_equivalent_rating(bs::BranchesSeries)
-    return minimum(_series_member_rating(branch) for branch in bs)
+    result = nothing
+    for branch in bs
+        r = _series_member_rating(branch)
+        if isnothing(r)
+            return nothing
+        end
+        if isnothing(result) || r < result
+            result = r
+        end
+    end
+    return result
 end
 
 _series_member_rating(branch::PSY.ACTransmission) = get_equivalent_rating(branch)
@@ -131,6 +143,20 @@ Return the rating for PSY.ACTransmission branches.
 """
 function get_equivalent_rating(bs::PSY.ACTransmission)
     return PSY.get_rating(bs)
+end
+
+"""
+    get_equivalent_rating(tf::PSY.TwoWindingTransformer)
+
+Two-winding transformer ratings are optional (`rating::Union{Nothing, Float64}`); when unset,
+approximate the rating from the device base power (see [`_base_power_fallback_rating`](@ref)) so
+an unrated transformer — including one equivalenced into a parallel/series group — still
+contributes a usable rating.
+"""
+function get_equivalent_rating(tf::PSY.TwoWindingTransformer)
+    r = PSY.get_rating(tf)
+    isnothing(r) && return _base_power_fallback_rating(tf)
+    return r
 end
 
 """

@@ -601,6 +601,23 @@ function get_arc_axis(nr::NetworkReductionData)
     return arc_ax
 end
 
+# Resolve an arc to its branch across all five maps; returns nothing if not found.
+# Single get() per map avoids the double-hash of haskey+getindex.
+function get_arc_branch(
+    nrd::NetworkReductionData,
+    arc::Tuple{Int, Int},
+)::Union{PSY.ACTransmission, Nothing}
+    r = get(nrd.direct_branch_map, arc, nothing)
+    !isnothing(r) && return r
+    r = get(nrd.parallel_branch_map, arc, nothing)
+    !isnothing(r) && return r
+    r = get(nrd.series_branch_map, arc, nothing)
+    !isnothing(r) && return r
+    r = get(nrd.transformer3W_map, arc, nothing)
+    !isnothing(r) && return r
+    return get(nrd.added_arc_impedance_map, arc, nothing)
+end
+
 function is_arc_in_series_map(nr::NetworkReductionData, arc::Tuple{Int64, Int64})
     return haskey(nr.series_branch_map, arc)
 end

@@ -101,11 +101,28 @@ function get_equivalent_b(tw::ThreeWindingTransformerWinding)
     end
 end
 
+# Approximate a missing transformer rating from its device base power, expressed in system-base
+# pu assuming 1.0 pu voltage (S = V·I ⇒ |S|_max ≈ base_power), so it stays consistent with the
+# explicit, system-base-pu ratings of the rest of the network. Warn so every approximation is
+# visible. Defined here (the earliest rating file) so every per-member rating getter can reuse
+# it. Requires an attached component — the system base comes from its units settings.
+function _base_power_fallback_rating(tf::PSY.Component)
+    base = PSY.get_base_power(tf)
+    sys_base = PSY.get_system_base_power(tf)
+    rating = base / sys_base
+    @warn "Transformer $(PSY.get_name(tf)) has no rating; approximating it from the base power \
+           as $rating pu (base_power = $base MVA, system base = $sys_base MVA, assuming 1.0 pu \
+           voltage)"
+    return rating
+end
+
 """
     get_equivalent_rating(tw::ThreeWindingTransformerWinding)
 
 Get the rating for a specific winding of a three-winding transformer.
-Returns the winding-specific rating if non-zero, otherwise returns the parent transformer rating.
+Returns the winding-specific rating if non-zero, else the parent transformer rating; if the
+transformer has no rating either, approximates it from the parent's base power (see
+[`_base_power_fallback_rating`](@ref)).
 """
 function get_equivalent_rating(tw::ThreeWindingTransformerWinding)
     tfw = get_transformer(tw)
@@ -120,13 +137,10 @@ function get_equivalent_rating(tw::ThreeWindingTransformerWinding)
     else
         throw(ArgumentError("Invalid winding number: $winding_num"))
     end
-    if winding_rating != 0.0
-        return winding_rating
-    elseif isnothing(PSY.get_rating(tfw))
-        return 0.0
-    else
-        return PSY.get_rating(tfw)
-    end
+    !iszero(winding_rating) && return winding_rating
+    parent_rating = PSY.get_rating(tfw)
+    isnothing(parent_rating) && return _base_power_fallback_rating(tfw)
+    return parent_rating
 end
 
 """

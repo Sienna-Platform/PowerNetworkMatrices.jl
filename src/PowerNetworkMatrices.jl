@@ -49,6 +49,15 @@ export find_subnetworks
 export from_hdf5
 export get_bus_reduction_map
 export get_lodf_data
+export FlowgateResult
+export flowgates
+export get_flowgate_contingency_branch
+export get_flowgate_outage
+export get_flowgate_monitored
+export get_flowgate_impacts
+export get_flowgate_score
+export get_flowgate_breadth
+export get_flowgate_magnitude
 export get_network_reduction_data
 export get_partial_lodf_row
 export get_ptdf_data
@@ -142,6 +151,7 @@ include("row_cache.jl")
 include("virtual_ptdf_calculations.jl")
 include("PowerflowMatrixTypes.jl")
 include("lodf_calculations.jl")
+include("flowgates.jl")
 include("virtual_lodf_calculations.jl")
 include("modf_definitions.jl")
 include("network_modification.jl")
