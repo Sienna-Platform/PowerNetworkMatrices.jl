@@ -10,6 +10,10 @@ const ZERO_IMPEDANCE_X_EPSILON = 1e-6
 const LODF_ENTRY_TOLERANCE = 1e-6
 const MODF_ISLANDING_TOLERANCE = 1e-10
 const YBUS_DELTA_TOL = 1e-10
+# At or above this bus count a default `AutoTolerance` sparsifies the on-demand
+# (virtual) matrices; below it, AutoTolerance is a no-op so small systems are
+# returned exactly. Sparsification only pays off — and is only wanted — at scale.
+const AUTO_TOLERANCE_BUS_LIMIT = 2000
 
 DEFAULT_LODF_CHUNK_SIZE = 18_000
 

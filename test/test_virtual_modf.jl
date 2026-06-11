@@ -713,3 +713,54 @@ end
     row_aa = vmodf_aa[2, ctg]
     @test isapprox(row_aa, row_klu, atol = 1e-9)
 end
+
+@testset "VirtualMODF: sparsification error is not amplified by the Woodbury correction" begin
+    # R2: the cutoff is applied to the FINAL row, after the exact Woodbury solve
+    # (Z is built from exact factorization solves, never sparsified rows), so the
+    # error stays bounded by the cutoff however near-critical the contingency is.
+    # Moving sparsification ahead of the solve would amplify it by ||W_inv|| (~190x).
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+
+    function _register_ctg!(v, arcs, uuidint)
+        mods = [ArcModification(e, -v.arc_susceptances[e]) for e in arcs]
+        u = Base.UUID(UInt128(uuidint))
+        ctg = ContingencySpec(u, NetworkModification("r2_$(uuidint)", mods))
+        v.contingency_cache[u] = ctg
+        return ctg
+    end
+
+    # arc 9 -> islanding bridge (pinv branch, infinite amplification);
+    # arcs [1, 19] -> near-singular W (||W_inv||_2 ~ 190), with tau large enough
+    # to actually drop entries so the bound is exercised rather than vacuous.
+    for (arcs, uid, tau) in (([9], 1, 1e-3), ([1, 19], 2, 5e-2))
+        vexact = VirtualMODF(sys; tol = eps())
+        vtau = VirtualMODF(sys; tol = tau)
+        n_arcs = length(PNM.get_arc_axis(vexact))
+
+        ce = _register_ctg!(vexact, arcs, uid)
+        ct = _register_ctg!(vtau, arcs, uid)
+
+        wf = PNM._get_woodbury_factors(vexact, ce.modification)
+        amplification = Inf
+        if !wf.is_islanding
+            amplification = opnorm(wf.W_inv, 2)
+        end
+
+        max_err = 0.0
+        n_dropped = 0
+        for m in 1:n_arcs
+            exact_row = vexact[m, ce.modification]
+            sparse_row = vtau[m, ct.modification]
+            max_err = max(max_err, maximum(abs, sparse_row .- exact_row))
+            n_dropped += count(iszero, sparse_row) - count(iszero, exact_row)
+        end
+
+        @test amplification > 50.0   # contingency is genuinely near-critical
+        @test max_err <= tau         # yet terminal-cutoff error stays below the cutoff
+        # [1, 19] actually drops entries, so the bound above is non-vacuous.
+        if length(arcs) == 2
+            @test n_dropped > 0
+            @test max_err > 0.5 * tau
+        end
+    end
+end
