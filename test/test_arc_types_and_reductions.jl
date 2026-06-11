@@ -155,7 +155,7 @@ end
 
     # ybus_branch_entries on the mixed group should equal the sum of the parts.
     Y11_l, Y12_l, Y21_l, Y22_l = PNM.ybus_branch_entries(line)
-    Y11_t, Y12_t, Y21_t, Y22_t = PNM.ybus_branch_entries(tap)
+    Y11_t, Y12_t, Y21_t, Y22_t = PNM.ybus_branch_entries(tap, PNM.NetworkReductionData())
     Y11_m, Y12_m, Y21_m, Y22_m =
         PNM.ybus_branch_entries(mbp, PNM.NetworkReductionData())
     @test Y11_m ≈ Y11_l + Y11_t

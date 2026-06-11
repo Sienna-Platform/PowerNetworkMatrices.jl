@@ -263,7 +263,7 @@ mod_ab3 = NetworkModification(vmodf, (123, 217));    # AB3 outage
 ctg_n2 = NetworkModification(
     "AB2_and_AB3_out",
     vcat(collect(mod_ab2.arc_modifications),
-         collect(mod_ab3.arc_modifications)),
+        collect(mod_ab3.arc_modifications)),
 );
 
 row_n2 = vmodf[m, ctg_n2];
@@ -303,7 +303,7 @@ ctg_ab3 = NetworkModification(vmodf, (123, 217));
 ctg_ab2_ab3 = NetworkModification(
     "AB2_and_AB3_out",
     vcat(collect(ctg_ab2.arc_modifications),
-         collect(ctg_ab3.arc_modifications)),
+        collect(ctg_ab3.arc_modifications)),
 );
 
 contingencies = [

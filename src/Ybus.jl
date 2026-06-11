@@ -466,24 +466,24 @@ end
 
 function ybus_branch_entries(
     br::PSY.TwoWindingTransformer,
-    ::NetworkReductionData;
+    nr::NetworkReductionData;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
     return ybus_branch_entries(
         br,
-        _get_impedance_correction_factor(br);
+        _get_impedance_correction_factor(br, nr);
         min_x_eps = min_x_eps,
     )
 end
 
 function ybus_branch_entries(
-    br::ThreeWindingTransformerWinding,
-    ::NetworkReductionData;
+    tp::ThreeWindingTransformerWinding,
+    nr::NetworkReductionData;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
     return ybus_branch_entries(
-        br,
-        _get_impedance_correction_factor(br);
+        tp,
+        _get_impedance_correction_factor(tp, nr);
         min_x_eps = min_x_eps,
     )
 end
@@ -505,6 +505,16 @@ function ybus_branch_entries(
     return (Y11, Y12, Y21, Y22)
 end
 
+# A single branch has unambiguous orientation; this `nr` overload lets callers iterating
+# heterogeneous segments (single branches and parallel groups) pass `nr` uniformly.
+function ybus_branch_entries(
+    br::PSY.GenericArcImpedance,
+    ::NetworkReductionData;
+    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+)
+    return ybus_branch_entries(br; min_x_eps = min_x_eps)
+end
+
 function ybus_branch_entries(
     parallel_br::AbstractBranchesParallel,
     nr::NetworkReductionData;
@@ -517,7 +527,7 @@ function ybus_branch_entries(
     # full-precision; callers narrow to YBUS_ELTYPE when storing.
     Y11 = Y12 = Y21 = Y22 = zero(ComplexF64)
     for br in parallel_br
-        (y11, y12, y21, y22) = ybus_branch_entries(br)
+        (y11, y12, y21, y22) = ybus_branch_entries(br, nr)
         if get_arc_tuple(br, nr) != reference
             Y11 += y22
             Y12 += y21
@@ -635,10 +645,11 @@ function _build_icd_correction_map(sys::PSY.System)::Union{Nothing, ICDCorrectio
     return ICDCorrectionMap(map_2w, map_3w)
 end
 
-function _get_impedance_correction_factor(br::PSY.TwoWindingTransformer)
-    attrs = PSY.get_supplemental_attributes(PSY.ImpedanceCorrectionData, br)
-    isempty(attrs) && return one(Float64)
-    return _compute_icd_factor(br, only(attrs))
+function _get_impedance_correction_factor(
+    br::PSY.TwoWindingTransformer,
+    nr::NetworkReductionData,
+)
+    return _get_correction(nr.icd_map, br)
 end
 
 """Ybus entries for a `Transformer2W`, `TapTransformer`, or `PhaseShiftingTransformer`."""
@@ -663,24 +674,14 @@ function ybus_branch_entries(
     return (Y11 + y_shunt, Y12, Y21, Y22)
 end
 
-function ybus_branch_entries(br::PSY.TwoWindingTransformer)
-    return ybus_branch_entries(br, _get_impedance_correction_factor(br))
-end
-
-function _get_impedance_correction_factor(tp::ThreeWindingTransformerWinding)
+function _get_impedance_correction_factor(
+    tp::ThreeWindingTransformerWinding,
+    nr::NetworkReductionData,
+)
+    isnothing(nr.icd_map) && return one(Float64)
     br = get_transformer(tp)
     winding_num = get_winding_number(tp)
-    target = (
-        PSY.WindingCategory.PRIMARY_WINDING,
-        PSY.WindingCategory.SECONDARY_WINDING,
-        PSY.WindingCategory.TERTIARY_WINDING,
-    )[winding_num]
-    attrs = PSY.get_supplemental_attributes(PSY.ImpedanceCorrectionData, br)
-    for attr in attrs
-        PSY.get_transformer_winding(attr) == target || continue
-        return _compute_icd_factor(br, attr, winding_num)
-    end
-    return one(Float64)
+    return get(nr.icd_map.map_3w, (IS.get_uuid(br), winding_num), 1.0)
 end
 
 """Ybus branch entries for an arc in the wye model of a `ThreeWindingTransformer`."""
@@ -733,10 +734,6 @@ function ybus_branch_entries(
     Y21 = (-Y_t / tap)
     Y22 = Y_t
     return (Y11, Y12, Y21, Y22)
-end
-
-function ybus_branch_entries(tp::ThreeWindingTransformerWinding)
-    return ybus_branch_entries(tp, _get_impedance_correction_factor(tp))
 end
 
 """Handles ybus entries for most 2-node AC branches. The types handled here are:
@@ -1196,6 +1193,7 @@ function Ybus(
     end
     adj = SparseArrays.spdiagm(ones(Int8, busnumber))
     icd_map = _build_icd_correction_map(sys)
+    nr.icd_map = icd_map
     branches = _get_ybus_two_terminal_ac_branches(sys)
     transformer_3W =
         _get_filtered_components(PSY.ThreeWindingTransformer, sys, PSY.get_available)
@@ -2333,7 +2331,7 @@ function add_segment_to_ybus!(
     segment_orientation::Symbol,
     nr::NetworkReductionData,
 )
-    (Y11, Y12, Y21, Y22) = ybus_branch_entries(segment)
+    (Y11, Y12, Y21, Y22) = ybus_branch_entries(segment, nr)
     push!(fb, ix)
     push!(tb, ix + 1)
     if segment_orientation == :FromTo
