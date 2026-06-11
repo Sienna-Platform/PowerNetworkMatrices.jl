@@ -198,7 +198,7 @@ return cached_row_lookup(
 end
 ```
 
-`cutoff` is the resolved [`SparsificationCutoff`](@ref) stored on the matrix: an
+`cutoff` is the resolved `SparsificationCutoff` stored on the matrix: an
 `AbsoluteCutoff` drops below a fixed value, a `RelativeCutoff` drops below
 `fraction · max|row|` so columns of large cases stay sparse.
 """
