@@ -61,7 +61,7 @@ _retained_buses(vmodf) =
         PSY.add_supplemental_attribute!(sys, line, _fixed_outage())
     end
 
-    protected = PNM._collect_protected_buses(sys, Ybus(sys))
+    protected = PNM._collect_protected_buses(sys)
     for line in outaged
         fb, tb = _arc_buses(line)
         @test fb in protected
@@ -80,7 +80,7 @@ end
         _fixed_outage(; monitored = [monitored]),
     )
 
-    protected = PNM._collect_protected_buses(sys, Ybus(sys))
+    protected = PNM._collect_protected_buses(sys)
     # Both the outaged branch and its monitored branch contribute their buses.
     for branch in (outaged, monitored)
         fb, tb = _arc_buses(branch)
@@ -100,7 +100,7 @@ end
     # Regression: Transformer3W <: ACTransmission but has no `get_arc`, so the
     # generic ACTransmission path would throw MethodError. It must route to the
     # 3WT-specific method and protect all of the transformer's buses.
-    protected = PNM._collect_protected_buses(sys, Ybus(sys))
+    protected = PNM._collect_protected_buses(sys)
     @test !isempty(protected)
     for arc in (
         PSY.get_primary_star_arc(t3w),
@@ -200,6 +200,33 @@ end
         sys;
         network_reductions = NetworkReduction[RadialReduction(), DegreeTwoReduction()],
     )
+
+    mfb, mtb = _arc_buses(monitored)
+    @test mfb in _retained_buses(vmodf)
+    @test mtb in _retained_buses(vmodf)
+    arc_lookup = PNM.get_arc_lookup(vmodf)
+    @test haskey(arc_lookup, (mfb, mtb)) || haskey(arc_lookup, (mtb, mfb))
+end
+
+@testset "VirtualMODF protects monitored branch endpoint merged by zero-impedance reduction" begin
+    # `psse_14_network_reduction_test_system` has a zero-impedance branch (104, 105);
+    # bus 105 is merged into bus 104 by the auto-applied ZeroImpedanceBranchReduction
+    # when neither bus is irreducible (see "ZeroImpedanceBranchReduction respects
+    # irreducible buses" in test_ybus_reductions.jl). The monitored branch below has
+    # bus 105 as an endpoint, so its (102, 105) arc must survive — bus 105 needs to be
+    # irreducible *before* the base Ybus (and its ZIBR pass) is built, not after.
+    sys = PSB.build_system(PSB.PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
+    monitored = PSY.get_component(PSY.ACTransmission, sys, "BUS 102_102-BUS 105_105-i_1")
+    outaged = PSY.get_component(PSY.ACTransmission, sys, "BUS 107_107-BUS 108_108-i_1")
+    @test monitored !== nothing
+    @test outaged !== nothing
+
+    PSY.add_supplemental_attribute!(
+        sys,
+        outaged,
+        _fixed_outage(; monitored = [monitored]),
+    )
+    vmodf = VirtualMODF(sys)
 
     mfb, mtb = _arc_buses(monitored)
     @test mfb in _retained_buses(vmodf)

@@ -256,10 +256,13 @@ Base.setindex!(::VirtualMODF, _, ::CartesianIndex) =
 Build a VirtualMODF from a PowerSystems System. Automatically registers all
 Outage supplemental attributes found in the system.
 
-When `network_reductions` are supplied, they are adjusted to retain the buses of
-every outaged component and the components each outage declares monitored
-(`get_monitored_components`). This is mandatory: the ABA/Woodbury solve runs on the
-reduced network, so a branch in a contingency must survive reduction.
+The buses of every outaged component and the components each outage declares
+monitored (`get_monitored_components`) are automatically added to the irreducible
+set before the base `Ybus` is built, and (when `network_reductions` are supplied)
+any `WardReduction.study_buses` are augmented to match. This is mandatory: the
+ABA/Woodbury solve runs on the reduced network, so a branch in a contingency must
+survive every reduction step, including the zero-impedance reduction that is
+auto-applied during `Ybus` construction.
 
 # Arguments
 - `sys::PSY.System`: Power system to build from
@@ -301,19 +304,21 @@ function VirtualMODF(
         _reject_zibr_in_user_reductions(r)
     end
 
-    # Build the base Ybus once (zero-impedance reduction auto-applied). It supplies the
-    # ZI-survivor map for the protection set and is the starting point for the reductions.
-    Ymatrix = Ybus(sys; irreducible_buses = irreducible_buses, kwargs...)
-
     # Outage/monitored buses are auto-protected so contingency branches survive
-    # reduction. Registering an outage with previously-unseen monitored components
-    # after construction shifts this set and requires rebuilding the MODF.
-    protected_buses = _collect_protected_buses(sys, Ymatrix)
+    # reduction. Collect them from `sys` before building the base Ybus and fold
+    # them into `irreducible_buses` so the auto-applied zero-impedance reduction
+    # never merges away a monitored/outaged branch endpoint in the first place.
+    # Registering an outage with previously-unseen monitored components after
+    # construction shifts this set and requires rebuilding the MODF.
+    protected_buses = _collect_protected_buses(sys)
     applied_irreducible = union(irreducible_buses, protected_buses)
 
-    # Protect via two channels: radial/degree-two read the container's irreducible set,
-    # while Ward reads `study_buses` (augmented separately).
-    _inject_protected_buses!(Ymatrix, protected_buses)
+    # Build the base Ybus with the combined irreducible set (zero-impedance reduction
+    # auto-applied here honors it); this is the starting point for further reductions.
+    Ymatrix = Ybus(sys; irreducible_buses = applied_irreducible, kwargs...)
+
+    # radial/degree-two read the container's irreducible set (already seeded above via
+    # `Ybus`'s `irreducible_buses`), while Ward reads `study_buses` (augmented separately).
     applied_reductions = _augment_ward_reductions(network_reductions, applied_irreducible)
     for reduction in applied_reductions
         Ymatrix = build_reduced_ybus(Ymatrix, sys, reduction)
