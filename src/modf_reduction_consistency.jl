@@ -51,19 +51,17 @@ function _accumulate_monitored_buses!(
     return
 end
 
-# Bus -> ZI-merge survivor map, read from an already-built `Ybus`. Reusing the caller's
-# Ybus avoids a second full network assembly just for this map.
-_zero_impedance_survivor_map(ybus::Ybus) =
-    get_reverse_bus_search_map(get_network_reduction_data(ybus))
-
 """
-    _collect_protected_buses(sys, ybus) -> Set{Int}
+    _collect_protected_buses(sys) -> Set{Int}
 
 Buses to protect so every `PSY.Outage`'s outaged and monitored components
-remain queryable as arcs after reduction. Buses are routed through `ybus`'s
-ZI-survivor map so that protecting a ZI-merged endpoint protects its survivor.
+remain queryable as arcs after reduction. Computed from `sys` alone (no `Ybus`
+needed) so the result can be folded into `irreducible_buses` *before* the base
+`Ybus` (and its auto-applied zero-impedance reduction) is built — otherwise a
+monitored/outaged branch endpoint could be merged away by ZIBR before it is
+known to need protecting.
 """
-function _collect_protected_buses(sys::PSY.System, ybus::Ybus)
+function _collect_protected_buses(sys::PSY.System)
     buses = Set{Int}()
     for outage in PSY.get_supplemental_attributes(PSY.Outage, sys)
         for component in PSY.get_associated_components(sys, outage)
@@ -71,9 +69,7 @@ function _collect_protected_buses(sys::PSY.System, ybus::Ybus)
         end
         _accumulate_monitored_buses!(buses, sys, outage)
     end
-    isempty(buses) && return Set{Int}()
-    zi_map = _zero_impedance_survivor_map(ybus)
-    return Set{Int}(get(zi_map, b, b) for b in buses)
+    return buses
 end
 
 _merge_irreducible(existing, protected::Set{Int}) =
@@ -93,15 +89,4 @@ function _augment_ward_reductions(
     protected::Set{Int},
 )
     return NetworkReduction[_augment_ward(r, protected) for r in reductions]
-end
-
-# Fold `protected` into the base Ybus's shared reduction container so radial/degree-two
-# reductions, which read the user irreducible set from it, honor them. Relies on the
-# container being read lazily by each later `build_reduced_ybus` step.
-function _inject_protected_buses!(ybus::Ybus, protected::Set{Int})
-    union!(
-        get_user_irreducible_buses(get_reductions(get_network_reduction_data(ybus))),
-        protected,
-    )
-    return
 end
