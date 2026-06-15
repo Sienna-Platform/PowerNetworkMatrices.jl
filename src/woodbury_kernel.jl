@@ -48,6 +48,15 @@ function _invert_woodbury_W(
     return W_inv, is_island
 end
 
+# Empty modification (M = 0): a contingency whose branch was eliminated by the
+# zero-impedance reduction resolves to no arc modifications, so W is 0×0. LAPACK's
+# getri! (reached via `inv`) rejects a 0×0 argument ("invalid argument #6"), so
+# return the empty inverse directly. `_apply_woodbury_correction_impl` then adds no
+# correction and yields the unmodified base PTDF row — the documented behavior for
+# such contingencies (see `_warn_if_transmission_dropped`).
+_invert_woodbury_W(::Matrix{Float64}, ::Val{0})::Tuple{Matrix{Float64}, Bool} =
+    (Matrix{Float64}(undef, 0, 0), false)
+
 function _invert_woodbury_W(
     W_mat::Matrix{Float64},
     ::Val{M},
