@@ -215,7 +215,10 @@ end
     # irreducible buses" in test_ybus_reductions.jl). The monitored branch below has
     # bus 105 as an endpoint, so its (102, 105) arc must survive — bus 105 needs to be
     # irreducible *before* the base Ybus (and its ZIBR pass) is built, not after.
-    sys = PSB.build_system(PSB.PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
+    sys = PSB.build_system(
+        PSB.PSSEParsingTestSystems,
+        "psse_14_network_reduction_test_system",
+    )
     monitored = PSY.get_component(PSY.ACTransmission, sys, "BUS 102_102-BUS 105_105-i_1")
     outaged = PSY.get_component(PSY.ACTransmission, sys, "BUS 107_107-BUS 108_108-i_1")
     @test monitored !== nothing

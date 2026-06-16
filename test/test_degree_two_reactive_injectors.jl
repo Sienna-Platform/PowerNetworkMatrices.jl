@@ -96,7 +96,11 @@ end
     @test !(2 in reduced.irreducible_buses)         # condenser bus is a reduction candidate
     @test 2 in reduced.removed_buses                # and is actually folded out of the chain
 
-    kept = PNM.get_reduction(adj, sys, DegreeTwoReduction(; reduce_reactive_power_injectors = false))
+    kept = PNM.get_reduction(
+        adj,
+        sys,
+        DegreeTwoReduction(; reduce_reactive_power_injectors = false),
+    )
     @test 2 in kept.irreducible_buses               # condenser bus retained
     @test !(2 in kept.removed_buses)                # and not folded
 end

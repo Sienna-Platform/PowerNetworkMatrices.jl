@@ -74,8 +74,9 @@ function _system_derived_irreducible_buses(
         PSY.get_available(c) || continue
         # An injector keeps its bus if it supports active power, or (when reactive
         # injectors are not being reduced) reactive power.
-        forces_keep = PSY.supports_active_power(c) ||
-                      (!reduce_reactive_power_injectors && PSY.supports_reactive_power(c))
+        forces_keep =
+            PSY.supports_active_power(c) ||
+            (!reduce_reactive_power_injectors && PSY.supports_reactive_power(c))
         forces_keep || continue
         bus = PSY.get_bus(c)
         PSY.get_available(bus) || continue
