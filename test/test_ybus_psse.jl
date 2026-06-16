@@ -85,7 +85,7 @@ end
         if col_bus ∈ keys(nr.reverse_bus_search_map)
             col_bus = nr.reverse_bus_search_map[col_bus]
         end
-        @test isapprox(Ybus_pnm[row_bus, col_bus], val, atol = 1e-3)
+        @test isapprox(Ybus_pnm[row_bus, col_bus], val, rtol = 2 * eps(Float32), atol = 0.0)
     end
 end
 
@@ -118,7 +118,7 @@ end
         if col_bus ∈ keys(nr.reverse_bus_search_map)
             col_bus = nr.reverse_bus_search_map[col_bus]
         end
-        @test isapprox(Ybus_pnm[row_bus, col_bus], val, atol = 2e-3)
+        @test isapprox(Ybus_pnm[row_bus, col_bus], val, rtol = 4 * eps(Float32), atol = 0.0)
     end
 end
 
@@ -202,7 +202,7 @@ end
         if col_bus ∈ keys(nr.reverse_bus_search_map)
             col_bus = nr.reverse_bus_search_map[col_bus]
         end
-        @test isapprox(Ybus_pnm[row_bus, col_bus], val; atol = 1e-1)
+        @test isapprox(Ybus_pnm[row_bus, col_bus], val; rtol = 9 * eps(Float32), atol = 0.0)
     end
 end
 
@@ -238,6 +238,77 @@ end
         if col_bus ∈ keys(nr.reverse_bus_search_map)
             col_bus = nr.reverse_bus_search_map[col_bus]
         end
-        @test isapprox(Ybus_pnm[row_bus, col_bus], val; atol = 1e-5)
+        @test isapprox(Ybus_pnm[row_bus, col_bus], val; rtol = 2 * eps(Float32), atol = 0.0)
+    end
+end
+
+@testset "psse_modified_14bus_off_nominal_icd" begin
+    # Three transformers have off-nominal settings that activate their ICTs:
+    #   BUS 109-BUS 104-i_1  (TapTransformer):          WINDV1=0.95, table 4 → F=1.030
+    #   BUS 110-BUS 109-i_1  (PhaseShiftingTransformer): ANG1=12.2°,  table 3 → F=1.082
+    #   BUS 113-BUS 110-BUS 114-i_1 winding 1 (PST3W):  ANG1=10.0°,  table 9 → F=1.100
+    sys = build_system(PSSEParsingTestSystems, "psse_modified_14bus_off_nominal_icd")
+    Ybus_pnm = Ybus(sys)
+    nr = Ybus_pnm.network_reduction_data
+
+    Ybus_psse, b_ix_psse, row_buses, col_buses, y_values, reduced_bus_pairs_psse =
+        parse_psse_ybus(
+            joinpath(TEST_DATA_DIR, "modified_14bus_system_off_nominal_icd_ymatrix.txt"),
+        )
+    for x in reduced_bus_pairs_psse
+        _test_psse_reduction_row(x, nr.reverse_bus_search_map)
+    end
+
+    psse_ref_bus_numbers = [101, 108]
+    psse_skip_indices = indexin(psse_ref_bus_numbers, Ybus_pnm.axes[1])
+    n_psse_excluded_elements = nnz(Ybus_pnm.data[psse_skip_indices, :])
+    @test nnz(Ybus_pnm.data) == length(filter(!iszero, y_values)) + n_psse_excluded_elements
+
+    psse_to_pnm_star_bus = Dict(1100001 => 1002, 1100002 => 1001)
+    for (row_bus, col_bus, val) in zip(row_buses, col_buses, y_values)
+        row_bus = get(psse_to_pnm_star_bus, row_bus, row_bus)
+        col_bus = get(psse_to_pnm_star_bus, col_bus, col_bus)
+        if row_bus ∈ keys(nr.reverse_bus_search_map)
+            row_bus = nr.reverse_bus_search_map[row_bus]
+        end
+        if col_bus ∈ keys(nr.reverse_bus_search_map)
+            col_bus = nr.reverse_bus_search_map[col_bus]
+        end
+        @test isapprox(Ybus_pnm[row_bus, col_bus], val; rtol = 2 * eps(Float32), atol = 0.0)
+    end
+end
+
+@testset "psse_modified_14bus_nominal_icd" begin
+    sys = build_system(PSSEParsingTestSystems, "psse_modified_14bus_nominal_icd")
+    Ybus_pnm = Ybus(sys)
+    nr = Ybus_pnm.network_reduction_data
+
+    Ybus_psse, b_ix_psse, row_buses, col_buses, y_values, reduced_bus_pairs_psse =
+        parse_psse_ybus(joinpath(TEST_DATA_DIR, "modified_14bus_system_no_icd.txt"))
+    for x in reduced_bus_pairs_psse
+        _test_psse_reduction_row(x, nr.reverse_bus_search_map)
+    end
+
+    # PSS/E excluded rows for both type-3 buses it saw (101 and 108); count those
+    # PNM entries to reconcile the NNZ check.
+    psse_ref_bus_numbers = [101, 108]
+    psse_skip_indices = indexin(psse_ref_bus_numbers, Ybus_pnm.axes[1])
+    n_psse_excluded_elements = nnz(Ybus_pnm.data[psse_skip_indices, :])
+    @test nnz(Ybus_pnm.data) == length(filter(!iszero, y_values)) + n_psse_excluded_elements
+
+    # PSS/E numbers its switch star-buses as 1100001/1100002; PNM assigns 1002/1001.
+    # Adjacency-derived mapping: PSS/E 1100001 ↔ {114,112,110} = PNM 1002;
+    #                            PSS/E 1100002 ↔ {107,104,109} = PNM 1001.
+    psse_to_pnm_star_bus = Dict(1100001 => 1002, 1100002 => 1001)
+    for (row_bus, col_bus, val) in zip(row_buses, col_buses, y_values)
+        row_bus = get(psse_to_pnm_star_bus, row_bus, row_bus)
+        col_bus = get(psse_to_pnm_star_bus, col_bus, col_bus)
+        if row_bus ∈ keys(nr.reverse_bus_search_map)
+            row_bus = nr.reverse_bus_search_map[row_bus]
+        end
+        if col_bus ∈ keys(nr.reverse_bus_search_map)
+            col_bus = nr.reverse_bus_search_map[col_bus]
+        end
+        @test isapprox(Ybus_pnm[row_bus, col_bus], val; rtol = 2 * eps(Float32), atol = 0.0)
     end
 end

@@ -1,3 +1,8 @@
+struct ICDCorrectionMap
+    map_2w::Dict{Base.UUID, Float64}
+    map_3w::Dict{Tuple{Base.UUID, Int}, Float64}
+end
+
 struct YbusACBranches
     lines::Vector{PSY.Line}
     monitored_lines::Vector{PSY.MonitoredLine}
@@ -32,6 +37,13 @@ function _populate_ybus_branch_vector!(
     return
 end
 
+_get_correction(::Nothing, ::PSY.ACTransmission) = 1.0
+_get_correction(::Nothing, ::PSY.DynamicBranch) = 1.0
+_get_correction(::ICDCorrectionMap, ::PSY.ACTransmission) = 1.0
+_get_correction(map::ICDCorrectionMap, br::PSY.TwoWindingTransformer) =
+    get(map.map_2w, IS.get_uuid(br), 1.0)
+_get_correction(map::ICDCorrectionMap, br::PSY.DynamicBranch) =
+    get(map.map_2w, IS.get_uuid(br.branch), 1.0)
 function _populate_ybus_branch_vector!(
     vec::Vector{T},
     sys::PSY.System,
@@ -71,25 +83,27 @@ end
 function _foreach_ybus_branch(
     f::F,
     branches::YbusACBranches,
+    icd_map::Union{Nothing, ICDCorrectionMap},
 ) where {F <: Function}
-    ix = _foreach_typed_branches(f, branches.lines, 0)
-    ix = _foreach_typed_branches(f, branches.monitored_lines, ix)
-    ix = _foreach_typed_branches(f, branches.generic_arc_impedances, ix)
-    ix = _foreach_typed_branches(f, branches.tap_transformers, ix)
-    ix = _foreach_typed_branches(f, branches.phase_shifting_transformers, ix)
-    ix = _foreach_typed_branches(f, branches.transformer2w, ix)
-    ix = _foreach_typed_branches(f, branches.dynamic_branches, ix)
-    ix = _foreach_typed_branches(f, branches.breaker_switches, ix)
+    ix = _foreach_typed_branches(f, branches.lines, icd_map, 0)
+    ix = _foreach_typed_branches(f, branches.monitored_lines, icd_map, ix)
+    ix = _foreach_typed_branches(f, branches.generic_arc_impedances, icd_map, ix)
+    ix = _foreach_typed_branches(f, branches.tap_transformers, icd_map, ix)
+    ix = _foreach_typed_branches(f, branches.phase_shifting_transformers, icd_map, ix)
+    ix = _foreach_typed_branches(f, branches.transformer2w, icd_map, ix)
+    ix = _foreach_typed_branches(f, branches.dynamic_branches, icd_map, ix)
+    ix = _foreach_typed_branches(f, branches.breaker_switches, icd_map, ix)
     return ix
 end
 
 function _foreach_typed_branches(
     f::F,
     vec::Vector{T},
+    icd_map::Union{Nothing, ICDCorrectionMap},
     offset::Int,
 ) where {F <: Function, T <: PSY.ACTransmission}
     for (i, br) in enumerate(vec)
-        f(br, offset + i)
+        f(br, offset + i, _get_correction(icd_map, br))
     end
     return offset + length(vec)
 end

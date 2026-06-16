@@ -134,6 +134,7 @@ network reduction algorithms.
 - `component_to_reduction_name_map::Dict{Type, Dict{String, String}}`: Lazily filled with the call to [`populate_branch_maps_by_type!`](@ref), maps component names to the names of the reduction entries used in name_to_arc_map.
 - `filters_applied::Dict{Type, Function}`: Filters applied when populating branch maps by type
 - `direct_branch_name_map::Dict{String, Tuple{Int, Int}}`: Lazily filled, maps branch names to their corresponding arc tuples for direct branches
+- `icd_map::Union{Nothing, ICDCorrectionMap}`: Precomputed impedance-correction-data factors for 2W and 3W transformers, built once via [`_build_icd_correction_map`](@ref)
 """
 @kwdef mutable struct NetworkReductionData
     irreducible_buses::Set{Int} = Set{Int}() # Buses that are not reduced in the network reduction
@@ -181,6 +182,7 @@ network reduction algorithms.
     filters_applied = Dict{Type, Function}() #Filters applied when populating branch maps by type
     direct_branch_name_map::Dict{String, Tuple{Int, Int}} =
         Dict{String, Tuple{Int, Int}}()
+    icd_map::Union{Nothing, ICDCorrectionMap} = nothing
 end
 
 function add_to_map(device::T, filters::Dict) where {T <: PSY.ACTransmission}
@@ -485,6 +487,9 @@ has_filtered_branches(rb::NetworkReductionData) = !isempty(rb.filters_applied)
 
 function Base.isempty(rb::NetworkReductionData)
     for field in fieldnames(NetworkReductionData)
+        # icd_map is a precomputed cache (Union{Nothing, ICDCorrectionMap}), not a
+        # reduction-state collection; isempty is undefined for both possible types.
+        field == :icd_map && continue
         if !isempty(getfield(rb, field))
             return false
         end
@@ -494,6 +499,7 @@ end
 
 function Base.empty!(rb::NetworkReductionData)
     for field in fieldnames(NetworkReductionData)
+        field == :icd_map && continue
         empty!(getfield(rb, field))
     end
     return
@@ -557,6 +563,9 @@ function isequal(
         # direct_branch_name_map is populated when indexing into matrices with branch names
         # this should not prevent using matrices for downstream computations (e.g. LODF(A, BA, ABA))
         field == :direct_branch_name_map && continue
+        # icd_map has no `==` override, so two structurally-identical maps from separate
+        # _build_icd_correction_map calls (or deepcopy) would compare unequal via `===`.
+        field == :icd_map && continue
         if getfield(rb1, field) != getfield(rb2, field)
             return false
         end

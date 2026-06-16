@@ -230,7 +230,7 @@ end
             arc_tuple = PNM.get_arc_axis(nr)[arc_mod.arc_index]
             if haskey(nr.direct_branch_map, arc_tuple)
                 br = nr.direct_branch_map[arc_tuple]
-                _, Y12, _, _ = PNM.ybus_branch_entries(br)
+                _, Y12, _, _ = PNM.ybus_branch_entries(br, nr)
                 @test isapprox(arc_mod.delta_y12, PNM.YBUS_ELTYPE(-Y12); atol = 1e-6)
             end
         end

@@ -774,10 +774,81 @@ end
     blind11 = zero(eltype(ybus.data))
     blind12 = zero(eltype(ybus.data))
     for br in bp.branches
-        entries = PNM.ybus_branch_entries(br)
+        entries = PNM.ybus_branch_entries(br, nr)
         blind11 += entries[1]
         blind12 += entries[2]
     end
     @test !isapprox(blind11, ybus.data[ip, ip])
     @test !isapprox(blind12, ybus.data[ip, iq])
+end
+
+@testset "GenericArcImpedance in series (degree-two) reduction" begin
+    sys = PSB.build_system(PSITestSystems, "c_sys5")
+    template = first(get_components(ACBus, sys))
+    grid_bus = first(
+        b for b in get_components(ACBus, sys) if
+        get_bustype(b) != PSY.ACBusTypes.REF && get_bustype(b) != PSY.ACBusTypes.ISOLATED
+    )
+    grid_bus_num = get_number(grid_bus)
+    function _mk_bus(num, name)
+        b = deepcopy(template)
+        b.internal = IS.InfrastructureSystemsInternal()
+        set_number!(b, num)
+        set_name!(b, name)
+        set_bustype!(b, PSY.ACBusTypes.PQ)
+        return b
+    end
+    junction = _mk_bus(901, "GAI_JUNCTION")
+    stub = _mk_bus(902, "GAI_STUB")
+    foreach(b -> add_component!(sys, b), (junction, stub))
+
+    # grid_bus -- junction (Line)
+    arc1 = Arc(grid_bus, junction)
+    add_component!(sys, arc1)
+    add_component!(
+        sys,
+        Line(
+            "GAI_grid_to_junction",
+            true,
+            0.0,
+            0.0,
+            arc1,
+            0.01,
+            0.10,
+            (from = 0.0, to = 0.0),
+            100.0,
+            (-1.5, 1.5),
+        ),
+    )
+
+    # junction -- stub (GenericArcImpedance), forming the second segment of the chain.
+    arc2 = Arc(junction, stub)
+    add_component!(sys, arc2)
+    add_component!(
+        sys,
+        PSY.GenericArcImpedance(;
+            name = "GAI_junction_to_stub",
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            max_flow = 100.0,
+            arc = arc2,
+            r = 0.02,
+            x = 0.08,
+        ),
+    )
+
+    ybus_full = Ybus(sys)
+    ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = PNM.get_network_reduction_data(ybus)
+
+    @test 901 ∉ PNM.get_bus_axis(ybus)
+    @test 902 ∈ PNM.get_bus_axis(ybus)
+    @test PSY.GenericArcImpedance in PNM.get_ac_transmission_types(nrd)
+
+    @test isapprox(
+        ybus[grid_bus_num, 902]^-1,
+        ybus_full[grid_bus_num, 901]^-1 + ybus_full[901, 902]^-1;
+        rtol = sqrt(eps(real(YBUS_ELTYPE))),
+    )
 end
