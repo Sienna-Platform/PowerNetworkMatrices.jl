@@ -34,6 +34,11 @@ export YBUS_ELTYPE
 export get_sum_of_max_rating
 export get_single_element_contingency_rating
 export get_impedance_averaged_rating
+export branch_admittance
+export reduced_arc_admittance
+export winding_admittance
+export three_winding_arcs
+export branch_flow_limits
 
 export apply_woodbury_correction
 export clear_all_caches!
@@ -137,6 +142,7 @@ include("AdjacencyMatrix.jl")
 include("connectivity_checks.jl")
 include("subnetworks.jl")
 include("common.jl")
+include("BranchAdmittance.jl")
 include("auto_tolerance.jl")
 include("BA_ABA_matrices.jl")
 include("virtual_factor_helpers.jl")
