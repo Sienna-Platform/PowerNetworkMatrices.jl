@@ -25,10 +25,11 @@ susceptance is split between the from/to shunts.
 """
 function branch_admittance(b::PSY.ACTransmission)
     ys = 1.0 / (PSY.get_r(b, PSY.SU) + PSY.get_x(b, PSY.SU) * im)
+    g_sh = PSY.get_b(b, PSY.SU)
     b_sh = PSY.get_b(b, PSY.SU)
     return (
         g = real(ys), b = imag(ys),
-        g_fr = 0.0, b_fr = b_sh.from, g_to = 0.0, b_to = b_sh.to,
+        g_fr = g_sh.from, b_fr = b_sh.from, g_to = g_sh.to, b_to = b_sh.to,
         tap = 1.0, shift = 0.0,
     )
 end
@@ -170,13 +171,13 @@ end
 """
     branch_flow_limits(branch) -> NamedTuple
 
-Directional flow limits in per-unit MVA: `(from_to::Float64, to_from::Float64)`. For symmetric
+Directional flow limits in MVA (device units, `PSY.DU`): `(from_to::Float64, to_from::Float64)`. For symmetric
 branches both fields equal the branch rating; `MonitoredLine` carries asymmetric limits.
 """
 function branch_flow_limits end
 
 function branch_flow_limits(b::PSY.MonitoredLine)
-    fl = PSY.get_flow_limits(b, PSY.SU)
+    fl = PSY.get_flow_limits(b, PSY.DU)
     return (from_to = fl.from_to, to_from = fl.to_from)
 end
 
@@ -188,7 +189,7 @@ function branch_flow_limits(
         PSY.PhaseShiftingTransformer,
     },
 )
-    r = PSY.get_rating(b, PSY.SU)
+    r = PSY.get_rating(b, PSY.DU)
     return (from_to = r, to_from = r)
 end
 

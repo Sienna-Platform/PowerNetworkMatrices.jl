@@ -19,7 +19,7 @@ end
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
     ml = first(PSY.get_components(PSY.MonitoredLine, sys))
     fl = PNM.branch_flow_limits(ml)
-    psy_fl = PSY.get_flow_limits(ml, PSY.SU)
+    psy_fl = PSY.get_flow_limits(ml, PSY.DU)
     @test fl.from_to == psy_fl.from_to
     @test fl.to_from == psy_fl.to_from
 end
