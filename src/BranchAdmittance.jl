@@ -5,9 +5,7 @@
 # from/to shunts, and `tap`/`shift` are the transformer ratio / phase shift (radians).
 #
 # This logic historically lived inline in PowerSimulations.jl's PowerModels translator
-# (`get_branch_to_pm`) and was later copied into PowerOperationsModels.jl's native DCP/ACP
-# branch builders. It is collected here so both the PowerModels translation path and the
-# native ohm's-law builders share a single, reduction-aware source of truth.
+# (`get_branch_to_pm`).
 
 # Transformer ratio / phase-shift accessors. Default to a unit, shift-free branch.
 _branch_tap(::PSY.ACTransmission) = 1.0
@@ -24,9 +22,9 @@ branch, where `g + im*b == 1 / (r + im*x)` is the series admittance and the line
 susceptance is split between the from/to shunts.
 """
 function branch_admittance(b::PSY.ACTransmission)
-    ys = 1.0 / (PSY.get_r(b, PSY.SU) + PSY.get_x(b, PSY.SU) * im)
-    g_sh = PSY.get_b(b, PSY.SU)
-    b_sh = PSY.get_b(b, PSY.SU)
+    ys = 1.0 / (PSY.get_r(b, PSY.DU) + PSY.get_x(b, PSY.DU) * im)
+    g_sh = PSY.get_b(b, PSY.DU)
+    b_sh = PSY.get_b(b, PSY.DU)
     return (
         g = real(ys), b = imag(ys),
         g_fr = g_sh.from, b_fr = b_sh.from, g_to = g_sh.to, b_to = b_sh.to,
@@ -43,8 +41,8 @@ primary (from) side only; `tap`/`shift` carry the transformer ratio and phase sh
 function branch_admittance(
     b::Union{PSY.Transformer2W, PSY.TapTransformer, PSY.PhaseShiftingTransformer},
 )
-    ys = 1.0 / (PSY.get_r(b, PSY.SU) + PSY.get_x(b, PSY.SU) * im)
-    yt = PSY.get_primary_shunt(b, PSY.SU)
+    ys = 1.0 / (PSY.get_r(b, PSY.DU) + PSY.get_x(b, PSY.DU) * im)
+    yt = PSY.get_primary_shunt(b, PSY.DU)
     return (
         g = real(ys), b = imag(ys),
         g_fr = real(yt), b_fr = imag(yt), g_to = 0.0, b_to = 0.0,
