@@ -781,3 +781,96 @@ end
     @test !isapprox(blind11, ybus.data[ip, ip])
     @test !isapprox(blind12, ybus.data[ip, iq])
 end
+
+# Build a minimal 3-bus system (bus 1 REF) wired so that the parallel arc (2, 3)
+# carries the supplied (r, x) pairs; lines 1-2 and 1-3 keep the network connected.
+function _mk_zi_parallel_sys(rx_pairs::Vector{Tuple{Float64, Float64}})
+    sys = System(100.0)
+    buses = ACBus[]
+    for i in 1:3
+        b = ACBus(;
+            number = i,
+            name = "b$i",
+            available = true,
+            bustype = i == 1 ? ACBusTypes.REF : ACBusTypes.PV,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        add_component!(sys, b)
+        push!(buses, b)
+    end
+    function _mk_line(name, arc, r, x)
+        add_component!(
+            sys,
+            Line(;
+                name = name,
+                available = true,
+                active_power_flow = 0.0,
+                reactive_power_flow = 0.0,
+                arc = arc,
+                r = r,
+                x = x,
+                b = (from = 0.0, to = 0.0),
+                rating = 1.0,
+                angle_limits = (min = -1.5, max = 1.5),
+            ),
+        )
+    end
+    # Parallel members share a single Arc (2, 3), as real parallel branches do.
+    zi_arc = Arc(; from = buses[2], to = buses[3])
+    add_component!(sys, zi_arc)
+    for (k, (r, x)) in enumerate(rx_pairs)
+        _mk_line("ZI$k", zi_arc, r, x)
+    end
+    for (f, t) in ((1, 2), (1, 3))
+        arc = Arc(; from = buses[f], to = buses[t])
+        add_component!(sys, arc)
+        _mk_line("L$f$t", arc, 0.0, 0.1)
+    end
+    return sys
+end
+
+@testset "ZIBR item 2: a single near-short branch merges despite a small combined entry" begin
+    # Two parallel members on arc (2, 3): member 1 is a near-short (y = +1.2e4·im,
+    # |y| = 1.2e4 ≥ 1e4), member 2 (y = -6e3·im) partially cancels it so the combined
+    # off-diagonal is only 6e3·im (|Y| = 6e3 < 1e4). The old summed-entry test missed the
+    # merge; the per-branch term now catches it (issue #322 item 2).
+    sys = _mk_zi_parallel_sys([(0.0, -1 / 1.2e4), (0.0, 1 / 6e3)])
+    ybus = Ybus(sys)
+    rbsm = ybus.network_reduction_data.reverse_bus_search_map
+    @test get(rbsm, 3, nothing) == 2
+    @test 3 ∉ PNM.get_bus_axis(ybus)
+end
+
+@testset "ZIBR item 3: sub-threshold branches still merge via the combined entry" begin
+    # Two parallel members each below threshold (y = -6e3·im, |y| = 6e3 < 1e4) but whose
+    # combined off-diagonal (-1.2e4·im, |Y| = 1.2e4 ≥ 1e4) clears it. We deliberately keep
+    # merging here: the combined matrix entry is the numerically robust coupling measure
+    # (issue #322 item 3 — open vs. PSS(e)'s strict per-branch rule).
+    sys = _mk_zi_parallel_sys([(0.0, 1 / 6e3), (0.0, 1 / 6e3)])
+    ybus = Ybus(sys)
+    rbsm = ybus.network_reduction_data.reverse_bus_search_map
+    @test get(rbsm, 3, nothing) == 2
+    @test 3 ∉ PNM.get_bus_axis(ybus)
+end
+
+@testset "ZIBR: parallel group below threshold by both measures is not merged" begin
+    # Each member and the combined entry are below threshold, so no merge occurs.
+    sys = _mk_zi_parallel_sys([(0.0, 1 / 3e3), (0.0, 1 / 3e3)])  # |y|=3e3 each, |Y|=6e3
+    ybus = Ybus(sys)
+    rbsm = ybus.network_reduction_data.reverse_bus_search_map
+    @test !haskey(rbsm, 3)
+    @test 3 ∈ PNM.get_bus_axis(ybus)
+end
+
+@testset "ZIBR item 1: L2 norm merges a branch with nonzero real part" begin
+    # A single branch with r = x = 1e-5 has real(y) = 5e4 ≠ 0 but |y| ≈ 7.07e4 ≥ 1e4. The
+    # old `iszero(real(Y))` gate skipped it; the L2 test now merges it (issue #322 item 1).
+    sys = _mk_zi_parallel_sys([(1e-5, 1e-5)])  # single direct branch on arc (2, 3)
+    ybus = Ybus(sys)
+    rbsm = ybus.network_reduction_data.reverse_bus_search_map
+    @test get(rbsm, 3, nothing) == 2
+    @test 3 ∉ PNM.get_bus_axis(ybus)
+end
