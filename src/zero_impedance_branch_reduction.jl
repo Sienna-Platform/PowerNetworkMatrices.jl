@@ -6,9 +6,13 @@ applied as the first step of `Ybus(sys; ...)` to avoid singular admittances;
 pass via the `zero_impedance_reduction` kwarg to override parameters — putting
 one in `network_reductions` is rejected.
 
-An off-diagonal `Y[i,j]` is treated as zero-impedance when `real(Y[i,j]) == 0`
-and `abs(imag(Y[i,j])) >= susceptance_threshold`. The from-bus survives unless the
-to-bus is in the user-supplied irreducible set, in which case the sides flip.
+An arc is treated as zero-impedance when either *any individual* non-transformer
+branch on it has series admittance `abs(y) >= susceptance_threshold` (PSS(e)'s
+per-branch L2 rule, which catches a near-short hidden by anti-parallel
+cancellation in the summed entry) or the combined off-diagonal `abs(Y[i,j]) >=
+susceptance_threshold` (the numerically robust measure of the buses' actual
+coupling). The from-bus survives unless the to-bus is in the user-supplied
+irreducible set, in which case the sides flip.
 
 # Fields
 - `susceptance_threshold::Float64 = ZERO_IMPEDANCE_BRANCH_YBUS_SUSCEPTANCE_THRESHOLD`
