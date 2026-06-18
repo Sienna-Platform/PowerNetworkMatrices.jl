@@ -129,7 +129,17 @@ end
             joinpath(TEST_DATA_DIR, "Base_Eastern_Interconnect_515GW_Ymatrix.dat"),
         )
 
-    Ybus_pnm = Ybus(sys; include_constant_impedance_loads = true)
+    # Unlike the other PSS(e) cases, this export has no "ZERO IMPEDANCE LINE CONNECTED
+    # BUSES" section (reduced_bus_pairs_psse is empty), i.e. the baseline is unreduced.
+    # The per-branch L2 criterion now merges low-impedance branches PSS(e) left in place
+    # here, so disable the auto ZeroImpedanceBranchReduction to compare unreduced matrices.
+    Ybus_pnm = Ybus(
+        sys;
+        include_constant_impedance_loads = true,
+        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+            susceptance_threshold = Inf,
+        ),
+    )
     nr = Ybus_pnm.network_reduction_data
     ref_bus_numbers = [
         get_number(x) for
