@@ -1533,6 +1533,75 @@ function _repair_merged_adjacency!(
     return
 end
 
+# A bus merge identifies the removed bus with its survivor: their rows/columns add and the
+# removed bus is dropped. The general path does this with in-place CSC structural inserts
+# (`_merge_ybus_buses!`) plus a later `data[bus_ix, bus_ix]` slice; on a large sparse matrix
+# every insert shifts the whole backing store, so the cost scales with merges × nnz. When a
+# reduction is a pure merge (no eliminations or admittance additions), the merge and the
+# slice are both just an index relabeling, so we can do them together in one O(nnz) pass:
+# relabel each entry's row/column to the surviving index and let `sparse()` sum collisions.
+# Returns `true` when the fast path applies; only ZIBR produces such a reduction today
+# (radial/Ward add admittances, degree-two adds series branches).
+function _is_pure_merge_reduction(nr_new::NetworkReductionData)
+    return !isempty(nr_new.merged_bus_pairs) &&
+           isempty(nr_new.removed_buses) &&
+           isempty(nr_new.series_branch_map) &&
+           isempty(nr_new.removed_arc_to_surviving_bus) &&
+           isempty(nr_new.added_admittance_map) &&
+           isempty(nr_new.added_arc_impedance_map)
+end
+
+# Old bus index -> new compacted index, sending every removed bus to its survivor's new
+# index. For a pure merge every bus maps to a surviving index (no drops).
+function _build_merge_remap(
+    old_lookup::Dict{Int, Int},
+    new_lookup::Dict{Int, Int},
+    merged_bus_pairs::Dict{Int, Int},
+)
+    remap = zeros(Int, length(old_lookup))
+    for (bus_no, old_ix) in old_lookup
+        survivor = get(merged_bus_pairs, bus_no, bus_no)
+        remap[old_ix] = new_lookup[survivor]
+    end
+    return remap
+end
+
+# Relabel a square bus×bus sparse matrix through `remap` and sum collisions in one
+# `sparse()` pass. Columns/rows mapping to 0 are dropped. Equivalent to summing merged
+# rows/columns then slicing out removed buses, without per-entry structural inserts.
+function _remap_and_reduce(
+    M::SparseArrays.SparseMatrixCSC{T, Int},
+    remap::Vector{Int},
+    n_new::Int,
+) where {T}
+    rows = SparseArrays.rowvals(M)
+    vals = SparseArrays.nonzeros(M)
+    nnz = length(vals)
+    I = Vector{Int}(undef, nnz)
+    J = Vector{Int}(undef, nnz)
+    V = Vector{T}(undef, nnz)
+    n = 0
+    for col in 1:size(M, 2)
+        new_col = remap[col]
+        new_col == 0 && continue
+        for k in SparseArrays.nzrange(M, col)
+            new_row = remap[rows[k]]
+            new_row == 0 && continue
+            n += 1
+            I[n] = new_row
+            J[n] = new_col
+            V[n] = vals[k]
+        end
+    end
+    return SparseArrays.sparse(
+        resize!(I, n),
+        resize!(J, n),
+        resize!(V, n),
+        n_new,
+        n_new,
+    )
+end
+
 function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     # These quantities are modified and used to construct the new Ybus
     data = get_data(ybus)
@@ -1540,8 +1609,14 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     bus_lookup = get_bus_lookup(ybus)
     nr = get_network_reduction_data(ybus)
 
+    # A pure-merge reduction (only ZIBR today) folds removed buses into survivors purely by
+    # index relabeling, so the merge and the bus-removal slice are fused into one O(nnz)
+    # rebuild below instead of in-place CSC structural inserts. Arc-admittance columns are
+    # still merged here (column adds on the arc×bus matrix, not the hot square-matrix path).
+    fast_merge = _is_pure_merge_reduction(nr_new)
     if !isempty(nr_new.merged_bus_pairs)
-        _merge_ybus_buses!(data, adjacency_data, bus_lookup, nr_new.merged_bus_pairs)
+        fast_merge ||
+            _merge_ybus_buses!(data, adjacency_data, bus_lookup, nr_new.merged_bus_pairs)
         _merge_arc_admittance_bus_columns!(
             ybus.arc_admittance_from_to,
             ybus.arc_admittance_to_from,
@@ -1579,8 +1654,25 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     bus_ax = setdiff(get_bus_axis(ybus), bus_numbers_to_remove)
     bus_lookup = make_ax_ref(bus_ax)
     bus_ix = [get_bus_lookup(ybus)[x] for x in bus_ax]
-    adjacency_data = adjacency_data[bus_ix, bus_ix]
-    data = data[bus_ix, bus_ix]
+    if fast_merge
+        # Fuse the merge (sum removed bus into survivor) and the bus-removal slice into one
+        # relabel-and-sum pass. Anti-parallel branches can cancel in the signed adjacency, so
+        # re-derive each survivor's adjacency from the (non-cancelling) complex Ybus data,
+        # mirroring `_merge_ybus_buses!`.
+        remap =
+            _build_merge_remap(get_bus_lookup(ybus), bus_lookup, nr_new.merged_bus_pairs)
+        n_new = length(bus_ax)
+        data = _remap_and_reduce(data, remap, n_new)
+        adjacency_data = _remap_and_reduce(adjacency_data, remap, n_new)
+        map!(sign, adjacency_data.nzval, adjacency_data.nzval)
+        SparseArrays.dropzeros!(adjacency_data)
+        for surviving_bus in Set(values(nr_new.merged_bus_pairs))
+            _repair_merged_adjacency!(adjacency_data, data, bus_lookup[surviving_bus])
+        end
+    else
+        adjacency_data = adjacency_data[bus_ix, bus_ix]
+        data = data[bus_ix, bus_ix]
+    end
 
     subnetwork_axes, arc_subnetwork_axis =
         _make_subnetwork_axes(
