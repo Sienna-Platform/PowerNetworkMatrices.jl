@@ -874,3 +874,62 @@ end
     @test !haskey(rbsm, 3)
     @test 3 ∈ PNM.get_bus_axis(ybus)
 end
+
+@testset "ZIBR fast merge matches a rewire-and-rebuild oracle" begin
+    # Validates the pure-merge fast path (relabel-and-sum rebuild of the reduced Ybus)
+    # against an independent oracle: merging bus 3 into bus 2 across a zero-impedance line
+    # must equal a system where bus 3's non-ZI branch is rewired onto bus 2 and the ZI line
+    # removed. The ZI branch's huge self/mutual entries cancel exactly in the row/column sum,
+    # so the survivor's admittances are those of the rewired network.
+    function _mk_sys(; with_zi::Bool)
+        sys = System(100.0)
+        bs = ACBus[]
+        for i in 1:(with_zi ? 3 : 2)  # oracle has no bus 3 (it merged into bus 2)
+            b = ACBus(; number = i, name = "b$i", available = true,
+                bustype = i == 1 ? ACBusTypes.REF : ACBusTypes.PV,
+                angle = 0.0, magnitude = 1.0,
+                voltage_limits = (min = 0.9, max = 1.1), base_voltage = 230.0)
+            add_component!(sys, b)
+            push!(bs, b)
+        end
+        function mkarc(f, t)
+            arc = Arc(; from = bs[f], to = bs[t])
+            add_component!(sys, arc)
+            return arc
+        end
+        function ln(name, arc, r, x)
+            add_component!(
+                sys,
+                Line(; name = name, available = true,
+                    active_power_flow = 0.0, reactive_power_flow = 0.0, arc = arc,
+                    r = r, x = x, b = (from = 0.0, to = 0.0), rating = 1.0,
+                    angle_limits = (min = -1.5, max = 1.5)),
+            )
+        end
+        arc12 = mkarc(1, 2)
+        ln("L12", arc12, 0.01, 0.1)
+        if with_zi
+            ln("L23", mkarc(2, 3), 0.0, 5e-5)  # |y| = 2e4 ≥ 1e4 -> merge bus 3 into bus 2
+            ln("L13", mkarc(1, 3), 0.02, 0.2)  # branch on bus 3, rewired onto bus 2 by merge
+        else
+            ln("L13on2", arc12, 0.02, 0.2)  # oracle: parallel on bus 2 (shares arc (1,2))
+        end
+        return sys
+    end
+
+    yb = Ybus(_mk_sys(; with_zi = true))
+    @test get(yb.network_reduction_data.reverse_bus_search_map, 3, nothing) == 2
+    @test 3 ∉ PNM.get_bus_axis(yb)
+
+    oracle = Ybus(_mk_sys(; with_zi = false))
+    @test Set(PNM.get_bus_axis(yb)) == Set(PNM.get_bus_axis(oracle))
+    lk_y, lk_o = yb.lookup[1], oracle.lookup[1]
+    for a in (1, 2), b in (1, 2)
+        @test isapprox(yb.data[lk_y[a], lk_y[b]], oracle.data[lk_o[a], lk_o[b]];
+            rtol = sqrt(eps(real(YBUS_ELTYPE))))
+    end
+    # Reduced Ybus stays symmetric and yields finite susceptance matrices.
+    @test yb.data[lk_y[1], lk_y[2]] == yb.data[lk_y[2], lk_y[1]]
+    @test all(isfinite, BA_Matrix(yb).data.nzval)
+    @test all(isfinite, ABA_Matrix(yb; factorize = false).data.nzval)
+end
