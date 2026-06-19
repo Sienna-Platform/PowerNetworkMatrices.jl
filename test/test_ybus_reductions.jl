@@ -844,16 +844,16 @@ end
     @test 3 ∉ PNM.get_bus_axis(ybus)
 end
 
-@testset "ZIBR item 3: sub-threshold branches still merge via the combined entry" begin
-    # Two parallel members each below threshold (y = -6e3·im, |y| = 6e3 < 1e4) but whose
-    # combined off-diagonal (-1.2e4·im, |Y| = 1.2e4 ≥ 1e4) clears it. We deliberately keep
-    # merging here: the combined matrix entry is the numerically robust coupling measure
-    # (issue #322 item 3 — open vs. PSS(e)'s strict per-branch rule).
+@testset "ZIBR item 3: sub-threshold branches are not merged (PSS(e) parity)" begin
+    # Two parallel members each below threshold (y = -6e3·im, |y| = 6e3 < 1e4) whose
+    # combined off-diagonal (-1.2e4·im, |Y| = 1.2e4 ≥ 1e4) clears it. Under the strict
+    # per-branch rule (PSS(e) parity) no single branch qualifies, so the buses are NOT
+    # merged (issue #322 item 3).
     sys = _mk_zi_parallel_sys([(0.0, 1 / 6e3), (0.0, 1 / 6e3)])
     ybus = Ybus(sys)
     rbsm = ybus.network_reduction_data.reverse_bus_search_map
-    @test get(rbsm, 3, nothing) == 2
-    @test 3 ∉ PNM.get_bus_axis(ybus)
+    @test !haskey(rbsm, 3)
+    @test 3 ∈ PNM.get_bus_axis(ybus)
 end
 
 @testset "ZIBR: parallel group below threshold by both measures is not merged" begin
@@ -865,12 +865,12 @@ end
     @test 3 ∈ PNM.get_bus_axis(ybus)
 end
 
-@testset "ZIBR item 1: L2 norm merges a branch with nonzero real part" begin
-    # A single branch with r = x = 1e-5 has real(y) = 5e4 ≠ 0 but |y| ≈ 7.07e4 ≥ 1e4. The
-    # old `iszero(real(Y))` gate skipped it; the L2 test now merges it (issue #322 item 1).
+@testset "ZIBR item 1: a branch with nonzero resistance is not merged (PSS(e) r==0 gate)" begin
+    # PSS(e) treats only r == 0 branches as zero-impedance. A branch with r = x = 1e-5 has
+    # |y| ≈ 7.07e4 ≥ 1e4 but r ≠ 0, so it is NOT merged (issue #322 item 1).
     sys = _mk_zi_parallel_sys([(1e-5, 1e-5)])  # single direct branch on arc (2, 3)
     ybus = Ybus(sys)
     rbsm = ybus.network_reduction_data.reverse_bus_search_map
-    @test get(rbsm, 3, nothing) == 2
-    @test 3 ∉ PNM.get_bus_axis(ybus)
+    @test !haskey(rbsm, 3)
+    @test 3 ∈ PNM.get_bus_axis(ybus)
 end
