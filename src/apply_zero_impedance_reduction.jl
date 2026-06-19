@@ -22,20 +22,28 @@ function _series_admittance(br, min_x_eps::Float64)
     return inv(complex(r, x))
 end
 
-# An arc is treated as zero-impedance when *either* some individual non-transformer
-# branch on it clears the susceptance threshold (PSS(e)'s per-branch L2 rule: a
-# near-short such as 1e4im directly ties the two buses even if an anti-parallel
-# member cancels it in the summed entry), *or* the combined off-diagonal entry
-# clears it (the numerically robust measure of the actual bus-to-bus coupling).
-# The union is a superset of either test alone; the two terms only differ for
-# parallel groups (for a single branch the combined entry equals the branch).
+# True for a branch with zero resistance (`real(Y) == 0`) whose series admittance reaches
+# the threshold (`|y| >= susceptance_threshold`).
+function _is_zero_impedance_branch(
+    br,
+    susceptance_threshold::Float64,
+    min_x_eps::Float64,
+)
+    return iszero(PSY.get_r(br)) &&
+           abs(_series_admittance(br, min_x_eps)) >= susceptance_threshold
+end
+
+# An arc is zero-impedance iff some individual non-transformer branch on it qualifies; the
+# parallel combination is never considered. So an `r == 0` jumper in parallel with a normal
+# line merges the buses (the jumper qualifies on its own), while branches that only
+# collectively exceed the threshold do not merge.
 function _is_zero_impedance_arc(
     br::PSY.ACTransmission,
     susceptance_threshold::Float64,
     min_x_eps::Float64,
 )
     _is_transformer(br) && return false
-    return abs(_series_admittance(br, min_x_eps)) >= susceptance_threshold
+    return _is_zero_impedance_branch(br, susceptance_threshold, min_x_eps)
 end
 
 function _is_zero_impedance_arc(
@@ -45,19 +53,10 @@ function _is_zero_impedance_arc(
 )
     # Transformer-bearing arcs are excluded from zero-impedance bus merging.
     _any_transformer(parallel_br) && return false
-    any_branch = any(
-        abs(_series_admittance(br, min_x_eps)) >= susceptance_threshold
+    return any(
+        _is_zero_impedance_branch(br, susceptance_threshold, min_x_eps)
         for br in parallel_br
     )
-    # Non-transformer members are symmetric, so the group's Ybus off-diagonal is
-    # `-sum(Y_l)` regardless of member orientation. Summing `Y_l` directly (with the
-    # same `min_x_eps`) keeps the combined-term decision consistent with how the
-    # matrix was assembled, which `ybus_branch_entries(group, nr)` does not since it
-    # ignores `min_x_eps`.
-    combined =
-        abs(sum(_series_admittance(br, min_x_eps) for br in parallel_br)) >=
-        susceptance_threshold
-    return any_branch || combined
 end
 
 function get_reduction(
