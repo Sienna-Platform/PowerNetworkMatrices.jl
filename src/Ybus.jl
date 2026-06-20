@@ -1511,7 +1511,22 @@ function _merge_ybus_buses!(
     end
     # Anti-parallel branches cancel in the signed adjacency (+1/-1 sum to 0) and get dropped
     # by `dropzeros!`, hiding a real edge from DegreeTwoReduction. The complex Ybus data sums
-    # and never cancels, so re-derive each surviving bus's adjacency from it.
+    # and never cancels structurally, so re-derive each surviving bus's adjacency from it.
+    _repair_merged_adjacencies!(adjacency_data, data, bus_lookup, merged_bus_pairs)
+    return
+end
+
+# Re-derive every surviving bus's signed adjacency from the complex Ybus data. Shared by the
+# in-place merge (`_merge_ybus_buses!`) and the fused pure-merge rebuild so the two paths
+# cannot drift. A merged off-diagonal can sum to a stored zero (e.g. a series capacitor
+# cancelling a line of equal magnitude), but that still marks a real edge between the buses,
+# so it must produce an adjacency entry; do not drop those zeros.
+function _repair_merged_adjacencies!(
+    adjacency_data::SparseArrays.SparseMatrixCSC{Int8, Int},
+    data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int},
+    bus_lookup::Dict{Int, Int},
+    merged_bus_pairs::Dict{Int, Int},
+)
     for surviving_bus in Set(values(merged_bus_pairs))
         _repair_merged_adjacency!(adjacency_data, data, bus_lookup[surviving_bus])
     end
@@ -1656,9 +1671,8 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     bus_ix = [get_bus_lookup(ybus)[x] for x in bus_ax]
     if fast_merge
         # Fuse the merge (sum removed bus into survivor) and the bus-removal slice into one
-        # relabel-and-sum pass. Anti-parallel branches can cancel in the signed adjacency, so
-        # re-derive each survivor's adjacency from the (non-cancelling) complex Ybus data,
-        # mirroring `_merge_ybus_buses!`.
+        # relabel-and-sum pass, then re-derive survivor adjacency from the complex Ybus data
+        # via the same `_repair_merged_adjacencies!` the in-place merge uses.
         remap =
             _build_merge_remap(get_bus_lookup(ybus), bus_lookup, nr_new.merged_bus_pairs)
         n_new = length(bus_ax)
@@ -1666,9 +1680,12 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
         adjacency_data = _remap_and_reduce(adjacency_data, remap, n_new)
         map!(sign, adjacency_data.nzval, adjacency_data.nzval)
         SparseArrays.dropzeros!(adjacency_data)
-        for surviving_bus in Set(values(nr_new.merged_bus_pairs))
-            _repair_merged_adjacency!(adjacency_data, data, bus_lookup[surviving_bus])
-        end
+        _repair_merged_adjacencies!(
+            adjacency_data,
+            data,
+            bus_lookup,
+            nr_new.merged_bus_pairs,
+        )
     else
         adjacency_data = adjacency_data[bus_ix, bus_ix]
         data = data[bus_ix, bus_ix]

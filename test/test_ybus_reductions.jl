@@ -782,17 +782,21 @@ end
     @test !isapprox(blind12, ybus.data[ip, iq])
 end
 
-# Build a minimal 3-bus system (bus 1 REF) wired so that the parallel arc (2, 3)
-# carries the supplied (r, x) pairs; lines 1-2 and 1-3 keep the network connected.
-function _mk_zi_parallel_sys(rx_pairs::Vector{Tuple{Float64, Float64}})
+# Fresh System with `n` buses (bus 1 REF, the rest PV); returns the system and the buses.
+function _mk_bus_system(n::Int)
     sys = System(100.0)
     buses = ACBus[]
-    for i in 1:3
+    for i in 1:n
+        if i == 1
+            bustype = ACBusTypes.REF
+        else
+            bustype = ACBusTypes.PV
+        end
         b = ACBus(;
             number = i,
             name = "b$i",
             available = true,
-            bustype = i == 1 ? ACBusTypes.REF : ACBusTypes.PV,
+            bustype = bustype,
             angle = 0.0,
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
@@ -801,33 +805,42 @@ function _mk_zi_parallel_sys(rx_pairs::Vector{Tuple{Float64, Float64}})
         add_component!(sys, b)
         push!(buses, b)
     end
-    function _mk_line(name, arc, r, x)
-        add_component!(
-            sys,
-            Line(;
-                name = name,
-                available = true,
-                active_power_flow = 0.0,
-                reactive_power_flow = 0.0,
-                arc = arc,
-                r = r,
-                x = x,
-                b = (from = 0.0, to = 0.0),
-                rating = 1.0,
-                angle_limits = (min = -1.5, max = 1.5),
-            ),
-        )
-    end
+    return sys, buses
+end
+
+# Add a `Line` named `name` on `arc` with series impedance `(r, x)` and no charging.
+function _add_test_line!(sys, name, arc, r, x)
+    add_component!(
+        sys,
+        Line(;
+            name = name,
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            arc = arc,
+            r = r,
+            x = x,
+            b = (from = 0.0, to = 0.0),
+            rating = 1.0,
+            angle_limits = (min = -1.5, max = 1.5),
+        ),
+    )
+end
+
+# Build a minimal 3-bus system (bus 1 REF) wired so that the parallel arc (2, 3)
+# carries the supplied (r, x) pairs; lines 1-2 and 1-3 keep the network connected.
+function _mk_zi_parallel_sys(rx_pairs::Vector{Tuple{Float64, Float64}})
+    sys, buses = _mk_bus_system(3)
     # Parallel members share a single Arc (2, 3), as real parallel branches do.
     zi_arc = Arc(; from = buses[2], to = buses[3])
     add_component!(sys, zi_arc)
     for (k, (r, x)) in enumerate(rx_pairs)
-        _mk_line("ZI$k", zi_arc, r, x)
+        _add_test_line!(sys, "ZI$k", zi_arc, r, x)
     end
     for (f, t) in ((1, 2), (1, 3))
         arc = Arc(; from = buses[f], to = buses[t])
         add_component!(sys, arc)
-        _mk_line("L$f$t", arc, 0.0, 0.1)
+        _add_test_line!(sys, "L$f$t", arc, 0.0, 0.1)
     end
     return sys
 end
@@ -882,37 +895,24 @@ end
     # removed. The ZI branch's huge self/mutual entries cancel exactly in the row/column sum,
     # so the survivor's admittances are those of the rewired network.
     function _mk_sys(; with_zi::Bool)
-        sys = System(100.0)
-        bs = ACBus[]
-        for i in 1:(with_zi ? 3 : 2)  # oracle has no bus 3 (it merged into bus 2)
-            b = ACBus(; number = i, name = "b$i", available = true,
-                bustype = i == 1 ? ACBusTypes.REF : ACBusTypes.PV,
-                angle = 0.0, magnitude = 1.0,
-                voltage_limits = (min = 0.9, max = 1.1), base_voltage = 230.0)
-            add_component!(sys, b)
-            push!(bs, b)
+        if with_zi
+            n = 3
+        else
+            n = 2  # oracle has no bus 3 (it merged into bus 2)
         end
+        sys, bs = _mk_bus_system(n)
         function mkarc(f, t)
             arc = Arc(; from = bs[f], to = bs[t])
             add_component!(sys, arc)
             return arc
         end
-        function ln(name, arc, r, x)
-            add_component!(
-                sys,
-                Line(; name = name, available = true,
-                    active_power_flow = 0.0, reactive_power_flow = 0.0, arc = arc,
-                    r = r, x = x, b = (from = 0.0, to = 0.0), rating = 1.0,
-                    angle_limits = (min = -1.5, max = 1.5)),
-            )
-        end
         arc12 = mkarc(1, 2)
-        ln("L12", arc12, 0.01, 0.1)
+        _add_test_line!(sys, "L12", arc12, 0.01, 0.1)
         if with_zi
-            ln("L23", mkarc(2, 3), 0.0, 5e-5)  # |y| = 2e4 ≥ 1e4 -> merge bus 3 into bus 2
-            ln("L13", mkarc(1, 3), 0.02, 0.2)  # branch on bus 3, rewired onto bus 2 by merge
+            _add_test_line!(sys, "L23", mkarc(2, 3), 0.0, 5e-5)  # |y| = 2e4 ≥ 1e4 -> merge 3 into 2
+            _add_test_line!(sys, "L13", mkarc(1, 3), 0.02, 0.2)  # on bus 3, rewired onto bus 2
         else
-            ln("L13on2", arc12, 0.02, 0.2)  # oracle: parallel on bus 2 (shares arc (1,2))
+            _add_test_line!(sys, "L13on2", arc12, 0.02, 0.2)  # oracle: parallel on bus 2
         end
         return sys
     end
@@ -931,5 +931,37 @@ end
     # Reduced Ybus stays symmetric and yields finite susceptance matrices.
     @test yb.data[lk_y[1], lk_y[2]] == yb.data[lk_y[2], lk_y[1]]
     @test all(isfinite, BA_Matrix(yb).data.nzval)
+    @test all(isfinite, ABA_Matrix(yb; factorize = false).data.nzval)
+end
+
+@testset "ZIBR fast merge: a cancelled (stored-zero) merged off-diagonal keeps the real edge" begin
+    # A merged off-diagonal can sum to a stored zero when two branches cancel exactly: here
+    # bus 3 merges into bus 2, and L24 (x = +0.1) plus the merged-in L43 (x = -0.1) cancel to
+    # data[2, 4] = 0. That stored zero still marks a *real* edge (two physical lines between the
+    # merged bus and bus 4), so `_repair_merged_adjacencies!` must keep the adjacency entry —
+    # dropping it would re-introduce the anti-parallel-cancellation islanding bug. Exact
+    # cancellation needs equal-magnitude opposite reactances, so this is a rare-but-reachable
+    # case worth pinning.
+    sys, buses = _mk_bus_system(4)
+    function arc!(f, t)
+        a = Arc(; from = buses[f], to = buses[t])
+        add_component!(sys, a)
+        return a
+    end
+    _add_test_line!(sys, "L12", arc!(1, 2), 0.01, 0.1)   # keeps bus 1 connected
+    _add_test_line!(sys, "L23", arc!(2, 3), 0.0, 5e-5)   # |y| = 2e4 ≥ 1e4 -> merge 3 into 2
+    _add_test_line!(sys, "L24", arc!(2, 4), 0.0, 0.1)    # off-diagonal +10im
+    _add_test_line!(sys, "L43", arc!(4, 3), 0.0, -0.1)   # anti-parallel cap, cancels at (2, 4)
+    yb = Ybus(sys)
+    @test get(yb.network_reduction_data.reverse_bus_search_map, 3, nothing) == 2
+    lk = yb.lookup[1]
+    i2, i4 = lk[2], lk[4]
+    # The merged mutual admittance cancels to ~0 ...
+    @test isapprox(yb.data[i2, i4], 0; atol = sqrt(eps(real(YBUS_ELTYPE))))
+    # ... but the real edge survives in the signed adjacency (not dropped as spurious).
+    @test !iszero(yb.adjacency_data[i2, i4])
+    @test !iszero(yb.adjacency_data[i4, i2])
+    # Bus 4 therefore stays in the single island; the susceptance matrix stays nonsingular.
+    @test length(yb.subnetwork_axes) == 1
     @test all(isfinite, ABA_Matrix(yb; factorize = false).data.nzval)
 end
