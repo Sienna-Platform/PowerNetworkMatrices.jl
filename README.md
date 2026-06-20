@@ -18,4 +18,4 @@
 
 PowerNetworkMatrices is released under a BSD [license](https://github.com/Sienna-Platform/PowerNetworkMatrices.jl/blob/master/LICENSE).
 PowerNetworkMatrices has been developed as part of the Scalable Integrated Infrastructure Planning (SIIP)
-initiative at the U.S. Department of Energy's National Laboratory of the Rockies (formerly known as NREL) ([NLR](https://www.nrel.gov/)).
+initiative at the U.S. Department of Energy's National Laboratory of the Rockies (formerly known as NREL) ([NLR](https://www.nlr.gov/)).
