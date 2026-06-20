@@ -7,30 +7,31 @@ _is_transformer(::PSY.ACTransmission) = false
 _any_transformer(parallel_br::AbstractBranchesParallel) =
     any(_is_transformer(br) for br in parallel_br)
 
-# Series admittance `Y_l = 1 / (r + x im)` of a non-transformer branch, with the
+# Series admittance `Y_l = 1 / (r + x im)` from a branch's `(r, x)`, with the
 # `r == x == 0` -> `min_x_eps` substitution applied during Ybus assembly so the
 # branch is judged against the admittance it contributed. Computed directly from
 # `(r, x)` rather than via `ybus_branch_entries`, which would re-emit that
 # function's `r == x == 0` warning (assembly already emitted it once) and rebuild
 # the full 2x2.
-function _series_admittance(br, min_x_eps::Float64)
-    r = PSY.get_r(br)
-    x = PSY.get_x(br)
-    if r == 0.0 && x == 0.0
+function _series_admittance(r::Float64, x::Float64, min_x_eps::Float64)
+    if iszero(r) && iszero(x)
         x = min_x_eps
     end
     return inv(complex(r, x))
 end
 
 # True for a branch with zero resistance (`real(Y) == 0`) whose series admittance reaches
-# the threshold (`|y| >= susceptance_threshold`).
+# the threshold (`|y| >= susceptance_threshold`). Reads `(r, x)` once and bails on `r != 0`
+# before touching `x`.
 function _is_zero_impedance_branch(
     br,
     susceptance_threshold::Float64,
     min_x_eps::Float64,
 )
-    return iszero(PSY.get_r(br)) &&
-           abs(_series_admittance(br, min_x_eps)) >= susceptance_threshold
+    r = PSY.get_r(br)
+    iszero(r) || return false
+    x = PSY.get_x(br)
+    return abs(_series_admittance(r, x, min_x_eps)) >= susceptance_threshold
 end
 
 # An arc is zero-impedance iff some individual non-transformer branch on it qualifies; the
