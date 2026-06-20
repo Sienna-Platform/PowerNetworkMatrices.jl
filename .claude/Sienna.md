@@ -8,34 +8,34 @@ General programming practices and conventions that apply across all Sienna packa
 
 ### Anti-Patterns to Avoid
 
-- **Type instability** — functions must return consistent concrete types. Check with `@code_warntype`. Bad: `f(x) = x > 0 ? 1 : 1.0`; good: `f(x) = x > 0 ? 1.0 : 1.0`.
-- **Abstract field types** — struct fields must be concrete or parameterized. Bad: `struct Foo; data::AbstractVector; end`; good: `struct Foo{T<:AbstractVector}; data::T; end`.
-- **Untyped containers** — use `Vector{Float64}()`, not `Vector{Any}()` / `Vector{Real}()`.
-- **Non-const globals** — use `const THRESHOLD = 0.5`. (No type annotation needed on a `const`; the compiler already infers it — annotating gives no precompilation benefit.)
-- **Unnecessary allocations** — use views (`@view`/`@views`), pre-allocate instead of `push!` in loops, use in-place (`!`) operations.
-- **Captured variables** — avoid closures that box captured variables; pass them as arguments instead.
-- **Splatting penalty** — avoid `...` in performance-critical code.
-- **Abstract return types** — avoid returning `Union`s or abstract types.
+  - **Type instability** — functions must return consistent concrete types. Check with `@code_warntype`. Bad: `f(x) = x > 0 ? 1 : 1.0`; good: `f(x) = x > 0 ? 1.0 : 1.0`.
+  - **Abstract field types** — struct fields must be concrete or parameterized. Bad: `struct Foo; data::AbstractVector; end`; good: `struct Foo{T<:AbstractVector}; data::T; end`.
+  - **Untyped containers** — use `Vector{Float64}()`, not `Vector{Any}()` / `Vector{Real}()`.
+  - **Non-const globals** — use `const THRESHOLD = 0.5`. (No type annotation needed on a `const`; the compiler already infers it — annotating gives no precompilation benefit.)
+  - **Unnecessary allocations** — use views (`@view`/`@views`), pre-allocate instead of `push!` in loops, use in-place (`!`) operations.
+  - **Captured variables** — avoid closures that box captured variables; pass them as arguments instead.
+  - **Splatting penalty** — avoid `...` in performance-critical code.
+  - **Abstract return types** — avoid returning `Union`s or abstract types.
 
 #### Runtime type checking (`isa` and `<:`) — the canonical rule
 
 **ABSOLUTELY FORBIDDEN unless the user explicitly asks for it.** Never use `isa` or `<:` (subtype) checks to branch on types in a function body — use multiple dispatch instead. Using `<:` to branch is just `isa` with extra steps.
 
-- Bad: `if x isa Float64 ... elseif x isa Int ... end`
-- Bad: `if typeof(x) <: AbstractVector ... end`
-- Bad: `if T <: SomeAbstractType ... else ... end` (branching on a type parameter)
-- Good: `f(x::AbstractVector) = sum(x); f(x::Number) = x`
+  - Bad: `if x isa Float64 ... elseif x isa Int ... end`
+  - Bad: `if typeof(x) <: AbstractVector ... end`
+  - Bad: `if T <: SomeAbstractType ... else ... end` (branching on a type parameter)
+  - Good: `f(x::AbstractVector) = sum(x); f(x::Number) = x`
 
 **Why:** runtime type checks force the compiler to handle multiple paths at runtime, lose type information, prevent specialization, and trigger runtime compilation — defeating Julia's performance model. The only acceptable use of `isa` is filtering inside a `catch` block, where dispatch is unavailable.
 
 ### Best Practices
 
-- Use `@inbounds` when bounds are verified; use broadcasting for element-wise ops.
-- Avoid `try-catch` in hot paths; use function barriers to isolate type instability.
+  - Use `@inbounds` when bounds are verified; use broadcasting for element-wise ops.
+  - Avoid `try-catch` in hot paths; use function barriers to isolate type instability.
 
 ## Code Conventions
 
-Style guide: <https://sienna-platform.github.io/InfrastructureSystems.jl/stable/style/>
+Style guide: [https://sienna-platform.github.io/InfrastructureSystems.jl/stable/style/](https://sienna-platform.github.io/InfrastructureSystems.jl/stable/style/)
 
 **Always run the formatter after completing each task — before reporting it done. This is not optional.** Run the package's formatter script (the script self-activates its own environment):
 
@@ -47,23 +47,23 @@ This applies after any change to `.jl` files. Treat the formatter's output as au
 
 Key rules:
 
-- Constructors: use `function Foo()`, not `Foo() = ...`
-- Asserts: prefer `InfrastructureSystems.@assert_op` over `@assert`
-- Globals: `UPPER_CASE` for constants; exports: all in the main module file
-- Comments: complete sentences; describe why, not how
-- Nothing checks: use `isnothing(x)` / `!isnothing(x)`, not `x === nothing` / `x !== nothing`
-- Type checks: use multiple dispatch, never `isa`/`<:` branching — see the runtime type-checking rule above
-- Conditionals: prefer `if/else` over the ternary `? :`, especially in multi-line expressions
-- Cache lookups: use the lazy closure form `get!(dict, key) do ... end` (only evaluates on a miss). Never use 3-arg `get!(dict, key, default)` when `default` is expensive — Julia evaluates arguments eagerly, so `default` runs on every call and silently defeats the cache.
+  - Constructors: use `function Foo()`, not `Foo() = ...`
+  - Asserts: prefer `InfrastructureSystems.@assert_op` over `@assert`
+  - Globals: `UPPER_CASE` for constants; exports: all in the main module file
+  - Comments: complete sentences; describe why, not how
+  - Nothing checks: use `isnothing(x)` / `!isnothing(x)`, not `x === nothing` / `x !== nothing`
+  - Type checks: use multiple dispatch, never `isa`/`<:` branching — see the runtime type-checking rule above
+  - Conditionals: prefer `if/else` over the ternary `? :`, especially in multi-line expressions
+  - Cache lookups: use the lazy closure form `get!(dict, key) do ... end` (only evaluates on a miss). Never use 3-arg `get!(dict, key, default)` when `default` is expensive — Julia evaluates arguments eagerly, so `default` runs on every call and silently defeats the cache.
 
 ## Documentation Practices and Requirements
 
 Framework: [Diataxis](https://diataxis.fr/). Sienna guides:
 
-- Explanation / best practices: <https://sienna-platform.github.io/InfrastructureSystems.jl/stable/docs_best_practices/explanation/>
-- Tutorials: <https://sienna-platform.github.io/InfrastructureSystems.jl/stable/docs_best_practices/how-to/write_a_tutorial/> (script format via Literate.jl: <https://fredrikekre.github.io/Literate.jl/v2/>)
-- How-to's: <https://sienna-platform.github.io/InfrastructureSystems.jl/stable/docs_best_practices/how-to/write_a_how-to/>
-- API docstrings: <https://sienna-platform.github.io/InfrastructureSystems.jl/stable/docs_best_practices/how-to/write_docstrings_org_api/>
+  - Explanation / best practices: [https://sienna-platform.github.io/InfrastructureSystems.jl/stable/docs_best_practices/explanation/](https://sienna-platform.github.io/InfrastructureSystems.jl/stable/docs_best_practices/explanation/)
+  - Tutorials: [https://sienna-platform.github.io/InfrastructureSystems.jl/stable/docs_best_practices/how-to/write_a_tutorial/](https://sienna-platform.github.io/InfrastructureSystems.jl/stable/docs_best_practices/how-to/write_a_tutorial/) (script format via Literate.jl: [https://fredrikekre.github.io/Literate.jl/v2/](https://fredrikekre.github.io/Literate.jl/v2/))
+  - How-to's: [https://sienna-platform.github.io/InfrastructureSystems.jl/stable/docs_best_practices/how-to/write_a_how-to/](https://sienna-platform.github.io/InfrastructureSystems.jl/stable/docs_best_practices/how-to/write_a_how-to/)
+  - API docstrings: [https://sienna-platform.github.io/InfrastructureSystems.jl/stable/docs_best_practices/how-to/write_docstrings_org_api/](https://sienna-platform.github.io/InfrastructureSystems.jl/stable/docs_best_practices/how-to/write_docstrings_org_api/)
 
 Docstrings: cover all public-interface elements (IS is selective about exports); include signatures + argument lists; automate with `DocStringExtensions.TYPEDSIGNATURES` (`TYPEDFIELDS` sparingly); add "see also" links for same-named (multiple-dispatch) functions. API docs: public in `docs/src/api/public.md` via `@autodocs` (`Public=true, Private=false`); internals in `docs/src/api/internals.md`.
 
@@ -82,10 +82,10 @@ julia --project=test scripts/check_docstrings.jl <PackageName>
 
 ## Design Principles
 
-- Elegance and concision in both interface and implementation
-- Fail fast with actionable error messages rather than hiding problems
-- Validate invariants explicitly in subtle cases
-- Avoid over-adherence to backwards compatibility for internal helpers
+  - Elegance and concision in both interface and implementation
+  - Fail fast with actionable error messages rather than hiding problems
+  - Validate invariants explicitly in subtle cases
+  - Avoid over-adherence to backwards compatibility for internal helpers
 
 ## Contribution Workflow
 
@@ -116,10 +116,10 @@ julia --project=docs docs/make.jl                           # build docs
 
 **Priorities:** read existing patterns first; maintain consistency; use concrete types in hot paths; add docstrings to public API; consider downstream-package impact; ensure tests pass. **Then run the formatter and never edit auto-generated files.** The two rules most often violated:
 
-- **Never use `isa`/`<:` for runtime type branching** — use multiple dispatch (see the canonical rule above).
-- **Always run the formatter** (`julia --project=scripts/formatter -e 'include("scripts/formatter/formatter_code.jl")'`) before reporting a task done.
+  - **Never use `isa`/`<:` for runtime type branching** — use multiple dispatch (see the canonical rule above).
+  - **Always run the formatter** (`julia --project=scripts/formatter -e 'include("scripts/formatter/formatter_code.jl")'`) before reporting a task done.
 
 ## Troubleshooting
 
-- **Tests fail unexpectedly / packages missing:** re-instantiate — `julia --project=test -e 'using Pkg; Pkg.instantiate()'`.
-- **Poor performance, many allocations:** run `@code_warntype` on the suspect function (see the performance anti-patterns above).
+  - **Tests fail unexpectedly / packages missing:** re-instantiate — `julia --project=test -e 'using Pkg; Pkg.instantiate()'`.
+  - **Poor performance, many allocations:** run `@code_warntype` on the suspect function (see the performance anti-patterns above).
