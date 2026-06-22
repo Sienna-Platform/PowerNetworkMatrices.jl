@@ -78,6 +78,81 @@ end
     @test_throws ErrorException aba[rb, :]
 end
 
+# 3-bus system: ref bus 1 tied to bus 2 by a normal line, plus parallel members on arc (2, 3)
+# carrying the supplied (r, x) pairs (used to force a degenerate net series admittance).
+function _mk_parallel_cancel_sys(member_rx::Vector{Tuple{Float64, Float64}})
+    sys, buses = _mk_bus_system(3)
+    arc12 = Arc(; from = buses[1], to = buses[2])
+    add_component!(sys, arc12)
+    _add_test_line!(sys, "L12", arc12, 0.01, 0.1)  # keeps the ref bus connected
+    # Parallel members share one Arc (2, 3), as real parallel branches do.
+    arc23 = Arc(; from = buses[2], to = buses[3])
+    add_component!(sys, arc23)
+    for (k, (r, x)) in enumerate(member_rx)
+        _add_test_line!(sys, "L23_$k", arc23, r, x)
+    end
+    return sys
+end
+
+@testset "BA/ABA: degenerate net series admittance stays finite" begin
+    # b = 1 / imag(1 / Yt) blows up for two degenerate parallel combinations; both must give
+    # finite b = 0. Case 1: admittances cancel (Yt = 0 -> NaN). Case 2: reactances cancel but
+    # resistance does not (Yt purely real -> imag(1 / Yt) = 0 -> Inf).
+    for member_rx in (
+        [(0.0, 0.1), (0.0, -0.1)],     # case 1: Yt = 0
+        [(0.01, 0.1), (0.01, -0.1)],   # case 2: zero net reactance, nonzero conductance
+    )
+        ybus = Ybus(_mk_parallel_cancel_sys(member_rx))
+        @test all(isfinite, BA_Matrix(ybus).data.nzval)
+        @test all(isfinite, ABA_Matrix(ybus; factorize = false).data.nzval)
+    end
+end
+
+@testset "BA: phase-shifting transformer susceptance ignores the phase angle" begin
+    # A phase shifter's off-diagonal Ybus is asymmetric, so a single entry folds α into b. BA
+    # must match the phase-independent PSY.get_series_susceptance = 1/(a x): b independent of α.
+    function _mk_pst_sys(α)
+        sys, buses = _mk_bus_system(3)
+        arc12 = Arc(; from = buses[1], to = buses[2])
+        add_component!(sys, arc12)
+        _add_test_line!(sys, "L12", arc12, 0.0, 0.1)
+        arc23 = Arc(; from = buses[2], to = buses[3])
+        add_component!(sys, arc23)
+        pst = PhaseShiftingTransformer(;
+            name = "PST23",
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            arc = arc23,
+            r = 0.01,
+            x = 0.2,
+            primary_shunt = 0.0,
+            tap = 1.05,
+            α = α,
+            rating = 1.0,
+            base_power = 100.0,
+        )
+        add_component!(sys, pst)
+        return sys, pst
+    end
+
+    # b for the PST arc (2, 3): BA.data is bus x arc, so the (from-bus, arc) entry holds +b.
+    function _pst_susceptance(sys)
+        ba = BA_Matrix(Ybus(sys))
+        bus_lookup, arc_lookup = PNM.get_lookup(ba)
+        return ba.data[bus_lookup[2], arc_lookup[(2, 3)]]
+    end
+
+    _, pst = _mk_pst_sys(0.0)
+    target = PSY.get_series_susceptance(pst)  # 1 / (tap * x) = 1 / (1.05 * 0.2)
+    for α in (0.0, 0.3, -0.5)
+        sys, _ = _mk_pst_sys(α)
+        b = _pst_susceptance(sys)
+        @test isfinite(b)
+        @test isapprox(abs(b), target; rtol = sqrt(eps(real(YBUS_ELTYPE))))
+    end
+end
+
 @testset "Test show for A, BA and ABA matrix" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
 

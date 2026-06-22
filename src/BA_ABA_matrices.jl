@@ -93,6 +93,21 @@ Construct a BA_Matrix from a Ybus matrix.
 # Returns
 - `BA_Matrix`: The constructed BA matrix structure containing the transposed BA matrix
 """
+# Phase-independent DC series susceptance for a phase-shifting-transformer arc, read from its
+# branch component(s) so the phase angle is ignored (`get_series_susceptance` is `1/(a x)`; the
+# shift is applied separately as an injection by the power-flow solver). A phase shifter is
+# always a direct, parallel, or three-winding branch, so this finds it; returns `NaN` otherwise.
+function _arc_component_susceptance(nr_data::NetworkReductionData, arc::Tuple{Int, Int})
+    direct_map = get_direct_branch_map(nr_data)
+    haskey(direct_map, arc) && return get_series_susceptance(direct_map[arc])
+    parallel_map = get_parallel_branch_map(nr_data)
+    haskey(parallel_map, arc) && return get_series_susceptance(parallel_map[arc])
+    transformer3W_map = get_transformer3W_map(nr_data)
+    haskey(transformer3W_map, arc) &&
+        return get_series_susceptance(transformer3W_map[arc])
+    return NaN
+end
+
 function BA_Matrix(ybus::Ybus)
     nr = ybus.network_reduction_data
     bus_ax = get_bus_axis(ybus)
@@ -107,15 +122,32 @@ function BA_Matrix(ybus::Ybus)
     for (ix_arc, arc) in enumerate(arc_ax)
         ix_from_bus = get_bus_index(arc[1], bus_lookup, nr)
         ix_to_bus = get_bus_index(arc[2], bus_lookup, nr)
-        # Get series susceptance from components, not the equivalent ybus for reductions of degree two nodes
-        # This results in reduced error relative to the DC power flow result without reductions
+        # Series-reduced arcs take the chain's equivalent susceptance from components (lower DC
+        # error than the summed Ybus entry).
         if is_arc_in_series_map(nr_data, arc)
             b = get_series_susceptance(get_mapped_series_branch(nr_data, arc))
         else
-            Yt = -1 * ybus.data[ix_from_bus, ix_to_bus]
-            Zt = 1 / Yt
-            # TODO - should we consider phase shift?
-            b = 1 / imag(Zt)
+            Y_ft = -1 * ybus.data[ix_from_bus, ix_to_bus]
+            Y_tf = -1 * ybus.data[ix_to_bus, ix_from_bus]
+            if Y_ft != Y_tf
+                # Asymmetric off-diagonals => a phase-shifting transformer. The Ybus-derived
+                # susceptance would fold its angle α into b, so take the phase-independent
+                # component susceptance instead.
+                b = _arc_component_susceptance(nr_data, arc)
+                isfinite(b) || (b = 0.0)
+            elseif iszero(Y_ft)
+                # Cancelling parallel reactances -> no DC coupling.
+                b = 0.0
+            else
+                # Symmetric branch: imag(1/Y_ft) is the equivalent series reactance; a zero net
+                # reactance (e.g. line + series capacitor) gives no usable DC coupling.
+                x_eq = imag(1 / Y_ft)
+                if iszero(x_eq)
+                    b = 0.0
+                else
+                    b = 1 / x_eq
+                end
+            end
         end
         BA_I[2 * ix_arc - 1] = ix_from_bus
         BA_J[2 * ix_arc - 1] = ix_arc

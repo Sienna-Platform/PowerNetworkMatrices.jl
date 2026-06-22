@@ -20,42 +20,46 @@ function _series_admittance(r::Float64, x::Float64, min_x_eps::Float64)
     return inv(complex(r, x))
 end
 
-# True for a branch with zero resistance (`real(Y) == 0`) whose series admittance reaches
-# the threshold (`|y| >= susceptance_threshold`). Reads `(r, x)` once and bails on `r != 0`
-# before touching `x`.
+# True for a branch with near-zero resistance (`abs(r) <= resistance_tolerance`, default `0.0` ⇒
+# exact `r == 0`) whose series admittance reaches the threshold (`|y| >= susceptance_threshold`).
+# Reads `(r, x)` once and bails on a too-large resistance before touching `x`.
 function _is_zero_impedance_branch(
     br,
     susceptance_threshold::Float64,
     min_x_eps::Float64,
+    resistance_tolerance::Float64,
 )
     r = PSY.get_r(br)
-    iszero(r) || return false
+    abs(r) <= resistance_tolerance || return false
     x = PSY.get_x(br)
     return abs(_series_admittance(r, x, min_x_eps)) >= susceptance_threshold
 end
 
 # An arc is zero-impedance iff some individual non-transformer branch on it qualifies; the
-# parallel combination is never considered. So an `r == 0` jumper in parallel with a normal
+# parallel combination is never considered. So an `r ≈ 0` jumper in parallel with a normal
 # line merges the buses (the jumper qualifies on its own), while branches that only
 # collectively exceed the threshold do not merge.
 function _is_zero_impedance_arc(
     br::PSY.ACTransmission,
     susceptance_threshold::Float64,
     min_x_eps::Float64,
+    resistance_tolerance::Float64,
 )
     _is_transformer(br) && return false
-    return _is_zero_impedance_branch(br, susceptance_threshold, min_x_eps)
+    return _is_zero_impedance_branch(
+        br, susceptance_threshold, min_x_eps, resistance_tolerance)
 end
 
 function _is_zero_impedance_arc(
     parallel_br::AbstractBranchesParallel,
     susceptance_threshold::Float64,
     min_x_eps::Float64,
+    resistance_tolerance::Float64,
 )
     # Transformer-bearing arcs are excluded from zero-impedance bus merging.
     _any_transformer(parallel_br) && return false
     return any(
-        _is_zero_impedance_branch(br, susceptance_threshold, min_x_eps)
+        _is_zero_impedance_branch(br, susceptance_threshold, min_x_eps, resistance_tolerance)
         for br in parallel_br
     )
 end
@@ -72,13 +76,15 @@ function get_reduction(
     # Match the substitute reactance used for `r == x == 0` branches during assembly,
     # so a branch's merge eligibility is judged against the admittance it contributed.
     min_x_eps = get_minimum_retained_impedance(reduction)
+    resistance_tolerance = get_resistance_tolerance(reduction)
     # ZIBR is the first reduction applied, so only the direct and parallel branch maps
     # are populated; series/3W arcs do not exist yet (3W arcs are transformers anyway).
     # Iterating the maps gives the merge granularity directly (one entry per arc) and
     # lets us examine each branch, matching PSS(e), instead of the summed Ybus entry.
     for branch_map in (get_direct_branch_map(nrd), get_parallel_branch_map(nrd))
         for (arc_key, br) in branch_map
-            _is_zero_impedance_arc(br, susceptance_threshold, min_x_eps) || continue
+            _is_zero_impedance_arc(
+                br, susceptance_threshold, min_x_eps, resistance_tolerance) || continue
             from_no, to_no = arc_key
             from_irred = from_no ∈ user_irreducible
             to_irred = to_no ∈ user_irreducible
