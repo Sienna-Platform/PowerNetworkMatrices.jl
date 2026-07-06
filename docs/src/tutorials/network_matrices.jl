@@ -3,7 +3,7 @@
 # `PowerNetworkMatrices.jl` is able to build classic power systems modeling network matrices such as
 # [Ybus](https://en.wikipedia.org/wiki/Nodal_admittance_matrix), [PTDF](https://www.powerworld.com/WebHelp/Content/MainDocumentation_HTML/Power_Transfer_Distribution_Factors.htm) and LODF.
 
-# Check section [Network Matrices](@ref net_mat) for more details.
+# See the Reference section for more details on each matrix.
 
 # ## Overview
 #
@@ -14,33 +14,42 @@
 # The network matrices code implements the dfs algorithm to find islands.
 
 using PowerSystems
+using PowerNetworkMatrices
+using PowerSystemCaseBuilder
+
 import PowerSystems as PSY
-DATA_DIR = "../../../data" #hide
-system_data = System(joinpath(DATA_DIR, "matpower/case14.m"))
+import PowerNetworkMatrices as PNM
+import PowerSystemCaseBuilder as PSB
+
+sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
 
 # ## Ybus
 #
 # The Ybus can be calculated as follows:
-ybus = Ybus(system_data)
+
+ybus = Ybus(sys)
 
 # The matrix can be indexed using directly the bus numbers. In this example buses are numbered
-# 1-14. However, in large systems buses don't usually follow sequential numbering. You can access
+# 1-5. In large systems buses don't usually follow sequential numbering. You can access
 # the entries of the Ybus with direct indexing or using the buses.
 
 ybus_entry = ybus[3, 3]
-#
-bus3 = get_component(Bus, system_data, "Bus 3     HV")
-ybus_entry = ybus[bus3, bus3]
+
+# Fetch a bus component and index the Ybus using its number:
+
+bus3 = first(b for b in PSY.get_components(PSY.ACBus, sys) if PSY.get_number(b) == 3)
+ybus_entry = ybus[PSY.get_number(bus3), PSY.get_number(bus3)]
 
 # We recognize that many models require matrix operations. For those cases, you can access the
 # sparse data as follows:
 
-sparse_array = get_data(ybus)
+sparse_array = PNM.get_data(ybus)
 
 # ## PTDF
 #
 # The PTDF matrix can be calculated as follows:
-ptdf = PTDF(system_data)
+
+ptdf = PTDF(sys)
 
 # The PTDF matrix is indexed by **arc tuples** `(from_bus, to_bus)` for branches and
 # **bus numbers** for buses. An arc tuple represents a directed connection between two buses.
@@ -50,14 +59,16 @@ ptdf = PTDF(system_data)
 # identifiers for each dimension and the `lookup` dictionaries map those identifiers to
 # integer matrix indices:
 
-get_axes(ptdf)
+PNM.get_axes(ptdf)
 
-get_lookup(ptdf)
+#
+
+PNM.get_lookup(ptdf)
 
 # Access a PTDF entry using an arc tuple and bus number taken from the axes:
 
-first_arc = get_axes(ptdf)[2][1]
-first_bus = get_axes(ptdf)[1][1]
+first_arc = PNM.get_axes(ptdf)[2][1]
+first_bus = PNM.get_axes(ptdf)[1][1]
 
 ptdf_entry = ptdf[first_arc, first_bus]
 
@@ -70,8 +81,8 @@ ptdf_entry = ptdf[first_arc, first_bus]
 # The LODF matrix is indexed by arc tuples for both dimensions. Each element `lodf[arc_i, arc_j]`
 # represents the change in flow on `arc_i` when `arc_j` is taken out of service.
 
-lodf = LODF(system_data)
+lodf = LODF(sys)
 
 # Both lookup dictionaries map arc tuples to matrix indices:
 
-get_lookup(lodf)
+PNM.get_lookup(lodf)
