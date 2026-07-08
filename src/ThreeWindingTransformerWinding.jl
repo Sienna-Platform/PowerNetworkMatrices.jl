@@ -1,29 +1,106 @@
 """
-    ThreeWindingTransformerWinding{T<:PSY.ThreeWindingTransformer} <: PSY.ACTransmission
+    ThreeWindingTransformerWinding <: PSY.ACTransmission
 
-Internal object representing a single winding of a three-winding transformer. Do not export.
+Internal object representing a single winding of a [`PSY.ThreeWindingTransformer`](@ref).
+Do not export.
 
-This structure is used internally to decompose three-winding transformers into individual
-winding components for network matrix construction and analysis purposes.
+This structure decomposes a three-winding transformer into individual winding components
+for network-matrix construction and analysis. The delta→star derivation (single home in
+PNM) is performed once at construction: the three pairwise measured impedances are read on
+a common base (system base, via `PSY.get_r_12(t, PSY.SU)` etc.), converted to the three
+star-leg impedances by the standard identity, and the reactance floored away from zero.
 
 # Fields
-- `transformer::T`: The parent three-winding transformer object
-- `winding_number::Int`: The winding number (1, 2, or 3) that this object represents
+- `transformer::PSY.ThreeWindingTransformer`: The parent three-winding transformer
+- `winding::PSY.TransformerWinding`: The parent's winding this object represents
+- `winding_number::Int`: The winding number (1 = primary, 2 = secondary, 3 = tertiary)
+- `r::Float64`: Derived star-leg resistance (pu, system base)
+- `x::Float64`: Derived star-leg reactance (pu, system base), floored at
+  [`STAR_LEG_REACTANCE_FLOOR`](@ref)
 
 # Note
-This is an internal object and should not be constructed directly by users or added to a system.
+This is an internal object and should not be constructed directly by users or added to a
+system.
 """
-struct ThreeWindingTransformerWinding{T <: PSY.ThreeWindingTransformer} <:
-       PSY.ACTransmission
-    transformer::T
+struct ThreeWindingTransformerWinding <: PSY.ACTransmission
+    transformer::PSY.ThreeWindingTransformer
+    winding::PSY.TransformerWinding
     winding_number::Int
+    r::Float64
+    x::Float64
+end
+
+# Standard delta→star identity on the common-base (SU) pairwise impedances; the star-leg
+# reactance is floored so a measured-zero leg does not blow up the admittance. Matches the
+# pre-refactor PowerFlowFileParser parse-time rule (see `STAR_LEG_REACTANCE_FLOOR`), which
+# floored the SYSTEM-BASE star reactance before re-converting to device base — the SU value
+# derived here is the equivalent quantity.
+function _star_leg_impedance(t::PSY.ThreeWindingTransformer, winding_number::Int)
+    z12 = complex(PSY.get_r_12(t, PSY.SU), PSY.get_x_12(t, PSY.SU))
+    z23 = complex(PSY.get_r_23(t, PSY.SU), PSY.get_x_23(t, PSY.SU))
+    z13 = complex(PSY.get_r_13(t, PSY.SU), PSY.get_x_13(t, PSY.SU))
+    z = if winding_number == 1
+        (z12 + z13 - z23) / 2
+    elseif winding_number == 2
+        (z12 + z23 - z13) / 2
+    elseif winding_number == 3
+        (z13 + z23 - z12) / 2
+    else
+        throw(ArgumentError("Invalid winding number: $winding_number"))
+    end
+    return (real(z), _floor_star_leg_reactance(imag(z), t, winding_number))
+end
+
+function _floor_star_leg_reactance(
+    x::Float64,
+    t::PSY.ThreeWindingTransformer,
+    winding_number::Int,
+)
+    if isapprox(x, 0.0; atol = STAR_LEG_ZERO_REACTANCE_ATOL)
+        # Constructed repeatedly on hot paths (Ybus assembly, reductions); @debug avoids
+        # log spam while preserving traceability of the flooring event.
+        @debug "Zero star-leg reactance in ThreeWindingTransformer $(PSY.get_name(t)) " *
+               "winding $(winding_number); flooring to $(STAR_LEG_REACTANCE_FLOOR)."
+        return STAR_LEG_REACTANCE_FLOOR
+    end
+    return x
+end
+
+"""
+    ThreeWindingTransformerWinding(t::PSY.ThreeWindingTransformer, winding_number::Int)
+
+Construct the wrapper for `winding_number` (1/2/3) of `t`, deriving and flooring the
+star-leg impedance from the parent's pairwise data.
+"""
+function ThreeWindingTransformerWinding(
+    t::PSY.ThreeWindingTransformer,
+    winding_number::Int,
+)
+    (winding_number in 1:3) ||
+        throw(ArgumentError("Invalid winding number: $winding_number"))
+    r, x = _star_leg_impedance(t, winding_number)
+    winding = PSY.get_windings(t)[winding_number]
+    return ThreeWindingTransformerWinding(t, winding, winding_number, r, x)
+end
+
+# Lookup identity must be `{parent, winding_number}`, NOT full field-egal equality: `r`/`x`
+# are derived at construction time from the parent's pairwise data (a build-time snapshot),
+# so two wrappers for the same winding built before/after a pairwise-impedance mutation would
+# otherwise compare unequal and hash differently, breaking Dict/Set-keyed lookups that
+# reconstruct a fresh wrapper to query a map keyed by an earlier-built one. `transformer` is
+# compared by identity (`===`), matching the pre-refactor `{parent, winding_number}` key.
+function Base.:(==)(a::ThreeWindingTransformerWinding, b::ThreeWindingTransformerWinding)
+    return a.transformer === b.transformer && a.winding_number == b.winding_number
+end
+
+function Base.hash(tw::ThreeWindingTransformerWinding, h::UInt)
+    return hash(tw.winding_number, hash(objectid(tw.transformer), h))
 end
 
 get_transformer(tw::ThreeWindingTransformerWinding) = tw.transformer
 get_winding_number(tw::ThreeWindingTransformerWinding) = tw.winding_number
-get_transformer_type(
-    ::ThreeWindingTransformerWinding{T},
-) where {T <: PSY.ThreeWindingTransformer} = T
+# One concrete parent type remains; kept for callers that key reduction maps by parent type.
+get_transformer_type(tw::ThreeWindingTransformerWinding) = typeof(tw.transformer)
 
 function get_name(three_wt_winding::ThreeWindingTransformerWinding)
     transformer = get_transformer(three_wt_winding)
@@ -31,211 +108,110 @@ function get_name(three_wt_winding::ThreeWindingTransformerWinding)
     return PSY.get_name(transformer) * "_winding_$winding"
 end
 
-function get_series_susceptance(
+"""
+    PSY.get_series_susceptance(segment::ThreeWindingTransformerWinding, units)
+
+Series susceptance `imag(1 / (r + im*x))` of the star leg (system base). `units` is
+accepted for interface symmetry; the stored star-leg impedance is always system base.
+
+This extends `PSY.get_series_susceptance` (owned by PowerSystems) for PNM's
+`ThreeWindingTransformerWinding` wrapper type, so the whole codebase resolves
+`get_series_susceptance` calls to a single generic-function family.
+
+!!! note "Deliberate model mixture (equivalence-preserving)"
+    This returns `imag(1/(r + im*x))`, which is r-aware and **negative-signed**, matching the
+    pre-refactor `PSY.get_series_susceptances(::Transformer3W)` (=`imag(1/Z)` per leg). It is
+    consumed alongside `Line` susceptances (`PSY`'s `+1/x`, positive, r-free) in the reduction
+    sums (`BranchesSeries`/`BranchesParallel`, `virtual_factor_helpers`, `network_modification`).
+    The two conventions are physically inconsistent, but the pre-refactor code mixed them the
+    SAME way; this wrapper faithfully preserves that value flow. Do not "fix" the sign/model
+    here unilaterally — the Ybus equivalence gate arbitrates any change.
+"""
+function PSY.get_series_susceptance(
     segment::ThreeWindingTransformerWinding,
-    units::IS.AbstractUnitSystem,
+    ::IS.AbstractUnitSystem,
 )
-    tfw = get_transformer(segment)
-    winding_int = get_winding_number(segment)
-    return PSY.get_series_susceptances(tfw, units)[winding_int]
+    return imag(1 / (segment.r + segment.x * im))
 end
 
 """
     get_equivalent_r(tw::ThreeWindingTransformerWinding)
 
-Get the resistance for a specific winding of a three-winding transformer.
-Returns the winding-specific series resistance.
+Derived star-leg resistance (pu, system base) of this winding.
 """
-function get_equivalent_r(tw::ThreeWindingTransformerWinding)
-    tfw = get_transformer(tw)
-    winding_num = get_winding_number(tw)
-
-    if winding_num == 1
-        return PSY.get_r_primary(tfw, PSY.SU)
-    elseif winding_num == 2
-        return PSY.get_r_secondary(tfw, PSY.SU)
-    elseif winding_num == 3
-        return PSY.get_r_tertiary(tfw, PSY.SU)
-    else
-        throw(ArgumentError("Invalid winding number: $winding_num"))
-    end
-end
+get_equivalent_r(tw::ThreeWindingTransformerWinding) = tw.r
 
 """
     get_equivalent_x(tw::ThreeWindingTransformerWinding)
 
-Get the reactance for a specific winding of a three-winding transformer.
-Returns the winding-specific series reactance.
+Derived star-leg reactance (pu, system base) of this winding, floored at
+[`STAR_LEG_REACTANCE_FLOOR`](@ref).
 """
-function get_equivalent_x(tw::ThreeWindingTransformerWinding)
-    tfw = get_transformer(tw)
-    winding_num = get_winding_number(tw)
-
-    if winding_num == 1
-        return PSY.get_x_primary(tfw, PSY.SU)
-    elseif winding_num == 2
-        return PSY.get_x_secondary(tfw, PSY.SU)
-    elseif winding_num == 3
-        return PSY.get_x_tertiary(tfw, PSY.SU)
-    else
-        throw(ArgumentError("Invalid winding number: $winding_num"))
-    end
-end
+get_equivalent_x(tw::ThreeWindingTransformerWinding) = tw.x
 
 """
     get_equivalent_b(tw::ThreeWindingTransformerWinding)
 
-Get the susceptance for a specific winding of a three-winding transformer.
-For the primary winding (winding 1), returns the shunt susceptance from the transformer.
-For secondary and tertiary windings, returns 0.0 as the shunt is only on the primary side.
+Shunt susceptance split. Only the primary winding (winding 1) carries the parent's
+magnetizing shunt (its imaginary part); secondary/tertiary carry none.
 """
 function get_equivalent_b(tw::ThreeWindingTransformerWinding)
-    tfw = get_transformer(tw)
-    winding_num = get_winding_number(tw)
-
-    if winding_num == 1
-        # Only the primary winding has the shunt susceptance
-        return (from = PSY.get_b(tfw, PSY.SU), to = 0.0)
-    elseif winding_num == 2 || winding_num == 3
-        # Secondary and tertiary windings don't have shunt susceptance
-        return (from = 0.0, to = 0.0)
+    if tw.winding_number == 1
+        return (from = imag(PSY.get_magnetizing_shunt(tw.transformer, PSY.SU)), to = 0.0)
     else
-        throw(ArgumentError("Invalid winding number: $winding_num"))
+        return (from = 0.0, to = 0.0)
     end
 end
 
 """
     get_equivalent_rating(tw::ThreeWindingTransformerWinding)
 
-Get the rating for a specific winding of a three-winding transformer.
-Returns the winding-specific rating if non-zero, otherwise returns the parent transformer rating.
+The winding's own rating (MVA, device base). May be `nothing` when unset, mirroring how a
+[`PSY.Line`](@ref)'s rating is surfaced; there is no parent-level rating to fall back to.
 """
-function get_equivalent_rating(tw::ThreeWindingTransformerWinding)
-    tfw = get_transformer(tw)
-    winding_num = get_winding_number(tw)
-
-    winding_rating = if winding_num == 1
-        PSY.get_rating_primary(tfw, PSY.DU)
-    elseif winding_num == 2
-        PSY.get_rating_secondary(tfw, PSY.DU)
-    elseif winding_num == 3
-        PSY.get_rating_tertiary(tfw, PSY.DU)
-    else
-        throw(ArgumentError("Invalid winding number: $winding_num"))
-    end
-    if winding_rating != 0.0
-        return winding_rating
-    elseif isnothing(PSY.get_rating(tfw, PSY.DU))
-        return 0.0
-    else
-        return PSY.get_rating(tfw, PSY.DU)
-    end
-end
+get_equivalent_rating(tw::ThreeWindingTransformerWinding) =
+    PSY.get_rating(tw.winding, PSY.DU)
 
 """
     get_equivalent_emergency_rating(tw::ThreeWindingTransformerWinding)
 
-Get the rating for a specific winding of a three-winding transformer.
-Returns the winding-specific rating if non-zero, otherwise returns the parent transformer rating.
+Emergency rating for this winding. No separate `rating_b` is modeled per winding, so this
+mirrors [`get_equivalent_rating`](@ref).
 """
-function get_equivalent_emergency_rating(tw::ThreeWindingTransformerWinding)
-    #Currently there is no rating_b defined in PSY5 for the different windings of a 3WTransformer
+get_equivalent_emergency_rating(tw::ThreeWindingTransformerWinding) =
     get_equivalent_rating(tw)
-end
 
 """
     get_equivalent_available(tw::ThreeWindingTransformerWinding)
 
-Get the availability status for a specific winding of a three-winding transformer.
-Returns the per-winding availability flag (`available_primary`/`secondary`/`tertiary`),
-which is independent of the parent transformer's own `available` flag.
+Per-winding availability, the single source of truth in the new transformer model.
 """
-function get_equivalent_available(tw::ThreeWindingTransformerWinding)
-    tfw = get_transformer(tw)
-    winding_num = get_winding_number(tw)
-
-    winding_status = if winding_num == 1
-        PSY.get_available_primary(tfw)
-    elseif winding_num == 2
-        PSY.get_available_secondary(tfw)
-    elseif winding_num == 3
-        PSY.get_available_tertiary(tfw)
-    else
-        throw(ArgumentError("Invalid winding number: $winding_num"))
-    end
-    return winding_status
-end
+get_equivalent_available(tw::ThreeWindingTransformerWinding) =
+    PSY.get_available(tw.winding)
 
 PSY.get_available(tw::ThreeWindingTransformerWinding) = get_equivalent_available(tw)
 
 function get_arc_tuple(tr::ThreeWindingTransformerWinding)
-    t3W = get_transformer(tr)
-    arc_number = get_winding_number(tr)
-    if arc_number == 1
-        return (
-            PSY.get_number(PSY.get_from(PSY.get_primary_star_arc(t3W))),
-            PSY.get_number(PSY.get_to(PSY.get_primary_star_arc(t3W))),
-        )
-    elseif arc_number == 2
-        return (
-            PSY.get_number(PSY.get_from(PSY.get_secondary_star_arc(t3W))),
-            PSY.get_number(PSY.get_to(PSY.get_secondary_star_arc(t3W))),
-        )
-    elseif arc_number == 3
-        return (
-            PSY.get_number(PSY.get_from(PSY.get_tertiary_star_arc(t3W))),
-            PSY.get_number(PSY.get_to(PSY.get_tertiary_star_arc(t3W))),
-        )
-    else
-        throw(error("Three-winding transformer arc number must be 1, 2, or 3"))
-    end
+    arc = PSY.get_arc(tr.winding)
+    return (
+        PSY.get_number(PSY.get_from(arc)),
+        PSY.get_number(PSY.get_to(arc)),
+    )
 end
 
 """
     get_equivalent_tap(tw::ThreeWindingTransformerWinding)
 
-Get the tap (turns ratio) for a specific winding of a three-winding transformer.
-Returns the winding-specific turns ratio for phase shifting transformers.
+The winding's tap (turns ratio). Defaults to `1.0` for windings with no tap.
 """
-function get_equivalent_tap(
-    tw::ThreeWindingTransformerWinding{PSY.PhaseShiftingTransformer3W},
-)
-    tfw = get_transformer(tw)
-    winding_num = get_winding_number(tw)
-
-    if winding_num == 1
-        return PSY.get_primary_turns_ratio(tfw)
-    elseif winding_num == 2
-        return PSY.get_secondary_turns_ratio(tfw)
-    elseif winding_num == 3
-        return PSY.get_tertiary_turns_ratio(tfw)
-    else
-        throw(ArgumentError("Invalid winding number: $winding_num"))
-    end
-end
+get_equivalent_tap(tw::ThreeWindingTransformerWinding) = PSY.get_tap(tw.winding)
 
 """
     get_equivalent_α(tw::ThreeWindingTransformerWinding)
 
-Get the phase angle (α) for a specific winding of a three-winding transformer.
-Returns the winding-specific phase shift angle for phase shifting transformers.
+The winding's phase-shift angle (radians). `0.0` for non-shifting windings.
 """
-function get_equivalent_α(
-    tw::ThreeWindingTransformerWinding{PSY.PhaseShiftingTransformer3W},
-)
-    tfw = get_transformer(tw)
-    winding_num = get_winding_number(tw)
-
-    if winding_num == 1
-        return PSY.get_α_primary(tfw)
-    elseif winding_num == 2
-        return PSY.get_α_secondary(tfw)
-    elseif winding_num == 3
-        return PSY.get_α_tertiary(tfw)
-    else
-        throw(ArgumentError("Invalid winding number: $winding_num"))
-    end
-end
+get_equivalent_α(tw::ThreeWindingTransformerWinding) = PSY.get_α(tw.winding)
 
 function add_to_map(device::ThreeWindingTransformerWinding, filters::Dict)
     isempty(filters) && return true

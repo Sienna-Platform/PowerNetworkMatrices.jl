@@ -17,10 +17,25 @@ const AUTO_TOLERANCE_BUS_LIMIT = 2000
 
 DEFAULT_LODF_CHUNK_SIZE = 18_000
 
-SKIP_PARALLEL_REDUCTION_TYPES = [
-    PSY.PhaseShiftingTransformer,
-    ThreeWindingTransformerWinding{PSY.PhaseShiftingTransformer3W},
-]
+# Star-leg reactance floor (pu, system base). A star leg whose reactance derives to ~0 from
+# the pairwise impedances is floored to this value. Recovered verbatim from the pre-refactor
+# PowerFlowFileParser parse-time rule (`ZERO_IMPEDANCE_REACTANCE_THRESHOLD`, per PSS/E Data
+# Formats §1.15.1 "Three-Winding Transformer Notes"). The old parser floored the SYSTEM-BASE
+# star reactance before re-converting to device base; the SU star reactance the wrapper
+# derives is the equivalent quantity, so the floor is applied there.
+const STAR_LEG_REACTANCE_FLOOR = 1e-4
+
+# Detection tolerance for the flooring above; matches the old parser's `atol = eps(Float32)`.
+const STAR_LEG_ZERO_REACTANCE_ATOL = eps(Float32)
+
+# A phase-shifting branch must not be folded into a parallel-equivalent group: the parallel
+# susceptance model cannot represent a per-branch phase shift. Phase shifting is a per-winding
+# data property in the new transformer model (no distinct PST type remains), so the skip is
+# data-driven via `PSY.is_phase_shifting` rather than a type list.
+_skip_parallel_reduction(::PSY.ACTransmission) = false
+_skip_parallel_reduction(b::PSY.TwoWindingTransformer) = PSY.is_phase_shifting(b)
+_skip_parallel_reduction(w::ThreeWindingTransformerWinding) =
+    PSY.is_phase_shifting(w.winding)
 
 # Singleton types for linear solver dispatch, enabling compile-time method resolution.
 abstract type LinearSolverType end

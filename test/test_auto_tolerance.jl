@@ -179,7 +179,12 @@ end
     v_auto = VirtualPTDF(sys)                           # default, below gate
     @test v_auto.tol isa PNM.AbsoluteCutoff
     @test PNM.get_tol(v_auto) == eps()
-    @test v_auto[arc, :] == v_exact[arc, :]             # exact, no entries dropped
+    # No entries dropped (AutoTolerance is a no-op below the gate). The two VirtualPTDFs are
+    # independently KLU-factorized, so kept values agree only to floating-point tolerance, not
+    # bit-for-bit — `==` here was flaky (ULP-level, run-to-run nondeterministic). The `count`
+    # check below is what actually verifies nothing was sparsified away.
+    @test isapprox(v_auto[arc, :], v_exact[arc, :]; atol = 1e-9)
+    @test count(!iszero, v_auto[arc, :]) == nnz_dense
 
     # Explicit Float64 -> absolute cutoff -> genuinely sparse, faithful column.
     v_num = VirtualPTDF(sys; tol = 1e-2)
@@ -188,7 +193,7 @@ end
     @test count(!iszero, sparse_row) < nnz_dense
     dense_row = v_exact[arc, :]
     for i in eachindex(sparse_row)
-        iszero(sparse_row[i]) || @test sparse_row[i] == dense_row[i]
+        iszero(sparse_row[i]) || @test isapprox(sparse_row[i], dense_row[i]; atol = 1e-9)
     end
 end
 

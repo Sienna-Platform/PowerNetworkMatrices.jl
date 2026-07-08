@@ -92,12 +92,11 @@ end
     trf = first(collect(PSY.get_components(PSY.ThreeWindingTransformer, sys)))
 
     rating3 = PNM.get_equivalent_rating(PNM.ThreeWindingTransformerWinding(trf, 3))
-    # Should return winding-specific rating if non-zero, else transformer rating
-    expected_rating3 =
-        trf.rating_tertiary == 0.0 ? PSY.get_rating(trf, PSY.DU) : trf.rating_tertiary
+    # The winding's own rating (device base); there is no parent-level rating to fall back to.
+    expected_rating3 = PSY.get_rating(PSY.get_tertiary_winding(trf), PSY.DU)
     @test rating3 == expected_rating3
 
-    set_available_secondary!(trf, false)
+    PSY.set_available!(PSY.get_secondary_winding(trf), false)
     @test PNM.get_equivalent_available(PNM.ThreeWindingTransformerWinding(trf, 3)) == true
     @test PNM.get_equivalent_available(PNM.ThreeWindingTransformerWinding(trf, 2)) == false
 end
@@ -171,21 +170,25 @@ function test_ybus_equivalence_branches_parallel(vector_branches)
         )
         add_component!(sys_equivalent, equivalent_branch)
     else
-        equivalent_transformer = PSY.PhaseShiftingTransformer(;
+        equivalent_transformer = PSY.TwoWindingTransformer(;
             name = "equivalent_transformer",
-            available = true,
-            active_power_flow = 0.0,
-            reactive_power_flow = 0.0,
-            arc = PSY.Arc(; from = bus1, to = bus2),
+            winding = PSY.TransformerWinding(;
+                arc = PSY.Arc(; from = bus1, to = bus2),
+                tap = PNM.get_equivalent_tap(equivalent_pbranch),
+                α = PNM.get_equivalent_shift(equivalent_pbranch),
+                available = true,
+                active_power_flow = 0.0,
+                reactive_power_flow = 0.0,
+                rating = 80.0,
+                base_power = 100.0,
+                base_voltage = 1.0,
+            ),
             r = PNM.get_equivalent_r(equivalent_pbranch),  # resistance
             x = PNM.get_equivalent_x(equivalent_pbranch),   # reactance
-            primary_shunt = Complex(
+            magnetizing_shunt = Complex(
                 PNM.get_equivalent_g_from(equivalent_pbranch),
                 PNM.get_equivalent_b_from(equivalent_pbranch),
             ),
-            tap = PNM.get_equivalent_tap(equivalent_pbranch),
-            α = PNM.get_equivalent_shift(equivalent_pbranch),
-            rating = 80.0,  # rating
             base_power = 100.0,
         )
         equivalent_admittance = PSY.FixedAdmittance(;
@@ -274,23 +277,26 @@ function test_ybus_equivalence_branches_series(vector_branches)
         )
         add_component!(sys_equivalent, equivalent_branch)
     else
-        equivalent_transformer = PSY.PhaseShiftingTransformer(;
+        equivalent_transformer = PSY.TwoWindingTransformer(;
             name = "equivalent_transformer",
-            available = true,
-            active_power_flow = 0.0,
-            reactive_power_flow = 0.0,
-            arc = PSY.Arc(; from = bus1, to = bus2),
+            winding = PSY.TransformerWinding(;
+                arc = PSY.Arc(; from = bus1, to = bus2),
+                tap = PNM.get_equivalent_tap(equivalent_pbranch),
+                α = PNM.get_equivalent_shift(equivalent_pbranch),
+                available = true,
+                active_power_flow = 0.0,
+                reactive_power_flow = 0.0,
+                rating = 80.0,
+                base_power = 100.0,
+                base_voltage = 1.0,
+            ),
             r = PNM.get_equivalent_r(equivalent_pbranch),  # resistance
             x = PNM.get_equivalent_x(equivalent_pbranch),   # reactance
-            primary_shunt = Complex(
+            magnetizing_shunt = Complex(
                 PNM.get_equivalent_g_from(equivalent_pbranch),
                 PNM.get_equivalent_b_from(equivalent_pbranch),
             ),
-            tap = PNM.get_equivalent_tap(equivalent_pbranch),
-            α = PNM.get_equivalent_shift(equivalent_pbranch),
-            rating = 80.0,  # rating
             base_power = 100.0,
-            #angle_limits = (min = -π / 2, max = π / 2),
         )
         equivalent_admittance = PSY.FixedAdmittance(;
             name = "equivalent_admittance",
@@ -349,47 +355,62 @@ end
         rating = 80.0,  # rating
         angle_limits = (min = -π / 2, max = π / 2),
     )
-    t1 = PSY.TapTransformer(;
+    t1 = PSY.TwoWindingTransformer(;
         name = "tfw_1",
-        available = true,
-        active_power_flow = 0.0,
-        reactive_power_flow = 0.0,
-        arc = PSY.Arc(nothing),
+        winding = PSY.TransformerWinding(;
+            arc = PSY.Arc(nothing),
+            tap = 1.0,
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            rating = 80.0,
+            base_power = 100.0,
+            base_voltage = 1.0,
+            winding_group_number = WindingGroupNumber.GROUP_11,
+        ),
         r = 0.122,  # resistance
         x = 0.1,   # reactance
-        primary_shunt = 0.01 + im * 0.02,
-        tap = 1.0,
-        rating = 80.0,  # rating
+        magnetizing_shunt = 0.01 + im * 0.02,
         base_power = 100.0,
-        winding_group_number = WindingGroupNumber.GROUP_11,
+        base_voltage_secondary = 1.0,
     )
-    t2 = PSY.TapTransformer(;
+    t2 = PSY.TwoWindingTransformer(;
         name = "tfw_2",
-        available = true,
-        active_power_flow = 0.0,
-        reactive_power_flow = 0.0,
-        arc = PSY.Arc(nothing),
+        winding = PSY.TransformerWinding(;
+            arc = PSY.Arc(nothing),
+            tap = 1.0,
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            rating = 80.0,
+            base_power = 100.0,
+            base_voltage = 1.0,
+            winding_group_number = WindingGroupNumber.GROUP_11,
+        ),
         r = 0.3,  # resistance
         x = 0.13,   # reactance
-        primary_shunt = 0.02 + im * 0.021,
-        tap = 1.0,
-        rating = 80.0,  # rating
+        magnetizing_shunt = 0.02 + im * 0.021,
         base_power = 100.0,
-        winding_group_number = WindingGroupNumber.GROUP_11,
+        base_voltage_secondary = 1.0,
     )
-    t3 = PSY.PhaseShiftingTransformer(;
+    t3 = PSY.TwoWindingTransformer(;
         name = "tfw_3",
-        available = true,
-        active_power_flow = 0.0,
-        reactive_power_flow = 0.0,
-        arc = PSY.Arc(nothing),
+        winding = PSY.TransformerWinding(;
+            arc = PSY.Arc(nothing),
+            tap = 1.0,
+            α = 0.2,
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            rating = 80.0,
+            base_power = 100.0,
+            base_voltage = 1.0,
+        ),
         r = 0.3,  # resistance
         x = 0.13,   # reactance
-        primary_shunt = 0.02 + im * 0.021,
-        tap = 1.0,
-        α = 0.2,
-        rating = 80.0,  # rating
+        magnetizing_shunt = 0.02 + im * 0.021,
         base_power = 100.0,
+        base_voltage_secondary = 1.0,
     )
     # Two lines in parallel:
     test_ybus_equivalence_branches_parallel([l1, l2])

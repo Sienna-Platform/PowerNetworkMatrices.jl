@@ -1,7 +1,7 @@
 """
-    _clone_transformer_with_name(xfmr, new_name) -> TapTransformer
+    _clone_transformer_with_name(xfmr, new_name) -> TwoWindingTransformer
 
-Clone a TapTransformer with a new name, sharing the same buses and identical
+Clone a TwoWindingTransformer with a new name, sharing the same buses and identical
 electrical parameters (R, X, tap, primary_shunt, rating, base_power,
 base_voltage_primary, base_voltage_secondary). The returned object has no
 supplemental attributes and is not attached to any system.
@@ -9,7 +9,7 @@ supplemental attributes and is not attached to any system.
 Used to create a second circuit on a bus pair so that `BA_Matrix` treats that
 pair as a 2-circuit parallel group, enabling N-2 parallel-circuit tests.
 """
-function _clone_transformer_with_name(xfmr::PSY.TapTransformer, new_name::String)
+function _clone_transformer_with_name(xfmr::PSY.TwoWindingTransformer, new_name::String)
     old_arc = PSY.get_arc(xfmr)
     # Deep-copy to reproduce every electrical parameter exactly (avoids re-reading
     # each field in a particular unit basis), then give it a fresh identity, name,
@@ -346,7 +346,7 @@ end
     # Shared fixture: RTS-GMLC system augmented with a second circuit on the A14
     # transformer (bus 109 → 111) to create a 2-circuit parallel group.
     sys = PSB.build_system(PSB.PSITestSystems, "test_RTS_GMLC_sys")
-    xfmr_a14 = PSY.get_component(PSY.TapTransformer, sys, "A14")
+    xfmr_a14 = PSY.get_component(PSY.TwoWindingTransformer, sys, "A14")
     PSY.add_component!(sys, _clone_transformer_with_name(xfmr_a14, "A14_b"))
 
     # Resolve the canonical arc key for the parallel group once.  A lightweight
@@ -377,7 +377,7 @@ end
         #   |vlodf[(111,114), par_arc_idx]| ≈ 0.2310
         sel_line_name = "A18"
 
-        A14_b_branch = PSY.get_component(PSY.TapTransformer, sys, "A14_b")
+        A14_b_branch = PSY.get_component(PSY.TwoWindingTransformer, sys, "A14_b")
         line_branch = PSY.get_component(PSY.Line, sys, sel_line_name)
 
         mod_a14b = NetworkModification(vmodf, A14_b_branch)
@@ -396,7 +396,7 @@ end
         sys_post = deepcopy(sys)
         PSY.remove_component!(
             sys_post,
-            PSY.get_component(PSY.TapTransformer, sys_post, "A14_b"),
+            PSY.get_component(PSY.TwoWindingTransformer, sys_post, "A14_b"),
         )
         PSY.remove_component!(
             sys_post,
@@ -436,7 +436,7 @@ end
         @test haskey(nrd.parallel_branch_map, par_key)
         @test length(nrd.parallel_branch_map[par_key].branches) == 2
 
-        A14_b_branch = PSY.get_component(PSY.TapTransformer, sys, "A14_b")
+        A14_b_branch = PSY.get_component(PSY.TwoWindingTransformer, sys, "A14_b")
         a18_branch = PSY.get_component(PSY.Line, sys, "A18")
         a19_branch = PSY.get_component(PSY.Line, sys, "A19")
 
@@ -458,7 +458,7 @@ end
         sys_post = deepcopy(sys)
         PSY.remove_component!(
             sys_post,
-            PSY.get_component(PSY.TapTransformer, sys_post, "A14_b"),
+            PSY.get_component(PSY.TwoWindingTransformer, sys_post, "A14_b"),
         )
         PSY.remove_component!(sys_post, PSY.get_component(PSY.Line, sys_post, "A18"))
         PSY.remove_component!(sys_post, PSY.get_component(PSY.Line, sys_post, "A19"))

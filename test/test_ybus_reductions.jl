@@ -222,55 +222,22 @@ end
 function set_radial_removed_arcs_to_unavailable!(sys, radial_removed_arcs, rbsm)
     for l in get_components(ACTransmission, sys)
         if typeof(l) <: ThreeWindingTransformer
-            primary_star_arc = get_primary_star_arc(l)
-            if (
-                (primary_star_arc.from.number, primary_star_arc.to.number) ∈
-                radial_removed_arcs
-            ) ||
-               (
-                (primary_star_arc.to.number, primary_star_arc.from.number) ∈
-                radial_removed_arcs
-            )
-                set_available_primary!(l, false)
-                if primary_star_arc.from.number ∈ keys(rbsm)
-                    set_available!(primary_star_arc.from, false)
-                end
-                if primary_star_arc.to.number ∈ keys(rbsm)
-                    set_available!(primary_star_arc.to, false)
-                end
-            end
-            secondary_star_arc = get_secondary_star_arc(l)
-            if (
-                (secondary_star_arc.from.number, secondary_star_arc.to.number) ∈
-                radial_removed_arcs
-            ) ||
-               (
-                (secondary_star_arc.to.number, secondary_star_arc.from.number) ∈
-                radial_removed_arcs
-            )
-                set_available_secondary!(l, false)
-                if secondary_star_arc.from.number ∈ keys(rbsm)
-                    set_available!(secondary_star_arc.from, false)
-                end
-                if secondary_star_arc.to.number ∈ keys(rbsm)
-                    set_available!(secondary_star_arc.to, false)
-                end
-            end
-            tertiary_star_arc = get_tertiary_star_arc(l)
-            if (
-                (tertiary_star_arc.from.number, tertiary_star_arc.to.number) ∈
-                radial_removed_arcs
-            ) ||
-               (
-                (tertiary_star_arc.to.number, tertiary_star_arc.from.number) ∈
-                radial_removed_arcs
-            )
-                set_available_tertiary!(l, false)
-                if tertiary_star_arc.from.number ∈ keys(rbsm)
-                    set_available!(tertiary_star_arc.from, false)
-                end
-                if tertiary_star_arc.to.number ∈ keys(rbsm)
-                    set_available!(tertiary_star_arc.to, false)
+            # Star arcs are now the per-winding arcs; availability is per winding.
+            for winding in get_windings(l)
+                star_arc = get_arc(winding)
+                if (
+                    (star_arc.from.number, star_arc.to.number) ∈ radial_removed_arcs
+                ) ||
+                   (
+                    (star_arc.to.number, star_arc.from.number) ∈ radial_removed_arcs
+                )
+                    set_available!(winding, false)
+                    if star_arc.from.number ∈ keys(rbsm)
+                        set_available!(star_arc.from, false)
+                    end
+                    if star_arc.to.number ∈ keys(rbsm)
+                        set_available!(star_arc.to, false)
+                    end
                 end
             end
         else
@@ -336,7 +303,7 @@ end
 
 @testset "ZeroImpedanceBranchReduction: transformer arcs are excluded" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
-    t = get_component(Transformer2W, sys, "Trans4")  # from=7, to=8
+    t = get_component(TwoWindingTransformer, sys, "Trans4")  # from=7, to=8
     set_r!(t, 0.0 * PSY.SU)
     set_x!(t, 1e-5 * PSY.SU)
 
@@ -737,18 +704,22 @@ end
     add_component!(sys, arc)
     add_component!(
         sys,
-        PSY.PhaseShiftingTransformer(;
+        PSY.TwoWindingTransformer(;
             name = "PST",
-            available = true,
-            active_power_flow = 0.0,
-            reactive_power_flow = 0.0,
-            arc = arc,
+            winding = PSY.TransformerWinding(;
+                arc = arc,
+                tap = 1.05,
+                α = 0.15,
+                available = true,
+                active_power_flow = 0.0,
+                reactive_power_flow = 0.0,
+                rating = 1.0,
+                base_power = 100.0,
+                base_voltage = 230.0,
+            ),
             r = 0.0,
             x = 0.2,
-            primary_shunt = Complex(0.0, 0.3),
-            tap = 1.05,
-            α = 0.15,
-            rating = 1.0,
+            magnetizing_shunt = Complex(0.0, 0.3),
             base_power = 100.0,
         ),
     )

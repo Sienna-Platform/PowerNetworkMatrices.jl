@@ -45,11 +45,9 @@ end
     network_reductions = NetworkReduction[RadialReduction()]
     Y = test_all_subtypes(sys, network_reductions)
     # test that the 3WT arc was actually reduced
-    trf = first(get_components(PSY.Transformer3W, sys))
+    trf = first(get_components(PSY.ThreeWindingTransformer, sys))
     trf_arcs = Tuple{Int, Int}[
-        PNM.get_arc_tuple(PSY.get_primary_star_arc(trf)),
-        PNM.get_arc_tuple(PSY.get_secondary_star_arc(trf)),
-        PNM.get_arc_tuple(PSY.get_tertiary_star_arc(trf)),
+        PNM.get_arc_tuple(PSY.get_arc(w)) for w in PSY.get_windings(trf)
     ]
     nrd = PNM.get_network_reduction_data(Y)
     @test any(arc in PNM.get_removed_arcs(nrd) for arc in trf_arcs) ||
@@ -62,7 +60,7 @@ end
     Y = test_all_subtypes(sys, network_reductions)
     # test that the 3WT arc was actually reduced
     nrd = PNM.get_network_reduction_data(Y)
-    @test PNM.ThreeWindingTransformerWinding{Transformer3W} in
+    @test PNM.ThreeWindingTransformerWinding in
           types_in_series_reduction(nrd)
 end
 
@@ -119,19 +117,23 @@ end
         rating = 100.0,
         angle_limits = (min = -π / 2, max = π / 2),
     )
-    tap = PSY.TapTransformer(;
+    tap = PSY.TwoWindingTransformer(;
         name = "mixed_tap",
-        available = true,
-        active_power_flow = 0.0,
-        reactive_power_flow = 0.0,
-        arc = PSY.Arc(; from = bus1, to = bus2),
+        winding = PSY.TransformerWinding(;
+            arc = PSY.Arc(; from = bus1, to = bus2),
+            tap = 1.0,
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            rating = 80.0,
+            base_power = 100.0,
+            base_voltage = 230.0,
+            winding_group_number = WindingGroupNumber.GROUP_11,
+        ),
         r = 0.122,
         x = 0.10,
-        primary_shunt = 0.01 + im * 0.02,
-        tap = 1.0,
-        rating = 80.0,
+        magnetizing_shunt = 0.01 + im * 0.02,
         base_power = 100.0,
-        winding_group_number = WindingGroupNumber.GROUP_11,
     )
 
     # Attach the branches to a system so the unit-aware getters used by
@@ -198,7 +200,7 @@ end
     )
     PowerNetworkMatrices.populate_branch_maps_by_type!(PNM.get_network_reduction_data(ptdf),
         Dict(Line => x -> occursin("B", get_name(x)),
-            TapTransformer => x -> occursin("B", get_name(x))))
+            TwoWindingTransformer => x -> occursin("B", get_name(x))))
     @test PNM.has_filtered_branches(PNM.get_network_reduction_data(ptdf))
     for k in keys(PNM.get_network_reduction_data(ptdf).name_to_arc_map[Line])
         @test occursin("B", k)

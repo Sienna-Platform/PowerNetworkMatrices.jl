@@ -26,7 +26,7 @@ end
 # First non-phase-shifter branch whose reduction-mapped arc is in `arcs`.
 function _branch_on_arcs(sys, nrd, arcs)
     for br in PSY.get_components(PSY.ACTransmission, sys)
-        typeof(br) <: PSY.PhaseShiftingTransformer && continue
+        _is_phase_shifting_2w(br) && continue
         if PNM.get_arc_tuple(br, nrd) in arcs
             return br
         end
@@ -102,11 +102,7 @@ end
     # 3WT-specific method and protect all of the transformer's buses.
     protected = PNM._collect_protected_buses(sys)
     @test !isempty(protected)
-    for arc in (
-        PSY.get_primary_star_arc(t3w),
-        PSY.get_secondary_star_arc(t3w),
-        PSY.get_tertiary_star_arc(t3w),
-    )
+    for arc in PSY.get_arc.(PSY.get_windings(t3w))
         @test PSY.get_number(PSY.get_from(arc)) in protected
         @test PSY.get_number(PSY.get_to(arc)) in protected
     end
@@ -184,7 +180,7 @@ end
     @test monitored !== nothing
     outaged = nothing
     for br in PSY.get_components(PSY.ACTransmission, sys)
-        typeof(br) <: PSY.PhaseShiftingTransformer && continue
+        _is_phase_shifting_2w(br) && continue
         br === monitored && continue
         outaged = br
         break
@@ -338,7 +334,7 @@ end
     # An external line: both endpoints outside the study area.
     external = nothing
     for br in PSY.get_components(PSY.ACTransmission, sys)
-        typeof(br) <: PSY.PhaseShiftingTransformer && continue
+        _is_phase_shifting_2w(br) && continue
         fb, tb = _arc_buses(br)
         if !(fb in study_set) && !(tb in study_set)
             external = br
@@ -375,7 +371,7 @@ end
 
     candidate = PSY.ACTransmission[target]
     for br in PSY.get_components(PSY.ACTransmission, sys)
-        typeof(br) <: PSY.PhaseShiftingTransformer && continue
+        _is_phase_shifting_2w(br) && continue
         br === target && continue
         push!(candidate, br)
         length(candidate) >= 8 && break

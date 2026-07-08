@@ -85,11 +85,15 @@ function get_typed_series_branch_map(
     return b.series_branch_map[T]::Dict{Tuple{Int, Int}, BranchesSeries}
 end
 
+# `ThreeWindingTransformerWinding` is no longer parametric (one concrete parent type), so the
+# per-type buckets are keyed by the parent transformer type and hold the non-parametric
+# wrapper. `T` is retained (always `PSY.ThreeWindingTransformer` today) for a minimal diff and
+# to keep the accessor signature symmetric with the other `get_typed_*` accessors.
 function get_typed_transformer3W_map(
     b::BranchMapsByType,
     ::Type{T},
 ) where {T <: PSY.ThreeWindingTransformer}
-    return b.transformer3W_map[T]::Dict{Tuple{Int, Int}, ThreeWindingTransformerWinding{T}}
+    return b.transformer3W_map[T]::Dict{Tuple{Int, Int}, ThreeWindingTransformerWinding}
 end
 
 function get_typed_reverse_transformer3W_map(
@@ -97,7 +101,7 @@ function get_typed_reverse_transformer3W_map(
     ::Type{T},
 ) where {T <: PSY.ThreeWindingTransformer}
     return b.reverse_transformer3W_map[T]::Dict{
-        ThreeWindingTransformerWinding{T},
+        ThreeWindingTransformerWinding,
         Tuple{Int, Int},
     }
 end
@@ -352,10 +356,7 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
             map_by_type = get!(
                 all_branch_maps_by_type.transformer3W_map,
                 _get_segment_type(v),
-                Dict{
-                    Tuple{Int, Int},
-                    ThreeWindingTransformerWinding{_get_segment_type(v)},
-                }(),
+                Dict{Tuple{Int, Int}, ThreeWindingTransformerWinding}(),
             )
             map_by_type[k] = v
 
@@ -372,10 +373,7 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
             map_by_type = get!(
                 all_branch_maps_by_type.reverse_transformer3W_map,
                 _get_segment_type(k),
-                Dict{
-                    ThreeWindingTransformerWinding{_get_segment_type(k)},
-                    Tuple{Int, Int},
-                }(),
+                Dict{ThreeWindingTransformerWinding, Tuple{Int, Int}}(),
             )
             map_by_type[k] = v
             component_name_map = get!(
@@ -397,9 +395,10 @@ _get_segment_components(x::AbstractBranchesParallel) = x.branches
 _get_segment_type(::T) where {T <: PSY.ACBranch} = T
 _get_segment_type(::BranchesParallel{T}) where {T <: PSY.ACTransmission} = T
 _get_segment_type(::MixedBranchesParallel) = MixedBranchesParallel
-_get_segment_type(
-    ::ThreeWindingTransformerWinding{T},
-) where {T <: PSY.ThreeWindingTransformer} = T
+# The wrapper is no longer parametric; the 3W reduction maps remain keyed by the parent
+# transformer type (a single concrete type now, `PSY.ThreeWindingTransformer`), preserving
+# the pre-refactor "look up 3W entries by the transformer type" contract.
+_get_segment_type(w::ThreeWindingTransformerWinding) = get_transformer_type(w)
 
 _get_concrete_types(x::T) where {T <: PSY.ACBranch} = [T]
 _get_concrete_types(::BranchesParallel{T}) where {T <: PSY.ACTransmission} = [T]
@@ -465,19 +464,25 @@ get_component_to_reduction_name_map(
     ::Type{T},
 ) where {T <: PSY.ACTransmission} =
     rb.component_to_reduction_name_map[T]
+# 3W winding entries are stored under the parent transformer type (see `_get_segment_type`);
+# a lookup keyed by the (non-parametric) wrapper type translates to that key. This override
+# is strictly more specific than the generic `T <: PSY.ACTransmission` method above, which
+# would otherwise (wrongly) index by the wrapper type.
 get_component_to_reduction_name_map(
     rb::NetworkReductionData,
-    ::Type{ThreeWindingTransformerWinding{T}},
-) where {T <: PSY.ThreeWindingTransformer} = rb.component_to_reduction_name_map[T]
+    ::Type{ThreeWindingTransformerWinding},
+) = rb.component_to_reduction_name_map[PSY.ThreeWindingTransformer]
 
 get_name_to_arc_maps(rb::NetworkReductionData) = rb.name_to_arc_map
 
 get_name_to_arc_map(rb::NetworkReductionData, ::Type{T}) where {T <: PSY.ACTransmission} =
     rb.name_to_arc_map[T]
+# See `get_component_to_reduction_name_map`: 3W winding lookups translate to the parent
+# transformer key; more specific than the generic `T <: PSY.ACTransmission` method.
 get_name_to_arc_map(
     rb::NetworkReductionData,
-    ::Type{ThreeWindingTransformerWinding{T}},
-) where {T <: PSY.ThreeWindingTransformer} = rb.name_to_arc_map[T]
+    ::Type{ThreeWindingTransformerWinding},
+) = rb.name_to_arc_map[PSY.ThreeWindingTransformer]
 
 has_radial_reduction(rb::NetworkReductionData) = has_radial_reduction(rb.reductions)
 has_degree_two_reduction(rb::NetworkReductionData) = has_degree_two_reduction(rb.reductions)

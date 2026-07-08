@@ -290,7 +290,7 @@ end
     trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
 
     # Disable one winding before building the matrix
-    PSY.set_available_secondary!(trf, false)
+    PSY.set_available!(PSY.get_secondary_winding(trf), false)
     vptdf = VirtualPTDF(sys)
 
     # Full 3WT outage should only produce 2 mods (secondary is unavailable)

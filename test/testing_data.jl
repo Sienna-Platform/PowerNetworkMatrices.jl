@@ -1,5 +1,11 @@
 using SparseArrays
 
+# The old `PhaseShiftingTransformer` 2W type collapsed into `TwoWindingTransformer`; phase
+# shifting is now a per-winding data property. Tests that used to skip branches with
+# `typeof(x) <: PhaseShiftingTransformer` use this data-driven predicate instead.
+_is_phase_shifting_2w(x) =
+    x isa PSY.TwoWindingTransformer && PSY.is_phase_shifting(x)
+
 include(joinpath(DATA_DIR, "psy_data", "data_5bus_pu.jl"))
 include(joinpath(DATA_DIR, "psy_data", "data_14bus_pu.jl"))
 

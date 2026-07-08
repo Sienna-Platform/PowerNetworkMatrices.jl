@@ -36,7 +36,7 @@ function _compute_parallel_partial_ybus_delta(
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
     for br in bp.branches
-        if _is_full_outage(delta_b, get_series_susceptance(br, PSY.SU))
+        if _is_full_outage(delta_b, PSY.get_series_susceptance(br, PSY.SU))
             return _negated_pi_model(ybus_branch_entries(br))
         end
     end
@@ -51,7 +51,7 @@ function _direct_arc_ybus_delta(
     br::PSY.ACTransmission,
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
-    b_arc = get_series_susceptance(br, PSY.SU)
+    b_arc = PSY.get_series_susceptance(br, PSY.SU)
     entries = ybus_branch_entries(br)
     if _is_full_outage(delta_b, b_arc)
         return _negated_pi_model(entries)
@@ -65,7 +65,7 @@ function _parallel_arc_ybus_delta(
     nr::NetworkReductionData,
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
-    if _is_full_outage(delta_b, get_series_susceptance(bp, PSY.SU))
+    if _is_full_outage(delta_b, PSY.get_series_susceptance(bp, PSY.SU))
         return _negated_pi_model(ybus_branch_entries(bp, nr))
     end
     return _compute_parallel_partial_ybus_delta(bp, delta_b)
@@ -78,7 +78,7 @@ function _series_arc_ybus_delta(
     arc_tuple::Tuple{Int, Int},
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
-    if !_is_full_outage(delta_b, get_series_susceptance(series_chain, PSY.SU))
+    if !_is_full_outage(delta_b, PSY.get_series_susceptance(series_chain, PSY.SU))
         error(
             "Partial Ybus delta is not supported on series-reduced arcs. " *
             "Arc $(arc_tuple), Δb=$(delta_b).",
@@ -93,7 +93,7 @@ function _transformer3W_arc_ybus_delta(
     arc_tuple::Tuple{Int, Int},
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
-    if !_is_full_outage(delta_b, get_series_susceptance(tr, PSY.SU))
+    if !_is_full_outage(delta_b, PSY.get_series_susceptance(tr, PSY.SU))
         error(
             "Partial Ybus delta is not supported on 3-winding transformer arcs. " *
             "Arc $(arc_tuple), Δb=$(delta_b).",
@@ -311,7 +311,10 @@ function NetworkModification(
     arc_ax = get_arc_axis(mat)
     for component in all_components
         _is_three_winding_transformer(component) || continue
-        star_num = get_arc_tuple(ThreeWindingTransformerWinding(component, 1))[2]
+        # Only the star-bus number is needed here — read it straight off winding 1's arc
+        # instead of constructing a full `ThreeWindingTransformerWinding` (which also derives
+        # and floors the star-leg impedance, unused on this path).
+        star_num = PSY.get_number(PSY.get_to(PSY.get_arc(PSY.get_windings(component)[1])))
         t3w_mods = [m for m in direct_mods if arc_ax[m.arc_index][2] == star_num]
         is_island = is_island || _3wt_real_bus_islanding(mat, t3w_mods)
     end
@@ -328,22 +331,11 @@ Classify a single outage component via multiple dispatch. ACTransmission branche
 classified into direct/parallel/series arc modifications. Shunt components produce
 diagonal admittance changes. Unsupported component types are silently ignored.
 """
-function _classify_outage_component!(
-    ::NetworkReductionData,
-    ::Dict,
-    ::Vector{Float64},
-    ::Dict{Int, Int},
-    component::PSY.PhaseShiftingTransformer,
-    ::Vector{ArcModification},
-    ::Vector{ArcModification},
-    ::Dict{Int, Vector{PSY.ACTransmission}},
-    ::Dict{Int, Tuple{Int, Int}},
-    ::Vector{ShuntModification},
-    ::Vector{String},
-)
-    _assert_not_phase_shifting(component)
-end
-
+# Phase-shifting transformers are unsupported for contingency classification. Previously a
+# dedicated `_classify_outage_component!(::PhaseShiftingTransformer)` method threw here; with
+# the collapsed transformer model the guard is data-driven (`_assert_not_phase_shifting`
+# tests `PSY.is_phase_shifting`) and lives at the top of the generic `ACTransmission` method
+# below, which also handles all non-phase-shifting two-winding transformers.
 function _classify_outage_component!(
     nr::NetworkReductionData,
     arc_lookup::Dict,
@@ -357,6 +349,7 @@ function _classify_outage_component!(
     ::Vector{ShuntModification},
     component_names::Vector{String},
 )
+    _assert_not_phase_shifting(component)
     tag, arc_tuple = _resolve_branch_arc(nr, component)
 
     if tag === :direct
@@ -379,6 +372,9 @@ function _classify_outage_component!(
         )
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
+        # `PSY.get_series_susceptance` divides a two-winding transformer's susceptance by
+        # its winding tap (reproducing the pre-refactor `TapTransformer`/`PST` value flow)
+        # and dispatches `ThreeWindingTransformerWinding` via PNM's extension.
         b_circuit = PSY.get_series_susceptance(component, PSY.SU)
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_circuit)
         push!(parallel_mods, ArcModification(arc_idx, -b_circuit, dy11, dy12, dy21, dy22))
@@ -500,14 +496,9 @@ Classify a single branch component into the appropriate arc modification using
 the network reduction reverse maps. For single-branch modifications only;
 use `_classify_outage_component!` for multi-component outages with series grouping.
 """
-function _classify_branch_modification(
-    ::NetworkReductionData,
-    ::Dict,
-    ::Vector{Float64},
-    branch::PSY.PhaseShiftingTransformer,
-)
-    _assert_not_phase_shifting(branch)
-end
+# Phase-shifting transformers are unsupported here too; the data-driven guard
+# (`_assert_not_phase_shifting`) sits at the top of the generic `ACTransmission` method
+# below rather than in a type-specific method (there is a single two-winding type now).
 
 """
     _classify_branch_modification(nr, arc_lookup, arc_susceptances, branch::PSY.ThreeWindingTransformer) -> Vector{ArcModification}
@@ -548,6 +539,7 @@ function _classify_branch_modification(
     arc_susceptances::Vector{Float64},
     branch::PSY.ACTransmission,
 )::Vector{ArcModification}
+    _assert_not_phase_shifting(branch)
     tag, arc_tuple = _resolve_branch_arc(nr, branch)
 
     if tag === :direct
@@ -569,6 +561,8 @@ function _classify_branch_modification(
         ]
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
+        # `PSY.get_series_susceptance` is tap-aware for two-winding transformers and
+        # dispatches the winding wrapper — see the note in `_classify_outage_component!`.
         b_circuit = PSY.get_series_susceptance(branch, PSY.SU)
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_circuit)
         return [ArcModification(arc_idx, -b_circuit, dy11, dy12, dy21, dy22)]

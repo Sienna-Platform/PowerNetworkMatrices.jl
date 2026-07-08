@@ -517,26 +517,45 @@ end
 """
     _assert_not_phase_shifting(component::PSY.ACTransmission)
 
-No-op for non-PST branches. Throws `ErrorException` for `PhaseShiftingTransformer`.
+No-op for non-transformer branches; transformer methods below throw for phase shifters.
 """
 _assert_not_phase_shifting(::PSY.ACTransmission) = nothing
 
-function _assert_not_phase_shifting(component::PSY.PhaseShiftingTransformer)
-    return error(
-        "Contingencies on PhaseShiftingTransformer are not supported. " *
-        "Component: $(PSY.get_name(component)).",
-    )
+"""
+    _assert_not_phase_shifting(component::Union{PSY.TwoWindingTransformer, PSY.ThreeWindingTransformer})
+
+Throws `ErrorException` when the transformer is phase shifting; no-op otherwise.
+
+Phase shifting is no longer a distinct type (the old `PhaseShiftingTransformer` /
+`PhaseShiftingTransformer3W` types collapsed into `TwoWindingTransformer` /
+`ThreeWindingTransformer`); it is a per-winding data property surfaced by the canonical
+`PSY.is_phase_shifting` predicate, preserving the old user-facing "not supported" contract.
+"""
+function _assert_not_phase_shifting(
+    component::Union{PSY.TwoWindingTransformer, PSY.ThreeWindingTransformer},
+)
+    if PSY.is_phase_shifting(component)
+        error(
+            "Contingencies on phase-shifting transformers are not supported. " *
+            "Component: $(PSY.get_name(component)).",
+        )
+    end
+    return nothing
 end
 
-# `PhaseShiftingTransformer3W` is a subtype of `ThreeWindingTransformer` but not of
-# `PhaseShiftingTransformer`, so it would otherwise reach the winding-decomposition
-# path and be modeled with susceptance deltas only, silently dropping the phase-shift
-# angle. Reject it explicitly to mirror the two-winding handling.
-function _assert_not_phase_shifting(component::PSY.PhaseShiftingTransformer3W)
-    return error(
-        "Contingencies on PhaseShiftingTransformer3W are not supported. " *
-        "Component: $(PSY.get_name(component)).",
-    )
+# A `ThreeWindingTransformerWinding` is `<: PSY.ACTransmission` but is not a PSY transformer
+# type, so the methods above would not inspect it; check its underlying winding directly.
+# Reachable: the generic `_classify_outage_component!`/`_classify_branch_modification`
+# (network_modification.jl) call `_assert_not_phase_shifting` on every classified branch,
+# and the 3W-parent methods recurse into them with the winding wrapper.
+function _assert_not_phase_shifting(component::ThreeWindingTransformerWinding)
+    if PSY.is_phase_shifting(component.winding)
+        error(
+            "Contingencies on phase-shifting transformer windings are not supported. " *
+            "Component: $(get_name(component)).",
+        )
+    end
+    return nothing
 end
 
 """
@@ -552,7 +571,7 @@ function _segment_susceptance_after_outage(
     segment::PSY.ACTransmission,
     tripped_set::Set{<:PSY.ACTransmission},
 )::Float64
-    return segment ∈ tripped_set ? 0.0 : get_series_susceptance(segment, PSY.SU)
+    return segment ∈ tripped_set ? 0.0 : PSY.get_series_susceptance(segment, PSY.SU)
 end
 
 function _segment_susceptance_after_outage(
@@ -562,7 +581,7 @@ function _segment_susceptance_after_outage(
     b_remaining = 0.0
     for branch in segment.branches
         if branch ∉ tripped_set
-            b_remaining += get_series_susceptance(branch, PSY.SU)
+            b_remaining += PSY.get_series_susceptance(branch, PSY.SU)
         end
     end
     return b_remaining
@@ -601,7 +620,7 @@ function _compute_series_outage_delta_b(
     series_chain::BranchesSeries,
     tripped::Vector{<:PSY.ACTransmission},
 )::Float64
-    b_old = get_series_susceptance(series_chain, PSY.SU)
+    b_old = PSY.get_series_susceptance(series_chain, PSY.SU)
     tripped_set = Set{PSY.ACTransmission}(tripped)
     remaining_inv_sum = 0.0
     for segment in series_chain

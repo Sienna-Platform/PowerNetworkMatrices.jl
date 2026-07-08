@@ -258,12 +258,12 @@ function add_to_branch_maps!(
     parallel_branch_map = get_parallel_branch_map(nr)
     reverse_parallel_branch_map = get_reverse_parallel_branch_map(nr)
     arc_tuple = get_arc_tuple(arc, nr)
-    if haskey(parallel_branch_map, arc_tuple) && typeof(br) ∉ SKIP_PARALLEL_REDUCTION_TYPES
+    if haskey(parallel_branch_map, arc_tuple) && !_skip_parallel_reduction(br)
         _push_parallel_branch!(parallel_branch_map, arc_tuple, br)
         reverse_parallel_branch_map[br] = arc_tuple
     elseif haskey(direct_branch_map, arc_tuple) &&
-           typeof(direct_branch_map[arc_tuple]) ∉ SKIP_PARALLEL_REDUCTION_TYPES &&
-           typeof(br) ∉ SKIP_PARALLEL_REDUCTION_TYPES
+           !_skip_parallel_reduction(direct_branch_map[arc_tuple]) &&
+           !_skip_parallel_reduction(br)
         corresponding_branch = direct_branch_map[arc_tuple]
         delete!(direct_branch_map, arc_tuple)
         delete!(reverse_direct_branch_map, corresponding_branch)
@@ -300,7 +300,7 @@ connecting to a virtual star bus. Each available winding is mapped separately.
 - `br::PSY.ThreeWindingTransformer`: Three-winding transformer to add
 
 # Implementation Details
-- Only adds arcs for available windings (checked via PSY.get_available_*)
+- Only adds arcs for available windings (per-winding `PSY.get_available`)
 - Maintains transformer3W_map and reverse_transformer3W_map
 - Each winding is numbered (1=primary, 2=secondary, 3=tertiary)
 """
@@ -313,23 +313,15 @@ function add_to_branch_maps!(
 )
     transformer3W_map = get_transformer3W_map(nr)
     reverse_transformer3W_map = get_reverse_transformer3W_map(nr)
-    if PSY.get_available_primary(br)
-        primary_star_arc_tuple = get_arc_tuple(primary_star_arc, nr)
-        winding = ThreeWindingTransformerWinding(br, 1)
-        transformer3W_map[primary_star_arc_tuple] = winding
-        reverse_transformer3W_map[winding] = primary_star_arc_tuple
-    end
-    if PSY.get_available_secondary(br)
-        secondary_star_arc_tuple = get_arc_tuple(secondary_star_arc, nr)
-        winding = ThreeWindingTransformerWinding(br, 2)
-        transformer3W_map[secondary_star_arc_tuple] = winding
-        reverse_transformer3W_map[winding] = secondary_star_arc_tuple
-    end
-    if PSY.get_available_tertiary(br)
-        tertiary_star_arc_tuple = get_arc_tuple(tertiary_star_arc, nr)
-        winding = ThreeWindingTransformerWinding(br, 3)
-        transformer3W_map[tertiary_star_arc_tuple] = winding
-        reverse_transformer3W_map[winding] = tertiary_star_arc_tuple
+    windings = PSY.get_windings(br)
+    star_arcs = (primary_star_arc, secondary_star_arc, tertiary_star_arc)
+    for i in 1:3
+        if PSY.get_available(windings[i])
+            arc_tuple = get_arc_tuple(star_arcs[i], nr)
+            winding = ThreeWindingTransformerWinding(br, i)
+            transformer3W_map[arc_tuple] = winding
+            reverse_transformer3W_map[winding] = arc_tuple
+        end
     end
     return
 end
@@ -522,18 +514,17 @@ function ybus_branch_entries(
     return ybus_reduced[1, 1], ybus_reduced[1, 2], ybus_reduced[2, 1], ybus_reduced[2, 2]
 end
 
-_get_tap(::PSY.Transformer2W) = one(YBUS_ELTYPE)
-_get_tap(br::PSY.TwoWindingTransformer) = PSY.get_tap(br)
-
-"""Ybus entries for a `Transformer2W`, `TapTransformer`, or `PhaseShiftingTransformer`."""
+"""Ybus entries for a `TwoWindingTransformer` (tap, phase shift, and magnetizing shunt read
+from its single [`PSY.TransformerWinding`](@ref); tap defaults to 1 and shift to 0)."""
 function ybus_branch_entries(
     br::PSY.TwoWindingTransformer;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
+    winding = PSY.get_winding(br)
     Y_t = 1 / (PSY.get_r(br, PSY.SU) + PSY.get_x(br, PSY.SU) * 1im)
-    tap = _get_tap(br) * exp(PSY.get_α(br) * 1im)
-    c_tap = _get_tap(br) * exp(-1 * PSY.get_α(br) * 1im)
-    y_shunt = PSY.get_primary_shunt(br, PSY.SU)
+    tap = PSY.get_tap(winding) * exp(PSY.get_α(winding) * 1im)
+    c_tap = PSY.get_tap(winding) * exp(-1 * PSY.get_α(winding) * 1im)
+    y_shunt = PSY.get_magnetizing_shunt(br, PSY.SU)
     Y11 = Y_t / abs2(tap)
     if !isfinite(Y11) || !isfinite(Y_t) || !isfinite(y_shunt * c_tap)
         error(
@@ -546,49 +537,37 @@ function ybus_branch_entries(
     return (Y11 + y_shunt, Y12, Y21, Y22)
 end
 
-"""Ybus branch entries for an arc in the wye model of a `ThreeWindingTransformer`."""
+"""Ybus branch entries for one star-leg arc of a `ThreeWindingTransformer`. The star-leg
+impedance is the derived, floored value stored on the wrapper; tap and phase shift are read
+from the winding. Only the primary winding (winding 1) carries the parent's magnetizing
+shunt."""
 function ybus_branch_entries(
     tp::ThreeWindingTransformerWinding;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
     br = get_transformer(tp)
-    winding_number = get_winding_number(tp)
-    if winding_number == 1
-        Y_t = 1 / (PSY.get_r_primary(br, PSY.SU) + PSY.get_x_primary(br, PSY.SU) * 1im)
-        tap = PSY.get_primary_turns_ratio(br) * exp(PSY.get_α_primary(br) * 1im)
-        c_tap = PSY.get_primary_turns_ratio(br) * exp(-1 * PSY.get_α_primary(br) * 1im)
-        Y11 = Y_t / abs2(tap)
-        y_shunt = PSY.get_g(br, PSY.SU) + im * PSY.get_b(br, PSY.SU)
+    winding = tp.winding
+    Y_t = 1 / (get_equivalent_r(tp) + get_equivalent_x(tp) * 1im)
+    tap_ratio = PSY.get_tap(winding)
+    α = PSY.get_α(winding)
+    tap = tap_ratio * exp(α * 1im)
+    c_tap = tap_ratio * exp(-1 * α * 1im)
+    Y11 = Y_t / abs2(tap)
+    if get_winding_number(tp) == 1
+        # primary bus alone gets the shunt term
+        y_shunt = PSY.get_magnetizing_shunt(br, PSY.SU)
         if !isfinite(Y11) || !isfinite(y_shunt)
             error(
                 "Data in $(PSY.get_name(br)) is incorrect.
-                r_p = $(PSY.get_r_primary(br, PSY.SU)), x_p = $(PSY.get_x_primary(br, PSY.SU)), primary_turns_ratio = $(PSY.get_primary_turns_ratio(br))",
+                r = $(get_equivalent_r(tp)), x = $(get_equivalent_x(tp)), tap = $(tap_ratio)",
             )
         end
-        # primary bus alone gets the shunt term
         Y11 += y_shunt
-    elseif winding_number == 2
-        Y_t = 1 / (PSY.get_r_secondary(br, PSY.SU) + PSY.get_x_secondary(br, PSY.SU) * 1im)
-        tap = PSY.get_secondary_turns_ratio(br) * exp(PSY.get_α_secondary(br) * 1im)
-        c_tap = PSY.get_secondary_turns_ratio(br) * exp(-1 * PSY.get_α_secondary(br) * 1im)
-        Y11 = Y_t / abs2(tap)
-        if !isfinite(Y11)
-            error(
-                "Data in $(PSY.get_name(br)) is incorrect.
-                r_s = $(PSY.get_r_secondary(br, PSY.SU)), x_s = $(PSY.get_x_secondary(br, PSY.SU)), secondary_turns_ratio = $(PSY.get_secondary_turns_ratio(br))",
-            )
-        end
-    elseif winding_number == 3
-        Y_t = 1 / (PSY.get_r_tertiary(br, PSY.SU) + PSY.get_x_tertiary(br, PSY.SU) * 1im)
-        tap = PSY.get_tertiary_turns_ratio(br) * exp(PSY.get_α_tertiary(br) * 1im)
-        c_tap = PSY.get_tertiary_turns_ratio(br) * exp(-1 * PSY.get_α_tertiary(br) * 1im)
-        Y11 = Y_t / abs2(tap)
-        if !isfinite(Y11)
-            error(
-                "Data in $(PSY.get_name(br)) is incorrect.
-                r_t = $(PSY.get_r_tertiary(br, PSY.SU)), x_t = $(PSY.get_x_tertiary(br, PSY.SU)), tertiary_turns_ratio = $(PSY.get_tertiary_turns_ratio(br))",
-            )
-        end
+    elseif !isfinite(Y11)
+        error(
+            "Data in $(PSY.get_name(br)) is incorrect.
+            r = $(get_equivalent_r(tp)), x = $(get_equivalent_x(tp)), tap = $(tap_ratio)",
+        )
     end
     Y12 = (-Y_t / c_tap)
     Y21 = (-Y_t / tap)
@@ -597,7 +576,7 @@ function ybus_branch_entries(
 end
 
 """Handles ybus entries for most 2-node AC branches. The types handled here are:
-`Line`, `DiscreteControlledACBranch`, `Transformer2W`, `TapTransformer`, and `PhaseShiftingTransformer`.
+`Line`, `DiscreteControlledACBranch`, and `TwoWindingTransformer`.
 """
 function _ybus!(
     y11::Vector{YBUS_ELTYPE},
@@ -635,41 +614,16 @@ function _ybus!(
     ix::Int,
     nr::NetworkReductionData,
 )
-    primary_star_arc = PSY.get_primary_star_arc(br)
-    secondary_star_arc = PSY.get_secondary_star_arc(br)
-    tertiary_star_arc = PSY.get_tertiary_star_arc(br)
-    add_to_branch_maps!(nr, primary_star_arc, secondary_star_arc, tertiary_star_arc, br)
-    primary_available = PSY.get_available_primary(br)
-    secondary_available = PSY.get_available_secondary(br)
-    tertiary_available = PSY.get_available_tertiary(br)
+    windings = PSY.get_windings(br)
+    star_arcs = PSY.get_arc.(windings)
+    add_to_branch_maps!(nr, star_arcs[1], star_arcs[2], star_arcs[3], br)
     n_entries = 0
-    if primary_available
-        primary_ix, star_ix = get_bus_indices(primary_star_arc, num_bus, nr)
-        fb[offset_ix + ix + n_entries] = primary_ix
+    for i in 1:3
+        PSY.get_available(windings[i]) || continue
+        term_ix, star_ix = get_bus_indices(star_arcs[i], num_bus, nr)
+        fb[offset_ix + ix + n_entries] = term_ix
         tb[offset_ix + ix + n_entries] = star_ix
-        (Y11, Y12, Y21, Y22) = ybus_branch_entries(ThreeWindingTransformerWinding(br, 1))
-        y11[offset_ix + ix + n_entries] = Y11
-        y12[offset_ix + ix + n_entries] = Y12
-        y21[offset_ix + ix + n_entries] = Y21
-        y22[offset_ix + ix + n_entries] = Y22
-        n_entries += 1
-    end
-    if secondary_available
-        secondary_ix, star_ix = get_bus_indices(secondary_star_arc, num_bus, nr)
-        fb[offset_ix + ix + n_entries] = secondary_ix
-        tb[offset_ix + ix + n_entries] = star_ix
-        (Y11, Y12, Y21, Y22) = ybus_branch_entries(ThreeWindingTransformerWinding(br, 2))
-        y11[offset_ix + ix + n_entries] = Y11
-        y12[offset_ix + ix + n_entries] = Y12
-        y21[offset_ix + ix + n_entries] = Y21
-        y22[offset_ix + ix + n_entries] = Y22
-        n_entries += 1
-    end
-    if tertiary_available
-        tertiary_ix, star_ix = get_bus_indices(tertiary_star_arc, num_bus, nr)
-        fb[offset_ix + ix + n_entries] = tertiary_ix
-        tb[offset_ix + ix + n_entries] = star_ix
-        (Y11, Y12, Y21, Y22) = ybus_branch_entries(ThreeWindingTransformerWinding(br, 3))
+        (Y11, Y12, Y21, Y22) = ybus_branch_entries(ThreeWindingTransformerWinding(br, i))
         y11[offset_ix + ix + n_entries] = Y11
         y12[offset_ix + ix + n_entries] = Y12
         y21[offset_ix + ix + n_entries] = Y21
@@ -747,10 +701,7 @@ function _buildybus!(
 )
     branch_entries_transformer_3w = 0
     for br in transformer_3w
-        branch_entries_transformer_3w +=
-            PSY.get_available_primary(br) +
-            PSY.get_available_secondary(br) +
-            PSY.get_available_tertiary(br)
+        branch_entries_transformer_3w += count(PSY.get_available, PSY.get_windings(br))
     end
     branchcount = length(branches) + branch_entries_transformer_3w
     branchcount_no_3w = length(branches)
@@ -777,7 +728,7 @@ function _buildybus!(
     ix = 1
     for b in transformer_3w
         if PSY.get_name(b) == "init"
-            throw(DataFormatError("The data in Transformer3W is invalid"))
+            throw(DataFormatError("The data in ThreeWindingTransformer is invalid"))
         end
         n_entries = _ybus!(
             y11,

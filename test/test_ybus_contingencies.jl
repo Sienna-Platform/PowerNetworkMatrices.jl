@@ -4,7 +4,7 @@
     vptdf = VirtualPTDF(sys)
 
     for branch in get_components(
-        x -> !(typeof(x) <: Union{PhaseShiftingTransformer, DiscreteControlledACBranch}),
+        x -> !(typeof(x) <: DiscreteControlledACBranch || _is_phase_shifting_2w(x)),
         ACTransmission, sys,
     )
         mod_new = NetworkModification(vptdf, branch)
@@ -218,7 +218,7 @@ end
     nr = PNM.get_network_reduction_data(vptdf)
 
     for branch in get_components(
-        x -> !(typeof(x) <: Union{PhaseShiftingTransformer, DiscreteControlledACBranch}),
+        x -> !(typeof(x) <: DiscreteControlledACBranch || _is_phase_shifting_2w(x)),
         ACTransmission, sys,
     )
         mod = NetworkModification(vptdf, branch)

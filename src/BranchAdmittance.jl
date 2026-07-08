@@ -7,12 +7,13 @@
 # This logic historically lived inline in PowerSimulations.jl's PowerModels translator
 # (`get_branch_to_pm`).
 
-# Transformer ratio / phase-shift accessors. Default to a unit, shift-free branch.
+# Transformer ratio / phase-shift accessors. Default to a unit, shift-free branch; a
+# two-winding transformer reads tap/shift off its single winding (tap defaults to 1, shift
+# to 0 for non-shifting windings).
 _branch_tap(::PSY.ACTransmission) = 1.0
-_branch_tap(b::PSY.TapTransformer) = PSY.get_tap(b)
-_branch_tap(b::PSY.PhaseShiftingTransformer) = PSY.get_tap(b)
+_branch_tap(b::PSY.TwoWindingTransformer) = PSY.get_tap(PSY.get_winding(b))
 _branch_shift(::PSY.ACTransmission) = 0.0
-_branch_shift(b::PSY.PhaseShiftingTransformer) = PSY.get_α(b)
+_branch_shift(b::PSY.TwoWindingTransformer) = PSY.get_α(PSY.get_winding(b))
 
 """
     branch_admittance(b::PSY.ACTransmission) -> NamedTuple
@@ -32,16 +33,16 @@ function branch_admittance(b::PSY.ACTransmission)
 end
 
 """
-    branch_admittance(b::Union{PSY.Transformer2W, PSY.TapTransformer, PSY.PhaseShiftingTransformer}) -> NamedTuple
+    branch_admittance(b::PSY.TwoWindingTransformer) -> NamedTuple
 
 π-model admittance for a two-winding transformer. The magnetizing shunt is allocated to the
 primary (from) side only; `tap`/`shift` carry the transformer ratio and phase shift.
 """
 function branch_admittance(
-    b::Union{PSY.Transformer2W, PSY.TapTransformer, PSY.PhaseShiftingTransformer},
+    b::PSY.TwoWindingTransformer,
 )
     ys = 1.0 / (PSY.get_r(b, PSY.SU) + PSY.get_x(b, PSY.SU) * im)
-    yt = PSY.get_primary_shunt(b, PSY.SU)
+    yt = PSY.get_magnetizing_shunt(b, PSY.SU)
     return (
         g = real(ys), b = imag(ys),
         g_fr = real(yt), b_fr = imag(yt), g_to = 0.0, b_to = 0.0,
@@ -113,19 +114,15 @@ end
 # ── Three-winding transformer admittance ─────────────────────────────────────
 
 """
-    three_winding_arcs(d::PSY.Transformer3W) -> Vector{<:NamedTuple}
+    three_winding_arcs(d::PSY.ThreeWindingTransformer) -> Vector{<:NamedTuple}
 
-Decompose a `Transformer3W` into its three wye-model windings via
+Decompose a `ThreeWindingTransformer` into its three wye-model windings via
 [`ThreeWindingTransformerWinding`](@ref), returning per-winding data: a naming `suffix`, the
 star-point `arc` (for reduction-aware bus mapping), the winding `rating`, and the `winding`
 object itself (for [`winding_admittance`](@ref)).
 """
-function three_winding_arcs(d::PSY.Transformer3W)
-    star_arcs = (
-        PSY.get_primary_star_arc(d),
-        PSY.get_secondary_star_arc(d),
-        PSY.get_tertiary_star_arc(d),
-    )
+function three_winding_arcs(d::PSY.ThreeWindingTransformer)
+    star_arcs = PSY.get_arc.(PSY.get_windings(d))
     out = NamedTuple[]
     for i in 1:3
         w = ThreeWindingTransformerWinding(d, i)
@@ -142,10 +139,9 @@ function three_winding_arcs(d::PSY.Transformer3W)
     return out
 end
 
-# No phase shift for windings; only the (optional) winding tap matters for the π-model.
-_winding_tap(::ThreeWindingTransformerWinding) = 1.0
-_winding_tap(w::ThreeWindingTransformerWinding{PSY.PhaseShiftingTransformer3W}) =
-    get_equivalent_tap(w)
+# Only the winding tap matters for the π-model here (phase shift is not carried by
+# `winding_admittance`); a winding with no tap reports 1.0.
+_winding_tap(w::ThreeWindingTransformerWinding) = get_equivalent_tap(w)
 
 """
     winding_admittance(w::ThreeWindingTransformerWinding) -> NamedTuple
@@ -168,8 +164,12 @@ end
 """
     branch_flow_limits(branch) -> NamedTuple
 
-Directional flow limits in MVA (device units, `PSY.DU`): `(from_to::Float64, to_from::Float64)`. For symmetric
+Directional flow limits in MVA (device units, `PSY.DU`): `(from_to, to_from)`. For symmetric
 branches both fields equal the branch rating; `MonitoredLine` carries asymmetric limits.
+Branches whose rating lives on a transformer winding (`TwoWindingTransformer`,
+`ThreeWindingTransformerWinding`) — and reduction groups containing them — may carry
+`nothing` in both fields when no rating is known; `Line`/`MonitoredLine` limits are always
+`Float64`.
 """
 function branch_flow_limits end
 
@@ -178,15 +178,14 @@ function branch_flow_limits(b::PSY.MonitoredLine)
     return (from_to = fl.from_to, to_from = fl.to_from)
 end
 
-function branch_flow_limits(
-    b::Union{
-        PSY.Line,
-        PSY.Transformer2W,
-        PSY.TapTransformer,
-        PSY.PhaseShiftingTransformer,
-    },
-)
+function branch_flow_limits(b::PSY.Line)
     r = PSY.get_rating(b, PSY.DU)
+    return (from_to = r, to_from = r)
+end
+
+# A `TwoWindingTransformer` has no parent rating; the rating lives on its single winding.
+function branch_flow_limits(b::PSY.TwoWindingTransformer)
+    r = PSY.get_rating(PSY.get_winding(b), PSY.DU)
     return (from_to = r, to_from = r)
 end
 

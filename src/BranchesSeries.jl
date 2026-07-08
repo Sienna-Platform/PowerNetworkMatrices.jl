@@ -104,23 +104,35 @@ Base.length(bs::BranchesSeries) =
 
 Base.eltype(::Type{BranchesSeries}) = PSY.ACTransmission
 
-function get_series_susceptance(series_chain::BranchesSeries, units::IS.AbstractUnitSystem)
+function PSY.get_series_susceptance(
+    series_chain::BranchesSeries,
+    units::IS.AbstractUnitSystem,
+)
     series_susceptances_sum =
-        sum(inv(get_series_susceptance(x, units)) for x in series_chain)
+        sum(inv(PSY.get_series_susceptance(x, units)) for x in series_chain)
     total_susceptance = 1 / series_susceptances_sum
     return total_susceptance
 end
 
 """
-    get_equivalent_rating(bs::BranchesSeries)
+    get_equivalent_rating(bs::BranchesSeries) -> Union{Nothing, Float64}
 
 Calculate the rating for branches in series.
 Series chains can be composed of PSY.ACTransmission branches and parallel groups.
 For series circuits, the rating is limited by the weakest link: Rating_total = min(Rating1, Rating2, ..., Ratingn).
 Parallel members contribute their N-1 single-element-contingency rating.
+
+Members with no known rating (transformer windings carry `rating::Union{Nothing, Float64}`)
+do not bind the minimum and are skipped; returns `nothing` only when no member has a known
+rating.
 """
 function get_equivalent_rating(bs::BranchesSeries)
-    return minimum(_series_member_rating(branch) for branch in bs)
+    # A series member's rating may be `nothing` (an unrated `ThreeWindingTransformerWinding`,
+    # or a parallel block whose members are all unrated); a member with no known limit does
+    # not bind the weakest-link minimum, so skip it. Propagate `nothing` only when no member
+    # has a known rating. See `get_sum_of_max_rating` (BranchesParallel.jl) for the policy.
+    ratings = filter(!isnothing, [_series_member_rating(branch) for branch in bs])
+    return isempty(ratings) ? nothing : minimum(ratings)
 end
 
 _series_member_rating(branch::PSY.ACTransmission) = get_equivalent_rating(branch)
@@ -135,6 +147,16 @@ function get_equivalent_rating(bs::PSY.ACTransmission)
 end
 
 """
+    get_equivalent_rating(bs::PSY.TwoWindingTransformer) -> Union{Nothing, Float64}
+
+A `TwoWindingTransformer` has no parent rating (there is no `get_rating(::TwoWindingTransformer)`);
+the rating lives on its single winding and may be `nothing`. Mirrors `branch_flow_limits`.
+"""
+function get_equivalent_rating(bs::PSY.TwoWindingTransformer)
+    return PSY.get_rating(PSY.get_winding(bs), PSY.DU)
+end
+
+"""
     get_equivalent_rating(bs::PSY.GenericArcImpedance)
 
 Rating is assumed to be max_flow for GenericArcImpedance.
@@ -145,14 +167,19 @@ function get_equivalent_rating(bs::PSY.GenericArcImpedance)
 end
 
 """
-    get_equivalent_emergency_rating(bs::BranchesSeries)
+    get_equivalent_emergency_rating(bs::BranchesSeries) -> Union{Nothing, Float64}
 
 Calculate the emergency rating for branches in series.
 For series circuits, the emergency rating is limited by the weakest link: Rating_total = min(Rating1, Rating2, ..., Ratingn)
+
+Members with no known rating do not bind the minimum and are skipped; returns `nothing` only
+when no member has a known rating (see [`get_equivalent_rating`](@ref)).
 """
 function get_equivalent_emergency_rating(bs::BranchesSeries)
-    # Minimum emergency rating for series branches (weakest link)
-    return minimum(get_equivalent_emergency_rating(branch) for branch in bs)
+    # Minimum emergency rating for series branches (weakest link); skip members with no known
+    # rating (see `get_equivalent_rating(::BranchesSeries)` for the `nothing` policy).
+    ratings = filter(!isnothing, [get_equivalent_emergency_rating(branch) for branch in bs])
+    return isempty(ratings) ? nothing : minimum(ratings)
 end
 
 """
@@ -167,6 +194,22 @@ function get_equivalent_emergency_rating(branch::PSY.ACTransmission)
         return PSY.get_rating(branch, PSY.DU)
     end
     return PSY.get_rating_b(branch, PSY.DU)
+end
+
+"""
+    get_equivalent_emergency_rating(branch::PSY.TwoWindingTransformer) -> Union{Nothing, Float64}
+
+`TwoWindingTransformer` carries its ratings on the winding (no parent
+`get_rating`/`get_rating_b`); falls back to the winding's normal-operation rating when
+`rating_b` is unset. May return `nothing` when the winding has neither rating.
+"""
+function get_equivalent_emergency_rating(branch::PSY.TwoWindingTransformer)
+    w = PSY.get_winding(branch)
+    if isnothing(PSY.get_rating_b(w, PSY.DU))
+        @debug "Winding of $(PSY.get_name(branch)) has no 'rating_b' defined; using normal-operation rating."
+        return PSY.get_rating(w, PSY.DU)
+    end
+    return PSY.get_rating_b(w, PSY.DU)
 end
 
 """
