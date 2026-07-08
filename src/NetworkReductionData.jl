@@ -85,10 +85,10 @@ function get_typed_series_branch_map(
     return b.series_branch_map[T]::Dict{Tuple{Int, Int}, BranchesSeries}
 end
 
-# `ThreeWindingTransformerWinding` is no longer parametric (one concrete parent type), so the
-# per-type buckets are keyed by the parent transformer type and hold the non-parametric
-# wrapper. `T` is retained (always `PSY.ThreeWindingTransformer` today) for a minimal diff and
-# to keep the accessor signature symmetric with the other `get_typed_*` accessors.
+# `ThreeWindingTransformerWinding` is non-parametric (one concrete parent type), so the
+# per-type buckets are keyed by the parent transformer type and hold the wrapper. `T`
+# (always `PSY.ThreeWindingTransformer`) is retained to keep the accessor signature
+# symmetric with the other `get_typed_*` accessors.
 function get_typed_transformer3W_map(
     b::BranchMapsByType,
     ::Type{T},
@@ -395,9 +395,8 @@ _get_segment_components(x::AbstractBranchesParallel) = x.branches
 _get_segment_type(::T) where {T <: PSY.ACBranch} = T
 _get_segment_type(::BranchesParallel{T}) where {T <: PSY.ACTransmission} = T
 _get_segment_type(::MixedBranchesParallel) = MixedBranchesParallel
-# The wrapper is no longer parametric; the 3W reduction maps remain keyed by the parent
-# transformer type (a single concrete type now, `PSY.ThreeWindingTransformer`), preserving
-# the pre-refactor "look up 3W entries by the transformer type" contract.
+# The 3W reduction maps are keyed by the parent transformer type
+# (`PSY.ThreeWindingTransformer`), so 3W entries are looked up by the transformer type.
 _get_segment_type(w::ThreeWindingTransformerWinding) = get_transformer_type(w)
 
 _get_concrete_types(x::T) where {T <: PSY.ACBranch} = [T]

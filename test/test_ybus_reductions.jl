@@ -222,7 +222,7 @@ end
 function set_radial_removed_arcs_to_unavailable!(sys, radial_removed_arcs, rbsm)
     for l in get_components(ACTransmission, sys)
         if typeof(l) <: ThreeWindingTransformer
-            # Star arcs are now the per-winding arcs; availability is per winding.
+            # Star arcs are the per-winding arcs; availability is per winding.
             for winding in get_windings(l)
                 star_arc = get_arc(winding)
                 if (

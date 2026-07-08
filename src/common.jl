@@ -526,10 +526,8 @@ _assert_not_phase_shifting(::PSY.ACTransmission) = nothing
 
 Throws `ErrorException` when the transformer is phase shifting; no-op otherwise.
 
-Phase shifting is no longer a distinct type (the old `PhaseShiftingTransformer` /
-`PhaseShiftingTransformer3W` types collapsed into `TwoWindingTransformer` /
-`ThreeWindingTransformer`); it is a per-winding data property surfaced by the canonical
-`PSY.is_phase_shifting` predicate, preserving the old user-facing "not supported" contract.
+Phase shifting is a per-winding data property surfaced by the `PSY.is_phase_shifting`
+predicate, not a distinct type.
 """
 function _assert_not_phase_shifting(
     component::Union{PSY.TwoWindingTransformer, PSY.ThreeWindingTransformer},

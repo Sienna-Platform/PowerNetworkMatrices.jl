@@ -1,7 +1,5 @@
 # Tests for the π-model branch admittance helpers (`branch_admittance`,
 # `reduced_arc_admittance`, `winding_admittance`, `three_winding_arcs`, `branch_flow_limits`).
-# Ported from PowerOperationsModels.jl's native DCP/ACP model tests, where this logic
-# previously lived as private `_*` helpers before being promoted to PNM's public API.
 
 @testset "branch_admittance primitives" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
@@ -77,7 +75,7 @@ end
     @test PNM.reduced_arc_admittance(nr, -1, -2) === nothing
 end
 
-# Build a `ThreeWindingTransformer` (new struct shape) into `sys`, wiring three terminal
+# Build a `ThreeWindingTransformer` into `sys`, wiring three terminal
 # buses to a hidden star bus. Pairwise impedances are stored device-base on `bp` (= system
 # base here, so SU == DU keeps the hand-computed literals clean); each winding carries its
 # own arc, base power, base voltage, and rating. Returns the attached transformer.
@@ -227,11 +225,10 @@ end
 @testset "PST-3W winding series susceptance (pinned behavior)" begin
     # `pti_case14_with_pst3w_sys` is the only fixture with a genuine phase-shifting
     # ThreeWindingTransformer (nonzero winding α parsed from PSS/E ANG1/ANG2/ANG3 fields).
-    # No fixture currently exercises a PST-3W through PNM's series-reduction paths
-    # (BranchesSeries/BranchesParallel), so this testset exists purely to PIN the wrapper's
-    # `get_series_susceptance` model against silent drift — see the note below and
-    # `docs/superpowers/plans/2026-07-08-transformer-refactor-pnm.md` ("Residual decision
-    # items") for the modeling decision this leaves open.
+    # No fixture exercises a PST-3W through PNM's series-reduction paths
+    # (BranchesSeries/BranchesParallel), so this testset pins the wrapper's
+    # `get_series_susceptance` model against silent drift. See the note below for the open
+    # modeling decision.
     sys = PSB.build_system(
         PSSEParsingTestSystems,
         "pti_case14_with_pst3w_sys";
@@ -276,35 +273,26 @@ end
     @test hand_derived_susceptance ≈ -10000.0
     @test PSY.get_series_susceptance(tw, PSY.SU) ≈ hand_derived_susceptance
 
-    # !!! note "This DIFFERS from pre-refactor PhaseShiftingTransformer3W semantics"
-    #     The old PSY `PhaseShiftingTransformer3W` computed series susceptance per leg as
-    #     `(1/x)/turns_ratio` — r-free, and divided by the winding's turns ratio (tap) —
-    #     wherever a PST-3W entered PNM's series-reduction sums. The new wrapper instead
-    #     returns `imag(1/(r+jx))` uniformly for ALL `ThreeWindingTransformer` legs
-    #     (phase-shifting or not), matching the plain `Transformer3W` model instead: r-aware,
-    #     tap/turns-ratio-free. For this fixture's star legs (r=0) the two forms happen to
-    #     coincide numerically at unit tap (`(1/x)/1.0 == imag(1/(j*x))`), which is exactly
-    #     why the divergence has been unobservable so far — it is a LATENT gap, not a proven
-    #     equivalence: any PST-3W with r != 0 or a non-unit turns ratio on the star leg would
-    #     produce different reduction susceptances under the two models.
-    #     This divergence is only reachable through series-reduction code paths
-    #     (`BranchesSeries`/`BranchesParallel`, `network_modification.jl`,
-    #     `virtual_factor_helpers.jl`) — no current fixture routes a PST-3W through those
-    #     paths, so it does not affect any passing test today. Changing the model (e.g. to
-    #     apply turns-ratio division, or to special-case phase-shifting legs) is a modeling
-    #     decision, not a bug fix; it is tracked as a residual decision item in
-    #     `docs/superpowers/plans/2026-07-08-transformer-refactor-pnm.md`. Do not "fix" this
-    #     unilaterally.
+    # !!! note "Uniform imag(1/Z) model for all 3W legs"
+    #     The wrapper returns `imag(1/(r+jx))` uniformly for ALL `ThreeWindingTransformer`
+    #     legs (phase-shifting or not): r-aware, tap/turns-ratio-free. An alternative
+    #     `(1/x)/turns_ratio` model (r-free, tap-divided) for phase-shifting legs is an open
+    #     modeling decision. For this fixture's star legs (r=0, unit tap) the two forms
+    #     coincide (`(1/x)/1.0 == imag(1/(j*x))`), so the divergence is LATENT: any PST-3W
+    #     with r != 0 or a non-unit star-leg turns ratio would produce different reduction
+    #     susceptances under the two models. The divergence is only reachable through
+    #     series-reduction code paths (`BranchesSeries`/`BranchesParallel`,
+    #     `network_modification.jl`, `virtual_factor_helpers.jl`), and no fixture routes a
+    #     PST-3W through those paths. Changing the model is a modeling decision, not a bug
+    #     fix; do not change it unilaterally.
 end
 
-@testset "winding_admittance tap contract: plain 3W winding tap flows through (deliberate change)" begin
-    # !!! note "Deliberate contract change"
-    #     Old world: `_winding_tap`/`branch_admittance` reported a hardcoded `1.0` for every
-    #     3W winding EXCEPT a phase-shifting one (which read the real winding tap). The
-    #     refactored `winding_admittance` now reads `get_equivalent_tap(w)` (== the winding's
-    #     own `PSY.get_tap`) unconditionally, for PST and plain 3W windings alike. This test
-    #     pins that a plain (non-phase-shifting) winding with a non-unit tap flows its real
-    #     tap through `winding_admittance`, rather than being hardcoded to `1.0`.
+@testset "winding_admittance applies the winding tap for all 3W windings" begin
+    # !!! note "Tap contract"
+    #     `winding_admittance` reads `get_equivalent_tap(w)` (== the winding's own
+    #     `PSY.get_tap`) for all 3W windings, phase-shifting or not. This test pins that a
+    #     plain (non-phase-shifting) winding with a non-unit tap flows its real tap through
+    #     `winding_admittance`.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
     busD = PSY.get_component(PSY.ACBus, sys, "nodeD")
     sec_bus, ter_bus, star_bus = _add_star_buses!(sys, busD; numbers = (501, 502, 503))
@@ -323,8 +311,8 @@ end
 @testset "ThreeWindingTransformerWinding zero-reactance flooring" begin
     # Choose pairwise reactances so the primary star leg derives to exactly zero:
     # x1 = (x12 + x13 - x23)/2 = (0.05 + 0.05 - 0.10)/2 = 0.0. The wrapper must floor it to
-    # `STAR_LEG_REACTANCE_FLOOR` (recovered from the deleted PowerFlowFileParser rule); the
-    # frozen baseline for `psse_4_zero_impedance_3wt_test_system` implies exactly this: its
+    # `STAR_LEG_REACTANCE_FLOOR`; the frozen baseline for
+    # `psse_4_zero_impedance_3wt_test_system` implies exactly this: its
     # zero-reactance star leg carries Y_t = 1/(r + j*1e-4).
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
     busD = PSY.get_component(PSY.ACBus, sys, "nodeD")

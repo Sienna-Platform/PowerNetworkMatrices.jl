@@ -331,11 +331,10 @@ Classify a single outage component via multiple dispatch. ACTransmission branche
 classified into direct/parallel/series arc modifications. Shunt components produce
 diagonal admittance changes. Unsupported component types are silently ignored.
 """
-# Phase-shifting transformers are unsupported for contingency classification. Previously a
-# dedicated `_classify_outage_component!(::PhaseShiftingTransformer)` method threw here; with
-# the collapsed transformer model the guard is data-driven (`_assert_not_phase_shifting`
-# tests `PSY.is_phase_shifting`) and lives at the top of the generic `ACTransmission` method
-# below, which also handles all non-phase-shifting two-winding transformers.
+# Phase-shifting transformers are unsupported for contingency classification. The guard is
+# data-driven (`_assert_not_phase_shifting` tests `PSY.is_phase_shifting`) and lives at the
+# top of the generic `ACTransmission` method below, which also handles all non-phase-shifting
+# two-winding transformers.
 function _classify_outage_component!(
     nr::NetworkReductionData,
     arc_lookup::Dict,
@@ -373,8 +372,7 @@ function _classify_outage_component!(
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
         # `PSY.get_series_susceptance` divides a two-winding transformer's susceptance by
-        # its winding tap (reproducing the pre-refactor `TapTransformer`/`PST` value flow)
-        # and dispatches `ThreeWindingTransformerWinding` via PNM's extension.
+        # its winding tap and dispatches `ThreeWindingTransformerWinding` via PNM's extension.
         b_circuit = PSY.get_series_susceptance(component, PSY.SU)
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_circuit)
         push!(parallel_mods, ArcModification(arc_idx, -b_circuit, dy11, dy12, dy21, dy22))
@@ -498,7 +496,7 @@ use `_classify_outage_component!` for multi-component outages with series groupi
 """
 # Phase-shifting transformers are unsupported here too; the data-driven guard
 # (`_assert_not_phase_shifting`) sits at the top of the generic `ACTransmission` method
-# below rather than in a type-specific method (there is a single two-winding type now).
+# below rather than in a type-specific method.
 
 """
     _classify_branch_modification(nr, arc_lookup, arc_susceptances, branch::PSY.ThreeWindingTransformer) -> Vector{ArcModification}

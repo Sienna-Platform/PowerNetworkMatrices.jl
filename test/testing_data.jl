@@ -1,8 +1,7 @@
 using SparseArrays
 
-# The old `PhaseShiftingTransformer` 2W type collapsed into `TwoWindingTransformer`; phase
-# shifting is now a per-winding data property. Tests that used to skip branches with
-# `typeof(x) <: PhaseShiftingTransformer` use this data-driven predicate instead.
+# Phase shifting is a per-winding data property, not a type; this predicate is the
+# data-driven way to detect a phase-shifting two-winding transformer.
 _is_phase_shifting_2w(x) =
     x isa PSY.TwoWindingTransformer && PSY.is_phase_shifting(x)
 

@@ -3,9 +3,6 @@
 # `(g, b, g_fr, b_fr, g_to, b_to, tap, shift)` NamedTuple following the PowerModels
 # convention: `g + im*b == 1/(r + im*x)` is the series admittance, `*_fr`/`*_to` are the
 # from/to shunts, and `tap`/`shift` are the transformer ratio / phase shift (radians).
-#
-# This logic historically lived inline in PowerSimulations.jl's PowerModels translator
-# (`get_branch_to_pm`).
 
 # Transformer ratio / phase-shift accessors. Default to a unit, shift-free branch; a
 # two-winding transformer reads tap/shift off its single winding (tap defaults to 1, shift

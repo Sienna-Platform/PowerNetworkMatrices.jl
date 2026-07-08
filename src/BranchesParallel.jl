@@ -111,9 +111,8 @@ Members with no known rating (transformer windings carry `rating::Union{Nothing,
 are skipped; returns `nothing` only when no member has a known rating.
 """
 # A `TransformerWinding` rating may be `nothing` (unlike a `Line`, whose rating is always a
-# `Float64`), so a `ThreeWindingTransformerWinding` member can contribute `nothing`. There is
-# no pre-refactor `nothing`-in-Line precedent to mirror; the least-surprising guard is to
-# aggregate over the members with a known rating and propagate `nothing` only when none is
+# `Float64`), so a `ThreeWindingTransformerWinding` member can contribute `nothing`.
+# Aggregate over the members with a known rating and propagate `nothing` only when none is
 # known (matching how `branch_flow_limits` carries `nothing` forward without erroring).
 function get_sum_of_max_rating(bp::AbstractBranchesParallel)
     ratings = filter(!isnothing, get_equivalent_rating.(bp.branches))

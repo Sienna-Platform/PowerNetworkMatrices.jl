@@ -16,8 +16,7 @@ _arc_connecting_two_areas(br::PSY.ACTransmission) =
 
 function _arc_connecting_two_areas(br::PSY.ThreeWindingTransformer)
     # For the 3WT all the 4 buses are kept if any of the 3 arcs connect two areas. The star
-    # arcs are now the per-winding arcs (`get_arc(winding)`) in primary/secondary/tertiary
-    # order.
+    # arcs are the per-winding arcs (`get_arc(winding)`) in primary/secondary/tertiary order.
     for winding in PSY.get_windings(br)
         if _arc_connecting_two_areas(PSY.get_arc(winding))
             return true

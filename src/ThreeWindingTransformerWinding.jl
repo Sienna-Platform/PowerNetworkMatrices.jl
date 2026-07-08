@@ -31,10 +31,8 @@ struct ThreeWindingTransformerWinding <: PSY.ACTransmission
 end
 
 # Standard delta→star identity on the common-base (SU) pairwise impedances; the star-leg
-# reactance is floored so a measured-zero leg does not blow up the admittance. Matches the
-# pre-refactor PowerFlowFileParser parse-time rule (see `STAR_LEG_REACTANCE_FLOOR`), which
-# floored the SYSTEM-BASE star reactance before re-converting to device base — the SU value
-# derived here is the equivalent quantity.
+# reactance is floored (see `STAR_LEG_REACTANCE_FLOOR`) so a measured-zero leg does not blow
+# up the admittance.
 function _star_leg_impedance(t::PSY.ThreeWindingTransformer, winding_number::Int)
     z12 = complex(PSY.get_r_12(t, PSY.SU), PSY.get_x_12(t, PSY.SU))
     z23 = complex(PSY.get_r_23(t, PSY.SU), PSY.get_x_23(t, PSY.SU))
@@ -88,7 +86,7 @@ end
 # so two wrappers for the same winding built before/after a pairwise-impedance mutation would
 # otherwise compare unequal and hash differently, breaking Dict/Set-keyed lookups that
 # reconstruct a fresh wrapper to query a map keyed by an earlier-built one. `transformer` is
-# compared by identity (`===`), matching the pre-refactor `{parent, winding_number}` key.
+# compared by identity (`===`).
 function Base.:(==)(a::ThreeWindingTransformerWinding, b::ThreeWindingTransformerWinding)
     return a.transformer === b.transformer && a.winding_number == b.winding_number
 end
@@ -99,7 +97,7 @@ end
 
 get_transformer(tw::ThreeWindingTransformerWinding) = tw.transformer
 get_winding_number(tw::ThreeWindingTransformerWinding) = tw.winding_number
-# One concrete parent type remains; kept for callers that key reduction maps by parent type.
+# Lets callers key reduction maps by the parent transformer type.
 get_transformer_type(tw::ThreeWindingTransformerWinding) = typeof(tw.transformer)
 
 function get_name(three_wt_winding::ThreeWindingTransformerWinding)
@@ -118,14 +116,13 @@ This extends `PSY.get_series_susceptance` (owned by PowerSystems) for PNM's
 `ThreeWindingTransformerWinding` wrapper type, so the whole codebase resolves
 `get_series_susceptance` calls to a single generic-function family.
 
-!!! note "Deliberate model mixture (equivalence-preserving)"
-    This returns `imag(1/(r + im*x))`, which is r-aware and **negative-signed**, matching the
-    pre-refactor `PSY.get_series_susceptances(::Transformer3W)` (=`imag(1/Z)` per leg). It is
-    consumed alongside `Line` susceptances (`PSY`'s `+1/x`, positive, r-free) in the reduction
-    sums (`BranchesSeries`/`BranchesParallel`, `virtual_factor_helpers`, `network_modification`).
-    The two conventions are physically inconsistent, but the pre-refactor code mixed them the
-    SAME way; this wrapper faithfully preserves that value flow. Do not "fix" the sign/model
-    here unilaterally — the Ybus equivalence gate arbitrates any change.
+!!! note "Mixed susceptance conventions"
+    This returns `imag(1/(r + im*x))` (r-aware, **negative-signed**), while `Line`
+    susceptance is `+1/x` (positive, r-free). Both conventions are consumed together in the
+    reduction sums (`BranchesSeries`/`BranchesParallel`, `virtual_factor_helpers`,
+    `network_modification`). They are physically inconsistent, so changing the sign/model on
+    either side requires revisiting both; the Ybus equivalence gate arbitrates any change. Do
+    not change it unilaterally.
 """
 function PSY.get_series_susceptance(
     segment::ThreeWindingTransformerWinding,
@@ -184,7 +181,7 @@ get_equivalent_emergency_rating(tw::ThreeWindingTransformerWinding) =
 """
     get_equivalent_available(tw::ThreeWindingTransformerWinding)
 
-Per-winding availability, the single source of truth in the new transformer model.
+Per-winding availability, the single source of truth for availability.
 """
 get_equivalent_available(tw::ThreeWindingTransformerWinding) =
     PSY.get_available(tw.winding)
