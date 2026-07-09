@@ -109,27 +109,21 @@ end
 """
     get_series_susceptance(segment::ThreeWindingTransformerWinding, units)
 
-Series susceptance `imag(1 / (r + im*x))` of the star leg (system base). `units` is
-accepted for interface symmetry; the stored star-leg impedance is always system base.
-
-Method of PNM's own `get_series_susceptance` generic (see `BranchAdmittance.jl` for the
-`ACTransmission`/`TwoWindingTransformer` methods) for the `ThreeWindingTransformerWinding`
-wrapper type, so the whole codebase resolves `get_series_susceptance` calls to a single
-generic-function family.
-
-!!! note "Mixed susceptance conventions"
-    This returns `imag(1/(r + im*x))` (r-aware, **negative-signed**), while `Line`
-    susceptance is `+1/x` (positive, r-free). Both conventions are consumed together in the
-    reduction sums (`BranchesSeries`/`BranchesParallel`, `virtual_factor_helpers`,
-    `network_modification`). They are physically inconsistent, so changing the sign/model on
-    either side requires revisiting both; the Ybus equivalence gate arbitrates any change. Do
-    not change it unilaterally.
+Series susceptance of the star leg for the DC/reduction model: `(1/x)/tap`, computed from
+the derived star-leg reactance alone (r-free) and divided by the winding tap ratio — the
+same convention as the [`PSY.TwoWindingTransformer`](@ref) method in `BranchAdmittance.jl`,
+and reactance-additive like the generic `ACTransmission` `1/x` method, so all branch kinds
+combine consistently in the reduction sums (`BranchesSeries`/`BranchesParallel`,
+`virtual_factor_helpers`, `network_modification`) and in `BA_Matrix` assembly. The sign
+follows `x`: a delta→star derivation can legitimately produce a negative star-leg
+reactance, giving a negative susceptance. `units` is accepted for interface symmetry; the
+stored star-leg impedance is always system base.
 """
 function get_series_susceptance(
     segment::ThreeWindingTransformerWinding,
     ::IS.AbstractUnitSystem,
 )
-    return imag(1 / (segment.r + segment.x * im))
+    return (1 / segment.x) / get_equivalent_tap(segment)
 end
 
 """

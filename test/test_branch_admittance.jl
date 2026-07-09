@@ -225,10 +225,9 @@ end
 @testset "PST-3W winding series susceptance (pinned behavior)" begin
     # `pti_case14_with_pst3w_sys` is the only fixture with a genuine phase-shifting
     # ThreeWindingTransformer (nonzero winding α parsed from PSS/E ANG1/ANG2/ANG3 fields).
-    # No fixture exercises a PST-3W through PNM's series-reduction paths
-    # (BranchesSeries/BranchesParallel), so this testset pins the wrapper's
-    # `get_series_susceptance` model against silent drift. See the note below for the open
-    # modeling decision.
+    # This testset pins the wrapper's `get_series_susceptance` model — `(1/x)/tap` on the
+    # derived star leg, uniform with the `TwoWindingTransformer` and `ACTransmission`
+    # conventions in BranchAdmittance.jl — against silent drift.
     sys = PSB.build_system(
         PSSEParsingTestSystems,
         "pti_case14_with_pst3w_sys";
@@ -246,9 +245,10 @@ end
     tw = PNM.ThreeWindingTransformerWinding(t, winding_number)
     @test !iszero(PSY.get_α(PSY.get_windings(t)[winding_number]))
 
-    # (a) Pinned current model: r-aware `imag(1/Z)` of the derived star leg, computed from
-    # the wrapper's own stored fields.
-    pinned = imag(1 / (tw.r + tw.x * im))
+    # (a) Pinned model: reactance-only `1/x` of the derived star leg, divided by the
+    # winding tap, computed from the wrapper's own stored fields.
+    tap = PSY.get_tap(windings[winding_number])
+    pinned = (1 / tw.x) / tap
     @test PNM.get_series_susceptance(tw, PSY.SU) ≈ pinned
 
     # (b) Independent hand-derivation from the fixture's raw pairwise data, so (a) is not
@@ -257,8 +257,10 @@ end
     # which equals the system base here, so SU reads back the raw values unchanged. The
     # standard delta->star identity gives every star leg r = (0+0-0)/2 = 0.0,
     # x = (0.0002+0.0002-0.0002)/2 = 0.0001 (independent of which winding), well above
-    # `STAR_LEG_ZERO_REACTANCE_ATOL` so no flooring applies. Susceptance is then
-    # imag(1/(0 + j*0.0001)) = imag(-j*10000) = -10000.0 exactly.
+    # `STAR_LEG_ZERO_REACTANCE_ATOL` so no flooring applies. The phase-shifting winding
+    # carries tap = 1.0, so the susceptance is (1/0.0001)/1.0 = +10000.0 exactly. Note the
+    # sign: `1/x` is positive for x > 0, whereas the r-aware complex form
+    # `imag(1/(j*x)) = -1/x` is negative — the two forms are NOT interchangeable.
     r12, x12 = PSY.get_r_12(t, PSY.SU), PSY.get_x_12(t, PSY.SU)
     r23, x23 = PSY.get_r_23(t, PSY.SU), PSY.get_x_23(t, PSY.SU)
     r13, x13 = PSY.get_r_13(t, PSY.SU), PSY.get_x_13(t, PSY.SU)
@@ -269,22 +271,16 @@ end
         (z13 + z23 - z12) / 2,
     )
     z_star = z_by_winding[winding_number]
-    hand_derived_susceptance = imag(1 / z_star)
-    @test hand_derived_susceptance ≈ -10000.0
+    hand_derived_susceptance = (1 / imag(z_star)) / tap
+    @test hand_derived_susceptance ≈ 10000.0
     @test PNM.get_series_susceptance(tw, PSY.SU) ≈ hand_derived_susceptance
 
-    # !!! note "Uniform imag(1/Z) model for all 3W legs"
-    #     The wrapper returns `imag(1/(r+jx))` uniformly for ALL `ThreeWindingTransformer`
-    #     legs (phase-shifting or not): r-aware, tap/turns-ratio-free. An alternative
-    #     `(1/x)/turns_ratio` model (r-free, tap-divided) for phase-shifting legs is an open
-    #     modeling decision. For this fixture's star legs (r=0, unit tap) the two forms
-    #     coincide (`(1/x)/1.0 == imag(1/(j*x))`), so the divergence is LATENT: any PST-3W
-    #     with r != 0 or a non-unit star-leg turns ratio would produce different reduction
-    #     susceptances under the two models. The divergence is only reachable through
-    #     series-reduction code paths (`BranchesSeries`/`BranchesParallel`,
-    #     `network_modification.jl`, `virtual_factor_helpers.jl`), and no fixture routes a
-    #     PST-3W through those paths. Changing the model is a modeling decision, not a bug
-    #     fix; do not change it unilaterally.
+    # (c) Tap division: winding 3 of this transformer carries a non-unit tap (1.05) on the
+    # same star-leg reactance (0.0001), so its susceptance must be 10000/1.05.
+    tap3 = PSY.get_tap(windings[3])
+    @test tap3 == 1.05
+    tw3 = PNM.ThreeWindingTransformerWinding(t, 3)
+    @test PNM.get_series_susceptance(tw3, PSY.SU) ≈ 10000.0 / 1.05
 end
 
 @testset "winding_admittance applies the winding tap for all 3W windings" begin
