@@ -13,6 +13,30 @@ _branch_shift(::PSY.ACTransmission) = 0.0
 _branch_shift(b::PSY.TwoWindingTransformer) = PSY.get_α(PSY.get_winding(b))
 
 """
+    get_series_susceptance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem)
+
+Series susceptance `1/x` of an [`ACTransmission`](@ref PSY.ACTransmission) branch, from
+the stored series reactance alone. [`PSY.TwoWindingTransformer`](@ref) has a more specific
+method (below) that additionally divides by the winding tap ratio
+(`PSY.get_tap(PSY.get_winding(t))`). This is a deliberate asymmetry: only the susceptance
+form is tap-divided; Ybus/PTDF/LODF assembly needs the tap-divided value, while callers that
+need the untapped complex admittance should build it directly from `PSY.get_r`/`PSY.get_x`.
+"""
+get_series_susceptance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem) =
+    1 / PSY.get_x(b, units)
+
+"""
+    get_series_susceptance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem)
+
+Series susceptance of a [`PSY.TwoWindingTransformer`](@ref): the generic `ACTransmission`
+value (`1/x`) divided by the winding tap ratio `PSY.get_tap(PSY.get_winding(t))`. A
+fixed-ratio transformer has `tap = 1.0`, so this is a no-op for it and matches the plain
+`ACTransmission` value.
+"""
+get_series_susceptance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem) =
+    (1 / PSY.get_x(t, units)) / PSY.get_tap(PSY.get_winding(t))
+
+"""
     branch_admittance(b::PSY.ACTransmission) -> NamedTuple
 
 π-model admittance `(g, b, g_fr, b_fr, g_to, b_to, tap, shift)` for a line or symmetric

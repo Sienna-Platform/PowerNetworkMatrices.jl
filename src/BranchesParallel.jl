@@ -79,21 +79,21 @@ function compute_parallel_multiplier(
     b_total = 0.0
     b_branch = 0.0
     for br in parallel_branch_set
-        # `PSY.get_series_susceptance` (see supplemental_accessors.jl) is tap-aware for
+        # `get_series_susceptance` (see BranchAdmittance.jl) is tap-aware for
         # two-winding transformers and dispatches PNM's three-winding winding wrapper.
         if PSY.get_name(br) == branch_name
-            b_branch += PSY.get_series_susceptance(br, PSY.SU)
+            b_branch += get_series_susceptance(br, PSY.SU)
         end
-        b_total += PSY.get_series_susceptance(br, PSY.SU)
+        b_total += get_series_susceptance(br, PSY.SU)
     end
     return b_branch / b_total
 end
 
-function PSY.get_series_susceptance(
+function get_series_susceptance(
     segment::AbstractBranchesParallel,
     units::IS.AbstractUnitSystem,
 )
-    return sum(PSY.get_series_susceptance(branch, units) for branch in segment.branches)
+    return sum(get_series_susceptance(branch, units) for branch in segment.branches)
 end
 
 # `get_equivalent_physical_branch_parameters` / `populate_equivalent_ybus!` for parallel and
@@ -152,9 +152,9 @@ function get_impedance_averaged_rating(bp::AbstractBranchesParallel)
     # Within a parallel group (a single bus pair) this equals the natural-units
     # weighting; device base would mix bases when the branches differ in base power.
     # Requires the branches to be attached to a system.
-    # `PSY.get_series_susceptance` (see supplemental_accessors.jl) is tap-aware for
+    # `get_series_susceptance` (see BranchAdmittance.jl) is tap-aware for
     # two-winding transformers.
-    b_total = sum(PSY.get_series_susceptance(br, PSY.SU) for br in bp.branches)
+    b_total = sum(get_series_susceptance(br, PSY.SU) for br in bp.branches)
     if !isfinite(b_total) || iszero(b_total)
         throw(
             ArgumentError(
@@ -165,7 +165,7 @@ function get_impedance_averaged_rating(bp::AbstractBranchesParallel)
     ratings = get_equivalent_rating.(bp.branches)
     all(isnothing, ratings) && return nothing
     return sum(
-        PSY.get_series_susceptance(br, PSY.SU) / b_total * r
+        get_series_susceptance(br, PSY.SU) / b_total * r
         for (br, r) in zip(bp.branches, ratings) if !isnothing(r)
     )
 end

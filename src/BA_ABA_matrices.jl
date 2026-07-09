@@ -110,7 +110,7 @@ function BA_Matrix(ybus::Ybus)
         # Get series susceptance from components, not the equivalent ybus for reductions of degree two nodes
         # This results in reduced error relative to the DC power flow result without reductions
         if is_arc_in_series_map(nr_data, arc)
-            b = PSY.get_series_susceptance(get_mapped_series_branch(nr_data, arc), PSY.SU)
+            b = get_series_susceptance(get_mapped_series_branch(nr_data, arc), PSY.SU)
         else
             Yt = -1 * ybus.data[ix_from_bus, ix_to_bus]
             Zt = 1 / Yt

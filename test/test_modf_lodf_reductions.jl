@@ -236,7 +236,7 @@ end
     @testset "parallel single-circuit" begin
         arc_tuple, arc_idx = _find_non_islanding_arc(vmodf, nrd.parallel_branch_map)
         parallel = nrd.parallel_branch_map[arc_tuple]
-        b_circuit = PSY.get_series_susceptance(first(parallel.branches), PSY.SU)
+        b_circuit = PNM.get_series_susceptance(first(parallel.branches), PSY.SU)
         delta_b = -b_circuit
         verify_modf_lodf_identity(vmodf, vlodf, ptdf, arc_idx, delta_b)
     end
@@ -259,7 +259,7 @@ end
     @testset "parallel single-circuit" begin
         arc_tuple, arc_idx = _find_non_islanding_arc(vmodf, nrd.parallel_branch_map)
         parallel = nrd.parallel_branch_map[arc_tuple]
-        b_circuit = PSY.get_series_susceptance(first(parallel.branches), PSY.SU)
+        b_circuit = PNM.get_series_susceptance(first(parallel.branches), PSY.SU)
         delta_b = -b_circuit
         verify_modf_lodf_identity(vmodf, vlodf, ptdf, arc_idx, delta_b)
     end
@@ -283,7 +283,7 @@ end
     @testset "parallel single-circuit" begin
         arc_tuple, arc_idx = _find_non_islanding_arc(vmodf, nrd.parallel_branch_map)
         parallel = nrd.parallel_branch_map[arc_tuple]
-        b_circuit = PSY.get_series_susceptance(first(parallel.branches), PSY.SU)
+        b_circuit = PNM.get_series_susceptance(first(parallel.branches), PSY.SU)
         delta_b = -b_circuit
         verify_modf_lodf_identity(vmodf, vlodf, ptdf, arc_idx, delta_b)
     end
@@ -315,7 +315,7 @@ end
     @testset "parallel single-circuit" begin
         arc_tuple, arc_idx = _find_non_islanding_arc(vmodf, nrd.parallel_branch_map)
         parallel = nrd.parallel_branch_map[arc_tuple]
-        b_circuit = PSY.get_series_susceptance(first(parallel.branches), PSY.SU)
+        b_circuit = PNM.get_series_susceptance(first(parallel.branches), PSY.SU)
         delta_b = -b_circuit
         verify_modf_lodf_identity(vmodf, vlodf, ptdf, arc_idx, delta_b)
     end

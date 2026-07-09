@@ -249,7 +249,7 @@ end
     # (a) Pinned current model: r-aware `imag(1/Z)` of the derived star leg, computed from
     # the wrapper's own stored fields.
     pinned = imag(1 / (tw.r + tw.x * im))
-    @test PSY.get_series_susceptance(tw, PSY.SU) ≈ pinned
+    @test PNM.get_series_susceptance(tw, PSY.SU) ≈ pinned
 
     # (b) Independent hand-derivation from the fixture's raw pairwise data, so (a) is not
     # purely self-referential. `case14_with_pst3w.raw`'s two 3W transformers both carry
@@ -271,7 +271,7 @@ end
     z_star = z_by_winding[winding_number]
     hand_derived_susceptance = imag(1 / z_star)
     @test hand_derived_susceptance ≈ -10000.0
-    @test PSY.get_series_susceptance(tw, PSY.SU) ≈ hand_derived_susceptance
+    @test PNM.get_series_susceptance(tw, PSY.SU) ≈ hand_derived_susceptance
 
     # !!! note "Uniform imag(1/Z) model for all 3W legs"
     #     The wrapper returns `imag(1/(r+jx))` uniformly for ALL `ThreeWindingTransformer`
@@ -364,4 +364,56 @@ end
     PSY.set_r_12!(t3w, 0.02 * PSY.SU)
     w1_rebuilt = PNM.ThreeWindingTransformerWinding(t3w, 1)
     @test d[w1_rebuilt] == "winding_1"
+end
+
+@testset "TwoWindingTransformer series susceptance divides by the winding tap" begin
+    sys = PSY.System(100.0)
+    busA = PSY.ACBus(;
+        number = 1,
+        name = "busA",
+        available = true,
+        bustype = PSY.ACBusTypes.REF,
+        angle = 0.0,
+        magnitude = 1.0,
+        voltage_limits = (min = 0.9, max = 1.1),
+        base_voltage = 138.0,
+    )
+    busB = PSY.ACBus(;
+        number = 2,
+        name = "busB",
+        available = true,
+        bustype = PSY.ACBusTypes.PV,
+        angle = 0.0,
+        magnitude = 1.0,
+        voltage_limits = (min = 0.9, max = 1.1),
+        base_voltage = 138.0,
+    )
+    PSY.add_component!(sys, busA)
+    PSY.add_component!(sys, busB)
+    arc = PSY.Arc(; from = busA, to = busB)
+    PSY.add_component!(sys, arc)
+    t = PSY.TwoWindingTransformer(;
+        name = "T2W",
+        winding = PSY.TransformerWinding(;
+            arc = arc,
+            tap = 1.0,
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            rating = 1.0,
+            base_power = 100.0,
+            base_voltage = 138.0,
+        ),
+        r = 0.01,
+        x = 0.1,
+        magnetizing_shunt = 0.0 + 0.0im,
+        base_power = 100.0,
+    )
+    PSY.add_component!(sys, t)
+
+    # parent base_power (100.0) == system base, so DU == SU here.
+    @test PNM.get_series_susceptance(t, PSY.SU) ≈ 1 / 0.1
+    PSY.set_tap!(PSY.get_winding(t), 1.05)
+    @test PNM.get_series_susceptance(t, PSY.SU) ≈ (1 / 0.1) / 1.05
+    @test PNM.get_series_susceptance(t, PSY.SU) ≈ 9.523809523809524
 end

@@ -107,14 +107,15 @@ function get_name(three_wt_winding::ThreeWindingTransformerWinding)
 end
 
 """
-    PSY.get_series_susceptance(segment::ThreeWindingTransformerWinding, units)
+    get_series_susceptance(segment::ThreeWindingTransformerWinding, units)
 
 Series susceptance `imag(1 / (r + im*x))` of the star leg (system base). `units` is
 accepted for interface symmetry; the stored star-leg impedance is always system base.
 
-This extends `PSY.get_series_susceptance` (owned by PowerSystems) for PNM's
-`ThreeWindingTransformerWinding` wrapper type, so the whole codebase resolves
-`get_series_susceptance` calls to a single generic-function family.
+Method of PNM's own `get_series_susceptance` generic (see `BranchAdmittance.jl` for the
+`ACTransmission`/`TwoWindingTransformer` methods) for the `ThreeWindingTransformerWinding`
+wrapper type, so the whole codebase resolves `get_series_susceptance` calls to a single
+generic-function family.
 
 !!! note "Mixed susceptance conventions"
     This returns `imag(1/(r + im*x))` (r-aware, **negative-signed**), while `Line`
@@ -124,7 +125,7 @@ This extends `PSY.get_series_susceptance` (owned by PowerSystems) for PNM's
     either side requires revisiting both; the Ybus equivalence gate arbitrates any change. Do
     not change it unilaterally.
 """
-function PSY.get_series_susceptance(
+function get_series_susceptance(
     segment::ThreeWindingTransformerWinding,
     ::IS.AbstractUnitSystem,
 )

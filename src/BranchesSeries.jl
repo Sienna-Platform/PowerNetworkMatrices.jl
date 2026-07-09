@@ -104,12 +104,12 @@ Base.length(bs::BranchesSeries) =
 
 Base.eltype(::Type{BranchesSeries}) = PSY.ACTransmission
 
-function PSY.get_series_susceptance(
+function get_series_susceptance(
     series_chain::BranchesSeries,
     units::IS.AbstractUnitSystem,
 )
     series_susceptances_sum =
-        sum(inv(PSY.get_series_susceptance(x, units)) for x in series_chain)
+        sum(inv(get_series_susceptance(x, units)) for x in series_chain)
     total_susceptance = 1 / series_susceptances_sum
     return total_susceptance
 end

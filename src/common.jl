@@ -569,7 +569,7 @@ function _segment_susceptance_after_outage(
     segment::PSY.ACTransmission,
     tripped_set::Set{<:PSY.ACTransmission},
 )::Float64
-    return segment ∈ tripped_set ? 0.0 : PSY.get_series_susceptance(segment, PSY.SU)
+    return segment ∈ tripped_set ? 0.0 : get_series_susceptance(segment, PSY.SU)
 end
 
 function _segment_susceptance_after_outage(
@@ -579,7 +579,7 @@ function _segment_susceptance_after_outage(
     b_remaining = 0.0
     for branch in segment.branches
         if branch ∉ tripped_set
-            b_remaining += PSY.get_series_susceptance(branch, PSY.SU)
+            b_remaining += get_series_susceptance(branch, PSY.SU)
         end
     end
     return b_remaining
@@ -618,7 +618,7 @@ function _compute_series_outage_delta_b(
     series_chain::BranchesSeries,
     tripped::Vector{<:PSY.ACTransmission},
 )::Float64
-    b_old = PSY.get_series_susceptance(series_chain, PSY.SU)
+    b_old = get_series_susceptance(series_chain, PSY.SU)
     tripped_set = Set{PSY.ACTransmission}(tripped)
     remaining_inv_sum = 0.0
     for segment in series_chain
