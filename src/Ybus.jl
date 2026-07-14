@@ -63,7 +63,32 @@ end
 get_axes(M::Ybus) = M.axes
 get_lookup(M::Ybus) = M.lookup
 get_ref_bus(M::Ybus) = sort!(collect(keys(M.subnetwork_axes)))
-get_ref_bus_position(M::Ybus) = [get_bus_lookup(M)[x] for x in keys(M.subnetwork_axes)]
+# A subnetwork's representative can itself be merged away by a later reduction (e.g.
+# ZeroImpedanceBranchReduction folding a swing into another bus); resolve it through the
+# reduction's reverse map to the surviving bus it now shares a position with.
+function get_ref_bus_position(M::Ybus)
+    bus_lookup = get_bus_lookup(M)
+    reverse_bus_search_map = get_reverse_bus_search_map(get_network_reduction_data(M))
+    return [
+        _resolve_ref_bus_position(bus_lookup, reverse_bus_search_map, x)
+        for x in keys(M.subnetwork_axes)
+    ]
+end
+
+function _resolve_ref_bus_position(
+    bus_lookup::Dict{Int, Int},
+    reverse_bus_search_map::Dict{Int, Int},
+    bus_number::Int,
+)
+    haskey(bus_lookup, bus_number) && return bus_lookup[bus_number]
+    surviving_bus = get(reverse_bus_search_map, bus_number, bus_number)
+    haskey(bus_lookup, surviving_bus) && return bus_lookup[surviving_bus]
+    error(
+        "Reference bus $bus_number is not present in the Ybus bus lookup, and its " *
+        "reduction-mapped surviving bus $surviving_bus is not present either.",
+    )
+end
+
 """Get the [`NetworkReduction`](@ref) data applied to this matrix."""
 get_network_reduction_data(M::Ybus) = M.network_reduction_data
 get_bus_axis(M::Ybus) = M.axes[1]
@@ -972,6 +997,9 @@ function Ybus(
     end
     user_irreducible = Set{Int}(irreducible_buses)
     ref_bus_numbers = Set{Int}()
+    # Stored angles of the swing (REF) buses, used to pick the smallest-angle swing as the
+    # representative when an island holds more than one (see `assign_reference_buses!`).
+    ref_bus_angles = Dict{Int, Float64}()
     # Seed the user set and ZIBR spec into the container so every reduction step and
     # the assembly path can read them.
     nr = NetworkReductionData(;
@@ -990,6 +1018,7 @@ function Ybus(
             bus_reduction_map[PSY.get_number(b)] = Set{Int}()
             if PSY.get_bustype(b) == ACBusTypes.REF
                 push!(ref_bus_numbers, PSY.get_number(b))
+                ref_bus_angles[PSY.get_number(b)] = PSY.get_angle(b)
             end
         else
             @debug "Found available isolated bus $(PSY.get_name(b)) with number $(PSY.get_number(b)). This is excluded from the Ybus build."
@@ -1114,6 +1143,7 @@ function Ybus(
         subnetworks = assign_reference_buses!(
             find_subnetworks(ybus, bus_ax; subnetwork_algorithm = subnetwork_algorithm),
             ref_bus_numbers,
+            ref_bus_angles,
         )
         if length(subnetworks) > 1
             @warn "More than one island found; Network is not connected"
