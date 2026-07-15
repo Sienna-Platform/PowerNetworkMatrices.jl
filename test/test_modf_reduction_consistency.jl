@@ -102,7 +102,7 @@ end
     # 3WT-specific method and protect all of the transformer's buses.
     protected = PNM._collect_protected_buses(sys)
     @test !isempty(protected)
-    for arc in PSY.get_arc.(PSY.get_windings(t3w))
+    for arc in PSY.get_arc.(PSY.get_circuits(t3w))
         @test PSY.get_number(PSY.get_from(arc)) in protected
         @test PSY.get_number(PSY.get_to(arc)) in protected
     end

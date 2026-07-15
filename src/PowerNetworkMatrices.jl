@@ -117,7 +117,7 @@ end
 
 # network calculations
 include("PowerNetworkMatrix.jl")
-include("ThreeWindingTransformerWinding.jl")
+include("ThreeWindingTransformerCircuit.jl")
 include("definitions.jl")
 include("EquivalentBranch.jl")
 include("BranchesSeries.jl")

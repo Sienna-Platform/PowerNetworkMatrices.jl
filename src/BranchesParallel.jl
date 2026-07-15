@@ -110,8 +110,8 @@ unconstrained flow steering across the parallel group.
 Members with no known rating (transformer windings carry `rating::Union{Nothing, Float64}`)
 are skipped; returns `nothing` only when no member has a known rating.
 """
-# A `TransformerWinding` rating may be `nothing` (unlike a `Line`, whose rating is always a
-# `Float64`), so a `ThreeWindingTransformerWinding` member can contribute `nothing`.
+# A `TransformerCircuit` rating may be `nothing` (unlike a `Line`, whose rating is always a
+# `Float64`), so a `ThreeWindingTransformerCircuit` member can contribute `nothing`.
 # Aggregate over the members with a known rating and propagate `nothing` only when none is
 # known (matching how `branch_flow_limits` carries `nothing` forward without erroring).
 function get_sum_of_max_rating(bp::AbstractBranchesParallel)

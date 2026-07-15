@@ -1,0 +1,196 @@
+"""
+    ThreeWindingTransformerCircuit <: PSY.ACTransmission
+
+Internal object representing a single circuit of a [`PSY.ThreeWindingTransformer`](@ref).
+Do not export.
+
+This structure decomposes a three-winding transformer into individual circuit components
+for network-matrix construction and analysis. The star-leg series impedance is stored on
+the circuit (`PSY.get_r`/`PSY.get_x`); this wrapper reads it directly and exposes it on the
+system base through [`get_equivalent_r`](@ref)/[`get_equivalent_x`](@ref).
+
+# Fields
+- `transformer::PSY.ThreeWindingTransformer`: The parent three-winding transformer
+- `circuit::PSY.TransformerCircuit`: The parent's circuit this object represents
+- `winding_number::Int`: The PSSE winding position (1 = primary, 2 = secondary, 3 = tertiary)
+
+# Note
+This is an internal object and should not be constructed directly by users or added to a
+system.
+"""
+struct ThreeWindingTransformerCircuit <: PSY.ACTransmission
+    transformer::PSY.ThreeWindingTransformer
+    circuit::PSY.TransformerCircuit
+    winding_number::Int
+end
+
+"""
+    ThreeWindingTransformerCircuit(t::PSY.ThreeWindingTransformer, winding_number::Int)
+
+Construct the wrapper for `winding_number` (1/2/3) of `t`.
+"""
+function ThreeWindingTransformerCircuit(
+    t::PSY.ThreeWindingTransformer,
+    winding_number::Int,
+)
+    (winding_number in 1:3) ||
+        throw(ArgumentError("Invalid winding number: $winding_number"))
+    circuit = PSY.get_circuits(t)[winding_number]
+    return ThreeWindingTransformerCircuit(t, circuit, winding_number)
+end
+
+# Lookup identity is `{parent, winding_number}`, NOT full field-egal equality: the circuit
+# object is compared by the parent transformer's identity and the winding number, so a fresh
+# wrapper reconstructed to query a Dict/Set keyed by an earlier-built one resolves the same
+# entry. `transformer` is compared by identity (`===`).
+function Base.:(==)(a::ThreeWindingTransformerCircuit, b::ThreeWindingTransformerCircuit)
+    return a.transformer === b.transformer && a.winding_number == b.winding_number
+end
+
+function Base.hash(tw::ThreeWindingTransformerCircuit, h::UInt)
+    return hash(tw.winding_number, hash(objectid(tw.transformer), h))
+end
+
+get_transformer(tw::ThreeWindingTransformerCircuit) = tw.transformer
+get_winding_number(tw::ThreeWindingTransformerCircuit) = tw.winding_number
+# Lets callers key reduction maps by the parent transformer type.
+get_transformer_type(tw::ThreeWindingTransformerCircuit) = typeof(tw.transformer)
+
+function get_name(three_wt_circuit::ThreeWindingTransformerCircuit)
+    transformer = get_transformer(three_wt_circuit)
+    winding = get_winding_number(three_wt_circuit)
+    return PSY.get_name(transformer) * "_winding_$winding"
+end
+
+"""
+    get_series_susceptance(segment::ThreeWindingTransformerCircuit, units)
+
+Series susceptance of the star leg for the DC/reduction model: `(1/x)/tap`, computed from
+the circuit's star-leg reactance alone (r-free) and divided by the circuit tap ratio — the
+same convention as the [`PSY.TwoWindingTransformer`](@ref) method in `BranchAdmittance.jl`,
+and reactance-additive like the generic `ACTransmission` `1/x` method, so all branch kinds
+combine consistently in the reduction sums (`BranchesSeries`/`BranchesParallel`,
+`virtual_factor_helpers`, `network_modification`) and in `BA_Matrix` assembly. The sign
+follows `x`: a star-leg reactance can legitimately be negative, giving a negative
+susceptance. `units` is accepted for interface symmetry; the reactance is read on the
+system base.
+"""
+function get_series_susceptance(
+    segment::ThreeWindingTransformerCircuit,
+    ::IS.AbstractUnitSystem,
+)
+    return (1 / get_equivalent_x(segment)) / get_equivalent_tap(segment)
+end
+
+"""
+    get_equivalent_r(tw::ThreeWindingTransformerCircuit)
+
+Star-leg resistance (pu, system base) of this circuit.
+"""
+get_equivalent_r(tw::ThreeWindingTransformerCircuit) = PSY.get_r(tw.circuit, PSY.SU)
+
+"""
+    get_equivalent_x(tw::ThreeWindingTransformerCircuit)
+
+Star-leg reactance (pu, system base) of this circuit.
+"""
+get_equivalent_x(tw::ThreeWindingTransformerCircuit) = PSY.get_x(tw.circuit, PSY.SU)
+
+"""
+    get_equivalent_b(tw::ThreeWindingTransformerCircuit)
+
+From/to shunt susceptance split of the PARENT transformer's magnetizing shunt. The
+magnetizing shunt lives on the parent [`PSY.ThreeWindingTransformer`](@ref) and is placed
+per its [`PSY.ThreeWindingTransformerShuntLocation`](@ref): the whole value lands on circuit
+1 only (PRIMARY on the terminal/from side, STAR on the star-node/to side); circuits 2 and 3
+carry no shunt.
+"""
+function get_equivalent_b(tw::ThreeWindingTransformerCircuit)
+    split = _three_winding_shunt_split(
+        PSY.get_magnetizing_shunt(get_transformer(tw), PSY.SU),
+        PSY.get_shunt_location(get_transformer(tw)),
+        get_winding_number(tw),
+    )
+    return (from = split.b_fr, to = split.b_to)
+end
+
+"""
+    get_equivalent_rating(tw::ThreeWindingTransformerCircuit)
+
+The circuit's own rating (MVA, device base). May be `nothing` when unset, mirroring how a
+[`PSY.Line`](@ref)'s rating is surfaced; there is no parent-level rating to fall back to.
+"""
+get_equivalent_rating(tw::ThreeWindingTransformerCircuit) =
+    PSY.get_rating(tw.circuit, PSY.DU)
+
+"""
+    get_equivalent_emergency_rating(tw::ThreeWindingTransformerCircuit)
+
+Emergency rating for this circuit. No separate `rating_b` is modeled per circuit, so this
+mirrors [`get_equivalent_rating`](@ref).
+"""
+get_equivalent_emergency_rating(tw::ThreeWindingTransformerCircuit) =
+    get_equivalent_rating(tw)
+
+"""
+    get_equivalent_available(tw::ThreeWindingTransformerCircuit)
+
+Per-circuit availability, the single source of truth for availability.
+"""
+get_equivalent_available(tw::ThreeWindingTransformerCircuit) =
+    PSY.get_available(tw.circuit)
+
+PSY.get_available(tw::ThreeWindingTransformerCircuit) = get_equivalent_available(tw)
+
+function get_arc_tuple(tr::ThreeWindingTransformerCircuit)
+    arc = PSY.get_arc(tr.circuit)
+    return (
+        PSY.get_number(PSY.get_from(arc)),
+        PSY.get_number(PSY.get_to(arc)),
+    )
+end
+
+"""
+    get_equivalent_tap(tw::ThreeWindingTransformerCircuit)
+
+The circuit's tap (turns ratio). Defaults to `1.0` for circuits with no tap.
+"""
+get_equivalent_tap(tw::ThreeWindingTransformerCircuit) = PSY.get_tap(tw.circuit)
+
+"""
+    get_equivalent_α(tw::ThreeWindingTransformerCircuit)
+
+The circuit's phase-shift angle (radians). `0.0` for non-shifting circuits.
+"""
+get_equivalent_α(tw::ThreeWindingTransformerCircuit) = PSY.get_α(tw.circuit)
+
+function add_to_map(device::ThreeWindingTransformerCircuit, filters::Dict)
+    isempty(filters) && return true
+    return add_to_map(get_transformer(device), filters)
+end
+
+is_a_reduction(::ThreeWindingTransformerCircuit) = true
+
+function has_time_series(
+    device::ThreeWindingTransformerCircuit,
+    ts_type::Type{T},
+    ts_name::String,
+) where {
+    T <: PSY.TimeSeriesData,
+}
+    return PSY.has_time_series(get_transformer(device), ts_type, ts_name)
+end
+
+function get_device_with_time_series(
+    device::ThreeWindingTransformerCircuit,
+    ts_type::Type{T},
+    ts_name::String,
+) where {
+    T <: PSY.TimeSeriesData,
+}
+    transformer = get_transformer(device)
+    if PSY.has_time_series(transformer, ts_type, ts_name)
+        return transformer
+    end
+    return nothing
+end

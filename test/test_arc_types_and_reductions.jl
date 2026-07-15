@@ -47,7 +47,7 @@ end
     # test that the 3WT arc was actually reduced
     trf = first(get_components(PSY.ThreeWindingTransformer, sys))
     trf_arcs = Tuple{Int, Int}[
-        PNM.get_arc_tuple(PSY.get_arc(w)) for w in PSY.get_windings(trf)
+        PNM.get_arc_tuple(PSY.get_arc(w)) for w in PSY.get_circuits(trf)
     ]
     nrd = PNM.get_network_reduction_data(Y)
     @test any(arc in PNM.get_removed_arcs(nrd) for arc in trf_arcs) ||
@@ -60,7 +60,7 @@ end
     Y = test_all_subtypes(sys, network_reductions)
     # test that the 3WT arc was actually reduced
     nrd = PNM.get_network_reduction_data(Y)
-    @test PNM.ThreeWindingTransformerWinding in
+    @test PNM.ThreeWindingTransformerCircuit in
           types_in_series_reduction(nrd)
 end
 
@@ -119,7 +119,7 @@ end
     )
     tap = PSY.TwoWindingTransformer(;
         name = "mixed_tap",
-        winding = PSY.TransformerWinding(;
+        circuit = PSY.TransformerCircuit(;
             arc = PSY.Arc(; from = bus1, to = bus2),
             tap = 1.0,
             available = true,
@@ -127,13 +127,12 @@ end
             reactive_power_flow = 0.0,
             rating = 80.0,
             base_power = 100.0,
-            base_voltage = 230.0,
+            base_voltage_primary = 230.0,
             winding_group_number = WindingGroupNumber.GROUP_11,
+            r = 0.122,
+            x = 0.10,
         ),
-        r = 0.122,
-        x = 0.10,
         magnetizing_shunt = 0.01 + im * 0.02,
-        base_power = 100.0,
     )
 
     # Attach the branches to a system so the unit-aware getters used by

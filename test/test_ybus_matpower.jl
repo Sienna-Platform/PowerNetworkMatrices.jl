@@ -105,6 +105,6 @@ end
         @test isapprox(ybus_pnm.data[row, col], Complex(val_re, val_im); atol = 1e-5)
     end
     N_1_5 = get_tap(
-        get_winding(get_component(TwoWindingTransformer, sys, "bus-1-bus-5-i_3")),
+        get_circuit(get_component(TwoWindingTransformer, sys, "bus-1-bus-5-i_3")),
     )
 end

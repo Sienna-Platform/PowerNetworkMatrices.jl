@@ -58,14 +58,9 @@ get_network_reduction_data(M::AdjacencyMatrix) = M.network_reduction_data
 get_bus_axis(M::AdjacencyMatrix) = M.axes[1]
 get_bus_lookup(M::AdjacencyMatrix) = M.lookup[1]
 
-function get_reduction(
-    A::AdjacencyMatrix,
-    sys::PSY.System,
-    reduction::DegreeTwoReduction,
-)
+function get_reduction(A::AdjacencyMatrix, sys::PSY.System, reduction::DegreeTwoReduction)
     network_reduction_data = get_network_reduction_data(A)
-    user_irreducible =
-        get_user_irreducible_buses(get_reductions(network_reduction_data))
+    user_irreducible = get_user_irreducible_buses(get_reductions(network_reduction_data))
     validate_buses(A, user_irreducible)
     working_set = Set{Int}(user_irreducible)
     union!(
@@ -76,8 +71,7 @@ function get_reduction(
         ),
     )
 
-    exempt_bus_positions =
-        Set(get_irreducible_indices(A, collect(working_set)))
+    exempt_bus_positions = Set(get_irreducible_indices(A, collect(working_set)))
     series_branch_map, reverse_series_branch_map, removed_buses, removed_arcs =
         get_degree2_reduction(
             A.data,
@@ -85,7 +79,6 @@ function get_reduction(
             exempt_bus_positions,
             network_reduction_data.direct_branch_map,
             network_reduction_data.parallel_branch_map,
-            network_reduction_data.transformer3W_map,
         )
     return NetworkReductionData(;
         irreducible_buses = working_set,

@@ -97,27 +97,36 @@ function _build_meshed_3wt_loop_system()
         PSY.Arc(; from = b3, to = star),
     )
     foreach(a -> PSY.add_component!(sys, a), arcs)
-    windings = ntuple(
-        i -> PSY.TransformerWinding(;
+    # Winding-resident star-leg impedances derived from the pairwise data (as PFFP does at
+    # parse): z1 = (z12 + z31 - z23)/2, z2 = (z12 + z23 - z31)/2, z3 = (z31 + z23 - z12)/2.
+    z12, z23, z31 = complex(0.01, 0.10), complex(0.01, 0.12), complex(0.01, 0.08)
+    legs = (
+        (z12 + z31 - z23) / 2,
+        (z12 + z23 - z31) / 2,
+        (z31 + z23 - z12) / 2,
+    )
+    circuits = ntuple(
+        i -> PSY.TransformerCircuit(;
             arc = arcs[i],
             available = true,
             base_power = 100.0,
-            base_voltage = 138.0,
+            base_voltage_primary = 138.0,
+            r = real(legs[i]),
+            x = imag(legs[i]),
             rating = 5.0,
         ),
         3,
     )
     t3w = PSY.ThreeWindingTransformer(;
         name = "T3W",
-        primary_winding = windings[1],
-        secondary_winding = windings[2],
-        tertiary_winding = windings[3],
+        primary_circuit = circuits[1],
+        secondary_circuit = circuits[2],
+        tertiary_circuit = circuits[3],
         star_bus = star,
         r_12 = 0.01, x_12 = 0.10,
         r_23 = 0.01, x_23 = 0.12,
-        r_13 = 0.01, x_13 = 0.08,
-        base_power_12 = 100.0, base_power_23 = 100.0, base_power_13 = 100.0,
-        magnetizing_shunt = 0.0 + 0.0im,
+        r_31 = 0.01, x_31 = 0.08,
+        base_power_12 = 100.0, base_power_23 = 100.0, base_power_31 = 100.0,
     )
     PSY.add_component!(sys, t3w)
     return sys
@@ -127,13 +136,13 @@ end
     sys = _build_meshed_3wt_loop_system()
     reductions = PNM.NetworkReduction[PNM.RadialReduction(), PNM.DegreeTwoReduction()]
 
-    # Guard the fixture: the reduction must fold a ThreeWindingTransformerWinding into a
+    # Guard the fixture: the reduction must fold a ThreeWindingTransformerCircuit into a
     # series chain, otherwise this testset silently stops covering the winding path.
     ybus = PNM.Ybus(sys; network_reductions = reductions)
     nr = PNM.get_network_reduction_data(ybus)
     series_map = PNM.get_series_branch_map(nr)
     @test any(
-        any(m isa PNM.ThreeWindingTransformerWinding for m in chain)
+        any(m isa PNM.ThreeWindingTransformerCircuit for m in chain)
         for chain in values(series_map)
     )
 

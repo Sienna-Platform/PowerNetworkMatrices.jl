@@ -84,21 +84,21 @@
     @test PSY.get_available(bs) == true
 end
 
-@testset "Equivalent getters for ThreeWindingTransformerWinding" begin
+@testset "Equivalent getters for ThreeWindingTransformerCircuit" begin
     # Create a test system with three-winding transformers
     sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
 
     # Get a three-winding transformer from the system
     trf = first(collect(PSY.get_components(PSY.ThreeWindingTransformer, sys)))
 
-    rating3 = PNM.get_equivalent_rating(PNM.ThreeWindingTransformerWinding(trf, 3))
-    # The winding's own rating (device base); there is no parent-level rating to fall back to.
-    expected_rating3 = PSY.get_rating(PSY.get_tertiary_winding(trf), PSY.DU)
+    rating3 = PNM.get_equivalent_rating(PNM.ThreeWindingTransformerCircuit(trf, 3))
+    # The circuit's own rating (device base); there is no parent-level rating to fall back to.
+    expected_rating3 = PSY.get_rating(PSY.get_tertiary_circuit(trf), PSY.DU)
     @test rating3 == expected_rating3
 
-    PSY.set_available!(PSY.get_secondary_winding(trf), false)
-    @test PNM.get_equivalent_available(PNM.ThreeWindingTransformerWinding(trf, 3)) == true
-    @test PNM.get_equivalent_available(PNM.ThreeWindingTransformerWinding(trf, 2)) == false
+    PSY.set_available!(PSY.get_secondary_circuit(trf), false)
+    @test PNM.get_equivalent_available(PNM.ThreeWindingTransformerCircuit(trf, 3)) == true
+    @test PNM.get_equivalent_available(PNM.ThreeWindingTransformerCircuit(trf, 2)) == false
 end
 
 function test_ybus_equivalence_branches_parallel(vector_branches)
@@ -172,7 +172,7 @@ function test_ybus_equivalence_branches_parallel(vector_branches)
     else
         equivalent_transformer = PSY.TwoWindingTransformer(;
             name = "equivalent_transformer",
-            winding = PSY.TransformerWinding(;
+            circuit = PSY.TransformerCircuit(;
                 arc = PSY.Arc(; from = bus1, to = bus2),
                 tap = PNM.get_equivalent_tap(equivalent_pbranch),
                 α = PNM.get_equivalent_shift(equivalent_pbranch),
@@ -181,15 +181,14 @@ function test_ybus_equivalence_branches_parallel(vector_branches)
                 reactive_power_flow = 0.0,
                 rating = 80.0,
                 base_power = 100.0,
-                base_voltage = 1.0,
+                base_voltage_primary = 1.0,
+                r = PNM.get_equivalent_r(equivalent_pbranch),  # resistance
+                x = PNM.get_equivalent_x(equivalent_pbranch),   # reactance
             ),
-            r = PNM.get_equivalent_r(equivalent_pbranch),  # resistance
-            x = PNM.get_equivalent_x(equivalent_pbranch),   # reactance
             magnetizing_shunt = Complex(
                 PNM.get_equivalent_g_from(equivalent_pbranch),
                 PNM.get_equivalent_b_from(equivalent_pbranch),
             ),
-            base_power = 100.0,
         )
         equivalent_admittance = PSY.FixedAdmittance(;
             name = "equivalent_admittance",
@@ -279,7 +278,7 @@ function test_ybus_equivalence_branches_series(vector_branches)
     else
         equivalent_transformer = PSY.TwoWindingTransformer(;
             name = "equivalent_transformer",
-            winding = PSY.TransformerWinding(;
+            circuit = PSY.TransformerCircuit(;
                 arc = PSY.Arc(; from = bus1, to = bus2),
                 tap = PNM.get_equivalent_tap(equivalent_pbranch),
                 α = PNM.get_equivalent_shift(equivalent_pbranch),
@@ -288,15 +287,14 @@ function test_ybus_equivalence_branches_series(vector_branches)
                 reactive_power_flow = 0.0,
                 rating = 80.0,
                 base_power = 100.0,
-                base_voltage = 1.0,
+                base_voltage_primary = 1.0,
+                r = PNM.get_equivalent_r(equivalent_pbranch),  # resistance
+                x = PNM.get_equivalent_x(equivalent_pbranch),   # reactance
             ),
-            r = PNM.get_equivalent_r(equivalent_pbranch),  # resistance
-            x = PNM.get_equivalent_x(equivalent_pbranch),   # reactance
             magnetizing_shunt = Complex(
                 PNM.get_equivalent_g_from(equivalent_pbranch),
                 PNM.get_equivalent_b_from(equivalent_pbranch),
             ),
-            base_power = 100.0,
         )
         equivalent_admittance = PSY.FixedAdmittance(;
             name = "equivalent_admittance",
@@ -357,7 +355,7 @@ end
     )
     t1 = PSY.TwoWindingTransformer(;
         name = "tfw_1",
-        winding = PSY.TransformerWinding(;
+        circuit = PSY.TransformerCircuit(;
             arc = PSY.Arc(nothing),
             tap = 1.0,
             available = true,
@@ -365,18 +363,17 @@ end
             reactive_power_flow = 0.0,
             rating = 80.0,
             base_power = 100.0,
-            base_voltage = 1.0,
+            base_voltage_primary = 1.0,
+            base_voltage_secondary = 1.0,
             winding_group_number = WindingGroupNumber.GROUP_11,
+            r = 0.122,  # resistance
+            x = 0.1,   # reactance
         ),
-        r = 0.122,  # resistance
-        x = 0.1,   # reactance
         magnetizing_shunt = 0.01 + im * 0.02,
-        base_power = 100.0,
-        base_voltage_secondary = 1.0,
     )
     t2 = PSY.TwoWindingTransformer(;
         name = "tfw_2",
-        winding = PSY.TransformerWinding(;
+        circuit = PSY.TransformerCircuit(;
             arc = PSY.Arc(nothing),
             tap = 1.0,
             available = true,
@@ -384,18 +381,17 @@ end
             reactive_power_flow = 0.0,
             rating = 80.0,
             base_power = 100.0,
-            base_voltage = 1.0,
+            base_voltage_primary = 1.0,
+            base_voltage_secondary = 1.0,
             winding_group_number = WindingGroupNumber.GROUP_11,
+            r = 0.3,  # resistance
+            x = 0.13,   # reactance
         ),
-        r = 0.3,  # resistance
-        x = 0.13,   # reactance
         magnetizing_shunt = 0.02 + im * 0.021,
-        base_power = 100.0,
-        base_voltage_secondary = 1.0,
     )
     t3 = PSY.TwoWindingTransformer(;
         name = "tfw_3",
-        winding = PSY.TransformerWinding(;
+        circuit = PSY.TransformerCircuit(;
             arc = PSY.Arc(nothing),
             tap = 1.0,
             α = 0.2,
@@ -404,13 +400,12 @@ end
             reactive_power_flow = 0.0,
             rating = 80.0,
             base_power = 100.0,
-            base_voltage = 1.0,
+            base_voltage_primary = 1.0,
+            base_voltage_secondary = 1.0,
+            r = 0.3,  # resistance
+            x = 0.13,   # reactance
         ),
-        r = 0.3,  # resistance
-        x = 0.13,   # reactance
         magnetizing_shunt = 0.02 + im * 0.021,
-        base_power = 100.0,
-        base_voltage_secondary = 1.0,
     )
     # Two lines in parallel:
     test_ybus_equivalence_branches_parallel([l1, l2])

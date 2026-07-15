@@ -14,13 +14,15 @@ function _find_zero_impedance_arc_key(bus_i::Int, bus_j::Int, nrd::NetworkReduct
 end
 
 _is_transformer(::PSY.TwoWindingTransformer) = true
+# Three-winding transformer windings are one-to-one arcs in `direct_branch_map`; they are
+# transformer arcs and must be excluded from zero-impedance bus merging like any transformer.
+_is_transformer(::ThreeWindingTransformerCircuit) = true
 _is_transformer(::PSY.ACTransmission) = false
 _any_transformer(parallel_br::AbstractBranchesParallel) =
     any(_is_transformer(br) for br in parallel_br)
 
 function _build_transformer_arc_set(nrd::NetworkReductionData)
     transformer_arcs = Set{Tuple{Int, Int}}()
-    union!(transformer_arcs, keys(nrd.transformer3W_map))
     for (arc, branch) in nrd.direct_branch_map
         _is_transformer(branch) && push!(transformer_arcs, arc)
     end
@@ -30,11 +32,7 @@ function _build_transformer_arc_set(nrd::NetworkReductionData)
     return transformer_arcs
 end
 
-function get_reduction(
-    ybus::Ybus,
-    sys::PSY.System,
-    reduction::ZeroImpedanceBranchReduction,
-)
+function get_reduction(ybus::Ybus, sys::PSY.System, reduction::ZeroImpedanceBranchReduction)
     nr = NetworkReductionData()
     nrd = get_network_reduction_data(ybus)
     user_irreducible = get_user_irreducible_buses(get_reductions(nrd))

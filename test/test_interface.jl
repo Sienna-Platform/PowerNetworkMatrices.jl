@@ -21,8 +21,6 @@
         :reverse_parallel_branch_map,
         :series_branch_map,
         :reverse_series_branch_map,
-        :transformer3W_map,
-        :reverse_transformer3W_map,
     ]
         original_map = getproperty(nrd, entry)
         rebuilt_map = getproperty(nrd_rebuild, entry)

@@ -271,17 +271,37 @@ end
     @test length(row) == length(PNM.get_bus_axis(vptdf))
 end
 
-@testset "NetworkModification: single ThreeWindingTransformerWinding outage" begin
+@testset "NetworkModification: single ThreeWindingTransformerCircuit outage" begin
     sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
     trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
     vptdf = VirtualPTDF(sys)
+    nr = PNM.get_network_reduction_data(vptdf)
+    arc_lookup = PNM.get_arc_lookup(vptdf)
 
-    # Single winding outage
+    # Single winding outage: exactly one arc modification, targeting THIS winding's arc
+    # (siblings and the star point are untouched), with a Ybus delta equal to the negated
+    # Pi-model of just that winding.
+    winding_arc_indices =
+        Dict(
+            w => arc_lookup[PNM.get_arc_tuple(
+                PNM.ThreeWindingTransformerCircuit(trf, w),
+                nr,
+            )] for w in 1:3
+        )
     for w in 1:3
-        winding = PNM.ThreeWindingTransformerWinding(trf, w)
+        winding = PNM.ThreeWindingTransformerCircuit(trf, w)
         mod = NetworkModification(vptdf, winding)
         @test length(mod.arc_modifications) == 1
-        @test mod.arc_modifications[1].delta_b < 0
+        am = mod.arc_modifications[1]
+        @test am.delta_b < 0
+        @test am.arc_index == winding_arc_indices[w]
+        sibling_indices = [winding_arc_indices[s] for s in 1:3 if s != w]
+        @test am.arc_index ∉ sibling_indices
+        Y11, Y12, Y21, Y22 = PNM.ybus_branch_entries(winding)
+        @test am.delta_y11 ≈ ComplexF32(-Y11)
+        @test am.delta_y12 ≈ ComplexF32(-Y12)
+        @test am.delta_y21 ≈ ComplexF32(-Y21)
+        @test am.delta_y22 ≈ ComplexF32(-Y22)
     end
 end
 
@@ -290,7 +310,7 @@ end
     trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
 
     # Disable one winding before building the matrix
-    PSY.set_available!(PSY.get_secondary_winding(trf), false)
+    PSY.set_available!(PSY.get_secondary_circuit(trf), false)
     vptdf = VirtualPTDF(sys)
 
     # Full 3WT outage should only produce 2 mods (secondary is unavailable)

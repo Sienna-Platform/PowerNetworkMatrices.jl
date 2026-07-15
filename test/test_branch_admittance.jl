@@ -76,9 +76,12 @@ end
 end
 
 # Build a `ThreeWindingTransformer` into `sys`, wiring three terminal
-# buses to a hidden star bus. Pairwise impedances are stored device-base on `bp` (= system
-# base here, so SU == DU keeps the hand-computed literals clean); each winding carries its
-# own arc, base power, base voltage, and rating. Returns the attached transformer.
+# buses to a hidden star bus. The circuit-resident star-leg series impedances are derived
+# from the pairwise data here (as PFFP does at parse) and stored per circuit on `bp`
+# (= system base here, so SU == DU keeps the hand-computed literals clean); the pairwise data
+# stays on the parent. The magnetizing shunt and its location live on the parent transformer.
+# Each circuit carries its own arc, base power, base voltages, and rating. Returns the
+# attached transformer.
 function _add_three_winding_transformer!(
     sys,
     busP,
@@ -88,9 +91,10 @@ function _add_three_winding_transformer!(
     name = "T3W",
     r12 = 0.01, x12 = 0.1,
     r23 = 0.01, x23 = 0.1,
-    r13 = 0.01, x13 = 0.1,
+    r31 = 0.01, x31 = 0.1,
     bp = 100.0,
     magnetizing_shunt = 0.0 + 0.0im,
+    shunt_location = PSY.ThreeWindingTransformerShuntLocation.PRIMARY,
     ratings = (1.0, 1.0, 0.5),
 )
     arcs = (
@@ -99,27 +103,36 @@ function _add_three_winding_transformer!(
         PSY.Arc(; from = busT, to = star_bus),
     )
     foreach(a -> PSY.add_component!(sys, a), arcs)
-    windings = ntuple(
-        i -> PSY.TransformerWinding(;
+    z12, z23, z31 = complex(r12, x12), complex(r23, x23), complex(r31, x31)
+    legs = (
+        (z12 + z31 - z23) / 2,
+        (z12 + z23 - z31) / 2,
+        (z31 + z23 - z12) / 2,
+    )
+    circuits = ntuple(
+        i -> PSY.TransformerCircuit(;
             arc = arcs[i],
             available = true,
             base_power = bp,
-            base_voltage = PSY.get_base_voltage(PSY.get_from(arcs[i])),
+            base_voltage_primary = PSY.get_base_voltage(PSY.get_from(arcs[i])),
+            r = real(legs[i]),
+            x = imag(legs[i]),
             rating = ratings[i],
         ),
         3,
     )
     t3w = PSY.ThreeWindingTransformer(;
         name = name,
-        primary_winding = windings[1],
-        secondary_winding = windings[2],
-        tertiary_winding = windings[3],
+        primary_circuit = circuits[1],
+        secondary_circuit = circuits[2],
+        tertiary_circuit = circuits[3],
         star_bus = star_bus,
         r_12 = r12, x_12 = x12,
         r_23 = r23, x_23 = x23,
-        r_13 = r13, x_13 = x13,
-        base_power_12 = bp, base_power_23 = bp, base_power_13 = bp,
+        r_31 = r31, x_31 = x31,
+        base_power_12 = bp, base_power_23 = bp, base_power_31 = bp,
         magnetizing_shunt = magnetizing_shunt,
+        shunt_location = shunt_location,
     )
     PSY.add_component!(sys, t3w)
     return t3w
@@ -145,9 +158,9 @@ function _add_star_buses!(sys, busD; numbers = (101, 102, 103))
 end
 
 @testset "ThreeWindingTransformer winding_admittance and three_winding_arcs decomposition" begin
-    # Unit test the per-winding admittance helper against a real PNM
-    # `ThreeWindingTransformerWinding`: for a winding whose derived star-leg impedance is
-    # R + jX the helper must return the series admittance 1/(R + jX), the winding's PNM shunt
+    # Unit test the per-circuit admittance helper against a real PNM
+    # `ThreeWindingTransformerCircuit`: for a circuit whose derived star-leg impedance is
+    # R + jX the helper must return the series admittance 1/(R + jX), the parent's PNM shunt
     # on the from/to sides, no phase shift, and (here) a unit tap. R/X are read back through
     # PNM so the assertion is robust to per-unit base conversions.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
@@ -157,7 +170,7 @@ end
         sys, busD, sec_bus, ter_bus, star_bus; name = "Transformer3W_busD",
     )
 
-    w = PNM.ThreeWindingTransformerWinding(transformer3w, 1)
+    w = PNM.ThreeWindingTransformerCircuit(transformer3w, 1)
     adm = PNM.winding_admittance(w)
 
     r = PNM.get_equivalent_r(w)
@@ -173,53 +186,17 @@ end
     @test adm.b_to == b_sh.to
     @test adm.tap == 1.0
 
-    # `three_winding_arcs` decomposes the device into its three windings, exposing the
-    # star-point arc, rating, and winding object the native builders consume.
+    # `three_winding_arcs` decomposes the device into its three circuits, exposing the
+    # star-point arc, rating, and circuit object the native builders consume.
     arcs = PNM.three_winding_arcs(transformer3w)
-    windings = PSY.get_windings(transformer3w)
+    circuits = PSY.get_circuits(transformer3w)
     @test length(arcs) == 3
     @test [a.suffix for a in arcs] == ["winding_1", "winding_2", "winding_3"]
-    @test arcs[1].arc == PSY.get_arc(windings[1])
-    @test arcs[2].arc == PSY.get_arc(windings[2])
-    @test arcs[3].arc == PSY.get_arc(windings[3])
-    # Winding admittance computed from the decomposition matches the standalone helper.
-    @test PNM.winding_admittance(arcs[1].winding).b ≈ adm.b
-end
-
-@testset "ThreeWindingTransformerWinding star derivation (hand-computed)" begin
-    # Asymmetric pairwise impedances, all on the system base (bp == 100), so SU == DU and the
-    # star-leg identity applies directly to the literals below. The identity is
-    #   z1 = (z12 + z13 - z23)/2, z2 = (z12 + z23 - z13)/2, z3 = (z13 + z23 - z12)/2.
-    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
-    busD = PSY.get_component(PSY.ACBus, sys, "nodeD")
-    sec_bus, ter_bus, star_bus = _add_star_buses!(sys, busD; numbers = (201, 202, 203))
-    # Values chosen so no star leg derives to ~0 (flooring is exercised separately below).
-    r12, x12 = 0.03, 0.20
-    r23, x23 = 0.04, 0.30
-    r13, x13 = 0.05, 0.40
-    t3w = _add_three_winding_transformer!(
-        sys, busD, sec_bus, ter_bus, star_bus;
-        name = "T3W_star_math",
-        r12 = r12, x12 = x12, r23 = r23, x23 = x23, r13 = r13, x13 = x13,
-    )
-    z12 = complex(r12, x12)
-    z23 = complex(r23, x23)
-    z13 = complex(r13, x13)
-    expected = (
-        (z12 + z13 - z23) / 2,
-        (z12 + z23 - z13) / 2,
-        (z13 + z23 - z12) / 2,
-    )
-    for i in 1:3
-        w = PNM.ThreeWindingTransformerWinding(t3w, i)
-        @test isapprox(PNM.get_equivalent_r(w), real(expected[i]); atol = 1e-12)
-        @test isapprox(PNM.get_equivalent_x(w), imag(expected[i]); atol = 1e-12)
-    end
-    # Hand-computed spot check for winding 1: r1 = (0.03 + 0.05 - 0.04)/2 = 0.02,
-    # x1 = (0.20 + 0.40 - 0.30)/2 = 0.15.
-    w1 = PNM.ThreeWindingTransformerWinding(t3w, 1)
-    @test isapprox(PNM.get_equivalent_r(w1), 0.02; atol = 1e-12)
-    @test isapprox(PNM.get_equivalent_x(w1), 0.15; atol = 1e-12)
+    @test arcs[1].arc == PSY.get_arc(circuits[1])
+    @test arcs[2].arc == PSY.get_arc(circuits[2])
+    @test arcs[3].arc == PSY.get_arc(circuits[3])
+    # Circuit admittance computed from the decomposition matches the standalone helper.
+    @test PNM.winding_admittance(arcs[1].circuit).b ≈ adm.b
 end
 
 @testset "PST-3W winding series susceptance (pinned behavior)" begin
@@ -239,36 +216,36 @@ end
             PSY.get_components(PSY.ThreeWindingTransformer, sys),
         ),
     )
-    windings = PSY.get_windings(t)
+    windings = PSY.get_circuits(t)
     winding_number = findfirst(w -> !iszero(PSY.get_α(w)), windings)
     @test winding_number !== nothing
-    tw = PNM.ThreeWindingTransformerWinding(t, winding_number)
-    @test !iszero(PSY.get_α(PSY.get_windings(t)[winding_number]))
+    tw = PNM.ThreeWindingTransformerCircuit(t, winding_number)
+    @test !iszero(PSY.get_α(PSY.get_circuits(t)[winding_number]))
 
-    # (a) Pinned model: reactance-only `1/x` of the derived star leg, divided by the
-    # winding tap, computed from the wrapper's own stored fields.
+    # (a) Pinned model: reactance-only `1/x` of the winding's star leg, divided by the
+    # winding tap, read back through the wrapper.
     tap = PSY.get_tap(windings[winding_number])
-    pinned = (1 / tw.x) / tap
+    pinned = (1 / PNM.get_equivalent_x(tw)) / tap
     @test PNM.get_series_susceptance(tw, PSY.SU) ≈ pinned
 
     # (b) Independent hand-derivation from the fixture's raw pairwise data, so (a) is not
     # purely self-referential. `case14_with_pst3w.raw`'s two 3W transformers both carry
-    # r_12 = r_23 = r_13 = 0.0, x_12 = x_23 = x_13 = 0.0002 pu on their own (100 MVA) base,
+    # r_12 = r_23 = r_31 = 0.0, x_12 = x_23 = x_31 = 0.0002 pu on their own (100 MVA) base,
     # which equals the system base here, so SU reads back the raw values unchanged. The
-    # standard delta->star identity gives every star leg r = (0+0-0)/2 = 0.0,
-    # x = (0.0002+0.0002-0.0002)/2 = 0.0001 (independent of which winding), well above
-    # `STAR_LEG_ZERO_REACTANCE_ATOL` so no flooring applies. The phase-shifting winding
-    # carries tap = 1.0, so the susceptance is (1/0.0001)/1.0 = +10000.0 exactly. Note the
-    # sign: `1/x` is positive for x > 0, whereas the r-aware complex form
-    # `imag(1/(j*x)) = -1/x` is negative — the two forms are NOT interchangeable.
+    # standard delta->star identity (applied by PFFP at parse) gives every star leg
+    # r = (0+0-0)/2 = 0.0, x = (0.0002+0.0002-0.0002)/2 = 0.0001 (independent of which
+    # winding). The phase-shifting winding carries tap = 1.0, so the susceptance is
+    # (1/0.0001)/1.0 = +10000.0 exactly. Note the sign: `1/x` is positive for x > 0, whereas
+    # the r-aware complex form `imag(1/(j*x)) = -1/x` is negative — the two forms are NOT
+    # interchangeable.
     r12, x12 = PSY.get_r_12(t, PSY.SU), PSY.get_x_12(t, PSY.SU)
     r23, x23 = PSY.get_r_23(t, PSY.SU), PSY.get_x_23(t, PSY.SU)
-    r13, x13 = PSY.get_r_13(t, PSY.SU), PSY.get_x_13(t, PSY.SU)
-    z12, z23, z13 = complex(r12, x12), complex(r23, x23), complex(r13, x13)
+    r31, x31 = PSY.get_r_31(t, PSY.SU), PSY.get_x_31(t, PSY.SU)
+    z12, z23, z31 = complex(r12, x12), complex(r23, x23), complex(r31, x31)
     z_by_winding = (
-        (z12 + z13 - z23) / 2,
-        (z12 + z23 - z13) / 2,
-        (z13 + z23 - z12) / 2,
+        (z12 + z31 - z23) / 2,
+        (z12 + z23 - z31) / 2,
+        (z31 + z23 - z12) / 2,
     )
     z_star = z_by_winding[winding_number]
     hand_derived_susceptance = (1 / imag(z_star)) / tap
@@ -279,7 +256,7 @@ end
     # same star-leg reactance (0.0001), so its susceptance must be 10000/1.05.
     tap3 = PSY.get_tap(windings[3])
     @test tap3 == 1.05
-    tw3 = PNM.ThreeWindingTransformerWinding(t, 3)
+    tw3 = PNM.ThreeWindingTransformerCircuit(t, 3)
     @test PNM.get_series_susceptance(tw3, PSY.SU) ≈ 10000.0 / 1.05
 end
 
@@ -296,41 +273,18 @@ end
         sys, busD, sec_bus, ter_bus, star_bus;
         name = "T3W_nonunit_tap",
     )
-    winding1 = PSY.get_windings(t3w)[1]
+    winding1 = PSY.get_circuits(t3w)[1]
     PSY.set_tap!(winding1, 1.05)
-    w1 = PNM.ThreeWindingTransformerWinding(t3w, 1)
+    w1 = PNM.ThreeWindingTransformerCircuit(t3w, 1)
     adm = PNM.winding_admittance(w1)
     @test adm.tap == 1.05
     @test adm.tap != 1.0
 end
 
-@testset "ThreeWindingTransformerWinding zero-reactance flooring" begin
-    # Choose pairwise reactances so the primary star leg derives to exactly zero:
-    # x1 = (x12 + x13 - x23)/2 = (0.05 + 0.05 - 0.10)/2 = 0.0. The wrapper must floor it to
-    # `STAR_LEG_REACTANCE_FLOOR`; the frozen baseline for
-    # `psse_4_zero_impedance_3wt_test_system` implies exactly this: its
-    # zero-reactance star leg carries Y_t = 1/(r + j*1e-4).
-    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
-    busD = PSY.get_component(PSY.ACBus, sys, "nodeD")
-    sec_bus, ter_bus, star_bus = _add_star_buses!(sys, busD; numbers = (301, 302, 303))
-    t3w = _add_three_winding_transformer!(
-        sys, busD, sec_bus, ter_bus, star_bus;
-        name = "T3W_zero_x",
-        r12 = 0.01, x12 = 0.05, r23 = 0.01, x23 = 0.10, r13 = 0.01, x13 = 0.05,
-    )
-    w1 = PNM.ThreeWindingTransformerWinding(t3w, 1)
-    @test PNM.get_equivalent_x(w1) == PNM.STAR_LEG_REACTANCE_FLOOR
-    @test PNM.STAR_LEG_REACTANCE_FLOOR == 1e-4
-    # Non-floored legs are unaffected: x2 = (0.05 + 0.10 - 0.05)/2 = 0.05.
-    w2 = PNM.ThreeWindingTransformerWinding(t3w, 2)
-    @test isapprox(PNM.get_equivalent_x(w2), 0.05; atol = 1e-12)
-end
-
-@testset "ThreeWindingTransformerWinding lookup identity is mutation-insensitive" begin
-    # Lookup identity must be `{parent, winding_number}`, not full field-egal equality: `r`/`x`
-    # are a build-time snapshot of the parent's pairwise data, so a wrapper constructed
-    # before a pairwise-impedance mutation and one constructed after must still be treated as
-    # "the same winding" by `==`/`hash`/Dict lookups.
+@testset "ThreeWindingTransformerCircuit lookup identity" begin
+    # Lookup identity is `{parent, winding_number}`: two wrappers for the same winding of the
+    # same parent are `==`/`hash`-equal, so a fresh wrapper resolves a Dict/Set entry keyed by
+    # an earlier-built one.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
     busD = PSY.get_component(PSY.ACBus, sys, "nodeD")
     sec_bus, ter_bus, star_bus = _add_star_buses!(sys, busD; numbers = (401, 402, 403))
@@ -339,26 +293,22 @@ end
         name = "T3W_identity",
     )
 
-    w1_before = PNM.ThreeWindingTransformerWinding(t3w, 1)
-    PSY.set_x_12!(t3w, 0.9 * PSY.SU)
-    w1_after = PNM.ThreeWindingTransformerWinding(t3w, 1)
+    w1_a = PNM.ThreeWindingTransformerCircuit(t3w, 1)
+    w1_b = PNM.ThreeWindingTransformerCircuit(t3w, 1)
 
-    # Same parent + winding number: equal and hash-equal even though the mutation changed the
-    # derived `r`/`x` snapshot between the two constructions.
-    @test w1_before.x != w1_after.x
-    @test w1_before == w1_after
-    @test hash(w1_before) == hash(w1_after)
+    # Same parent + winding number: equal and hash-equal.
+    @test w1_a == w1_b
+    @test hash(w1_a) == hash(w1_b)
 
     # Different winding number on the same parent: unequal.
-    w2 = PNM.ThreeWindingTransformerWinding(t3w, 2)
-    @test w1_after != w2
-    @test hash(w1_after) != hash(w2)
+    w2 = PNM.ThreeWindingTransformerCircuit(t3w, 2)
+    @test w1_a != w2
+    @test hash(w1_a) != hash(w2)
 
-    # Dict lookup round-trip: a fresh wrapper (rebuilt after further mutation) must resolve
-    # the same map entry as the wrapper originally used as the key.
-    d = Dict(w1_before => "winding_1")
-    PSY.set_r_12!(t3w, 0.02 * PSY.SU)
-    w1_rebuilt = PNM.ThreeWindingTransformerWinding(t3w, 1)
+    # Dict lookup round-trip: a fresh wrapper must resolve the same map entry as the wrapper
+    # originally used as the key.
+    d = Dict(w1_a => "winding_1")
+    w1_rebuilt = PNM.ThreeWindingTransformerCircuit(t3w, 1)
     @test d[w1_rebuilt] == "winding_1"
 end
 
@@ -390,7 +340,7 @@ end
     PSY.add_component!(sys, arc)
     t = PSY.TwoWindingTransformer(;
         name = "T2W",
-        winding = PSY.TransformerWinding(;
+        circuit = PSY.TransformerCircuit(;
             arc = arc,
             tap = 1.0,
             available = true,
@@ -398,18 +348,165 @@ end
             reactive_power_flow = 0.0,
             rating = 1.0,
             base_power = 100.0,
-            base_voltage = 138.0,
+            base_voltage_primary = 138.0,
+            r = 0.01,
+            x = 0.1,
         ),
-        r = 0.01,
-        x = 0.1,
-        magnetizing_shunt = 0.0 + 0.0im,
-        base_power = 100.0,
     )
     PSY.add_component!(sys, t)
 
-    # parent base_power (100.0) == system base, so DU == SU here.
+    # circuit base_power (100.0) == system base, so DU == SU here.
     @test PNM.get_series_susceptance(t, PSY.SU) ≈ 1 / 0.1
-    PSY.set_tap!(PSY.get_winding(t), 1.05)
+    PSY.set_tap!(PSY.get_circuit(t), 1.05)
     @test PNM.get_series_susceptance(t, PSY.SU) ≈ (1 / 0.1) / 1.05
     @test PNM.get_series_susceptance(t, PSY.SU) ≈ 9.523809523809524
+end
+
+@testset "Magnetizing shunt placement (2W enum + 3W enum, parent-resident)" begin
+    # Nonzero conductance (not just susceptance), to exercise the g-side of the shunt split.
+    # r = 0.01, x = 0.1 for both transformer types below (2W directly; 3W via symmetric
+    # pairwise legs r12 = r23 = r31 = 0.02, x12 = x23 = x31 = 0.2, which derive every star
+    # leg to (0.02 + 0.02 - 0.02)/2 = 0.01, (0.2 + 0.2 - 0.2)/2 = 0.1), so `Y_t` is identical
+    # in both cases. The magnetizing shunt and its location are PARENT-transformer
+    # fields; the 2W and 3W enums are distinct types.
+    y_shunt = 0.005 + 0.012im
+    r, x = 0.01, 0.1
+    Y_t = inv(complex(r, x))
+
+    # 2W: PRIMARY -> from side, SECONDARY -> to side, SPLIT -> full value both sides.
+    twoW_locations = (
+        (location = PSY.TwoWindingTransformerShuntLocation.PRIMARY, fr = true, to = false),
+        (
+            location = PSY.TwoWindingTransformerShuntLocation.SECONDARY,
+            fr = false,
+            to = true,
+        ),
+        (location = PSY.TwoWindingTransformerShuntLocation.SPLIT, fr = true, to = true),
+    )
+
+    function _t2w_with_shunt(shunt_location)
+        sys = PSY.System(100.0)
+        busA = PSY.ACBus(;
+            number = 1,
+            name = "busA",
+            available = true,
+            bustype = PSY.ACBusTypes.REF,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 138.0,
+        )
+        busB = PSY.ACBus(;
+            number = 2,
+            name = "busB",
+            available = true,
+            bustype = PSY.ACBusTypes.PV,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 138.0,
+        )
+        PSY.add_component!(sys, busA)
+        PSY.add_component!(sys, busB)
+        arc = PSY.Arc(; from = busA, to = busB)
+        PSY.add_component!(sys, arc)
+        t = PSY.TwoWindingTransformer(;
+            name = "T2W_shunt",
+            circuit = PSY.TransformerCircuit(;
+                arc = arc,
+                available = true,
+                rating = 1.0,
+                base_power = 100.0,
+                base_voltage_primary = 138.0,
+                r = r,
+                x = x,
+            ),
+            magnetizing_shunt = y_shunt,
+            shunt_location = shunt_location,
+        )
+        PSY.add_component!(sys, t)
+        return t
+    end
+
+    for (location, fr, to) in twoW_locations
+        t = _t2w_with_shunt(location)
+        (Y11, Y12, Y21, Y22) = PNM.ybus_branch_entries(t)
+        @test isapprox(Y11, Y_t + (fr ? y_shunt : 0.0 + 0.0im); atol = 1e-12)
+        @test isapprox(Y22, Y_t + (to ? y_shunt : 0.0 + 0.0im); atol = 1e-12)
+        @test isapprox(Y12, -Y_t; atol = 1e-12)
+        @test isapprox(Y21, -Y_t; atol = 1e-12)
+
+        adm = PNM.branch_admittance(t)
+        @test adm.g_fr == (fr ? real(y_shunt) : 0.0)
+        @test adm.b_fr == (fr ? imag(y_shunt) : 0.0)
+        @test adm.g_to == (to ? real(y_shunt) : 0.0)
+        @test adm.b_to == (to ? imag(y_shunt) : 0.0)
+    end
+
+    # SPLIT applies the FULL value on both sides -- not halved.
+    t_split = _t2w_with_shunt(PSY.TwoWindingTransformerShuntLocation.SPLIT)
+    (Y11, _, _, Y22) = PNM.ybus_branch_entries(t_split)
+    @test isapprox(Y11 - Y_t, y_shunt; atol = 1e-12)
+    @test isapprox(Y22 - Y_t, y_shunt; atol = 1e-12)
+    @test !isapprox(Y11 - Y_t, y_shunt / 2; atol = 1e-9)
+
+    # 3W: the parent shunt lands on circuit 1 only. PRIMARY places it on the terminal (from)
+    # side, STAR on the star-node (to) side; circuits 2 and 3 never carry it.
+    threeW_locations = (
+        (
+            location = PSY.ThreeWindingTransformerShuntLocation.PRIMARY,
+            fr = true,
+            to = false,
+        ),
+        (location = PSY.ThreeWindingTransformerShuntLocation.STAR, fr = false, to = true),
+    )
+
+    function _t3w_with_shunt(shunt_location, suffix)
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
+        busD = PSY.get_component(PSY.ACBus, sys, "nodeD")
+        sec_bus, ter_bus, star_bus =
+            _add_star_buses!(
+                sys,
+                busD;
+                numbers = (601 + suffix, 602 + suffix, 603 + suffix),
+            )
+        return _add_three_winding_transformer!(
+            sys, busD, sec_bus, ter_bus, star_bus;
+            name = "T3W_shunt_$suffix",
+            r12 = 0.02, x12 = 0.2, r23 = 0.02, x23 = 0.2, r31 = 0.02, x31 = 0.2,
+            magnetizing_shunt = y_shunt,
+            shunt_location = shunt_location,
+        )
+    end
+
+    for (i, (location, fr, to)) in enumerate(threeW_locations)
+        t3w = _t3w_with_shunt(location, i)
+        w1 = PNM.ThreeWindingTransformerCircuit(t3w, 1)
+        (Y11, Y12, Y21, Y22) = PNM.ybus_branch_entries(w1)
+        # STAR lands the shunt on the star-bus diagonal (circuit-1 Y22); PRIMARY on the
+        # terminal-bus diagonal (Y11). Hand-computed: the whole value, on one side only.
+        @test isapprox(Y11, Y_t + (fr ? y_shunt : 0.0 + 0.0im); atol = 1e-12)
+        @test isapprox(Y22, Y_t + (to ? y_shunt : 0.0 + 0.0im); atol = 1e-12)
+
+        adm = PNM.winding_admittance(w1)
+        @test adm.g_fr == (fr ? real(y_shunt) : 0.0)
+        @test adm.b_fr == (fr ? imag(y_shunt) : 0.0)
+        @test adm.g_to == (to ? real(y_shunt) : 0.0)
+        @test adm.b_to == (to ? imag(y_shunt) : 0.0)
+
+        # Circuits 2 and 3 carry no shunt regardless of the parent location: their Ybus
+        # diagonals stay at the bare series admittance (unit tap here).
+        for cn in (2, 3)
+            wc = PNM.ThreeWindingTransformerCircuit(t3w, cn)
+            (c11, _, _, c22) = PNM.ybus_branch_entries(wc)
+            @test isapprox(c11, Y_t; atol = 1e-12)
+            @test isapprox(c22, Y_t; atol = 1e-12)
+            b_sh = PNM.get_equivalent_b(wc)
+            @test b_sh.from == 0.0
+            @test b_sh.to == 0.0
+            cadm = PNM.winding_admittance(wc)
+            @test cadm.g_fr == 0.0 && cadm.b_fr == 0.0
+            @test cadm.g_to == 0.0 && cadm.b_to == 0.0
+        end
+    end
 end

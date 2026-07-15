@@ -26,7 +26,6 @@ function get_degree2_reduction(
     exempt_bus_positions::Set{Int},
     direct_branch_map::Dict{Tuple{Int, Int}, PSY.ACTransmission},
     parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel},
-    transformer3W_map::Dict{Tuple{Int, Int}, ThreeWindingTransformerWinding},
 )
     reverse_bus_lookup = Dict(v => k for (k, v) in bus_lookup)
     arc_maps = find_degree2_chains(data, exempt_bus_positions)
@@ -45,12 +44,8 @@ function get_degree2_reduction(
         segments = BranchesSeries()
         for ix in 1:(length(segment_numbers) - 1)
             segment_arc = (segment_numbers[ix], segment_numbers[ix + 1])
-            segment_arc, entry, orientation = _get_branch_map_entry(
-                direct_branch_map,
-                parallel_branch_map,
-                transformer3W_map,
-                segment_arc,
-            )
+            segment_arc, entry, orientation =
+                _get_branch_map_entry(direct_branch_map, parallel_branch_map, segment_arc)
             add_branch!(segments, entry, orientation)
             push!(removed_arcs, segment_arc)
             ix != 1 && push!(removed_buses, segment_numbers[ix])
@@ -102,10 +97,10 @@ end
 function _get_branch_map_entry(
     direct_branch_map::Dict{Tuple{Int, Int}, PSY.ACTransmission},
     parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel},
-    transformer3W_map::Dict{Tuple{Int, Int}, ThreeWindingTransformerWinding},
     arc::Tuple{Int, Int},
 )
     reverse_arc = (arc[2], arc[1])
+    # `ThreeWindingTransformerCircuit`s are one-to-one arcs held in `direct_branch_map`.
     if haskey(direct_branch_map, arc)
         return arc, direct_branch_map[arc], :FromTo
     elseif haskey(direct_branch_map, reverse_arc)
@@ -114,10 +109,6 @@ function _get_branch_map_entry(
         return arc, parallel_branch_map[arc], :FromTo
     elseif haskey(parallel_branch_map, reverse_arc)
         return reverse_arc, parallel_branch_map[reverse_arc], :ToFrom
-    elseif haskey(transformer3W_map, arc)
-        return arc, transformer3W_map[arc], :FromTo
-    elseif haskey(transformer3W_map, reverse_arc)
-        return reverse_arc, transformer3W_map[reverse_arc], :ToFrom
     else
         error("Arc $arc not found in the existing network reduction mappings.")
     end
@@ -260,7 +251,8 @@ function _get_partial_chain_recursive!(
     current_node::Int,
     prev_node::Int,
     reduced_indices::BitVector,
-    irreducible_indices::BitVector)
+    irreducible_indices::BitVector,
+)
     # If current node is reduced stop
     if reduced_indices[current_node]
         return Int[]

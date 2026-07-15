@@ -143,7 +143,7 @@ end
     vptdf = VirtualPTDF(sys; network_reductions = reductions)
     nr = PNM.get_network_reduction_data(ybus)
 
-    # Find an ACBranch (not ThreeWindingTransformerWinding) in the series map.
+    # Find an ACBranch (not ThreeWindingTransformerCircuit) in the series map.
     # Dict iteration order is not stable across Julia versions, so sort the
     # candidates by name for determinism. Only standalone segments (not nested
     # inside BranchesParallel) yield a full-chain outage when removed; partial
@@ -151,7 +151,7 @@ end
     series_branch = nothing
     candidates = [
         entry for entry in nr.reverse_series_branch_map
-        if !(entry[1] isa PNM.ThreeWindingTransformerWinding)
+        if !(entry[1] isa PNM.ThreeWindingTransformerCircuit)
     ]
     sort!(candidates; by = entry -> PSY.get_name(entry[1]))
     for (br, composite_arc) in candidates

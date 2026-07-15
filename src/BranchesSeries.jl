@@ -127,7 +127,7 @@ do not bind the minimum and are skipped; returns `nothing` only when no member h
 rating.
 """
 function get_equivalent_rating(bs::BranchesSeries)
-    # A series member's rating may be `nothing` (an unrated `ThreeWindingTransformerWinding`,
+    # A series member's rating may be `nothing` (an unrated `ThreeWindingTransformerCircuit`,
     # or a parallel block whose members are all unrated); a member with no known limit does
     # not bind the weakest-link minimum, so skip it. Propagate `nothing` only when no member
     # has a known rating. See `get_sum_of_max_rating` (BranchesParallel.jl) for the policy.
@@ -153,7 +153,7 @@ A `TwoWindingTransformer` has no parent rating (there is no `get_rating(::TwoWin
 the rating lives on its single winding and may be `nothing`. Mirrors `branch_flow_limits`.
 """
 function get_equivalent_rating(bs::PSY.TwoWindingTransformer)
-    return PSY.get_rating(PSY.get_winding(bs), PSY.DU)
+    return PSY.get_rating(PSY.get_circuit(bs), PSY.DU)
 end
 
 """
@@ -204,7 +204,7 @@ end
 `rating_b` is unset. May return `nothing` when the winding has neither rating.
 """
 function get_equivalent_emergency_rating(branch::PSY.TwoWindingTransformer)
-    w = PSY.get_winding(branch)
+    w = PSY.get_circuit(branch)
     if isnothing(PSY.get_rating_b(w, PSY.DU))
         @debug "Winding of $(PSY.get_name(branch)) has no 'rating_b' defined; using normal-operation rating."
         return PSY.get_rating(w, PSY.DU)

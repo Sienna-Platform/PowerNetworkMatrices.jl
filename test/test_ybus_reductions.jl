@@ -4,9 +4,7 @@
         sys;
         network_reductions = NetworkReduction[RadialReduction(), RadialReduction()],
     )
-    @test_throws IS.DataFormatError(
-        "Ward reduction must be the last applied reduction",
-    ) Ybus(
+    @test_throws IS.DataFormatError("Ward reduction must be the last applied reduction") Ybus(
         sys;
         network_reductions = NetworkReduction[WardReduction([1, 2, 4]), RadialReduction()],
     )
@@ -41,10 +39,14 @@ end
     @test nrd.bus_reduction_map[112] == Set([113])
     @test nrd.bus_reduction_map[104] == Set([105])
     @test nrd.reverse_bus_search_map == Dict{Int, Int}(105 => 104, 113 => 112)
-    @test length(keys(nrd.direct_branch_map)) == 14
+    # 14 non-winding direct branches plus 6 three-winding windings, all in direct_branch_map.
+    @test length(keys(nrd.direct_branch_map)) == 20
+    @test count(
+        v -> v isa PNM.ThreeWindingTransformerCircuit,
+        values(nrd.direct_branch_map),
+    ) == 6
     @test length(keys(nrd.parallel_branch_map)) == 3
     @test length(keys(nrd.series_branch_map)) == 0
-    @test length(keys(nrd.transformer3W_map)) == 6
     @test nrd.removed_buses == Set{Int}()
     @test nrd.removed_arcs == Set([(112, 113), (104, 105)])
     @test Set(keys(nrd.added_admittance_map)) == Set{Int}()
@@ -53,7 +55,6 @@ end
         Set(keys(nrd.direct_branch_map)),
         Set(keys(nrd.parallel_branch_map)),
         Set(keys(nrd.series_branch_map)),
-        Set(keys(nrd.transformer3W_map)),
     )
     @test Set(A.axes[2]) == Set(keys(nrd.bus_reduction_map))
 end
@@ -72,10 +73,14 @@ end
     @test nrd.bus_reduction_map[1001] == Set([107, 108])
     @test nrd.reverse_bus_search_map ==
           Dict(113 => 112, 105 => 104, 116 => 103, 108 => 1001, 107 => 1001)
-    @test length(keys(nrd.direct_branch_map)) == 12
+    # 12 non-winding direct branches plus 5 three-winding windings, all in direct_branch_map.
+    @test length(keys(nrd.direct_branch_map)) == 17
+    @test count(
+        v -> v isa PNM.ThreeWindingTransformerCircuit,
+        values(nrd.direct_branch_map),
+    ) == 5
     @test length(keys(nrd.parallel_branch_map)) == 3
     @test length(keys(nrd.series_branch_map)) == 0
-    @test length(keys(nrd.transformer3W_map)) == 5
     @test nrd.removed_buses == Set{Int}()
     @test nrd.removed_arcs ==
           Set([(107, 108), (107, 1001), (103, 116), (112, 113), (104, 105)])
@@ -85,7 +90,6 @@ end
         Set(keys(nrd.direct_branch_map)),
         Set(keys(nrd.parallel_branch_map)),
         Set(keys(nrd.series_branch_map)),
-        Set(keys(nrd.transformer3W_map)),
     )
     @test Set(A.axes[2]) == Set(keys(nrd.bus_reduction_map))
 end
@@ -102,10 +106,14 @@ end
     @test nrd.bus_reduction_map[112] == Set([113])
     @test nrd.bus_reduction_map[104] == Set([105])
     @test nrd.reverse_bus_search_map == Dict(113 => 112, 105 => 104)
-    @test length(keys(nrd.direct_branch_map)) == 9
+    # 9 non-winding direct branches plus 5 three-winding windings, all in direct_branch_map.
+    @test length(keys(nrd.direct_branch_map)) == 14
+    @test count(
+        v -> v isa PNM.ThreeWindingTransformerCircuit,
+        values(nrd.direct_branch_map),
+    ) == 5
     @test length(keys(nrd.parallel_branch_map)) == 2
     @test length(keys(nrd.series_branch_map)) == 3
-    @test length(keys(nrd.transformer3W_map)) == 5
     @test length(keys(nrd.reverse_series_branch_map)) == 8
     @test nrd.removed_buses == Set([117, 107, 115, 118])
     @test nrd.removed_arcs == Set([
@@ -125,7 +133,6 @@ end
         Set(keys(nrd.direct_branch_map)),
         Set(keys(nrd.parallel_branch_map)),
         Set(keys(nrd.series_branch_map)),
-        Set(keys(nrd.transformer3W_map)),
     )
     @test Set(A.axes[2]) == Set(keys(nrd.bus_reduction_map))
     ybus_full = Ybus(sys)
@@ -190,7 +197,6 @@ end
         Set(keys(nrd.direct_branch_map)),
         Set(keys(nrd.parallel_branch_map)),
         Set(keys(nrd.series_branch_map)),
-        Set(keys(nrd.transformer3W_map)),
         Set(keys(nrd.added_arc_impedance_map)),
     )
     @test Set(A.axes[2]) == Set(keys(nrd.bus_reduction_map))
@@ -201,8 +207,11 @@ end
     # Test irreducible bus input for radial reduction
     ybus = Ybus(sys; network_reductions = NetworkReduction[RadialReduction()])
     @test haskey(ybus.network_reduction_data.reverse_bus_search_map, 116)
-    ybus = Ybus(sys; network_reductions = NetworkReduction[RadialReduction()],
-        irreducible_buses = Set([116]))
+    ybus = Ybus(
+        sys;
+        network_reductions = NetworkReduction[RadialReduction()],
+        irreducible_buses = Set([116]),
+    )
     @test !haskey(ybus.network_reduction_data.reverse_bus_search_map, 116)
     @test ybus.network_reduction_data.irreducible_buses == Set{Int}(116)
 
@@ -223,14 +232,10 @@ function set_radial_removed_arcs_to_unavailable!(sys, radial_removed_arcs, rbsm)
     for l in get_components(ACTransmission, sys)
         if typeof(l) <: ThreeWindingTransformer
             # Star arcs are the per-winding arcs; availability is per winding.
-            for winding in get_windings(l)
+            for winding in get_circuits(l)
                 star_arc = get_arc(winding)
-                if (
-                    (star_arc.from.number, star_arc.to.number) ∈ radial_removed_arcs
-                ) ||
-                   (
-                    (star_arc.to.number, star_arc.from.number) ∈ radial_removed_arcs
-                )
+                if ((star_arc.from.number, star_arc.to.number) ∈ radial_removed_arcs) ||
+                   ((star_arc.to.number, star_arc.from.number) ∈ radial_removed_arcs)
                     set_available!(winding, false)
                     if star_arc.from.number ∈ keys(rbsm)
                         set_available!(star_arc.from, false)
@@ -259,10 +264,7 @@ end
 # This test is designed to test the Ybus modifications needed when removing radial branches
 @testset "Test compare Ybus matrices with radial reduction and manually removing radial components" begin
     sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
-    ybus_1 = Ybus(
-        sys;
-        network_reductions = NetworkReduction[RadialReduction()],
-    )
+    ybus_1 = Ybus(sys; network_reductions = NetworkReduction[RadialReduction()])
     # Take the setdiff to ignore removed_arcs from breaker/switch reduction:
     radial_removed_arcs = setdiff(
         ybus_1.network_reduction_data.removed_arcs,
@@ -315,6 +317,74 @@ end
 
     @test 7 ∈ PNM.get_bus_axis(ybus)
     @test 8 ∈ PNM.get_bus_axis(ybus)
+end
+
+@testset "ZeroImpedanceBranchReduction: degenerate 3WT merge promotes windings to a parallel group" begin
+    # A NON-winding zero-impedance branch between two REAL terminal buses of the same
+    # three-winding transformer gets ZIR-merged. Both winding arcs then remap to the same
+    # (merged, star) arc and collide in the direct map, promoting the two windings into a
+    # BranchesParallel group. Pin that the group's equivalent Ybus entry is the sum of the
+    # two windings' Pi-models (physically, the windings really are in parallel between the
+    # merged bus and the star point) and matches the merged matrix entry.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
+    busD = PSY.get_component(PSY.ACBus, sys, "nodeD")
+    sec_bus, ter_bus, star_bus = _add_star_buses!(sys, busD)
+    t3w = _add_three_winding_transformer!(
+        sys, busD, sec_bus, ter_bus, star_bus; name = "T3W_degenerate",
+    )
+    zi_arc = PSY.Arc(; from = busD, to = sec_bus)
+    PSY.add_component!(sys, zi_arc)
+    zi_line = PSY.Line(;
+        name = "zi_line",
+        available = true,
+        active_power_flow = 0.0,
+        reactive_power_flow = 0.0,
+        arc = zi_arc,
+        r = 0.0,
+        x = 1.0e-5,
+        b = (from = 0.0, to = 0.0),
+        rating = 10.0,
+        angle_limits = (min = -1.57, max = 1.57),
+    )
+    PSY.add_component!(sys, zi_line)
+
+    ybus = Ybus(sys)
+    nrd = PNM.get_network_reduction_data(ybus)
+    busD_no = PSY.get_number(busD)
+    sec_no = PSY.get_number(sec_bus)
+    star_no = PSY.get_number(star_bus)
+    ter_no = PSY.get_number(ter_bus)
+
+    # The zero-impedance line merged the secondary terminal into the primary terminal.
+    @test get(nrd.reverse_bus_search_map, sec_no, nothing) == busD_no
+
+    # After the merge, windings 1 and 2 share the (busD, star) arc as a parallel group.
+    merged_arc = (busD_no, star_no)
+    @test haskey(nrd.parallel_branch_map, merged_arc)
+    bp = nrd.parallel_branch_map[merged_arc]
+    @test bp isa PNM.BranchesParallel{PNM.ThreeWindingTransformerCircuit}
+    @test Set(PNM.get_name.(bp.branches)) ==
+          Set(["T3W_degenerate_winding_1", "T3W_degenerate_winding_2"])
+    @test !haskey(nrd.direct_branch_map, merged_arc)
+    # Winding 3 keeps its own direct arc to the star point.
+    @test nrd.direct_branch_map[(ter_no, star_no)] isa PNM.ThreeWindingTransformerCircuit
+
+    # Hand computation: with r12=r23=r31=0.01 and x12=x23=x31=0.1 (the helper defaults) each
+    # star leg is z_leg = (0.01 + 0.1im)/2, so two identical legs in parallel give
+    # y = 2 / z_leg with the standard Pi-model sign pattern (unit taps, no shunt).
+    y_expected = 2 / (0.005 + 0.05im)
+    Y11, Y12, Y21, Y22 = PNM.ybus_branch_entries(bp, nrd)
+    @test Y11 ≈ y_expected atol = 1e-8
+    @test Y12 ≈ -y_expected atol = 1e-8
+    @test Y21 ≈ -y_expected atol = 1e-8
+    @test Y22 ≈ y_expected atol = 1e-8
+    # The group equivalent equals the sum of the member windings' own Pi-models.
+    w1 = PNM.ThreeWindingTransformerCircuit(t3w, 1)
+    w2 = PNM.ThreeWindingTransformerCircuit(t3w, 2)
+    expected_sum = PNM.ybus_branch_entries(w1) .+ PNM.ybus_branch_entries(w2)
+    @test all(isapprox.((Y11, Y12, Y21, Y22), expected_sum; atol = 1e-10))
+    # And the merged matrix entry agrees with the group's off-diagonal.
+    @test isapprox(ybus[busD_no, star_no], Y12; atol = 1e-4)
 end
 
 @testset "ZeroImpedanceBranchReduction respects irreducible buses" begin
@@ -416,8 +486,8 @@ end
     sys = PSB.build_system(PSITestSystems, "c_sys5")
     template = first(get_components(ACBus, sys))
     grid_bus = first(
-        b for b in get_components(ACBus, sys) if
-        get_bustype(b) != PSY.ACBusTypes.REF && get_bustype(b) != PSY.ACBusTypes.ISOLATED
+        b for b in get_components(ACBus, sys) if get_bustype(b) != PSY.ACBusTypes.REF &&
+        get_bustype(b) != PSY.ACBusTypes.ISOLATED
     )
     function _mk_bus(num, name)
         b = deepcopy(template)
@@ -476,8 +546,8 @@ end
     sys = PSB.build_system(PSITestSystems, "c_sys5")
     template = first(get_components(ACBus, sys))
     grid_bus = first(
-        b for b in get_components(ACBus, sys) if
-        get_bustype(b) != PSY.ACBusTypes.REF && get_bustype(b) != PSY.ACBusTypes.ISOLATED
+        b for b in get_components(ACBus, sys) if get_bustype(b) != PSY.ACBusTypes.REF &&
+        get_bustype(b) != PSY.ACBusTypes.ISOLATED
     )
     function _mk_bus(num, name)
         b = deepcopy(template)
@@ -706,7 +776,7 @@ end
         sys,
         PSY.TwoWindingTransformer(;
             name = "PST",
-            winding = PSY.TransformerWinding(;
+            circuit = PSY.TransformerCircuit(;
                 arc = arc,
                 tap = 1.05,
                 α = 0.15,
@@ -715,12 +785,11 @@ end
                 reactive_power_flow = 0.0,
                 rating = 1.0,
                 base_power = 100.0,
-                base_voltage = 230.0,
+                base_voltage_primary = 230.0,
+                r = 0.0,
+                x = 0.2,
             ),
-            r = 0.0,
-            x = 0.2,
             magnetizing_shunt = Complex(0.0, 0.3),
-            base_power = 100.0,
         ),
     )
 

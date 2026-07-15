@@ -17,23 +17,14 @@ const AUTO_TOLERANCE_BUS_LIMIT = 2000
 
 DEFAULT_LODF_CHUNK_SIZE = 18_000
 
-# Star-leg reactance floor (pu, system base). A star leg whose reactance derives to ~0 from
-# the pairwise impedances is floored to this value (per PSS/E Data Formats §1.15.1
-# "Three-Winding Transformer Notes"). The floor is applied to the SU star reactance derived
-# by the wrapper.
-const STAR_LEG_REACTANCE_FLOOR = 1e-4
-
-# Detection tolerance for the flooring above (`atol = eps(Float32)`).
-const STAR_LEG_ZERO_REACTANCE_ATOL = eps(Float32)
-
 # A phase-shifting branch must not be folded into a parallel-equivalent group: the parallel
 # susceptance model cannot represent a per-branch phase shift. Phase shifting is a per-winding
 # data property, so the skip is data-driven via `PSY.is_phase_shifting` rather than a type
 # list.
 _skip_parallel_reduction(::PSY.ACTransmission) = false
 _skip_parallel_reduction(b::PSY.TwoWindingTransformer) = PSY.is_phase_shifting(b)
-_skip_parallel_reduction(w::ThreeWindingTransformerWinding) =
-    PSY.is_phase_shifting(w.winding)
+_skip_parallel_reduction(w::ThreeWindingTransformerCircuit) =
+    PSY.is_phase_shifting(w.circuit)
 
 # Singleton types for linear solver dispatch, enabling compile-time method resolution.
 abstract type LinearSolverType end

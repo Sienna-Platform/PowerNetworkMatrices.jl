@@ -48,11 +48,7 @@ function get_bus_index(
     return get_bus_index(bus_number, bus_lookup, nr)
 end
 
-function get_bus_indices(
-    arc::PSY.Arc,
-    bus_lookup::Dict{Int, Int},
-    nr::NetworkReductionData,
-)
+function get_bus_indices(arc::PSY.Arc, bus_lookup::Dict{Int, Int}, nr::NetworkReductionData)
     check_arc_validity(arc, IS.get_name(arc))
     reverse_bus_search_map = get_reverse_bus_search_map(nr)
     fr_bus_number = PSY.get_number(PSY.get_from(arc))
@@ -102,10 +98,7 @@ function get_arc_tuple(arc::PSY.Arc, nr::NetworkReductionData)
     )
 end
 
-function get_arc_tuple(
-    tr::ThreeWindingTransformerWinding,
-    nr::NetworkReductionData,
-)
+function get_arc_tuple(tr::ThreeWindingTransformerCircuit, nr::NetworkReductionData)
     reverse_bus_search_map = get_reverse_bus_search_map(nr)
     arc_tuple_original = get_arc_tuple(tr)
     return (
@@ -203,8 +196,8 @@ end
 
 function find_slack_positions(buses, bus_lookup::Dict{Int, Int})::Set{Int}
     slack_position = sort([
-        bus_lookup[PSY.get_number(n)]
-        for n in buses if PSY.get_bustype(n) == ACBusTypes.REF
+        bus_lookup[PSY.get_number(n)] for
+        n in buses if PSY.get_bustype(n) == ACBusTypes.REF
     ])
     if length(slack_position) == 0
         error("Slack bus not identified in the Bus/buses list, can't build NetworkMatrix")
@@ -265,7 +258,8 @@ NOTE:
 function calculate_ABA_matrix(
     A::SparseArrays.SparseMatrixCSC{Int8, Int},
     BA::SparseArrays.SparseMatrixCSC{Float64, Int},
-    ref_bus_positions::Set{Int})
+    ref_bus_positions::Set{Int},
+)
     tmp = BA * A
     valid_ix = setdiff(1:size(tmp, 1), ref_bus_positions)
     return tmp[valid_ix, valid_ix]
@@ -360,19 +354,13 @@ end
 # `get_equivalent_physical_branch_parameters` / `populate_equivalent_ybus!` live here (rather
 # than in BranchesParallel.jl / BranchesSeries.jl) because they take a `NetworkReductionData`,
 # which is defined in a file included after those two.
-function populate_equivalent_ybus!(
-    bp::AbstractBranchesParallel,
-    nr::NetworkReductionData,
-)
+function populate_equivalent_ybus!(bp::AbstractBranchesParallel, nr::NetworkReductionData)
     Y11, Y12, Y21, Y22 = ybus_branch_entries(bp, nr)
     bp.equivalent_ybus = YBUS_ELTYPE[Y11 Y12; Y21 Y22]
     return
 end
 
-function populate_equivalent_ybus!(
-    bs::BranchesSeries,
-    nr::NetworkReductionData,
-)
+function populate_equivalent_ybus!(bs::BranchesSeries, nr::NetworkReductionData)
     ybus_series_chain = _build_chain_ybus(bs, nr)
     bs.equivalent_ybus = _reduce_internal_nodes(ybus_series_chain)
     return
@@ -394,9 +382,7 @@ function has_time_series(
     branch::BranchesSeries,
     ts_type::Type{T},
     ts_name::String,
-) where {
-    T <: PSY.TimeSeriesData,
-}
+) where {T <: PSY.TimeSeriesData}
     for b in branch
         if is_a_reduction(b)
             if has_time_series(b, ts_type, ts_name)
@@ -416,9 +402,7 @@ function has_time_series(
     branch::AbstractBranchesParallel,
     ts_type::Type{T},
     ts_name::String,
-) where {
-    T <: PSY.TimeSeriesData,
-}
+) where {T <: PSY.TimeSeriesData}
     for b in branch
         if PSY.has_time_series(b, ts_type, ts_name)
             return true
@@ -431,9 +415,7 @@ function has_time_series(
     branch::PSY.ACTransmission,
     ts_type::Type{T},
     ts_name::String,
-) where {
-    T <: PSY.TimeSeriesData,
-}
+) where {T <: PSY.TimeSeriesData}
     if PSY.has_time_series(branch, ts_type, ts_name)
         return true
     end
@@ -444,9 +426,7 @@ function get_device_with_time_series(
     branch::BranchesSeries,
     ts_type::Type{T},
     ts_name::String,
-) where {
-    T <: PSY.TimeSeriesData,
-}
+) where {T <: PSY.TimeSeriesData}
     for b in branch
         if has_time_series(b, ts_type, ts_name)
             return get_device_with_time_series(b, ts_type, ts_name)
@@ -459,9 +439,7 @@ function get_device_with_time_series(
     branch::AbstractBranchesParallel,
     ts_type::Type{T},
     ts_name::String,
-) where {
-    T <: PSY.TimeSeriesData,
-}
+) where {T <: PSY.TimeSeriesData}
     for b in branch
         if has_time_series(b, ts_type, ts_name)
             return b
@@ -474,9 +452,7 @@ function get_device_with_time_series(
     branch::PSY.ACTransmission,
     ts_type::Type{T},
     ts_name::String,
-) where {
-    T <: PSY.TimeSeriesData,
-}
+) where {T <: PSY.TimeSeriesData}
     if has_time_series(branch, ts_type, ts_name)
         return branch
     end
@@ -489,10 +465,9 @@ end
 
 Classify a branch component by looking up which reverse map it belongs to in the
 `NetworkReductionData`. Returns `(tag, arc_tuple)` where `tag` is one of:
-- `:direct`       -- branch is the sole branch on its arc
+- `:direct`       -- branch is the sole branch on its arc (a `ThreeWindingTransformerCircuit` is one such branch, on its star-point arc)
 - `:parallel`     -- branch is one of several parallel branches on its arc
 - `:series`       -- branch is part of a series chain on its arc
-- `:transformer3w` -- branch is a three-winding transformer winding
 - `:not_found`    -- branch is not in any map (e.g., eliminated by radial reduction)
 
 The second element is the arc tuple `(from_bus, to_bus)`, or `nothing` when `:not_found`.
@@ -507,8 +482,6 @@ function _resolve_branch_arc(
         return (:parallel, nr.reverse_parallel_branch_map[component])
     elseif haskey(nr.reverse_series_branch_map, component)
         return (:series, nr.reverse_series_branch_map[component])
-    elseif haskey(nr.reverse_transformer3W_map, component)
-        return (:transformer3w, nr.reverse_transformer3W_map[component])
     else
         return (:not_found, nothing)
     end
@@ -541,13 +514,13 @@ function _assert_not_phase_shifting(
     return nothing
 end
 
-# A `ThreeWindingTransformerWinding` is `<: PSY.ACTransmission` but is not a PSY transformer
+# A `ThreeWindingTransformerCircuit` is `<: PSY.ACTransmission` but is not a PSY transformer
 # type, so the methods above would not inspect it; check its underlying winding directly.
 # Reachable: the generic `_classify_outage_component!`/`_classify_branch_modification`
 # (network_modification.jl) call `_assert_not_phase_shifting` on every classified branch,
 # and the 3W-parent methods recurse into them with the winding wrapper.
-function _assert_not_phase_shifting(component::ThreeWindingTransformerWinding)
-    if PSY.is_phase_shifting(component.winding)
+function _assert_not_phase_shifting(component::ThreeWindingTransformerCircuit)
+    if PSY.is_phase_shifting(component.circuit)
         error(
             "Contingencies on phase-shifting transformer windings are not supported. " *
             "Component: $(get_name(component)).",

@@ -34,22 +34,19 @@
     @test length(rb.reverse_parallel_branch_map) == 0
     @test length(rb.series_branch_map) == 0
     @test length(rb.reverse_series_branch_map) == 0
-    @test length(rb.transformer3W_map) == 0
-    @test length(rb.reverse_transformer3W_map) == 0
+    # This system has no three-winding transformers, so no winding wrappers are in the
+    # direct maps.
+    @test !any(v -> v isa PNM.ThreeWindingTransformerCircuit, values(rb.direct_branch_map))
     @test length(rb.removed_buses) == 0
     @test rb.removed_arcs == Set([(7, 8), (8, 61)])
-    @test get_reductions(rb) ==
-          PNM.ReductionContainer(;
+    @test get_reductions(rb) == PNM.ReductionContainer(;
         radial_reduction = RadialReduction(),
         zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(),
     )
 end
 
 @testset "Radial Branches Large" begin
-    sys = build_system(
-        MatpowerTestSystems,
-        "matpower_ACTIVSg10k_sys",
-    )
+    sys = build_system(MatpowerTestSystems, "matpower_ACTIVSg10k_sys")
     Y = Ybus(sys; network_reductions = NetworkReduction[RadialReduction()])
     rb = get_network_reduction_data(Y)
     for (k, v) in get_bus_reduction_map(rb)
@@ -59,10 +56,7 @@ end
 
 @testset "Check reference bus in Radial Branches" begin
     for name in ["matpower_ACTIVSg2000_sys", "matpower_ACTIVSg10k_sys"]
-        sys = build_system(
-            MatpowerTestSystems,
-            name,
-        )
+        sys = build_system(MatpowerTestSystems, name)
         a_mat = IncidenceMatrix(sys)
         Y = Ybus(sys; network_reductions = NetworkReduction[RadialReduction()])
         rb = get_network_reduction_data(Y)
@@ -77,10 +71,7 @@ end
 
 @testset "Small island exception for radial reduction" begin
     sys = build_hvdc_with_small_island()
-    ybus = Ybus(
-        sys;
-        network_reductions = NetworkReduction[RadialReduction()],
-    )
+    ybus = Ybus(sys; network_reductions = NetworkReduction[RadialReduction()])
     rr = get_network_reduction_data(ybus)
     @test haskey(rr.reverse_bus_search_map, 16)
     @test haskey(rr.reverse_bus_search_map, 17)

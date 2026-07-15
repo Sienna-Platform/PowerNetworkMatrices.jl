@@ -154,11 +154,7 @@ reduction_data = get_reduction(ybus, system, reduction)
 - [`RadialReduction`](@ref): Radial reduction configuration
 - [`get_reduction`](@ref): Other reduction methods
 """
-function get_reduction(
-    ybus::Ybus,
-    sys::PSY.System,
-    reduction::RadialReduction,
-)
+function get_reduction(ybus::Ybus, sys::PSY.System, reduction::RadialReduction)
     A = IncidenceMatrix(ybus)
     return get_reduction(A, sys, reduction)
 end
@@ -301,7 +297,7 @@ connecting to a virtual star bus. Each available winding is mapped separately.
 
 # Implementation Details
 - Only adds arcs for available windings (per-winding `PSY.get_available`)
-- Maintains transformer3W_map and reverse_transformer3W_map
+- Each available winding is a one-to-one arc, stored in the direct branch maps
 - Each winding is numbered (1=primary, 2=secondary, 3=tertiary)
 """
 function add_to_branch_maps!(
@@ -311,16 +307,16 @@ function add_to_branch_maps!(
     tertiary_star_arc::PSY.Arc,
     br::PSY.ThreeWindingTransformer,
 )
-    transformer3W_map = get_transformer3W_map(nr)
-    reverse_transformer3W_map = get_reverse_transformer3W_map(nr)
-    windings = PSY.get_windings(br)
+    direct_branch_map = get_direct_branch_map(nr)
+    reverse_direct_branch_map = get_reverse_direct_branch_map(nr)
+    windings = PSY.get_circuits(br)
     star_arcs = (primary_star_arc, secondary_star_arc, tertiary_star_arc)
     for i in 1:3
         if PSY.get_available(windings[i])
             arc_tuple = get_arc_tuple(star_arcs[i], nr)
-            winding = ThreeWindingTransformerWinding(br, i)
-            transformer3W_map[arc_tuple] = winding
-            reverse_transformer3W_map[winding] = arc_tuple
+            winding = ThreeWindingTransformerCircuit(br, i)
+            direct_branch_map[arc_tuple] = winding
+            reverse_direct_branch_map[winding] = arc_tuple
         end
     end
     return
@@ -514,64 +510,86 @@ function ybus_branch_entries(
     return ybus_reduced[1, 1], ybus_reduced[1, 2], ybus_reduced[2, 1], ybus_reduced[2, 2]
 end
 
-"""Ybus entries for a `TwoWindingTransformer` (tap, phase shift, and magnetizing shunt read
-from its single [`PSY.TransformerWinding`](@ref); tap defaults to 1 and shift to 0)."""
+# Add a two-winding transformer's magnetizing shunt to the self-admittance entries per its
+# `PSY.TwoWindingTransformerShuntLocation`: PRIMARY on the from-bus diagonal (Y11), SECONDARY
+# on the to-bus diagonal (Y22), SPLIT the full value on both.
+function _place_magnetizing_shunt(Y11, Y22, y_shunt, location)
+    if location == PSY.TwoWindingTransformerShuntLocation.SECONDARY
+        return (Y11, Y22 + y_shunt)
+    elseif location == PSY.TwoWindingTransformerShuntLocation.SPLIT
+        return (Y11 + y_shunt, Y22 + y_shunt)
+    else
+        return (Y11 + y_shunt, Y22)
+    end
+end
+
+# Add a three-winding transformer's magnetizing shunt to one circuit's self-admittance
+# entries. The shunt lives on the parent transformer and lands on circuit 1 only, per its
+# `PSY.ThreeWindingTransformerShuntLocation`: PRIMARY on the terminal-bus diagonal (Y11),
+# STAR on the star-node diagonal (Y22). Circuits 2 and 3 receive no shunt.
+function _place_three_winding_shunt(Y11, Y22, y_shunt, location, winding_number::Int)
+    winding_number == 1 || return (Y11, Y22)
+    if location == PSY.ThreeWindingTransformerShuntLocation.STAR
+        return (Y11, Y22 + y_shunt)
+    else
+        return (Y11 + y_shunt, Y22)
+    end
+end
+
+"""Ybus entries for a `TwoWindingTransformer` (tap and phase shift read from its single
+[`PSY.TransformerCircuit`](@ref); tap defaults to 1 and shift to 0). The magnetizing shunt is
+transformer-level and placed per its [`PSY.TwoWindingTransformerShuntLocation`](@ref)."""
 function ybus_branch_entries(
     br::PSY.TwoWindingTransformer;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
-    winding = PSY.get_winding(br)
+    circuit = PSY.get_circuit(br)
     Y_t = 1 / (PSY.get_r(br, PSY.SU) + PSY.get_x(br, PSY.SU) * 1im)
-    tap = PSY.get_tap(winding) * exp(PSY.get_α(winding) * 1im)
-    c_tap = PSY.get_tap(winding) * exp(-1 * PSY.get_α(winding) * 1im)
+    tap = PSY.get_tap(circuit) * exp(PSY.get_α(circuit) * 1im)
+    c_tap = PSY.get_tap(circuit) * exp(-1 * PSY.get_α(circuit) * 1im)
     y_shunt = PSY.get_magnetizing_shunt(br, PSY.SU)
     Y11 = Y_t / abs2(tap)
-    if !isfinite(Y11) || !isfinite(Y_t) || !isfinite(y_shunt * c_tap)
-        error(
-            "Data in $(summary(br)) gives a non-finite Ybus entry; check input data.",
-        )
+    if !isfinite(Y11) || !isfinite(Y_t) || !isfinite(y_shunt)
+        error("Data in $(summary(br)) gives a non-finite Ybus entry; check input data.")
     end
     Y12 = -Y_t / c_tap
     Y21 = -Y_t / tap
     Y22 = Y_t
-    return (Y11 + y_shunt, Y12, Y21, Y22)
+    Y11, Y22 = _place_magnetizing_shunt(Y11, Y22, y_shunt, PSY.get_shunt_location(br))
+    return (Y11, Y12, Y21, Y22)
 end
 
 """Ybus branch entries for one star-leg arc of a `ThreeWindingTransformer`. The star-leg
-impedance is the derived, floored value stored on the wrapper; tap and phase shift are read
-from the winding. Only the primary winding (winding 1) carries the parent's magnetizing
-shunt."""
+impedance, tap, and phase shift are read from the circuit. The parent transformer's
+magnetizing shunt is placed per its [`PSY.ThreeWindingTransformerShuntLocation`](@ref) and
+lands on circuit 1 only."""
 function ybus_branch_entries(
-    tp::ThreeWindingTransformerWinding;
+    tp::ThreeWindingTransformerCircuit;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
     br = get_transformer(tp)
-    winding = tp.winding
+    circuit = tp.circuit
     Y_t = 1 / (get_equivalent_r(tp) + get_equivalent_x(tp) * 1im)
-    tap_ratio = PSY.get_tap(winding)
-    α = PSY.get_α(winding)
+    tap_ratio = PSY.get_tap(circuit)
+    α = PSY.get_α(circuit)
     tap = tap_ratio * exp(α * 1im)
     c_tap = tap_ratio * exp(-1 * α * 1im)
+    y_shunt = PSY.get_magnetizing_shunt(br, PSY.SU)
     Y11 = Y_t / abs2(tap)
-    if get_winding_number(tp) == 1
-        # primary bus alone gets the shunt term
-        y_shunt = PSY.get_magnetizing_shunt(br, PSY.SU)
-        if !isfinite(Y11) || !isfinite(y_shunt)
-            error(
-                "Data in $(PSY.get_name(br)) is incorrect.
-                r = $(get_equivalent_r(tp)), x = $(get_equivalent_x(tp)), tap = $(tap_ratio)",
-            )
-        end
-        Y11 += y_shunt
-    elseif !isfinite(Y11)
-        error(
-            "Data in $(PSY.get_name(br)) is incorrect.
-            r = $(get_equivalent_r(tp)), x = $(get_equivalent_x(tp)), tap = $(tap_ratio)",
-        )
+    if !isfinite(Y11) || !isfinite(Y_t) || !isfinite(y_shunt)
+        error("Data in $(PSY.get_name(br)) is incorrect.
+              r = $(get_equivalent_r(tp)), x = $(get_equivalent_x(tp)), tap = $(tap_ratio)")
     end
     Y12 = (-Y_t / c_tap)
     Y21 = (-Y_t / tap)
     Y22 = Y_t
+    Y11, Y22 = _place_three_winding_shunt(
+        Y11,
+        Y22,
+        y_shunt,
+        PSY.get_shunt_location(br),
+        get_winding_number(tp),
+    )
     return (Y11, Y12, Y21, Y22)
 end
 
@@ -594,10 +612,8 @@ function _ybus!(
     # ZIBR's substitute reactance for r=x=0 branches; fall back if no spec on the NRD.
     zir = get_zero_impedance_reduction(get_reductions(nr))
     min_x_eps =
-        isnothing(zir) ? ZERO_IMPEDANCE_X_EPSILON :
-        get_minimum_retained_impedance(zir)
-    add_branch_entries_to_ybus!(y11, y12, y21, y22, branch_ix, br;
-        min_x_eps = min_x_eps)
+        isnothing(zir) ? ZERO_IMPEDANCE_X_EPSILON : get_minimum_retained_impedance(zir)
+    add_branch_entries_to_ybus!(y11, y12, y21, y22, branch_ix, br; min_x_eps = min_x_eps)
     return
 end
 
@@ -614,7 +630,7 @@ function _ybus!(
     ix::Int,
     nr::NetworkReductionData,
 )
-    windings = PSY.get_windings(br)
+    windings = PSY.get_circuits(br)
     star_arcs = PSY.get_arc.(windings)
     add_to_branch_maps!(nr, star_arcs[1], star_arcs[2], star_arcs[3], br)
     n_entries = 0
@@ -623,7 +639,7 @@ function _ybus!(
         term_ix, star_ix = get_bus_indices(star_arcs[i], num_bus, nr)
         fb[offset_ix + ix + n_entries] = term_ix
         tb[offset_ix + ix + n_entries] = star_ix
-        (Y11, Y12, Y21, Y22) = ybus_branch_entries(ThreeWindingTransformerWinding(br, i))
+        (Y11, Y12, Y21, Y22) = ybus_branch_entries(ThreeWindingTransformerCircuit(br, i))
         y11[offset_ix + ix + n_entries] = Y11
         y12[offset_ix + ix + n_entries] = Y12
         y21[offset_ix + ix + n_entries] = Y21
@@ -645,9 +661,7 @@ function _ybus!(
     Y = PSY.get_Y(fa)
     sb[fa_ix] = bus_no
     if !isfinite(Y)
-        error(
-            "Data in $(PSY.get_name(fa)) is incorrect. Y = $(Y)",
-        )
+        error("Data in $(PSY.get_name(fa)) is incorrect. Y = $(Y)")
     end
     ysh[fa_ix] = Y
     return
@@ -681,9 +695,7 @@ function _ybus!(
         PSY.get_impedance_active_power(fa, PSY.SU) -
         im * PSY.get_impedance_reactive_power(fa, PSY.SU)
     if !isfinite(Y)
-        error(
-            "Data in $(PSY.get_name(fa)) is incorrect. Y = $(Y)",
-        )
+        error("Data in $(PSY.get_name(fa)) is incorrect. Y = $(Y)")
     end
     sb[fa_ix] = bus_no
     ysh[fa_ix] = Y
@@ -701,7 +713,7 @@ function _buildybus!(
 )
     branch_entries_transformer_3w = 0
     for br in transformer_3w
-        branch_entries_transformer_3w += count(PSY.get_available, PSY.get_windings(br))
+        branch_entries_transformer_3w += count(PSY.get_available, PSY.get_circuits(br))
     end
     branchcount = length(branches) + branch_entries_transformer_3w
     branchcount_no_3w = length(branches)
@@ -758,21 +770,11 @@ function _buildybus!(
         shunt_ix += 1
         _ybus!(ysh, sl, num_bus, shunt_ix, sb, network_reduction_data)
     end
-    return (
-        y11,
-        y12,
-        y21,
-        y22,
-        ysh,
-        fb,
-        tb,
-        sb,
-    )
+    return (y11, y12, y21, y22, ysh, fb, tb, sb)
 end
 
 function _is_available_shunt(x::PSY.StaticInjection)::Bool
-    return PSY.get_available(x) &&
-           PSY.get_bustype(PSY.get_bus(x)) != ACBusTypes.ISOLATED
+    return PSY.get_available(x) && PSY.get_bustype(PSY.get_bus(x)) != ACBusTypes.ISOLATED
 end
 
 function _get_filtered_components(
@@ -885,8 +887,7 @@ function Ybus(
     make_arc_admittance_matrices::Bool = false,
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
     irreducible_buses = Set{Int}(),
-    zero_impedance_reduction::ZeroImpedanceBranchReduction =
-    ZeroImpedanceBranchReduction(),
+    zero_impedance_reduction::ZeroImpedanceBranchReduction = ZeroImpedanceBranchReduction(),
     include_constant_impedance_loads = true,
     subnetwork_algorithm = iterative_union_find,
 )
@@ -946,16 +947,15 @@ function Ybus(
     else
         PSY.StandardLoad[]
     end
-    y11, y12, y21, y22, ysh, fb, tb, sb =
-        _buildybus!(
-            nr,
-            branches,
-            transformer_3W,
-            bus_lookup,
-            fixed_admittances,
-            switched_admittances,
-            standard_loads,
-        )
+    y11, y12, y21, y22, ysh, fb, tb, sb = _buildybus!(
+        nr,
+        branches,
+        transformer_3W,
+        bus_lookup,
+        fixed_admittances,
+        switched_admittances,
+        standard_loads,
+    )
     # Build adjacency matrix from COO triplets in a single sparse() call to avoid
     # ~2×branchcount structural insertions into a growing CSC matrix.
     # Values: diagonal = +1, forward arc (from→to) = +1, reverse arc (to→from) = -1.
@@ -1007,20 +1007,10 @@ function Ybus(
         end
         rows_ix = [arc_lookup[(x, y)] for (x, y) in zip(bus_ax[fb], bus_ax[tb])]
         rows_ix_nnz = vcat(rows_ix, rows_ix)
-        yft_data = SparseArrays.sparse(
-            rows_ix_nnz,
-            [fb; tb],
-            [y11; y12],
-            arc_count,
-            busnumber,
-        )
-        ytf_data = SparseArrays.sparse(
-            rows_ix_nnz,
-            [tb; fb],
-            [y22; y21],
-            arc_count,
-            busnumber,
-        )
+        yft_data =
+            SparseArrays.sparse(rows_ix_nnz, [fb; tb], [y11; y12], arc_count, busnumber)
+        ytf_data =
+            SparseArrays.sparse(rows_ix_nnz, [tb; fb], [y22; y21], arc_count, busnumber)
         arc_admittance_from_to = ArcAdmittanceMatrix(
             yft_data,
             (arc_axis, bus_ax),
@@ -1132,10 +1122,11 @@ corresponding arc list for matrix indexing.
 """
 function make_bus_arc_subnetwork_axes(ybus::Ybus)
     subnetwork_count = length(ybus.subnetwork_axes)
-    subnetwork_axes = sizehint!(
-        Dict{Int, Tuple{Vector{Int}, Vector{Tuple{Int, Int}}}}(),
-        subnetwork_count,
-    )
+    subnetwork_axes =
+        sizehint!(
+            Dict{Int, Tuple{Vector{Int}, Vector{Tuple{Int, Int}}}}(),
+            subnetwork_count,
+        )
     for key in keys(ybus.subnetwork_axes)
         subnetwork_axes[key] = (ybus.subnetwork_axes[key][1], ybus.arc_subnetwork_axis[key])
     end
@@ -1367,13 +1358,10 @@ _merge_arc_admittance_bus_columns!(
     ::Nothing,
     ::Dict{Int, Int},
     ::Dict{Int, Int},
-) = nothing
+) =
+    nothing
 
-function _accumulate_csc_row_into!(
-    M::SparseArrays.SparseMatrixCSC,
-    i::Int,
-    j::Int,
-)
+function _accumulate_csc_row_into!(M::SparseArrays.SparseMatrixCSC, i::Int, j::Int)
     rows = SparseArrays.rowvals(M)
     vals = SparseArrays.nonzeros(M)
     for col in 1:size(M, 2)
@@ -1395,11 +1383,7 @@ function _accumulate_csc_row_into!(
     return
 end
 
-function _accumulate_csc_col_into!(
-    M::SparseArrays.SparseMatrixCSC,
-    i::Int,
-    j::Int,
-)
+function _accumulate_csc_col_into!(M::SparseArrays.SparseMatrixCSC, i::Int, j::Int)
     rows = SparseArrays.rowvals(M)
     vals = SparseArrays.nonzeros(M)
     # Snapshot column j up front. Structural inserts into column i shift the CSC backing
@@ -1511,13 +1495,12 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     adjacency_data = adjacency_data[bus_ix, bus_ix]
     data = data[bus_ix, bus_ix]
 
-    subnetwork_axes, arc_subnetwork_axis =
-        _make_subnetwork_axes(
-            ybus,
-            bus_numbers_to_remove,
-            nr_new.removed_arcs,
-            Set(keys(nr_new.added_arc_impedance_map)),
-        )
+    subnetwork_axes, arc_subnetwork_axis = _make_subnetwork_axes(
+        ybus,
+        bus_numbers_to_remove,
+        nr_new.removed_arcs,
+        Set(keys(nr_new.added_arc_impedance_map)),
+    )
 
     arc_admittance_from_to, arc_admittance_to_from = _resolve_arc_admittance(
         new_y_ft,
@@ -1667,37 +1650,18 @@ function _remap_merged_bus_in_branch_maps!(
         end
     end
 
-    # --- transformer3W_map: collision means a degenerate transformer (two terminals
-    #     merged to the same bus). Warn and keep the pre-existing winding. ---
-    t3w_to_insert = Pair{Tuple{Int, Int}, ThreeWindingTransformerWinding}[]
-    for arc in collect(keys(nr.transformer3W_map))
-        new_from = get(merged_bus_pairs, arc[1], arc[1])
-        new_to = get(merged_bus_pairs, arc[2], arc[2])
-        (new_from == arc[1] && new_to == arc[2]) && continue
-        val = pop!(nr.transformer3W_map, arc)
-        new_arc = (new_from, new_to)
-        if new_arc[1] == new_arc[2]
-            @debug "Bus merge collapsed 3-winding transformer winding $(get_winding_number(val)) of $(PSY.get_name(get_transformer(val))) (arc $arc) into a self-loop; dropping."
-            continue
-        end
-        push!(t3w_to_insert, new_arc => val)
-    end
-    for (new_arc, val) in t3w_to_insert
-        if haskey(nr.transformer3W_map, new_arc)
-            @warn "Bus merge creates a degenerate 3-winding transformer: two windings of " *
-                  "$(PSY.get_name(get_transformer(val))) now share arc $new_arc. " *
-                  "Retaining the pre-existing winding; winding $(get_winding_number(val)) is dropped."
-        else
-            nr.transformer3W_map[new_arc] = val
-        end
-    end
-
-    # Rebuild reverse maps for the three forward maps that were modified above.
-    # series_branch_map is always empty when ZIR runs (D2 populates it afterwards),
-    # so its reverse map does not need rebuilding here.
+    # Rebuild reverse maps for the two forward maps that were modified above.
+    # `ThreeWindingTransformerCircuit`s live in `direct_branch_map` and are handled by the
+    # direct-map remap above. ZIR excludes winding arcs themselves from bus merging (see
+    # `_build_transformer_arc_set`), but a non-winding zero-impedance branch between two real
+    # terminal buses of the same transformer can merge them, remapping both winding arcs onto
+    # one (merged, star) arc. That collision promotes the windings into a parallel group,
+    # whose equivalent correctly sums the star-leg Pi-models (the windings really are in
+    # parallel between the merged bus and the star point). series_branch_map is always empty
+    # when ZIR runs (D2 populates it afterwards), so its reverse map does not need rebuilding
+    # here.
     _remake_reverse_direct_branch_map!(nr)
     _remake_reverse_parallel_branch_map!(nr)
-    _remake_reverse_transformer3W_map!(nr)
     return
 end
 
@@ -1708,7 +1672,6 @@ function _remove_arcs_from_branch_maps!(
     remake_reverse_direct_branch_map = false
     remake_reverse_parallel_branch_map = false
     remake_reverse_series_branch_map = false
-    remake_reverse_transformer3W_map = false
     for x in nr_new.removed_arcs
         push!(nr.removed_arcs, x)
         if haskey(nr.direct_branch_map, x)
@@ -1720,15 +1683,11 @@ function _remove_arcs_from_branch_maps!(
         elseif haskey(nr.series_branch_map, x)
             remake_reverse_series_branch_map = true
             delete!(nr.series_branch_map, x)
-        elseif haskey(nr.transformer3W_map, x)
-            remake_reverse_transformer3W_map = true
-            delete!(nr.transformer3W_map, x)
         end
     end
     remake_reverse_direct_branch_map && _remake_reverse_direct_branch_map!(nr)
     remake_reverse_parallel_branch_map && _remake_reverse_parallel_branch_map!(nr)
     remake_reverse_series_branch_map && _remake_reverse_series_branch_map!(nr)
-    remake_reverse_transformer3W_map && _remake_reverse_transformer3W_map!(nr)
     return
 end
 
@@ -1870,8 +1829,6 @@ function _get_entry(arc::Tuple{Int, Int}, nrd::NetworkReductionData)
         return nrd.parallel_branch_map[arc]
     elseif haskey(nrd.series_branch_map, arc)
         return nrd.series_branch_map[arc]
-    elseif haskey(nrd.transformer3W_map, arc)
-        return nrd.transformer3W_map[arc]
     else
         error("Key $arc not found in any of the maps")
     end
@@ -1984,10 +1941,7 @@ function _apply_d2_chain_ybus!(
     return
 end
 
-function _build_chain_ybus(
-    series_chain::BranchesSeries,
-    nr::NetworkReductionData,
-)
+function _build_chain_ybus(series_chain::BranchesSeries, nr::NetworkReductionData)
     segment_orientations = series_chain.segment_orientations
     fb = Vector{Int}()
     tb = Vector{Int}()
@@ -2226,16 +2180,6 @@ function _remake_reverse_series_branch_map!(nr::NetworkReductionData)
     return
 end
 
-function _remake_reverse_transformer3W_map!(nr::NetworkReductionData)
-    reverse_transformer3W_map =
-        Dict{ThreeWindingTransformerWinding, Tuple{Int, Int}}()
-    for (k, v) in nr.transformer3W_map
-        reverse_transformer3W_map[v] = k
-    end
-    nr.reverse_transformer3W_map = reverse_transformer3W_map
-    return
-end
-
 """
     validate_connectivity(M::Ybus) -> Bool
 
@@ -2321,11 +2265,7 @@ function find_subnetworks(M::Ybus)
     return find_subnetworks(M.adjacency_data, bus_numbers)
 end
 
-function get_reduction(
-    ybus::Ybus,
-    sys::PSY.System,
-    reduction::DegreeTwoReduction,
-)
+function get_reduction(ybus::Ybus, sys::PSY.System, reduction::DegreeTwoReduction)
     A = AdjacencyMatrix(ybus)
     return get_reduction(A, sys, reduction)
 end
@@ -2345,15 +2285,10 @@ validation succeeds.
 - Throws `IS.DataFormatError` if study buses span multiple subnetworks.
 - Throws `IS.DataFormatError` if a partially reduced subnetwork excludes its slack bus.
 """
-function _validate_study_buses(
-    ybus::Ybus,
-    study_buses::Vector{Int},
-)
+function _validate_study_buses(ybus::Ybus, study_buses::Vector{Int})
     nrd = get_network_reduction_data(ybus)
-    valid_bus_numbers = union(
-        Set(keys(nrd.bus_reduction_map)),
-        Set(keys(nrd.reverse_bus_search_map)),
-    )
+    valid_bus_numbers =
+        union(Set(keys(nrd.bus_reduction_map)), Set(keys(nrd.reverse_bus_search_map)))
 
     for bus_number in study_buses
         bus_number ∉ valid_bus_numbers &&
@@ -2395,11 +2330,7 @@ function _validate_study_buses(
     return nothing
 end
 
-function get_reduction(
-    ybus::Ybus,
-    ::PSY.System,
-    reduction::WardReduction,
-)
+function get_reduction(ybus::Ybus, ::PSY.System, reduction::WardReduction)
     study_buses = get_study_buses(reduction)
     ref_bus_key = _validate_study_buses(ybus, study_buses)
     subnetwork_bus_axis = ybus.subnetwork_axes[ref_bus_key][1]
@@ -2445,17 +2376,16 @@ function get_reduction(
     bus_reduction_map,
     reverse_bus_search_map,
     added_arc_impedance_map,
-    added_admittance_map =
-        get_ward_reduction(
-            ybus.data,
-            bus_lookup,
-            bus_axis,
-            arc_axis,
-            boundary_buses,
-            Set(get_ref_bus(ybus)),
-            study_buses,
-            subnetwork_bus_axis,
-        )
+    added_admittance_map = get_ward_reduction(
+        ybus.data,
+        bus_lookup,
+        bus_axis,
+        arc_axis,
+        boundary_buses,
+        Set(get_ref_bus(ybus)),
+        study_buses,
+        subnetwork_bus_axis,
+    )
 
     for arc_tuple in keys(added_arc_impedance_map)
         if ybus.data[bus_lookup[arc_tuple[1]], bus_lookup[arc_tuple[2]]] != 0.0

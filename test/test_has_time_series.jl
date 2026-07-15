@@ -22,7 +22,7 @@ end
     @test PNM.is_a_reduction(bs) == true
 
     trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
-    @test PNM.is_a_reduction(PNM.ThreeWindingTransformerWinding(trf, 1)) == true
+    @test PNM.is_a_reduction(PNM.ThreeWindingTransformerCircuit(trf, 1)) == true
 end
 
 @testset "has_time_series" begin
@@ -35,8 +35,8 @@ end
     bs = PNM.BranchesSeries()
     PNM.add_branch!(bs, line1, :FromTo)
     PNM.add_branch!(bs, line2, :FromTo)
-    tww1 = PNM.ThreeWindingTransformerWinding(trf, 1)
-    tww2 = PNM.ThreeWindingTransformerWinding(trf, 2)
+    tww1 = PNM.ThreeWindingTransformerCircuit(trf, 1)
+    tww2 = PNM.ThreeWindingTransformerCircuit(trf, 2)
 
     # No time series attached to any component
     @test PNM.has_time_series(bp, PSY.SingleTimeSeries, "rating") == false
@@ -49,7 +49,7 @@ end
     @test PNM.has_time_series(bs, PSY.SingleTimeSeries, "rating") == true
     @test PNM.has_time_series(bp, PSY.SingleTimeSeries, "nonexistent") == false
 
-    # ThreeWindingTransformerWinding delegates to parent transformer
+    # ThreeWindingTransformerCircuit delegates to parent transformer
     PSY.add_time_series!(sys, trf, _make_test_time_series("rating"))
     @test PNM.has_time_series(tww1, PSY.SingleTimeSeries, "rating") == true
     @test PNM.has_time_series(tww2, PSY.SingleTimeSeries, "rating") == true
@@ -66,8 +66,8 @@ end
     bs = PNM.BranchesSeries()
     PNM.add_branch!(bs, line1, :FromTo)
     PNM.add_branch!(bs, line2, :FromTo)
-    tww1 = PNM.ThreeWindingTransformerWinding(trf, 1)
-    tww2 = PNM.ThreeWindingTransformerWinding(trf, 2)
+    tww1 = PNM.ThreeWindingTransformerCircuit(trf, 1)
+    tww2 = PNM.ThreeWindingTransformerCircuit(trf, 2)
 
     # No time series attached — should return nothing
     @test isnothing(PNM.get_device_with_time_series(bp, PSY.SingleTimeSeries, "rating"))
@@ -85,7 +85,7 @@ end
     @test PNM.get_device_with_time_series(bs, PSY.SingleTimeSeries, "nonexistent") ===
           nothing
 
-    # Add time series to transformer — ThreeWindingTransformerWinding should delegate to parent
+    # Add time series to transformer — ThreeWindingTransformerCircuit should delegate to parent
     PSY.add_time_series!(sys, trf, _make_test_time_series("rating"))
     @test PNM.get_device_with_time_series(tww1, PSY.SingleTimeSeries, "rating") === trf
     @test PNM.get_device_with_time_series(tww2, PSY.SingleTimeSeries, "rating") === trf
