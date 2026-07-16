@@ -11,9 +11,6 @@
 #   - `PowerNetworkMatrices.jl` installed
 #   - A power system model loaded (see [Getting Started](@ref))
 
-using PowerNetworkMatrices
-using PowerSystemCaseBuilder
-
 import PowerNetworkMatrices as PNM
 import PowerSystemCaseBuilder as PSB
 

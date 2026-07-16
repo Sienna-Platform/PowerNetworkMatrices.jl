@@ -1,6 +1,8 @@
 # # How to Compute Network Matrices
 
-# This guide shows you how to compute various network matrices for your power system.
+# This guide shows you how to build the network matrices for your power system.
+# They all share one construction pattern and one indexing scheme, so once you
+# can build and read a `PTDF` you can do the same for every other type.
 
 # ## Prerequisites
 #
@@ -10,133 +12,44 @@
 # The examples below load a small test system with `PowerSystemCaseBuilder`; in
 # your own work replace this with your own `System`.
 
-using PowerNetworkMatrices
-using PowerSystemCaseBuilder
-
 import PowerNetworkMatrices as PNM
 import PowerSystemCaseBuilder as PSB
 
 sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
 
-# ## Computing PTDF Matrix
+# ## Build any matrix the same way
 
-# To compute the Power Transfer Distribution Factor matrix using [`PTDF`](@ref):
+# Every matrix type is a constructor that takes the `System` and returns the
+# matrix object. The call is identical across types — only the name changes:
 
 ptdf_matrix = PNM.PTDF(sys)
 
-## Access the matrix data (in standard arcs × buses orientation)
-matrix_data = PNM.get_ptdf_data(ptdf_matrix)
-
-# ### Indexing PTDF Elements
-
-# The PTDF matrix is indexed by **arc tuples** `(from_bus, to_bus)` and **bus numbers**:
-
-## Access PTDF element for arc (1, 2) and bus 3
-ptdf_matrix[(1, 2), 3]
-
-# Inspect available axes and lookup dictionaries:
-
-PNM.get_axes(ptdf_matrix)
-
+# The same `Type(sys; kwargs...)` form builds every matrix in the package:
 #
-
-PNM.get_lookup(ptdf_matrix)
-
-# ## Computing LODF Matrix
-
-# To compute the Line Outage Distribution Factor matrix using [`LODF`](@ref):
-
-lodf_matrix = PNM.LODF(sys)
-matrix_data = PNM.get_lodf_data(lodf_matrix)
-
-# ### Indexing LODF Elements
-
-# The LODF matrix is indexed by **arc tuples** for both dimensions:
-
-## Access LODF element: flow change on arc (1, 4) due to outage of arc (2, 3)
-lodf_matrix[(1, 4), (2, 3)]
-
-# Inspect available axes and lookup dictionaries:
-
-PNM.get_axes(lodf_matrix)
-
+# | Constructor                                                          | Matrix                              |
+# |:-------------------------------------------------------------------- |:----------------------------------- |
+# | [`PTDF`](@ref)                                                       | Power transfer distribution factors |
+# | [`LODF`](@ref)                                                       | Line outage distribution factors    |
+# | [`Ybus`](@ref)                                                       | Complex nodal admittance            |
+# | [`BA_Matrix`](@ref) / [`ABA_Matrix`](@ref)                           | DC susceptance forms                |
+# | [`IncidenceMatrix`](@ref) / [`AdjacencyMatrix`](@ref)                | Network topology                    |
+# | [`VirtualPTDF`](@ref) / [`VirtualLODF`](@ref) / [`VirtualMODF`](@ref) | Lazy, row-on-demand forms          |
 #
+# So `PNM.LODF(sys)`, `PNM.Ybus(sys)`, `PNM.ABA_Matrix(sys)`, and the rest are all
+# built exactly like the `PNM.PTDF(sys)` call above. The shared build-time
+# keywords — `network_reductions`, `tol`, `linear_solver`, `dist_slack` — work on
+# every constructor that accepts them; each has its own how-to.
 
-PNM.get_lookup(lodf_matrix)
+# Pull the underlying array out with the matching `get_*_data` accessor when you
+# need the raw `SparseMatrixCSC` / `Matrix` (`get_ptdf_data`, `get_lodf_data`, …):
 
-# ## Computing Virtual PTDF Matrix
+matrix_data = PNM.get_ptdf_data(ptdf_matrix);
 
-# For systems where you need virtual representation using [`VirtualPTDF`](@ref):
+# ## Index any matrix the same way
 
-vptdf_matrix = PNM.VirtualPTDF(sys)
-
-## Access element by arc tuple and bus number
-vptdf_matrix[(1, 2), 3]
-
-# ## Computing Virtual LODF Matrix
-
-# Similarly for virtual LODF using [`VirtualLODF`](@ref):
-
-vlodf_matrix = PNM.VirtualLODF(sys)
-
-## Access element by arc tuples
-vlodf_matrix[(1, 4), (2, 3)]
-
-# ## Computing Virtual MODF Matrix
-
-# For post-contingency / post-modification PTDF rows using [`VirtualMODF`](@ref).
-# The example below assumes the system has `PSY.Outage` supplemental attributes
-# attached, from which contingencies are auto-registered:
-
-# ```julia
-# vmodf_matrix = PNM.VirtualMODF(sys)
-#
-# # Inspect contingencies auto-registered from PSY.Outage supplemental attributes
-# PNM.get_registered_contingencies(vmodf_matrix)
-#
-# # Access the post-modification PTDF row for monitored arc (1, 2) under a contingency
-# contingency = first(values(PNM.get_registered_contingencies(vmodf_matrix)))
-# vmodf_matrix[(1, 2), contingency]
-# ```
-
-# ## Computing Incidence and BA Matrices
-
-# For the fundamental network topology matrices:
-
-# Compute the incidence matrix using [`IncidenceMatrix`](@ref):
-
-incidence_matrix = PNM.IncidenceMatrix(sys)
-
-## Axes are (arc_tuples, bus_numbers)
-PNM.get_axes(incidence_matrix)
-
-# Compute the BA matrix (Bus-Admittance) using [`BA_Matrix`](@ref):
-
-ba_matrix = PNM.BA_Matrix(sys)
-
-# Compute the ABA matrix using [`ABA_Matrix`](@ref):
-
-aba_matrix = PNM.ABA_Matrix(sys)
-
-# ## Working with Pre-computed Matrices
-
-# If you have already computed the incidence and BA matrices, you can use them to compute [`PTDF`](@ref):
-
-## Compute base matrices first
-ba_matrix = PNM.BA_Matrix(sys)
-a_matrix = PNM.IncidenceMatrix(sys)
-
-## Use them to compute PTDF
-ptdf_matrix = PNM.PTDF(a_matrix, ba_matrix)
-
-# ## Understanding Axes and Lookup Dictionaries
-
-# All network matrices store `axes` and `lookup` fields that describe how rows and columns map to physical network elements:
-#
-#   - **`axes`**: A tuple of vectors containing the identifiers for each dimension
-#   - **`lookup`**: A tuple of dictionaries mapping identifiers to integer indices
-#
-# For matrices involving branches (IncidenceMatrix, PTDF, LODF), branches are represented as **arc tuples** `(from_bus_number, to_bus_number)` rather than branch name strings. This provides a compact, unambiguous identifier for each directed branch in the network.
+# Matrices are indexed by **physical network elements** — bus numbers and **arc
+# tuples** `(from_bus, to_bus)` — mapped to internal positions for you. What
+# differs between types is only *which* identifier each dimension takes:
 
 # | Matrix            | Dimension 1 (rows) | Dimension 2 (columns) |
 # |:----------------- |:------------------ |:--------------------- |
@@ -148,11 +61,66 @@ ptdf_matrix = PNM.PTDF(a_matrix, ba_matrix)
 # | `VirtualLODF`     | Arc tuples         | Arc tuples            |
 # | `VirtualMODF`     | Arc tuples         | Bus numbers           |
 
-# !!! note
+# A `PTDF` entry is a `(monitored arc, injection bus)` sensitivity:
+
+ptdf_matrix[(1, 2), 3]
+
+# A `LODF` entry is a `(monitored arc, outaged arc)` sensitivity — here *both*
+# dimensions are arc tuples, but the indexing call looks the same:
+
+lodf_matrix = PNM.LODF(sys)
+lodf_matrix[(1, 4), (2, 3)]
+
+# The `axes` (identifiers per dimension) and `lookup` (identifier → integer index)
+# behind this mapping are available on any matrix:
+
+PNM.get_axes(ptdf_matrix)
+
 #
-#     For backward compatibility, branch name strings can also be used to index PTDF and LODF matrices. This uses the `get_branch_multiplier` function internally to map names to arc tuples. Using arc tuples directly is recommended.
+
+PNM.get_lookup(ptdf_matrix)
+
+# !!! note
+#     For backward compatibility, branch **name** strings can also index `PTDF`
+#     and `LODF` (mapped to arc tuples internally via `get_branch_multiplier`).
+#     Arc tuples are the recommended, unambiguous form.
+
+# ## Virtual matrices are drop-in
+
+# The lazy [`VirtualPTDF`](@ref) / [`VirtualLODF`](@ref) / [`VirtualMODF`](@ref)
+# forms build and index **exactly** like their materialized counterparts — the
+# only difference is that they compute rows on demand and cache them instead of
+# storing the whole matrix. Swap the type name; everything else stays the same:
+
+vptdf_matrix = PNM.VirtualPTDF(sys)
+vptdf_matrix[(1, 2), 3]
+
+# `VirtualMODF` additionally serves post-contingency / post-modification rows; it
+# needs `PSY.Outage` supplemental attributes on the system to auto-register
+# contingencies (see [How to Define and Apply Contingencies](@ref)):
+
+# ```julia
+# vmodf_matrix = PNM.VirtualMODF(sys)
+# contingency = first(values(PNM.get_registered_contingencies(vmodf_matrix)))
+# vmodf_matrix[(1, 2), contingency]
+# ```
+#
+# For when to prefer a virtual matrix over a materialized one, see
+# [Virtual vs. Materialized Matrices](../explanation/virtual_vs_materialized.md).
+
+# ## Building from pre-computed matrices
+
+# Some constructors accept already-built matrices instead of a `System`, to reuse
+# shared intermediates. For example, `PTDF` can be built from an
+# [`IncidenceMatrix`](@ref) and a [`BA_Matrix`](@ref):
+
+a_matrix = PNM.IncidenceMatrix(sys)
+ba_matrix = PNM.BA_Matrix(sys)
+ptdf_matrix = PNM.PTDF(a_matrix, ba_matrix)
 
 # ## Next Steps
 #
 #   - [How to Choose a Linear Solver](@ref) for optimal performance
+#   - [Matrix Overview and Indexing](../reference/network_matrices_overview.md) —
+#     the reference for every type's axes and indexing
 #   - Understand the theory behind network matrices in the Explanation section

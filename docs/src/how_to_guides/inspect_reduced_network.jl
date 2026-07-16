@@ -6,14 +6,15 @@
 # which buses survived, where eliminated buses were mapped, and which reduction
 # algorithms were applied.
 
+# For a first, learning-oriented walkthrough of building a reduced matrix and
+# seeing the payoff, start with the [Network Reduction](@ref) tutorial. This
+# how-to is the reference recipe for querying the reduction data afterward.
+
 # ## Prerequisites
 #
 #   - `PowerNetworkMatrices.jl` installed
 #   - Familiarity with applying reductions at construction (see the reduction
 #     how-to and [Network reduction reference](@ref))
-
-using PowerNetworkMatrices
-using PowerSystemCaseBuilder
 
 import PowerNetworkMatrices as PNM
 import PowerSystemCaseBuilder as PSB
@@ -28,7 +29,7 @@ sys = PSB.build_system(PSB.PSSEParsingTestSystems,
 # Apply reductions through the `network_reductions` keyword. Reductions are
 # supplied only as a `Vector{NetworkReduction}` — there is no per-flag keyword.
 
-reductions = NetworkReduction[PNM.RadialReduction(), PNM.DegreeTwoReduction()];
+reductions = PNM.NetworkReduction[PNM.RadialReduction(), PNM.DegreeTwoReduction()];
 ptdf = PNM.PTDF(sys; network_reductions = reductions);
 
 # ## Retrieve the Reduction Data

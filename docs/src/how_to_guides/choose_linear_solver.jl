@@ -7,14 +7,22 @@
 # Pass the solver name as the `linear_solver` keyword to any matrix constructor
 # (`PTDF`, `LODF`, `ABA_Matrix`, …). `PowerNetworkMatrices.jl` supports four:
 #
-#  1. **`"KLU"`** - sparse KLU factorization. Always available (built-in
-#     `KLUWrapper` submodule); the default off Apple hardware.
-#  2. **`"AppleAccelerateLU"`** - sparse LU via Apple's Accelerate/libSparse.
+#  1. **`"KLU"`** - sparse
+#     [KLU](https://github.com/DrTimothyAldenDavis/SuiteSparse) factorization
+#     (part of SuiteSparse). Always available (built-in `KLUWrapper` submodule);
+#     the default off Apple hardware.
+#  2. **`"AppleAccelerateLU"`** - sparse LU via Apple's
+#     [Accelerate sparse solvers](https://developer.apple.com/documentation/accelerate/sparse_solvers).
 #     Always compiled in (built-in `AccelerateWrapper` submodule) but
 #     runtime-gated to macOS 15.5+ on Apple hardware, where it is the default.
-#  3. **`"MKLPardiso"`** - Intel's MKL Pardiso. A weak-dependency package
-#     extension: only loaded once you also add and import `Pardiso.jl`.
-#  4. **`"Dense"`** - dense matrix operations, for small or debugging cases.
+#  3. **`"MKLPardiso"`** - Intel's
+#     [oneMKL PARDISO](https://www.intel.com/content/www/us/en/docs/onemkl/developer-reference-c/current/onemkl-pardiso-parallel-direct-sparse-solver-interface.html),
+#     wrapped by [`Pardiso.jl`](https://github.com/JuliaSparse/Pardiso.jl). A
+#     weak-dependency package extension: only loaded once you also add and import
+#     `Pardiso.jl`.
+#  4. **`"Dense"`** - dense
+#     [LU](https://docs.julialang.org/en/v1/stdlib/LinearAlgebra/#LinearAlgebra.lu)
+#     from Julia's LinearAlgebra stdlib, for small or debugging cases.
 #
 # The default is platform-dependent: `AppleAccelerateLU` on macOS 15.5+ (Apple
 # hardware), `KLU` everywhere else. KLU and Apple Accelerate are always-present
@@ -22,9 +30,7 @@
 
 # The examples below use a small test system loaded with `PowerSystemCaseBuilder`:
 
-using PowerNetworkMatrices
-using PowerSystemCaseBuilder
-
+import PowerNetworkMatrices as PNM
 import PowerSystemCaseBuilder as PSB
 
 sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
@@ -40,9 +46,9 @@ sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
 #
 # Use [`PTDF`](@ref) with the KLU solver (the default off Apple hardware):
 
-ptdf_matrix = PTDF(sys)  # platform default
+ptdf_matrix = PNM.PTDF(sys)  # platform default
 ## or explicitly:
-ptdf_matrix = PTDF(sys; linear_solver = "KLU");
+ptdf_matrix = PNM.PTDF(sys; linear_solver = "KLU");
 
 # ### Use Apple Accelerate When:
 #
@@ -51,7 +57,7 @@ ptdf_matrix = PTDF(sys; linear_solver = "KLU");
 #
 # Select it explicitly with:
 
-ptdf_matrix = PTDF(sys; linear_solver = "AppleAccelerateLU");
+ptdf_matrix = PNM.PTDF(sys; linear_solver = "AppleAccelerateLU");
 
 # ### Use Dense When:
 #
@@ -61,7 +67,7 @@ ptdf_matrix = PTDF(sys; linear_solver = "AppleAccelerateLU");
 #
 # Specify the Dense solver explicitly:
 
-ptdf_matrix = PTDF(sys; linear_solver = "Dense");
+ptdf_matrix = PNM.PTDF(sys; linear_solver = "Dense");
 
 # ### Use MKLPardiso When:
 #
@@ -75,7 +81,7 @@ ptdf_matrix = PTDF(sys; linear_solver = "Dense");
 
 # ```julia
 # using Pardiso   # loads the MKLPardisoExt extension
-# ptdf_matrix = PTDF(sys; linear_solver = "MKLPardiso")
+# ptdf_matrix = PNM.PTDF(sys; linear_solver = "MKLPardiso")
 # ```
 
 # ## Performance Considerations
@@ -108,13 +114,13 @@ ptdf_matrix = PTDF(sys; linear_solver = "Dense");
 # using BenchmarkTools
 #
 # # Benchmark KLU
-# @btime ptdf_klu = PTDF($sys; linear_solver = "KLU")
+# @btime ptdf_klu = PNM.PTDF($sys; linear_solver = "KLU")
 #
 # # Benchmark Dense
-# @btime ptdf_dense = PTDF($sys; linear_solver = "Dense")
+# @btime ptdf_dense = PNM.PTDF($sys; linear_solver = "Dense")
 #
 # # Benchmark MKLPardiso (if available)
-# @btime ptdf_mkl = PTDF($sys; linear_solver = "MKLPardiso")
+# @btime ptdf_mkl = PNM.PTDF($sys; linear_solver = "MKLPardiso")
 # ```
 
 # ## Troubleshooting

@@ -24,13 +24,10 @@
 #     [PowerSystemCaseBuilder documentation](https://sienna-platform.github.io/PowerSystemCaseBuilder.jl/stable)
 #     for how to load your own data.
 
-using PowerNetworkMatrices
-using PowerSystemCaseBuilder
-
 import PowerNetworkMatrices as PNM
 import PowerSystemCaseBuilder as PSB
 
-sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
 
 # This system has five buses (numbered `1`–`5`) and six branches (named `"1"`
 # through `"6"`).

@@ -5,9 +5,6 @@
 # keyword. For why this changes PTDF values and how to choose weights, see
 # [Slack distribution and reference-bus conventions](../explanation/slack_conventions.md).
 
-using PowerNetworkMatrices
-using PowerSystemCaseBuilder
-
 import PowerNetworkMatrices as PNM
 import PowerSystemCaseBuilder as PSB
 
@@ -50,10 +47,3 @@ vptdf = PNM.VirtualPTDF(sys; dist_slack = weights);
 nbus = size(PNM.Ybus(sys), 1)             # Ybus is buses x buses
 slack_vector = fill(1.0 / nbus, nbus)     # uniform distribution across all buses
 vlodf = PNM.VirtualLODF(sys; dist_slack = slack_vector);
-
-# ## Default: single reference bus
-
-# Omitting `dist_slack` (or passing an empty container) keeps the single
-# reference bus:
-
-ptdf = PNM.PTDF(sys);                      # single-slack (default)

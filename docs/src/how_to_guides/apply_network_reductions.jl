@@ -6,9 +6,6 @@
 # [Network Reduction Theory](../explanation/network_reduction_theory.md); for the
 # full API, see [Network reduction reference](../reference/network_reduction.md).
 
-using PowerNetworkMatrices
-using PowerSystemCaseBuilder
-
 import PowerNetworkMatrices as PNM
 import PowerSystemCaseBuilder as PSB
 
@@ -38,14 +35,16 @@ ptdf = PNM.PTDF(sys; network_reductions = PNM.NetworkReduction[PNM.RadialReducti
 
 # ### Radial reduction
 
-# Eliminates leaf (degree-1) buses and their branches. It takes no fields:
+# [`RadialReduction`](@ref) eliminates leaf (degree-1) buses and their branches.
+# It takes no fields:
 
 reductions = PNM.NetworkReduction[PNM.RadialReduction()];
 
 # ### Degree-two reduction
 
-# Folds degree-2 buses into equivalent series branches. Its one field controls
-# whether reactive-only injector hosts are reduced:
+# [`DegreeTwoReduction`](@ref) folds degree-2 buses into equivalent series
+# branches. Its one field controls whether reactive-only injector hosts are
+# reduced:
 
 PNM.DegreeTwoReduction()                                        # reduce_reactive_power_injectors = true (default)
 PNM.DegreeTwoReduction(; reduce_reactive_power_injectors = false);
@@ -55,8 +54,9 @@ PNM.DegreeTwoReduction(; reduce_reactive_power_injectors = false);
 
 # ### Ward reduction
 
-# Eliminates buses outside a study area, keeping the electrical behavior seen
-# from the retained buses. It requires the study-bus set (bus numbers to keep):
+# [`WardReduction`](@ref) eliminates buses outside a study area, keeping the
+# electrical behavior seen from the retained buses. It requires the study-bus set
+# (bus numbers to keep):
 
 ward = PNM.WardReduction([1, 2, 3]);
 

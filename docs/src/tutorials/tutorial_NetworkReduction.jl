@@ -20,9 +20,6 @@
 # behavior, and how equivalent branches are derived — lives in
 # [Network Reduction Theory](@ref). Here we focus on doing it.
 
-using PowerNetworkMatrices
-using PowerSystemCaseBuilder
-
 import PowerNetworkMatrices as PNM
 import PowerSystemCaseBuilder as PSB
 
@@ -33,7 +30,7 @@ import PowerSystemCaseBuilder as PSB
 # big the problem is: `PTDF` is indexed by buses along one axis and branches
 # (arcs) along the other.
 
-sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
+sys = PSB.build_system(PSB.PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
 
 ptdf_full = PNM.PTDF(sys)
 size(ptdf_full)
@@ -53,7 +50,7 @@ ptdf_full[(103, 104), 103]
 # removing dangling buses can expose new degree-two buses for the second pass to
 # collapse.
 
-reductions = [RadialReduction(), DegreeTwoReduction()]
+reductions = [PNM.RadialReduction(), PNM.DegreeTwoReduction()]
 ptdf_reduced = PNM.PTDF(sys; network_reductions = reductions)
 size(ptdf_reduced)
 
@@ -66,20 +63,20 @@ size(ptdf_reduced)
 # Every reduced matrix carries a [`NetworkReductionData`](@ref) record describing
 # exactly what changed. Retrieve it with [`get_network_reduction_data`](@ref):
 
-reduction_data = get_network_reduction_data(ptdf_reduced)
+reduction_data = PNM.get_network_reduction_data(ptdf_reduced);
 
 # The buses that were eliminated:
 
 PNM.get_removed_buses(reduction_data)
 
-# The branches (arcs) that were eliminated:
+# And the branches (arcs) that were eliminated:
 
 PNM.get_removed_arcs(reduction_data)
 
-# And [`get_bus_reduction_map`](@ref) shows where each removed bus went — the
-# parent bus that absorbed it:
-
-get_bus_reduction_map(reduction_data)
+# That is enough to see what the reduction did. To query the reduction data in
+# depth — where each removed bus was folded, which algorithms ran, mapping an
+# original bus to its representative in the reduced matrix — see
+# [How to Inspect a Reduced Network](@ref).
 
 # ## Step 4 — Confirm the payoff
 
@@ -97,5 +94,5 @@ ptdf_reduced[(103, 104), 103]
 #
 #   - [Network Reduction Theory](@ref) — why the reductions are lossless and how
 #     equivalent-branch parameters are derived.
-#   - `WardReduction` — a third strategy that reduces the network around a chosen
-#     set of study buses, for when you care about one area of a large grid.
+#   - [`WardReduction`](@ref) — a third strategy that reduces the network around a
+#     chosen set of study buses, for when you care about one area of a large grid.
