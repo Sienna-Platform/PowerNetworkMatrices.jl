@@ -1,4 +1,4 @@
-## Computational Considerations
+# Computational Considerations
 
 ### Matrix Construction
 

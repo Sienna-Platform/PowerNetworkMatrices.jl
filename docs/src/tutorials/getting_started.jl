@@ -1,17 +1,28 @@
-# # Quick Start Guide
+# # Getting Started
+
+# This tutorial takes you from a power system to your first network-sensitivity
+# number. By the end you will have built a Power Transfer Distribution Factor
+# (`PTDF`) matrix and read a single, meaningful value out of it — the change in
+# one branch's flow caused by an injection at one bus.
+
+# We keep to a single path here. `PowerNetworkMatrices.jl` builds many other
+# matrices (`LODF`, `Ybus`, `BA_Matrix`, `ABA_Matrix`, and lazy `Virtual*`
+# variants); those are covered in [How to Compute Network Matrices](@ref) and the
+# [Matrix overview & indexing](@ref) reference, not in your first five minutes.
+
+# ## Step 1 — Load a power system
+
+# Network matrices are built from a `PowerSystems.System`. Here we use
+# `PowerSystemCaseBuilder.jl` to load a small five-bus test system so the example
+# is reproducible; in your own work you would build the `System` from your data
+# files instead.
 
 # !!! note
 #
-#     `PowerSystemCaseBuilder.jl` is a helper library that makes it easier to reproduce examples in the documentation and tutorials. Normally you would pass your local files to create the system data instead of calling the function `build_system`.
-#     For more details visit [PowerSystemCaseBuilder Documentation](https://sienna-platform.github.io/PowerSystemCaseBuilder.jl/stable)
-
-# For more details about loading data and adding more dynamic components check the
-# [Creating a System with Dynamic devices](https://sienna-platform.github.io/PowerSystems.jl/stable/tutorials/add_dynamic_data/)
-# section of the documentation in `PowerSystems.jl`.
-
-# ## Loading data
-
-# Data can be loaded from a pss/e raw file and a pss/e dyr file.
+#     `PowerSystemCaseBuilder.jl` is a helper library for reproducing the examples
+#     in this documentation. See the
+#     [PowerSystemCaseBuilder documentation](https://sienna-platform.github.io/PowerSystemCaseBuilder.jl/stable)
+#     for how to load your own data.
 
 using PowerNetworkMatrices
 using PowerSystemCaseBuilder
@@ -21,38 +32,42 @@ import PowerSystemCaseBuilder as PSB
 
 sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
 
-# ## Computation of the PTDF matrix
+# This system has five buses (numbered `1`–`5`) and six branches (named `"1"`
+# through `"6"`).
 
-# Once system data is loaded, network matrices can be evaluated. The following
-# example shows how the PTDF matrix is computed.
+# ## Step 2 — Build the PTDF matrix
 
-# The function `PTDF` is called for the evaluation of the matrix and other data. These
-# are stored in a structure of type `PTDF`.
+# Call [`PTDF`](@ref) on the system. This computes the whole matrix once and
+# stores it, along with the axes that let you index it by physical network
+# elements.
 
-## evaluate the PTDF structure containing the matrix and other data.
-ptdf_matrix = PNM.PTDF(sys);
+ptdf = PNM.PTDF(sys)
 
-# Show the PTDF matrix:
+# Each entry answers one question: *if one unit of power is injected at a given
+# bus (and withdrawn at the reference bus), how much of it flows along a given
+# branch?* Rows are branches, columns are buses.
 
-PNM.get_data(ptdf_matrix)
+# ## Step 3 — Read one sensitivity
 
-# As it can be seen, the PTDF matrix is stored internally in transposed form for computational efficiency.
-# The function `get_ptdf_data` returns the data in the standard orientation (arcs × buses).
+# You index the matrix by a **branch name** and a **bus number** directly — the
+# matrix maps those to its internal positions for you. Let's ask how the flow on
+# branch `"1"` (which connects buses 1 and 2) responds to an injection at bus 2:
 
-# The matrix axes are indexed by arc tuples `(from_bus_number, to_bus_number)` and bus numbers.
-# You can inspect the axes and lookup dictionaries as follows:
+ptdf["1", 2]
 
-# `axes` and `lookup` dictionaries describe the arc tuples and bus numbers for each dimension:
+# The result is about `-0.48`. Read it like this: injecting 1 MW at bus 2 (and
+# withdrawing it at the reference bus) changes the flow on branch `"1"` by
+# roughly `-0.48` MW. The magnitude — close to half — tells you branch `"1"` is a
+# major path for power leaving bus 2; the sign tells you the flow moves *against*
+# the branch's `(from, to)` orientation.
 
-PNM.get_axes(ptdf_matrix)
+# That single number is a network sensitivity, and computing it for every
+# branch/bus pair is exactly what the `PTDF` matrix gives you.
 
+# ## Where to go next
 #
-
-PNM.get_lookup(ptdf_matrix)
-
-# Elements can be accessed using arc tuples and bus numbers directly. The example below picks
-# the first arc and first bus from the matrix axes so it works for any system:
-
-some_arc = PNM.get_axes(ptdf_matrix)[2][1]
-some_bus = PNM.get_axes(ptdf_matrix)[1][1]
-ptdf_matrix[some_arc, some_bus]
+#   - [How to Compute Network Matrices](@ref) — build `LODF`, `Ybus`, and the
+#     other matrices the same way.
+#   - [Network Reduction](@ref) — shrink a large system before building matrices.
+#   - [The DC Power Flow Approximation](@ref) — the theory behind these
+#     sensitivities.

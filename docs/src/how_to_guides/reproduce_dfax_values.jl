@@ -1,16 +1,15 @@
-# # Industry DFAX values
+# # Reproduce industry DFAX values
 
-# In this tutorial we map the industry's "DFAX" vocabulary (Distribution
-# Factors, as used in PSS/E's DFAX activity and downstream by the NERC IDC for
-# TLR and Congestion Management Procedures) onto the matrices provided by
-# `PowerNetworkMatrices`. Every flavor of DFAX — GSF, LSF, LODF, OTDF, transfer
-# DFAX, flowgate DFAX, and multi-element (N-k) DFAX — is a special case of one
-# unified formula. The tutorial walks through each case with executable
-# examples on the RTS-GMLC system.
+# To validate `PowerNetworkMatrices` against the industry's "DFAX" vocabulary
+# (Distribution Factors, as used in PSS/E's DFAX activity and downstream by the
+# NERC IDC for TLR and Congestion Management Procedures), follow the recipe
+# below. Every flavor of DFAX — GSF, LSF, LODF, OTDF, transfer DFAX, flowgate
+# DFAX, and multi-element (N-k) DFAX — is a special case of one unified formula.
+# This guide reproduces each case with executable examples on the RTS-GMLC
+# system and checks the results against their closed-form references.
 
-# We assume you have already worked through the [PTDF matrix](@ref) and
-# [LODF matrix](@ref) tutorials. For the Woodbury-identity derivation behind
-# post-contingency PTDF rows, see the [Flowgate Methodology](@ref) explanation.
+# For the Woodbury-identity derivation behind post-contingency PTDF rows, see
+# the [Flowgate Methodology](@ref) explanation.
 
 # ## What is DFAX?
 
@@ -133,7 +132,7 @@ gsf_area1 = sum(w * ptdf[m, bn] for (bn, w) in src_weights)
 
 # If the swing should be distributed across many buses instead of falling on
 # the single reference bus, pass a `dist_slack` dictionary to the `PTDF`
-# constructor (see the [PTDF matrix](@ref) tutorial). That is a different
+# constructor (see the [`PTDF`](@ref) constructor). That is a different
 # concept from subsystem aggregation: `dist_slack` redefines the reference,
 # whereas the participation vector above defines the *source* of the
 # transfer.
@@ -208,7 +207,7 @@ otdf_vmodf = row_c[bus_lookup[b]]
 
 isapprox(otdf_closed, otdf_vmodf; rtol = 1e-10)
 
-# The `isapprox` check is the tutorial's internal validation: `VirtualMODF`
+# The `isapprox` check is this guide's internal validation: `VirtualMODF`
 # and the closed-form LODF expansion are the same calculation expressed two
 # different ways. Whenever both apply, they agree to floating-point
 # tolerance.
@@ -323,7 +322,7 @@ report = sort(DataFrame(rows), :dfax; by = abs, rev = true)
 
 # This table is the kind of output that drives downstream congestion and
 # seams-coordination workflows; assembling it requires nothing beyond the
-# matrices in this tutorial.
+# matrices in this guide.
 
 # ## When to use which primitive
 

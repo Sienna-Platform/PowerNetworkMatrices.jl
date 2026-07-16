@@ -24,6 +24,76 @@ Network reduction aims to preserve:
 
 The type of reduction (e.g. `RadialReduction`, `DegreeTwoReduction`, `WardReduction`) determines the extent to which these characteristics are retained
 
+## The graph and susceptance structure reduction operates on
+
+Network reduction is fundamentally a *graph* operation, and to understand why
+it is well-defined it helps to see the three matrices that encode the network's
+topology and electrical strength. These are the same building blocks the DC
+sensitivity matrices are assembled from, and they are what every reduction
+manipulates under the hood. (For constructor signatures and field accessors,
+see the [matrix type reference](../reference/matrix_types.md); the discussion
+here is about *what they mean*.)
+
+### The incidence matrix: pure topology
+
+The `IncidenceMatrix` ``A`` is the oriented node–arc incidence matrix of the
+network graph. It has one row per arc and one column per bus, with a ``+1`` at
+the arc's *from* bus, a ``-1`` at its *to* bus, and zeros elsewhere. It carries
+**topology only** — which bus connects to which, and with what orientation — and
+nothing about the electrical parameters. The reference bus column is dropped so
+that the downstream susceptance matrix is non-singular. Reading ``A`` row by row
+recovers the graph; reading it column by column recovers each bus's degree,
+which is exactly the quantity radial (degree 1) and degree-two reductions key
+off of.
+
+### The BA matrix: topology weighted by electrical strength
+
+The `BA_Matrix` is the product ``B A``, where ``B`` is the diagonal matrix of
+branch susceptances (under the DC approximation, ``b = 1/x`` for each branch).
+Where ``A`` says *which* buses a branch connects, ``BA`` scales each connection
+by *how electrically strong* it is: a low-reactance branch couples its endpoints
+tightly, a high-reactance branch loosely. Mapped onto bus angles, ``BA`` returns
+branch flows — it is the linear operator behind ``P_{ij} = (\theta_i - \theta_j)/x_{ij}``. (For computational reasons the raw data is stored transposed,
+but the axes still read arcs × buses.)
+
+### The ABA matrix: the grounded graph Laplacian
+
+The `ABA_Matrix` is ``A^\top B A``, the reduced nodal susceptance matrix. This
+is a **weighted graph Laplacian** with the reference bus grounded out: its
+off-diagonal entry ``(i,j)`` is the negative susceptance of the branch between
+``i`` and ``j``, and its diagonal is the sum of susceptances incident to each
+bus. Solving ``ABA\,\theta = P`` *is* the DC power flow, and inverting it is
+what produces the dense `PTDF`/`LODF` sensitivities. Because it is a Laplacian,
+its structure mirrors the graph directly: eliminating a bus from the network is
+a Kron elimination on this matrix, which is precisely why degree-two reduction
+(below) is exact rather than approximate.
+
+### Why this makes reduction well-posed
+
+Every reduction is defined on this susceptance graph and then propagates
+uniformly to the downstream matrices (see also
+[Computational considerations](computational_considerations.md), which explains
+why reductions are applied to the `Ybus` first). A radial bus is a degree-1 node
+in the graph; a degree-two bus is a degree-2 node; Ward reduction partitions the
+graph into study and external subgraphs and Kron-eliminates the external one.
+Because all of these are operations on the incidence/susceptance structure, the
+same reduction map applies to `PTDF`, `LODF`, and their virtual variants without
+re-deriving anything per matrix.
+
+### A subtlety: the susceptance graph is not the admittance graph
+
+Connectivity and reduction do not always see the same network. `find_subnetworks`
+walks the **admittance** graph of the `Ybus`, whereas `ABA` is built from the
+**susceptance** graph. These differ for branches with ``r > 0`` and ``x = 0``:
+such a branch has a finite admittance but zero susceptance (``b = 1/x`` is
+undefined / treated as absent), so it appears in the `Ybus` graph but *not* in
+`BA`. A network that is a single connected island electrically can therefore
+fragment into several disconnected components in the susceptance graph, leaving
+blocks with no reference bus and a **singular `ABA`**. This is why zero-impedance
+handling must resolve both endpoints of such branches to a common node before
+building the susceptance matrix — a reduction that ignored it would silently
+produce a singular DC power flow.
+
 ## Radial Branch Reduction
 
 ### What is a Radial Branch?

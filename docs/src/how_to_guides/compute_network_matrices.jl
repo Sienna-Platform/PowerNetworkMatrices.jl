@@ -5,7 +5,7 @@
 # ## Prerequisites
 #
 #   - `PowerNetworkMatrices.jl` installed
-#   - A power system model loaded (see [Quick Start Guide](@ref))
+#   - A power system model loaded (see [Getting Started](@ref))
 #
 # The examples below load a small test system with `PowerSystemCaseBuilder`; in
 # your own work replace this with your own `System`.
@@ -154,5 +154,5 @@ ptdf_matrix = PNM.PTDF(a_matrix, ba_matrix)
 
 # ## Next Steps
 #
-#   - Learn about choosing linear solvers for optimal performance
+#   - [How to Choose a Linear Solver](@ref) for optimal performance
 #   - Understand the theory behind network matrices in the Explanation section
