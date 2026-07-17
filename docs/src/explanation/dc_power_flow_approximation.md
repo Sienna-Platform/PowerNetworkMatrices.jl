@@ -1,7 +1,7 @@
 # The DC Power Flow Approximation
 
 Many network matrices in PowerNetworkMatrices.jl rely on the DC power flow
-approximation. It linearizes the AC power flow equations into a purely
+approximation.[^dcpf] It linearizes the AC power flow equations into a purely
 algebraic relationship between active-power injections and voltage angles,
 which is what makes the sensitivity matrices ([`PTDF`](@ref), [`LODF`](@ref)) fast to build and
 cheap to reason about.
@@ -32,3 +32,12 @@ network collapses to the susceptance-weighted graph Laplacian that the
   - Large angle differences
   - Voltage-constrained systems
   - Detailed reactive power analysis
+
+## References
+
+[^dcpf]: For the DC power-flow approximation and its assumptions see B. Stott,
+    J. Jardim, and O. Alsaç, "DC Power Flow Revisited," *IEEE Transactions on
+    Power Systems*, vol. 24, no. 3, pp. 1290–1300, 2009; and A. J. Wood,
+    B. F. Wollenberg, and G. B. Sheblé, *Power Generation, Operation, and
+    Control*, 3rd ed., Wiley, 2013. See also
+    [https://en.wikipedia.org/wiki/Power-flow_study](https://en.wikipedia.org/wiki/Power-flow_study).

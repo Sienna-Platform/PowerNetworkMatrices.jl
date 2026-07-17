@@ -3,7 +3,7 @@
 A PTDF answers "if I inject one unit of power at bus *j*, how much flows on branch
 *i*?" But power is conserved: an injection somewhere must be balanced by a
 withdrawal somewhere else. **Where that balancing withdrawal goes is the slack
-convention**, and it changes the PTDF. This page explains single versus
+convention**, and it changes the PTDF.[^ptdf] This page explains single versus
 distributed slack, the role of the reference bus, and how the choice shows up in
 the sensitivities.
 
@@ -100,3 +100,11 @@ withdrawal) is identical. Just match the type to the matrix you are building.
 The distributed slack does not make the DC model more or less exact; it changes
 the *question* the PTDF answers, from "balanced at one bus" to "balanced across a
 weighted fleet."
+
+## References
+
+[^ptdf]: Power transfer distribution factors, the reference/slack convention, and
+    distributed slack are standard sensitivity-analysis results; see A. J. Wood,
+    B. F. Wollenberg, and G. B. Sheblé, *Power Generation, Operation, and Control*,
+    3rd ed., Wiley, 2013 (sensitivity factors), together with the PTDF/LODF
+    definitions in the Siemens PSS®E and PowerWorld Simulator documentation.

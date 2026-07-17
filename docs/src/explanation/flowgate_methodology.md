@@ -96,7 +96,7 @@ of two entries of the post-contingency row:
 ```
 
 For a single-element (N-1) contingency this is equivalent to the explicit
-LODF expansion
+LODF expansion[^lodf]
 
 ```math
 \mathrm{DF} \; = \; \mathrm{PTDF}[m, s] - \mathrm{PTDF}[m, k]
@@ -223,3 +223,9 @@ contingency registrations, so subsequent queries will simply recompute. Use
     or [https://en.wikipedia.org/wiki/Woodbury_matrix_identity](https://en.wikipedia.org/wiki/Woodbury_matrix_identity).
 [^mod030]: NERC Reliability Standard MOD-030, *Flowgate Methodology* (Available
     Flowgate Capability). [https://www.nerc.com](https://www.nerc.com)
+[^lodf]: The line outage distribution factor and its expression in terms of the
+    base-case PTDF are standard results; see A. J. Wood, B. F. Wollenberg, and
+    G. B. Sheblé, *Power Generation, Operation, and Control*, 3rd ed., Wiley, 2013,
+    and J. Guo, Y. Fu, Z. Li, and M. Shahidehpour, "Direct Calculation of Line
+    Outage Distribution Factors," *IEEE Transactions on Power Systems*, vol. 24,
+    no. 3, pp. 1633–1634, 2009.

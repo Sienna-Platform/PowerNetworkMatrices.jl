@@ -38,7 +38,7 @@ behind ``P_{ij} = (\theta_i - \theta_j)/x_{ij}``.
 ### The ABA matrix: the grounded graph Laplacian
 
 The [`ABA_Matrix`](@ref) is ``A^\top B A``, the reduced nodal susceptance matrix —
-a **weighted graph Laplacian** with the reference bus grounded out. Solving
+a **weighted graph Laplacian**[^laplacian] with the reference bus grounded out. Solving
 ``ABA\,\theta = P`` *is* the DC power flow, and inverting it produces the dense
 [`PTDF`](@ref)/[`LODF`](@ref) sensitivities. Because it is a Laplacian, eliminating
 a bus is a Kron elimination on this matrix — which is precisely why degree-two
@@ -50,7 +50,7 @@ Every reduction is defined on this susceptance graph and then propagates uniform
 to the downstream matrices (see also
 [Computational considerations](computational_considerations.md), on why reductions
 are applied to the [`Ybus`](@ref) first). A radial bus is a degree-1 node; a
-degree-two bus a degree-2 node; Ward reduction Kron-eliminates the external
+degree-two bus a degree-2 node; Ward reduction[^ward] Kron-eliminates the external
 subgraph. Because all are operations on the incidence/susceptance structure, the
 same reduction map applies to [`PTDF`](@ref), [`LODF`](@ref), and their virtual
 variants without re-deriving anything per matrix.
@@ -100,7 +100,7 @@ A degree-two bus connects exactly two others, acting as a pass-through:
 Bus A --- Bus B (degree 2) --- Bus C
 ```
 
-Kron reduction eliminates buses from the admittance matrix. Partitioning into
+Kron reduction[^kron] eliminates buses from the admittance matrix. Partitioning into
 retained (``r``) and eliminated (``e``) buses with no injection at the eliminated
 buses (``I_e = 0``):
 
@@ -141,3 +141,15 @@ local voltage studies.
 
   - [`RadialReduction`](@ref)
   - [`DegreeTwoReduction`](@ref)
+
+## References
+
+[^laplacian]: The matrix ``A^\top B A`` is a weighted graph Laplacian; see
+    [https://en.wikipedia.org/wiki/Laplacian_matrix](https://en.wikipedia.org/wiki/Laplacian_matrix).
+[^kron]: For Kron reduction and its graph-theoretic interpretation see
+    F. Dörfler and F. Bullo, "Kron Reduction of Graphs With Applications to
+    Electrical Networks," *IEEE Transactions on Circuits and Systems I*, vol. 60,
+    no. 1, pp. 150–163, 2013. See also
+    [https://en.wikipedia.org/wiki/Kron_reduction](https://en.wikipedia.org/wiki/Kron_reduction).
+[^ward]: J. B. Ward, "Equivalent Circuits for Power-Flow Studies,"
+    *Transactions of the AIEE*, vol. 68, no. 1, pp. 373–382, 1949.

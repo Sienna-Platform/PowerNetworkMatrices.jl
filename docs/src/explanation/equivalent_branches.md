@@ -44,7 +44,7 @@ The combining rules follow directly:
     `b = 1 / Σ (1/bᵢ)` — a chain is weaker than its strongest link.
 
 There is a single correct answer here because the electrical behavior is fixed by
-Kirchhoff's laws. The equivalent is exact for the linear (DC) model.
+Kirchhoff's laws.[^circuits] The equivalent is exact for the linear (DC) model.
 
 ## Rating aggregation is policy — several answers
 
@@ -108,3 +108,9 @@ Rating aggregation encodes an operator's risk posture, so PNM refuses to pick fo
 you and instead names the policies (`sum_of_max`, `single_element_contingency`,
 `impedance_averaged`) so a study selects the one matching its purpose: raw
 capacity, N-1 security, or realistic DC loading.
+
+## References
+
+[^circuits]: Series and parallel combination of admittances/impedances is
+    elementary circuit theory; see
+    [https://en.wikipedia.org/wiki/Series_and_parallel_circuits](https://en.wikipedia.org/wiki/Series_and_parallel_circuits).
