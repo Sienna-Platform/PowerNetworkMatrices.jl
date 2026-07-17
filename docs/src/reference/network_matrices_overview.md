@@ -273,7 +273,7 @@ fields and accessors are documented on the [`NetworkReductionData`](@ref) docstr
 !!! note "Serialization drops reduction data"
     
     A [`PTDF`](@ref) rehydrated from HDF5 via [`from_hdf5`](@ref) carries an
-    **empty** [`NetworkReductionData`](@ref). See [Serialization](serialization.md).
+    **empty** [`NetworkReductionData`](@ref). See the [`to_hdf5`](@ref) docstring.
 
 ### System provenance
 
@@ -289,14 +289,14 @@ This overview is the entry point. Detailed reference lives on the sibling pages:
 
   - [Matrix type reference](matrix_types.md) — constructor signatures, keyword
     arguments, and concrete type aliases for every matrix type.
-  - [Connectivity & islands](connectivity.md) — testing whether the network is
+  - [How to Diagnose a Disconnected Network](@ref) — testing whether the network is
     connected and enumerating electrical islands.
-  - [Contingency & modification types](contingencies.md) — `ArcModification`,
-    `ShuntModification`, `NetworkModification`, `ContingencySpec`, Woodbury
+  - [How to Define and Apply Contingencies](@ref) — `ArcModification`,
+    `ShuntModification`, `NetworkModification`, `ContingencySpec`, and the Woodbury
     tooling.
-  - [Tolerance & solver settings](tolerance_and_solvers.md) — `AutoTolerance`,
-    sparsification cutoffs, and the linear-solver backends.
-  - [Serialization](serialization.md) — HDF5 persistence (PTDF only).
+  - [`AutoTolerance`](@ref) and [How to Choose a Linear Solver](@ref) — the
+    sparsification `tol` and the linear-solver backends.
+  - [`to_hdf5`](@ref) / [`from_hdf5`](@ref) — HDF5 persistence (PTDF only).
   - [Full public API](public.md) — the curated autodocs for every exported
     symbol, including the reduction specs, `NetworkReductionData`, and the
     aggregated-branch rating functions.

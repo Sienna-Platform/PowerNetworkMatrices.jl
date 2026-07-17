@@ -49,7 +49,7 @@ Network reductions reach both through the `Ybus` `kwargs...`
 (`network_reductions = [...]`) — there is no `reduce_*` keyword. `LODF(A, PTDFm)`
 warns and densifies if the supplied [`PTDF`](@ref) was itself sparsified, since
 that degrades LODF accuracy. Only [`PTDF`](@ref) supports HDF5 serialization (see
-the [serialization reference](serialization.md)).
+the [`to_hdf5`](@ref) / [`from_hdf5`](@ref) docstrings).
 
 ## Virtual (on-demand) matrices
 
@@ -65,7 +65,7 @@ where only a subset of rows is needed, and are **not** serializable.
     Distribution Factor matrix: the [`PTDF`](@ref) row of a monitored arc *after* a
     modification/contingency, via Woodbury updates. **There is no dense `MODF`
     type.** Query it with the [`ContingencySpec`](@ref) / [`NetworkModification`](@ref)
-    types (see the [contingency and modification reference](contingencies.md)).
+    types (see the [contingencies how-to](../how_to_guides/generated_contingencies.md)).
 
 !!! note "Distributed slack: `Dict` vs `Vector`"
     
@@ -132,9 +132,9 @@ signatures when you need to fix a concrete storage layout. All are exported, as 
   - [Matrix overview and indexing hub](network_matrices_overview.md) — how
     `A[row, col]` resolves and the per-type axis summary.
   - [Full public API](public.md) — authoritative docstrings and signatures.
-  - [How to Apply Network Reductions at Construction](@ref) — the
-    [`NetworkReduction`](@ref) spec types passed via `network_reductions`.
-  - [Contingency and modification reference](contingencies.md) — types used to
-    query [`VirtualMODF`](@ref).
-  - [Tolerance and solver settings](tolerance_and_solvers.md) — [`AutoTolerance`](@ref)
-    and `linear_solver` backends.
+  - [`NetworkReduction`](@ref) — the reduction spec types passed via
+    `network_reductions`, with the ordering rules.
+  - [How to Define and Apply Contingencies](@ref) — types used to query
+    [`VirtualMODF`](@ref).
+  - [`AutoTolerance`](@ref) and [How to Choose a Linear Solver](@ref) — the
+    sparsification `tol` and `linear_solver` backends.

@@ -56,8 +56,8 @@ vptdf = PNM.VirtualPTDF(ybus)
 #     every input to have been built with the **same** `network_reductions`. Because
 #     they all derive from a single [`Ybus`](@ref) here, they are automatically
 #     consistent. Pass `network_reductions` once, to the [`Ybus`](@ref) call, and
-#     everything downstream inherits it. See
-#     [How to Apply Network Reductions at Construction](@ref).
+#     everything downstream inherits it. See the [`NetworkReduction`](@ref) docstring
+#     for the keyword and its rules.
 
 # ## When this matters
 
@@ -73,5 +73,5 @@ vptdf = PNM.VirtualPTDF(ybus)
 #     shared intermediates fit together.
 #   - [How to Choose a Linear Solver](@ref) — the factorization cost that reuse
 #     avoids repeating.
-#   - [How to Apply Network Reductions at Construction](@ref) — supplying reductions
+#   - [`NetworkReduction`](@ref) — supplying reductions via `network_reductions`
 #     to the shared [`Ybus`](@ref).

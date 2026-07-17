@@ -38,13 +38,15 @@ The documentation follows the [Diátaxis](https://diataxis.fr/) framework, split
 into four kinds of material:
 
   - **[Tutorials](tutorials/generated_getting_started.md)** — learning-oriented
-    journeys. Start with [Getting Started](tutorials/generated_getting_started.md):
-    a guided tour that builds a PTDF, reads a sensitivity, swaps in a virtual
-    matrix, and reduces a network.
+    journeys, each answering one question end to end. Start with
+    [Getting Started](tutorials/generated_getting_started.md), which screens a line
+    outage on a small network with a PTDF, an LODF, and a reduction; then
+    [Analysis at Scale](tutorials/generated_analysis_at_scale.md) does the same at
+    scale with virtual matrices and cache control.
   - **[How-To Guides](how_to_guides/generated_build_multiple_matrices.md)** —
     task recipes for a specific goal (build matrices efficiently, choose a solver,
-    apply reductions, set a tolerance, define contingencies, diagnose connectivity,
-    persist a PTDF, and more).
+    reproduce industry DFAX values, compute phase-shifter factors, define
+    contingencies, diagnose connectivity).
   - **[Reference](reference/network_matrices_overview.md)** — exhaustive
     descriptions of every matrix type, accessor, and setting. Begin at the
     [Matrix Overview and Indexing](reference/network_matrices_overview.md) hub.

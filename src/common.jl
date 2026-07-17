@@ -378,6 +378,16 @@ function populate_equivalent_ybus!(
     return
 end
 
+"""
+    get_equivalent_physical_branch_parameters(segment, nr::NetworkReductionData) -> EquivalentBranch
+
+Physical branch parameters equivalent to a reduced group of branches. Lazily builds the
+group's 2×2 equivalent Ybus block (via `populate_equivalent_ybus!`) if not already
+cached, then decomposes that block into an [`EquivalentBranch`](@ref) — series `r`/`x`,
+from/to shunt `g`/`b`, and the transformer `tap`/`shift` — so a series chain or set of
+parallel branches can be represented as a single Pi-model branch. `segment` is a
+[`BranchesSeries`](@ref) or [`AbstractBranchesParallel`](@ref) reduction group.
+"""
 function get_equivalent_physical_branch_parameters(
     segment::Union{AbstractBranchesParallel, BranchesSeries},
     nr::NetworkReductionData,

@@ -29,8 +29,7 @@ To recover sparsity the package applies a **tolerance** and drops entries below 
 The default [`AutoTolerance`](@ref) chooses that cutoff from the data — a *relative
 per-row* drop that keeps large virtual matrices sparse while leaving small systems
 and the dense constructors exact. The exact rule, the bus-count gate, and the
-`Float64` alternative are the
-[tolerance & solver reference](../reference/tolerance_and_solvers.md); for very
+`Float64` alternative are documented in the [`AutoTolerance`](@ref) docstring; for very
 large studies prefer the [`VirtualPTDF`](@ref)/[`VirtualLODF`](@ref) variants, which
 compute rows on demand and store each one sparsely.
 

@@ -1,15 +1,16 @@
 # # Getting Started
 
-# This tutorial is a guided tour of `PowerNetworkMatrices.jl` (PNM). By the end you
-# will have built a few different network matrices from a power system, read
-# meaningful values out of them, swapped in a memory-light *virtual* matrix, and
-# shrunk a network with a reduction — the whole arc of what the package does, in one
-# sitting. Follow along and experiment; each stop links onward to the how-to guides
-# and reference for depth.
-
-# We keep to a single happy path. The point here is to *see* the pieces fit
-# together, not to cover every option — those live in the how-to guides and the
-# [Matrix overview & indexing](@ref) reference.
+# In this tutorial we answer a real operational question about a network, end to
+# end, with `PowerNetworkMatrices.jl` (PNM):
+#
+# > **If a key transmission line trips, which other lines are most at risk of
+# > overloading?**
+#
+# Answering it takes three of PNM's matrices in turn — a [`PTDF`](@ref) to see how
+# power routes today, an [`LODF`](@ref) to see where a tripped line's flow goes, and
+# a network *reduction* to make the study cheap enough to repeat at scale. Each builds
+# on the last, so read top to bottom; by the end you will have used the core of the
+# package on one continuous problem.
 
 import PowerNetworkMatrices as PNM
 import PowerSystemCaseBuilder as PSB
@@ -21,123 +22,123 @@ import PowerSystemCaseBuilder as PSB
 #     [PowerSystemCaseBuilder documentation](https://sienna-platform.github.io/PowerSystemCaseBuilder.jl/stable)
 #     for how to load your own data.
 
-# ## Step 1 — Load a power system
+# ## Step 1 — Load the network
 
 # Network matrices are built from a [`PowerSystems.System`](@extref PowerSystems.System).
-# Here we load a small five-bus test system so the example is reproducible; in your
-# own work you would build the [`System`](@extref PowerSystems.System) from your data
-# files instead.
+# We use a small IEEE-14-style test network; in your own work you would build the
+# [`System`](@extref PowerSystems.System) from your data files instead.
 
-sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
+sys = PSB.build_system(PSB.PSSEParsingTestSystems, "psse_14_network_reduction_test_system");
 
-# This system has five buses (numbered `1`–`5`) and six branches (named `"1"`
-# through `"6"`).
+# The line we are worried about is the one running between buses `103` and `104` — a
+# central corridor in this grid. Our whole analysis is about what happens to the rest
+# of the network if that line goes out.
 
-# ## Step 2 — Build a PTDF and read a sensitivity
+# ## Step 2 — See how power routes today with a PTDF
 
-# The [`PTDF`](@ref) (Power Transfer Distribution Factor) matrix is a good first
-# stop. Build it by calling the constructor on the system — this computes the whole
-# matrix once and stores it, along with the axes that let you index it by physical
-# network elements.
+# The [`PTDF`](@ref) (Power Transfer Distribution Factor) matrix is the natural first
+# stop: before asking what happens when a line trips, we want to know how power flows
+# through the network in the first place. Build it by calling the constructor on the
+# system — this computes the whole matrix once and stores it, along with the axes that
+# let you index it by physical network elements.
 
 ptdf = PNM.PTDF(sys)
 
 # Each entry answers one question: *if one unit of power is injected at a given bus
 # (and withdrawn at the reference bus), how much of it flows along a given branch?*
-# Rows are branches, columns are buses. Index by a **branch name** and a **bus
-# number** directly — the matrix maps those to its internal positions for you:
+# Index by an **arc tuple** `(from_bus, to_bus)` and a **bus number** directly — the
+# matrix maps those to its internal positions for you. Here is our corridor's response
+# to an injection at bus `103`:
 
-ptdf["1", 2]
+ptdf[(103, 104), 103]
 
-# The result is about `-0.48`. Read it like this: injecting 1 MW at bus 2 (and
-# withdrawing it at the reference bus) changes the flow on branch `"1"` by roughly
-# `-0.48` MW. The magnitude — close to half — tells you branch `"1"` is a major path
-# for power leaving bus 2; the sign tells you the flow moves *against* the branch's
-# `(from, to)` orientation.
+# The result is about `0.71`. Read it like this: injecting 1 MW at bus `103` (and
+# withdrawing it at the reference bus) sends roughly `0.71` MW down line `(103, 104)`.
+# That large fraction tells us `(103, 104)` is a dominant path for power leaving bus
+# `103` — exactly why its outage is worth studying.
 
-# Now explore. The same branch responds differently to injections at different
-# buses — each column of the matrix is a different bus's influence on this branch:
+# Compare a bus that barely touches this corridor:
 
-ptdf["1", 3]
+ptdf[(103, 104), 102]
 
-# And you can index by an **arc tuple** `(from_bus, to_bus)` instead of a branch
-# name. Arc tuples are the canonical, unambiguous identifier — they survive network
-# reductions, where named branches may be merged away:
+# About `0.01` — an injection at bus `102` splits away through other paths and hardly
+# loads our line. And the **reference bus** is special: injecting there changes
+# nothing, so its column is exactly zero.
 
-ptdf[(2, 3), 1]
+ptdf[(103, 104), 101]
 
-# ## Step 3 — A different matrix answers a different question
+# So bus `101` is the reference here. A whole column of the PTDF is one bus's influence
+# on this corridor; a whole row is how one corridor responds to every bus. This is the
+# background flow picture. Now the outage.
 
-# Every matrix in PNM is built the same way — `Type(sys)` — and indexed the same
-# way. Only the *question* changes. The [`LODF`](@ref) (Line Outage Distribution
-# Factor) matrix asks: *if one branch is outaged, how does its flow redistribute
-# onto the others?* Here both dimensions are branches (a monitored arc and an
-# outaged arc):
+# ## Step 3 — Where does a tripped line's flow go? Ask the LODF
+
+# The [`LODF`](@ref) (Line Outage Distribution Factor) matrix answers our question
+# directly: *if one branch is outaged, what fraction of its pre-outage flow lands on
+# each other branch?* Both dimensions are branches — a **monitored** arc and an
+# **outaged** arc.
 
 lodf = PNM.LODF(sys)
-lodf[(1, 4), (2, 3)]
 
-# That value is the fraction of branch `(2, 3)`'s pre-outage flow that lands on
-# branch `(1, 4)` when `(2, 3)` trips. The [Matrix overview & indexing](@ref)
-# reference lists every matrix type and the identifiers each dimension takes.
+# Trip our corridor and scan every other branch for the share it inherits. We keep only
+# the branches that pick up a meaningful fraction and rank them worst-first — this is
+# exactly the screen an operator runs:
 
-# ## Step 4 — Virtual matrices are drop-in
+outaged = (103, 104)
+responders = [(arc, lodf[arc, outaged]) for arc in lodf.axes[1] if arc != outaged]
+filter!(pair -> abs(pair[2]) > 0.05, responders)
+sort!(responders; by = pair -> -abs(pair[2]))
+responders
 
-# For large systems, materializing a full dense [`PTDF`](@ref) can be expensive. The
-# lazy [`VirtualPTDF`](@ref) computes rows on demand and caches them, but builds and
-# indexes **exactly** like the materialized form — swap the type name and nothing
-# else changes:
+# There is our answer. Branch `(102, 103)` inherits **the entire** flow of the tripped
+# line (a factor of `-1.0`): it is the series partner on the far side of bus `103`, so
+# it is by far the most at risk. Behind it, two parallel corridors each absorb about
+# `65%` — the `101–115–102` path and the `101–117–118–104` path — and branch
+# `(102, 104)` takes the remaining `35%`. Every other branch is untouched. An operator
+# would watch `(102, 103)` first, then those two corridors.
 
-vptdf = PNM.VirtualPTDF(sys)
-vptdf[(2, 3), 1]
+# The sign carries meaning too: a negative factor means the redistributed flow runs
+# *against* the monitored branch's `(from, to)` orientation. You can always pull a
+# single factor out directly:
 
-# Same answer as the materialized `ptdf[(2, 3), 1]` above, computed only for the row
-# you asked for. [Virtual vs. materialized matrices](@ref) explains when to prefer
-# each.
+lodf[(102, 103), (103, 104)]
 
-# ## Step 5 — Shrink a network with a reduction
+# ## Step 4 — Make the study cheap enough to repeat
 
-# Real grids carry buses that add no information to a study: dead-end (radial) buses
-# and pass-through (degree-two) buses. PNM can *reduce* them away, making the
-# matrices smaller while leaving the sensitivities you care about unchanged. Let's
-# see the payoff on a system built to exercise reduction.
+# We answered the question on the full network. But reliability studies get run over
+# and over — every credible outage, every operating point — so the matrices want to be
+# as small as possible. Real grids carry buses that add nothing to a study like this:
+# dead-end (radial) buses and pass-through (degree-two) buses. PNM can *reduce* them
+# away, shrinking the matrices while leaving the sensitivities we care about unchanged.
 
-sys14 =
-    PSB.build_system(PSB.PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
+# Reductions are supplied to any constructor through the `network_reductions` keyword.
+# We combine two strategies — [`RadialReduction`](@ref) (drop dangling buses) then
+# [`DegreeTwoReduction`](@ref) (fuse pass-through chains):
 
-ptdf_full = PNM.PTDF(sys14)
-size(ptdf_full)
+reductions = PNM.NetworkReduction[PNM.RadialReduction(), PNM.DegreeTwoReduction()]
+ptdf_reduced = PNM.PTDF(sys; network_reductions = reductions)
+size(ptdf_reduced), size(ptdf)
 
-# Pick one sensitivity to track through the reduction — the response of branch
-# `(103, 104)` to an injection at bus `103`, both in the core network:
-
-ptdf_full[(103, 104), 103]
-
-# Reductions are supplied to any constructor through the `network_reductions`
-# keyword. We combine two strategies — [`RadialReduction`](@ref) (drop dangling
-# buses) then [`DegreeTwoReduction`](@ref) (fuse pass-through chains):
-
-reductions = [PNM.RadialReduction(), PNM.DegreeTwoReduction()]
-ptdf_reduced = PNM.PTDF(sys14; network_reductions = reductions)
-size(ptdf_reduced)
-
-# The matrix is smaller — fewer bus columns and fewer branch rows. Yet the tracked
-# sensitivity is unchanged, to the last digit:
+# Fewer branch rows and fewer bus columns. Yet the sensitivity that anchored our whole
+# analysis is unchanged, to the last digit:
 
 ptdf_reduced[(103, 104), 103]
 
-# A smaller, faster matrix that gives the same answer for every element that
-# survived the reduction. That is the whole point of reduction.
+# A smaller, faster matrix that gives the same answer for every element that survived
+# the reduction. Note that we indexed with the **arc tuple** `(103, 104)` throughout:
+# arc tuples are the canonical, unambiguous identifier and they survive reductions,
+# where named branches may be merged away. That is why they are the identifier to reach
+# for in code that runs before and after a reduction.
 
 # ## Where to go next
 #
-# You have now touched the core of the package. To go deeper:
+# You have taken one question from raw network to answer and back, using PNM's core
+# matrices. To go further:
 #
+#   - [Analysis at Scale](@ref) — the second tutorial: screening *many* contingencies
+#     on a large network with the memory-light virtual matrices and cache control.
 #   - [Matrix overview & indexing](@ref) — the reference for every matrix type, its
 #     axes, indexing, and accessors.
-#   - [How to Build Multiple Matrices Without Repeating Work](@ref) — reuse shared
-#     intermediates when you need several matrices for the same system.
-#   - [How to Apply Network Reductions at Construction](@ref) — combining and
-#     ordering reductions, and reading back what changed.
-#   - [The DC Power Flow Approximation](@ref) — the theory behind these
-#     sensitivities.
+#   - [The DC Power Flow Approximation](@ref) — the theory behind these sensitivities.
+#   - [How to Define and Apply Contingencies](@ref) — post-contingency factors beyond
+#     the single-outage LODF.

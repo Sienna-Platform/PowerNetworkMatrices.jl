@@ -222,7 +222,7 @@ end
 end
 
 """
-    LODF(sys::PSY.System; linear_solver::String = _default_linear_solver(), tol::Float64 = eps(), network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
+    LODF(sys::PSY.System; linear_solver::String = _default_linear_solver(), tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE, network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
 
 Construct a Line Outage Distribution Factor (LODF) matrix from a PowerSystems.System by computing
 the sensitivity of line flows to single line outages. This is the primary constructor for LODF
@@ -233,9 +233,11 @@ analysis starting from system data.
 
 # Keyword Arguments
 - `linear_solver::String = _default_linear_solver()`:
-        Linear solver algorithm for matrix computations. Options: "KLU", "Dense", "MKLPardiso"
-- `tol::Float64 = eps()`:
-        Sparsification tolerance for dropping small matrix elements to reduce memory usage
+        Linear solver algorithm for matrix computations. Options: "KLU", "AppleAccelerateLU", "Dense", "MKLPardiso"
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
+        Sparsification tolerance for dropping small matrix elements to reduce memory usage.
+        A `Float64` applies a fixed absolute cutoff at any size; an [`AutoTolerance`](@ref)
+        (the default) applies a relative per-row cutoff on large virtual matrices only.
 - `network_reductions::Vector{NetworkReduction} = NetworkReduction[]`:
         Vector of network reduction algorithms to apply before matrix construction
 - `include_constant_impedance_loads::Bool=true`:
@@ -259,7 +261,8 @@ analysis starting from system data.
 6. **Sparsification**: Applies tolerance threshold to reduce matrix density
 
 # Linear Solver Options
-- **"KLU"**: Sparse LU factorization (default, recommended for most cases)
+- **"KLU"**: Sparse LU factorization (default off Apple hardware, recommended for most cases)
+- **"AppleAccelerateLU"**: Apple Accelerate sparse LU (default on macOS 15.5+ Apple hardware)
 - **"Dense"**: Dense matrix operations (faster for small systems)
 - **"MKLPardiso"**: Intel MKL Pardiso solver (requires MKL, best for very large systems)
 
@@ -320,7 +323,7 @@ function LODF(
 end
 
 """
-    LODF(A::IncidenceMatrix, PTDFm::PTDF; linear_solver::String = _default_linear_solver(), tol::Float64 = eps())
+    LODF(A::IncidenceMatrix, PTDFm::PTDF; linear_solver::String = _default_linear_solver(), tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE)
 
 Construct a Line Outage Distribution Factor (LODF) matrix from existing incidence and PTDF matrices.
 This constructor is more efficient when the prerequisite matrices are already available.
@@ -417,7 +420,7 @@ function LODF(
 end
 
 """
-    LODF(A::IncidenceMatrix, ABA::ABA_Matrix, BA::BA_Matrix; linear_solver::String = "KLU", tol::Float64 = eps())
+    LODF(A::IncidenceMatrix, ABA::ABA_Matrix, BA::BA_Matrix; linear_solver::String = "KLU", tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE)
 
 Construct a Line Outage Distribution Factor (LODF) matrix from incidence, ABA, and BA matrices.
 This constructor provides direct control over the underlying matrix computations and is most
@@ -433,7 +436,7 @@ efficient when the prerequisite matrices with factorization are already availabl
         This constructor is intentionally KLU-only because `ABA.K` is always a
         KLU factorization. The keyword is kept for API consistency; passing any
         other value will error.
-- `tol::Float64 = eps()`:
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
         Sparsification tolerance for dropping small matrix elements
 
 # Returns

@@ -25,8 +25,9 @@ relationship by computing the full post-contingency PTDF row directly, which
 extends naturally to multi-element contingencies.
 
 For the constructor signatures and the contingency/modification types named
-below, see the [contingency & modification reference](../reference/contingencies.md);
-for a task-oriented walkthrough of building and querying a `VirtualMODF`, see the
+below, see the [Public API Reference](../reference/public.md); for a task-oriented
+walkthrough of building and querying a `VirtualMODF` — including the modification
+type model — see the
 [contingencies how-to](../how_to_guides/generated_contingencies.md).
 
 ## Why a low-rank (Woodbury) update

@@ -82,5 +82,4 @@ into running solves in parallel.
     it.
 
 For the solver backends themselves, see the
-[tolerance and solver reference](../reference/tolerance_and_solvers.md) and the
 [choose-a-linear-solver how-to](../how_to_guides/generated_choose_linear_solver.md).

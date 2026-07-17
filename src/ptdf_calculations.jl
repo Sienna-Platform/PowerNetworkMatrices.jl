@@ -285,7 +285,7 @@ end
 end
 
 """
-    PTDF(sys::PSY.System; dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(), linear_solver = _default_linear_solver(), tol::Float64 = eps(), network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
+    PTDF(sys::PSY.System; dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(), linear_solver = _default_linear_solver(), tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE, network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
 
 Construct a Power Transfer Distribution Factor (PTDF) matrix from a PowerSystems.System by computing
 the sensitivity of transmission line flows to bus power injections. This is the primary constructor
@@ -299,9 +299,11 @@ for PTDF analysis starting from system data.
         Dictionary mapping bus numbers to distributed slack weights for realistic slack modeling.
         Empty dictionary uses single slack bus (default behavior)
 - `linear_solver::String = _default_linear_solver()`:
-        Linear solver algorithm for matrix computations. Options: "KLU", "Dense", "MKLPardiso"
-- `tol::Float64 = eps()`:
-        Sparsification tolerance for dropping small matrix elements to reduce memory usage
+        Linear solver algorithm for matrix computations. Options: "KLU", "AppleAccelerateLU", "Dense", "MKLPardiso"
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
+        Sparsification tolerance for dropping small matrix elements to reduce memory usage.
+        A `Float64` applies a fixed absolute cutoff at any size; an [`AutoTolerance`](@ref)
+        (the default) applies a relative per-row cutoff on large virtual matrices only.
 - `network_reductions::Vector{NetworkReduction} = NetworkReduction[]`:
         Vector of network reduction algorithms to apply before matrix construction
 - `include_constant_impedance_loads::Bool=true`:
@@ -331,7 +333,8 @@ for PTDF analysis starting from system data.
 - **Physical Meaning**: Distributed slack better represents generator response to load changes
 
 # Linear Solver Options
-- **"KLU"**: Sparse LU factorization (default, recommended for most cases)
+- **"KLU"**: Sparse LU factorization (default off Apple hardware, recommended for most cases)
+- **"AppleAccelerateLU"**: Apple Accelerate sparse LU (default on macOS 15.5+ Apple hardware)
 - **"Dense"**: Dense matrix operations (faster for small systems, higher memory usage)
 - **"MKLPardiso"**: Intel MKL Pardiso solver (requires MKL library, best for very large systems)
 
@@ -363,7 +366,7 @@ function PTDF(sys::PSY.System;
 end
 
 """
-    PTDF(ybus::Ybus; dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(), linear_solver = _default_linear_solver(), tol::Float64 = eps(), network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
+    PTDF(ybus::Ybus; dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(), linear_solver = _default_linear_solver(), tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE, network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
 
 Construct a Power Transfer Distribution Factor (PTDF) matrix from existing Ybus matrix.
 This constructor is more efficient when the prerequisite matrices are already available and provides
@@ -377,9 +380,11 @@ direct control over the underlying matrix computations.
         Dictionary mapping bus numbers to distributed slack weights for realistic slack modeling.
         Empty dictionary uses single slack bus (default behavior)
 - `linear_solver::String = _default_linear_solver()`:
-        Linear solver algorithm for matrix computations. Options: "KLU", "Dense", "MKLPardiso"
-- `tol::Float64 = eps()`:
-        Sparsification tolerance for dropping small matrix elements to reduce memory usage
+        Linear solver algorithm for matrix computations. Options: "KLU", "AppleAccelerateLU", "Dense", "MKLPardiso"
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
+        Sparsification tolerance for dropping small matrix elements to reduce memory usage.
+        A `Float64` applies a fixed absolute cutoff at any size; an [`AutoTolerance`](@ref)
+        (the default) applies a relative per-row cutoff on large virtual matrices only.
 
 # Returns
 - `PTDF`: The constructed PTDF matrix structure containing:
@@ -401,7 +406,8 @@ direct control over the underlying matrix computations.
 - **Physical Meaning**: Distributed slack better represents generator response to load changes
 
 # Linear Solver Options
-- **"KLU"**: Sparse LU factorization (default, recommended for most cases)
+- **"KLU"**: Sparse LU factorization (default off Apple hardware, recommended for most cases)
+- **"AppleAccelerateLU"**: Apple Accelerate sparse LU (default on macOS 15.5+ Apple hardware)
 - **"Dense"**: Dense matrix operations (faster for small systems, higher memory usage)
 - **"MKLPardiso"**: Intel MKL Pardiso solver (requires MKL library, best for very large systems)
 
@@ -436,7 +442,7 @@ function PTDF(ybus::Ybus;
 end
 
 """
-    PTDF(A::IncidenceMatrix, BA::BA_Matrix; dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(), linear_solver = _default_linear_solver(), tol::Float64 = eps())
+    PTDF(A::IncidenceMatrix, BA::BA_Matrix; dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(), linear_solver = _default_linear_solver(), tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE)
 
 Construct a Power Transfer Distribution Factor (PTDF) matrix from existing incidence and BA matrices.
 This constructor is more efficient when the prerequisite matrices are already available and provides
@@ -451,9 +457,11 @@ direct control over the underlying matrix computations.
         Dictionary mapping bus numbers to distributed slack participation factors.
         Empty dictionary uses single slack bus (reference bus from matrices)
 - `linear_solver::String = _default_linear_solver()`:
-        Linear solver algorithm for matrix computations. Options: "KLU", "Dense", "MKLPardiso"
-- `tol::Float64 = eps()`:
-        Sparsification tolerance for dropping small matrix elements to reduce memory usage
+        Linear solver algorithm for matrix computations. Options: "KLU", "AppleAccelerateLU", "Dense", "MKLPardiso"
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
+        Sparsification tolerance for dropping small matrix elements to reduce memory usage.
+        A `Float64` applies a fixed absolute cutoff at any size; an [`AutoTolerance`](@ref)
+        (the default) applies a relative per-row cutoff on large virtual matrices only.
 
 # Returns
 - `PTDF`: The constructed PTDF matrix structure with injection-to-flow sensitivity coefficients

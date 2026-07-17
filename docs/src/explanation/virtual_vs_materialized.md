@@ -58,7 +58,7 @@ would exceed `max_cache_size`.
 
 Caches are cleared with [`clear_caches!`](@ref) / [`clear_all_caches!`](@ref).
 For the mechanics of sizing, pinning, and clearing, see the
-[cache how-to guide](../how_to_guides/generated_virtual_cache.md).
+[Analysis at Scale](../tutorials/generated_analysis_at_scale.md) tutorial.
 
 ## When each form wins
 
@@ -69,8 +69,8 @@ For the mechanics of sizing, pinning, and clearing, see the
     pattern — amortizing one full build over many reads beats repeated on-demand
     solves.
   - You want to **serialize** the result. Only the dense [`PTDF`](@ref) can be
-    written to and read from HDF5 (see the
-    [serialization reference](../reference/serialization.md)). Virtual matrices are
+    written to and read from HDF5 (see the [`to_hdf5`](@ref) / [`from_hdf5`](@ref)
+    docstrings). Virtual matrices are
     **never serialized** — they hold a factorization and a volatile cache, not a
     stored matrix, so there is nothing meaningful to persist. A deserialized PTDF
     is a fully materialized matrix.

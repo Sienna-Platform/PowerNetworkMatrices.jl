@@ -84,6 +84,29 @@ row = vmodf[monitored_arc, ctg]
 # vmodf[monitored_arc, outage]              # the PSY.Outage, by UUID
 # ```
 
+# ## The modification type model
+
+# Under the convenience constructor sit a few value types, layered from the smallest
+# unit up to the solver-ready form. It helps to know them before dropping to the
+# manual path:
+#
+# | Type                          | Represents                                                             | Scope                      |
+# |:----------------------------- |:---------------------------------------------------------------------- |:-------------------------- |
+# | [`ArcModification`](@ref)     | A susceptance change on one aggregated arc, plus optional Ybus Pi-model deltas | One arc              |
+# | [`ShuntModification`](@ref)   | A diagonal admittance change on one bus                                | One bus                    |
+# | [`NetworkModification`](@ref) | A canonical, [`System`](@extref PowerSystems.System)-independent bundle of arc and shunt changes plus islanding status | Whole modification |
+# | [`ContingencySpec`](@ref)     | A [`NetworkModification`](@ref) tagged with the source [`PSY.Outage`](@extref PowerSystems.Outage) UUID | One registered contingency |
+#
+# [`NetworkModification`](@ref) is the canonical representation: once built it holds no
+# reference to the source [`System`](@extref PowerSystems.System) and serves as the
+# cache key inside [`VirtualMODF`](@ref) (its `label` is excluded from equality, so two
+# physically identical modifications compare equal regardless of name).
+#
+# !!! note
+#     Partial (non-full-outage) susceptance changes are supported only on **direct and
+#     parallel** arcs. Series-reduced arcs and 3-winding transformer windings accept
+#     only a full outage of the equivalent; anything else raises an error.
+
 # ## Build a Modification Manually
 
 # The convenience constructor used above (`NetworkModification(matrix, arc)`, or
@@ -147,5 +170,6 @@ isapprox(vptdf[varcs[1], mod], row_oneshot)
 
 # ## See Also
 #
-#   - [Contingency & Modification Types](@ref) — reference for the value types
+#   - [Public API Reference](@ref) — full docstrings for [`NetworkModification`](@ref),
+#     [`ContingencySpec`](@ref), [`compute_woodbury_factors`](@ref), and the rest
 #   - [Flowgate Methodology](@ref) — the Woodbury post-contingency theory

@@ -14,15 +14,32 @@ sparse regardless of the conditioning of `ABA`; the 1-norm condition estimate of
 cutoff.
 
 - `data_precision`: relative precision `δ` of the branch parameters. `:auto`
-  (default) discovers it from the branch reactances (see
+  (default) discovers it from the branch susceptances (see
   [`discover_data_precision`](@ref)); a `Float64` sets it explicitly (e.g. `1e-3`
   for reactances good to 0.1%).
 - `safety`: aggressiveness multiplier on `δ`; `> 1` sparsifies more, `< 1` less.
 - `quantile`: only used when `data_precision = :auto`; which quantile of the
   per-branch significant-figure counts to adopt.
 
-A plain `Float64` `tol` is still accepted by every constructor and applies a
-fixed *absolute* cutoff (backward compatible / exact tolerance).
+# Where the cutoff applies
+
+An `AutoTolerance` is a **no-op below `AUTO_TOLERANCE_BUS_LIMIT`** (2000 buses): small
+systems and the test cases are returned exactly, and its relative drop is reserved for
+the large virtual matrices ([`VirtualPTDF`](@ref) / [`VirtualLODF`](@ref) /
+[`VirtualMODF`](@ref)). On the **dense** [`PTDF`](@ref) / [`LODF`](@ref) path it is also
+a no-op, preserving the `Matrix{Float64}` element type.
+
+A plain `Float64` `tol` is accepted by every constructor and applies a fixed *absolute*
+cutoff (`|entry| < tol`) at any system size, dense or virtual — the backward-compatible,
+exact-tolerance path.
+
+# Examples
+
+```julia
+PTDF(sys; tol = 1e-5)                                  # fixed absolute cutoff, any size
+PTDF(sys; tol = AutoTolerance(; safety = 5.0))         # sparsify large virtual matrices harder
+PTDF(sys; tol = AutoTolerance(; data_precision = 1e-3))  # pin precision instead of discovering it
+```
 """
 struct AutoTolerance{D <: Union{Float64, Symbol}}
     data_precision::D

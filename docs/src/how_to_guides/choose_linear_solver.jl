@@ -106,6 +106,27 @@ ptdf_matrix = PNM.PTDF(sys; linear_solver = "Dense");
 # `AppleAccelerateLU` needs no extra package — it is built in. Only
 # `MKLPardiso` requires installing and importing `Pardiso.jl`.
 
+# ### Singular `ABA`: prefer KLU
+
+# The two default solvers differ in how they treat a singular `ABA` matrix.
+# `AppleAccelerateLU` **silently factorizes a singular matrix and returns garbage**,
+# whereas KLU raises. Prefer `"KLU"` whenever the `ABA` matrix may be singular — for
+# example a full outage that isolates a bus, such as a 3-winding transformer's
+# zero-injection star bus:
+
+# ```julia
+# ptdf = PNM.PTDF(sys; linear_solver = "KLU")   # safe when singularity is possible
+# ```
+
+# ### Persisting a preferred backend
+
+# The active sparse backend can be pinned across Julia sessions with `Preferences.jl`
+# via the (non-exported) helpers in `src/linalg_settings.jl` —
+# `PNM.set_linalg_backend_preference` / `PNM.get_linalg_backend_preference`,
+# `PNM.set_linalg_backend_check` / `PNM.get_linalg_backend_check`, and
+# `PNM.check_linalg_backend` (reports the active BLAS/LAPACK library and whether the
+# requested backend is loaded).
+
 # ## Switching Solvers
 
 # You can easily switch between solvers to compare performance:
@@ -139,5 +160,5 @@ ptdf_matrix = PNM.PTDF(sys; linear_solver = "Dense");
 # ## Related Topics
 #
 #   - [How to Build Multiple Matrices Without Repeating Work](@ref) - use these solvers to build matrices
-#   - Reference: [Tolerance and solver settings](../reference/tolerance_and_solvers.md) -
-#     the full solver-type and tolerance API
+#   - [Computational Considerations](@ref) - the reasoning behind the platform defaults
+#   - The [`AutoTolerance`](@ref) docstring - the orthogonal `tol` sparsification setting
