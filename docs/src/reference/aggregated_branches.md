@@ -7,11 +7,11 @@ compute their equivalent electrical parameters and ratings. It is a dry
 reference; for the reasoning behind the rating policies see
 [Equivalent representation of reduced branches](../explanation/equivalent_branches.md).
 
-All the types below subtype `PSY.ACTransmission`, so they can stand in for a real
-branch wherever the reduction machinery expects one. None of them are exported
-except the three rating-strategy functions
-[`get_sum_of_max_rating`](public.md), [`get_single_element_contingency_rating`](public.md),
-and [`get_impedance_averaged_rating`](public.md); the remaining accessors and the
+All the types below subtype [`ACTransmission`](@extref PowerSystems.ACTransmission),
+so they can stand in for a real branch wherever the reduction machinery expects
+one. None of them are exported except the three rating-strategy functions
+[`get_sum_of_max_rating`](@ref), [`get_single_element_contingency_rating`](@ref),
+and [`get_impedance_averaged_rating`](@ref); the remaining accessors and the
 aggregate types themselves are internal.
 
 ## `BranchesParallel`, `MixedBranchesParallel`, `AbstractBranchesParallel`
@@ -153,10 +153,14 @@ end
 Field getters, one per field:
 
 ```julia
-get_equivalent_r(eb)get_equivalent_x(eb)
-get_equivalent_g_from(eb)get_equivalent_b_from(eb)
-get_equivalent_g_to(eb)get_equivalent_b_to(eb)
-get_equivalent_tap(eb)get_equivalent_shift(eb)
+get_equivalent_r(eb)
+get_equivalent_x(eb)
+get_equivalent_g_from(eb)
+get_equivalent_b_from(eb)
+get_equivalent_g_to(eb)
+get_equivalent_b_to(eb)
+get_equivalent_tap(eb)
+get_equivalent_shift(eb)
 ```
 
 ### `get_equivalent_physical_branch_parameters`

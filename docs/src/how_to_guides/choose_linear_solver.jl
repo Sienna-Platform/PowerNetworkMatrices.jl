@@ -5,7 +5,7 @@
 # ## Available Solvers
 
 # Pass the solver name as the `linear_solver` keyword to any matrix constructor
-# (`PTDF`, `LODF`, `ABA_Matrix`, …). `PowerNetworkMatrices.jl` supports four:
+# ([`PTDF`](@ref), [`LODF`](@ref), [`ABA_Matrix`](@ref), …). `PowerNetworkMatrices.jl` supports four:
 #
 #  1. **`"KLU"`** - sparse
 #     [KLU](https://github.com/DrTimothyAldenDavis/SuiteSparse) factorization

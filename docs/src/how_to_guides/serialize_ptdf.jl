@@ -7,12 +7,12 @@
 # !!! warning "Serialization is PTDF-only and lossy for reductions"
 #
 #     Only the dense [`PTDF`](@ref) type can be serialized. There is **no**
-#     serialization for `LODF`, `VirtualPTDF`, `VirtualLODF`, `VirtualMODF`,
-#     `Ybus`, `BA_Matrix`, or `ABA_Matrix`, and **no** Arrow/JLD/generic
+#     serialization for [`LODF`](@ref), [`VirtualPTDF`](@ref), [`VirtualLODF`](@ref), [`VirtualMODF`](@ref),
+#     [`Ybus`](@ref), [`BA_Matrix`](@ref), or [`ABA_Matrix`](@ref), and **no** Arrow/JLD/generic
 #     `save`/`load` or `Base.serialize` support.
 #
 #     Network reduction data is **not persisted**. A PTDF read back from disk is
-#     rehydrated with an *empty* `NetworkReductionData`. If your matrix was built
+#     rehydrated with an *empty* [`NetworkReductionData`](@ref). If your matrix was built
 #     with `network_reductions`, that context is lost on reload — keep the
 #     construction code if you need the reduction metadata.
 
@@ -35,14 +35,14 @@ ptdf = PNM.PTDF(sys)
 filename = joinpath(mktempdir(), "ptdf.h5")
 PNM.to_hdf5(ptdf, filename)
 
-# `to_hdf5` refuses to overwrite an existing file unless you pass `force = true`.
+# [`to_hdf5`](@ref) refuses to overwrite an existing file unless you pass `force = true`.
 # Tune compression with `compress` and `compression_level`:
 
 PNM.to_hdf5(ptdf, filename; compress = true, compression_level = 5, force = true)
 
 # ## Read the PTDF back
 
-# Use [`from_hdf5`](@ref), passing the `PTDF` type as the first argument:
+# Use [`from_hdf5`](@ref), passing the [`PTDF`](@ref) type as the first argument:
 
 ptdf_loaded = PNM.from_hdf5(PNM.PTDF, filename)
 

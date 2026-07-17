@@ -8,7 +8,7 @@
 
 # !!! note
 #     There is **no dense `MODF` type**. Post-contingency factors are only
-#     available through `VirtualMODF`, which computes rows on demand via the
+#     available through [`VirtualMODF`](@ref), which computes rows on demand via the
 #     Woodbury identity. See [Flowgate Methodology](@ref) for the theory.
 
 # ## Prerequisites
@@ -24,9 +24,9 @@ sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
 
 # ## Attach Outages to the System
 
-# Contingencies are defined as `PSY.Outage` supplemental attributes on the
+# Contingencies are defined as [`PSY.Outage`](@extref PowerSystems.Outage) supplemental attributes on the
 # components they trip. When a contingency only needs to *exist*, use a
-# `PSY.FixedForcedOutage` with `outage_status = 1.0` (outaged) and attach it to
+# [`PSY.FixedForcedOutage`](@extref PowerSystems.FixedForcedOutage) with `outage_status = 1.0` (outaged) and attach it to
 # each branch:
 
 for branch in PSY.get_components(PSY.ACTransmission, sys)
@@ -36,7 +36,7 @@ end
 
 # ## Build the VirtualMODF
 
-# Registration is **automatic**: the constructor scans the system for `PSY.Outage`
+# Registration is **automatic**: the constructor scans the system for [`PSY.Outage`](@extref PowerSystems.Outage)
 # attributes and resolves each into a [`ContingencySpec`](@ref). There is no
 # public `register_contingency` — construct the matrix from a system that already
 # carries its outages.
@@ -71,7 +71,7 @@ ctg = first(values(contingencies));
 # vmodf[monitored_arc, ctg.modification]
 # ```
 
-# By the original `PSY.Outage` (its UUID must be registered):
+# By the original [`PSY.Outage`](@extref PowerSystems.Outage) (its UUID must be registered):
 
 # ```julia
 # branch = first(PSY.get_components(PSY.ACTransmission, sys))
@@ -79,13 +79,13 @@ ctg = first(values(contingencies));
 # vmodf[monitored_arc, outage]
 # ```
 
-# All three resolve to the same `NetworkModification` and share the cached
+# All three resolve to the same [`NetworkModification`](@ref) and share the cached
 # Woodbury factors, so repeated queries for the same contingency across different
 # monitored arcs reuse work.
 
 # ## Build a Modification Manually
 
-# When you want a contingency that is not backed by a `PSY.Outage`, build a
+# When you want a contingency that is not backed by a [`PSY.Outage`](@extref PowerSystems.Outage), build a
 # [`NetworkModification`](@ref) directly. The simplest path is the convenience
 # constructor that outages an entire arc by bus pair — it looks up the arc's
 # susceptance and populates the deltas for you:
@@ -115,13 +115,13 @@ ctg = first(values(contingencies));
 # Prefer the convenience constructors (`NetworkModification(matrix, arc)` or
 # `NetworkModification(matrix, branch)`) — they compute physically consistent
 # `delta_b` and Pi-model deltas from the network data, whereas hand-built
-# `ArcModification` values are your responsibility to get right.
+# [`ArcModification`](@ref) values are your responsibility to get right.
 
 # ## One-Shot Post-Modification Rows from a VirtualPTDF
 
 # If you already hold a [`VirtualPTDF`](@ref) and want a single post-modification
 # row without registering contingencies, use
-# [`get_post_modification_ptdf_row`](@ref). It applies a `NetworkModification`
+# [`get_post_modification_ptdf_row`](@ref). It applies a [`NetworkModification`](@ref)
 # through the same Woodbury correction:
 
 # ```julia
@@ -135,11 +135,11 @@ ctg = first(values(contingencies));
 
 # This function does **no caching** — each call recomputes. When querying many
 # monitored arcs for the *same* modification, precompute once with
-# `compute_woodbury_factors` and reuse via `apply_woodbury_correction`.
+# [`compute_woodbury_factors`](@ref) and reuse via [`apply_woodbury_correction`](@ref).
 
 # ## Contingencies and Network Reduction
 
-# If you build the `VirtualMODF` with `network_reductions`, any branch that a
+# If you build the [`VirtualMODF`](@ref) with `network_reductions`, any branch that a
 # contingency outages or monitors must survive every reduction step. Outage and
 # monitored-component buses are auto-protected from reduction. Declare monitored
 # branches on the outage so their buses are kept:

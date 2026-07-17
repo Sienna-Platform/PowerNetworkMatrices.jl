@@ -1,7 +1,7 @@
 # Flowgate Methodology
 
-This page explains how the `VirtualMODF` matrix in PowerNetworkMatrices can be
-used to evaluate *flowgates* — post-contingency distribution factors of
+This page explains how the [`VirtualMODF`](@ref) matrix in PowerNetworkMatrices can
+be used to evaluate *flowgates* — post-contingency distribution factors of
 monitored transmission elements. It describes the mathematics behind the
 Woodbury-based computation and shows how to query distribution factors using
 the current API.
@@ -20,7 +20,7 @@ source-to-sink transfer that appears as flow on the monitored element after
 the contingency occurs.
 
 In the DC power-flow model, this quantity can be expressed in closed form in
-terms of the base-case PTDF and the LODF. `VirtualMODF` generalizes that
+terms of the base-case [`PTDF`](@ref) and the [`LODF`](@ref). [`VirtualMODF`](@ref) generalizes that
 relationship by computing the full post-contingency PTDF row directly, which
 extends naturally to multi-element contingencies.
 
@@ -48,7 +48,7 @@ where ``U`` collects the incidence columns of the outaged branches and
 The naïve way to get post-contingency sensitivities would be to rebuild and
 re-factorize ``\widetilde{ABA}`` for *every* contingency, an ``O(N^3)``
 factorization each time. The Woodbury (Sherman–Morrison–Woodbury) matrix
-identity avoids this entirely. It expresses the inverse of a low-rank update in
+identity[^woodbury] avoids this entirely. It expresses the inverse of a low-rank update in
 terms of the *already-computed* factorization of the base ``ABA`` plus the
 solution of a small ``k \times k`` system:
 
@@ -108,9 +108,9 @@ without additional derivation.
 
 ## Describing a contingency
 
-`VirtualMODF` queries are keyed by a `NetworkModification` (or by a
-`ContingencySpec` or a `PSY.Outage` that resolves to one). A
-`NetworkModification` can be built in several ways:
+[`VirtualMODF`](@ref) queries are keyed by a [`NetworkModification`](@ref) (or by a
+[`ContingencySpec`](@ref) or a [`Outage`](@extref PowerSystems.Outage) that resolves
+to one). A [`NetworkModification`](@ref) can be built in several ways:
 
 ```julia
 using PowerSystems
@@ -127,10 +127,12 @@ mod_branch = NetworkModification(vmodf, branch)
 mod_outage = NetworkModification(vmodf, sys, outage)
 ```
 
-When a `VirtualMODF` is constructed from a `PSY.System`, all `PSY.Outage`
-supplemental attributes in the system are automatically resolved and
-registered. Registered contingencies can be inspected with
-`get_registered_contingencies(vmodf)` and queried directly by `PSY.Outage`.
+When a [`VirtualMODF`](@ref) is constructed from a
+[`System`](@extref PowerSystems.System), all
+[`Outage`](@extref PowerSystems.Outage) supplemental attributes in the system are
+automatically resolved and registered. Registered contingencies can be inspected
+with [`get_registered_contingencies`](@ref) and queried directly by
+[`Outage`](@extref PowerSystems.Outage).
 
 ## Querying post-contingency rows
 
@@ -166,7 +168,8 @@ df = row[bus_lookup[source_bus]] - row[bus_lookup[sink_bus]]
 
 ## Caching and sparsification
 
-`VirtualMODF` maintains two caches, both keyed by `NetworkModification`:
+[`VirtualMODF`](@ref) maintains two caches, both keyed by
+[`NetworkModification`](@ref):
 
   - A Woodbury-factor cache (one entry per contingency, populated on first
     query for that contingency).
@@ -185,12 +188,12 @@ never enters the correction itself, and the bound holds even when the Woodbury
 update is severely ill-conditioned (a near-islanding contingency). Pass an
 explicit `Float64` `tol` (e.g. `eps()`) when you need every entry retained; see
 [Computational considerations](computational_considerations.md) for the
-per-row `AutoTolerance` rule and its accuracy trade-offs.
+per-row [`AutoTolerance`](@ref) rule and its accuracy trade-offs.
 
-`clear_caches!(vmodf)` drops the Woodbury and row caches but retains the
+[`clear_caches!`](@ref) drops the Woodbury and row caches but retains the
 contingency registrations, so subsequent queries will simply recompute. Use
-`clear_all_caches!(vmodf)` to also drop the registrations (after which the
-`VirtualMODF` can no longer be queried).
+[`clear_all_caches!`](@ref) to also drop the registrations (after which the
+[`VirtualMODF`](@ref) can no longer be queried).
 
 ## Relationship to other matrix types
 
@@ -207,8 +210,16 @@ contingency registrations, so subsequent queries will simply recompute. Use
   - The implementation assumes DC power flow (lossless, linearized). Voltage
     and stability limits that define some flowgate transfer capabilities must
     be handled externally.
-  - MOD-030 flowgate screening (OTDF thresholding, AFC and ATC arithmetic,
-    interconnection-wide congestion management procedures) is not provided by
-    this package. `VirtualMODF` computes the distribution factors that such a
-    layer would consume; the MOD-030 policy vocabulary is not part of the
-    current API.
+  - MOD-030 flowgate screening[^mod030] (OTDF thresholding, AFC and ATC
+    arithmetic, interconnection-wide congestion management procedures) is not
+    provided by this package. [`VirtualMODF`](@ref) computes the distribution
+    factors that such a layer would consume; the MOD-030 policy vocabulary is not
+    part of the current API.
+
+## References
+
+[^woodbury]: The Sherman–Morrison–Woodbury identity; see G. H. Golub and
+    C. F. Van Loan, *Matrix Computations*, 4th ed., Johns Hopkins, 2013, §2.1.4,
+    or [https://en.wikipedia.org/wiki/Woodbury_matrix_identity](https://en.wikipedia.org/wiki/Woodbury_matrix_identity).
+[^mod030]: NERC Reliability Standard MOD-030, *Flowgate Methodology* (Available
+    Flowgate Capability). [https://www.nerc.com](https://www.nerc.com)

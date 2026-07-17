@@ -3,7 +3,7 @@
 Many network matrices in PowerNetworkMatrices.jl rely on the DC power flow
 approximation. It linearizes the AC power flow equations into a purely
 algebraic relationship between active-power injections and voltage angles,
-which is what makes the sensitivity matrices (`PTDF`, `LODF`) fast to build and
+which is what makes the sensitivity matrices ([`PTDF`](@ref), [`LODF`](@ref)) fast to build and
 cheap to reason about.
 
 ### Assumptions

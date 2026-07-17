@@ -31,11 +31,11 @@ vptdf = PNM.VirtualPTDF(sys; max_cache_size = 50)
 
 vptdf = PNM.VirtualPTDF(sys; persistent_arcs = [(1, 2), (1, 4)])
 
-# `VirtualLODF` accepts the same `max_cache_size` and `persistent_arcs` kwargs:
+# [`VirtualLODF`](@ref) accepts the same `max_cache_size` and `persistent_arcs` kwargs:
 
 vlodf = PNM.VirtualLODF(sys; max_cache_size = 50, persistent_arcs = [(1, 2)])
 
-# `VirtualMODF` accepts `max_cache_size` (applied per contingency) but not
+# [`VirtualMODF`](@ref) accepts `max_cache_size` (applied per contingency) but not
 # `persistent_arcs`:
 
 # ```julia
@@ -52,19 +52,19 @@ vlodf[(1, 4), (2, 3)];
 
 # ## Clear the cache
 
-# For `VirtualPTDF` / `VirtualLODF`, empty the row cache in place to reclaim
+# For [`VirtualPTDF`](@ref) / [`VirtualLODF`](@ref), empty the row cache in place to reclaim
 # memory (persistent rows are also removed, with a warning):
 
 empty!(vptdf.cache)
 empty!(vlodf.cache)
 
-# `VirtualMODF` exposes dedicated clearing functions:
+# [`VirtualMODF`](@ref) exposes dedicated clearing functions:
 #
 #   - [`clear_caches!`](@ref) frees the Woodbury and row caches but **keeps** the
 #     registered contingencies, so the matrix can still be queried.
 #   - [`clear_all_caches!`](@ref) additionally drops the contingency
 #     registrations, leaving the matrix empty and unqueryable — rebuild a new
-#     `VirtualMODF` from the system to restore it.
+#     [`VirtualMODF`](@ref) from the system to restore it.
 
 # ```julia
 # PNM.clear_caches!(vmodf)      # keeps registered contingencies

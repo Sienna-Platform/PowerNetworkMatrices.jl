@@ -15,7 +15,7 @@ sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
 
 # Reductions are applied **only** through the `network_reductions` keyword, a
 # `Vector{NetworkReduction}`. Every matrix constructor that builds from a
-# `System` accepts it: [`PTDF`](@ref), [`Ybus`](@ref), [`BA_Matrix`](@ref),
+# [`System`](@extref PowerSystems.System) accepts it: [`PTDF`](@ref), [`Ybus`](@ref), [`BA_Matrix`](@ref),
 # [`ABA_Matrix`](@ref), [`LODF`](@ref), [`VirtualPTDF`](@ref),
 # [`VirtualLODF`](@ref), and [`VirtualMODF`](@ref).
 
@@ -27,7 +27,7 @@ sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
 #     bare `[RadialReduction()]` infers the narrower `Vector{RadialReduction}`,
 #     which the keyword (typed `Vector{NetworkReduction}`) will not accept. The
 #     prefix is unnecessary only when the vector already holds two or more
-#     different spec types, whose common element type is `NetworkReduction`.
+#     different spec types, whose common element type is [`NetworkReduction`](@ref).
 
 ptdf = PNM.PTDF(sys; network_reductions = PNM.NetworkReduction[PNM.RadialReduction()]);
 
@@ -94,7 +94,7 @@ ptdf = PNM.PTDF(
 # ## Reading the result
 
 # The applied reductions are recorded on the matrix. Retrieve them with
-# `get_network_reduction_data`; see
+# [`get_network_reduction_data`](@ref); see
 # [Network reduction reference](../reference/network_reduction.md) for the
 # accessors that read bus maps and removed elements.
 

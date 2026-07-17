@@ -19,14 +19,10 @@ sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
 # ## Goal: keep the matrix exact
 
 # On a small or medium system the default already keeps every entry:
-# `AutoTolerance` is a no-op below the bus-count gate, so nothing is dropped.
+# [`AutoTolerance`](@ref) is a no-op below the bus-count gate, so nothing is
+# dropped.
 
 ptdf = PNM.PTDF(sys);
-
-# On a large system where you want to force exactness, pass an absolute cutoff of
-# zero — it drops nothing:
-
-ptdf = PNM.PTDF(sys; tol = 0.0);
 
 # ## Goal: apply a fixed, size-independent cutoff
 

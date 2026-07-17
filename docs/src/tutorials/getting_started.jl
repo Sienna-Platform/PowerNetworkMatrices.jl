@@ -2,19 +2,19 @@
 
 # This tutorial takes you from a power system to your first network-sensitivity
 # number. By the end you will have built a Power Transfer Distribution Factor
-# (`PTDF`) matrix and read a single, meaningful value out of it — the change in
+# ([`PTDF`](@ref)) matrix and read a single, meaningful value out of it — the change in
 # one branch's flow caused by an injection at one bus.
 
 # We keep to a single path here. `PowerNetworkMatrices.jl` builds many other
-# matrices (`LODF`, `Ybus`, `BA_Matrix`, `ABA_Matrix`, and lazy `Virtual*`
+# matrices ([`LODF`](@ref), [`Ybus`](@ref), [`BA_Matrix`](@ref), [`ABA_Matrix`](@ref), and lazy `Virtual*`
 # variants); those are covered in [How to Compute Network Matrices](@ref) and the
 # [Matrix overview & indexing](@ref) reference, not in your first five minutes.
 
 # ## Step 1 — Load a power system
 
-# Network matrices are built from a `PowerSystems.System`. Here we use
+# Network matrices are built from a [`PowerSystems.System`](@extref PowerSystems.System). Here we use
 # `PowerSystemCaseBuilder.jl` to load a small five-bus test system so the example
-# is reproducible; in your own work you would build the `System` from your data
+# is reproducible; in your own work you would build the [`System`](@extref PowerSystems.System) from your data
 # files instead.
 
 # !!! note
@@ -59,11 +59,11 @@ ptdf["1", 2]
 # the branch's `(from, to)` orientation.
 
 # That single number is a network sensitivity, and computing it for every
-# branch/bus pair is exactly what the `PTDF` matrix gives you.
+# branch/bus pair is exactly what the [`PTDF`](@ref) matrix gives you.
 
 # ## Where to go next
 #
-#   - [How to Compute Network Matrices](@ref) — build `LODF`, `Ybus`, and the
+#   - [How to Compute Network Matrices](@ref) — build [`LODF`](@ref), [`Ybus`](@ref), and the
 #     other matrices the same way.
 #   - [Network Reduction](@ref) — shrink a large system before building matrices.
 #   - [The DC Power Flow Approximation](@ref) — the theory behind these

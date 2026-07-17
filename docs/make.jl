@@ -4,6 +4,7 @@ using Literate
 using DocumenterInterLinks
 
 links = InterLinks(
+    "Julia" => "https://docs.julialang.org/en/v1/objects.inv",
     "PowerSystems" => "https://sienna-platform.github.io/PowerSystems.jl/stable/",
     "PowerSystemCaseBuilder" => "https://sienna-platform.github.io/PowerSystemCaseBuilder.jl/stable/",
 )
@@ -22,10 +23,10 @@ pages = OrderedDict(
         "Compute Network Matrices" => "how_to_guides/generated_compute_network_matrices.md",
         "Choose a Linear Solver" => "how_to_guides/generated_choose_linear_solver.md",
         "Reproduce Industry DFAX Values" => "how_to_guides/generated_reproduce_dfax_values.md",
+        "Compute Phase Shifter Factors" => "how_to_guides/generated_phase_shifter_factor.md",
         "Apply Network Reductions" => "how_to_guides/generated_apply_network_reductions.md",
         "Set the Sparsification Tolerance" => "how_to_guides/generated_set_tolerance.md",
         "Use a Distributed Slack" => "how_to_guides/generated_distributed_slack.md",
-        "Inspect a Reduced Network" => "how_to_guides/generated_inspect_reduced_network.md",
         "Define and Apply Contingencies" => "how_to_guides/generated_contingencies.md",
         "Factorize and Reuse an ABA Matrix" => "how_to_guides/generated_factorize_aba.md",
         "Persist a PTDF to Disk" => "how_to_guides/generated_serialize_ptdf.md",

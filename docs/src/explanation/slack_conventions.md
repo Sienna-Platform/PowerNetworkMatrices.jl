@@ -77,10 +77,11 @@ The way you pass the weights depends on the matrix, and this catches people out:
 | [`PTDF`](@ref), [`VirtualPTDF`](@ref)        | `Dict{Int, Float64}` — bus number → weight                |
 | [`VirtualLODF`](@ref), [`VirtualMODF`](@ref) | `Vector{Float64}` — one weight per bus, in bus-axis order |
 
-For `PTDF`/`VirtualPTDF` you supply a **dictionary keyed by bus number**, which is
-convenient because you name only the participating buses; internally it is
-normalized and expanded to a per-bus vector. For `VirtualLODF`/`VirtualMODF` you
-supply the **positional vector** directly. In both cases the default is empty,
+For [`PTDF`](@ref)/[`VirtualPTDF`](@ref) you supply a **dictionary keyed by bus
+number**, which is convenient because you name only the participating buses;
+internally it is normalized and expanded to a per-bus vector. For
+[`VirtualLODF`](@ref)/[`VirtualMODF`](@ref) you supply the **positional vector**
+directly. In both cases the default is empty,
 meaning single-reference-bus slack.
 
 Why the LODF/MODF forms take a raw vector rather than a dict is an interface

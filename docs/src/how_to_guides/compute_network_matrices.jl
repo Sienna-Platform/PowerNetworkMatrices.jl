@@ -2,7 +2,7 @@
 
 # This guide shows you how to build the network matrices for your power system.
 # They all share one construction pattern and one indexing scheme, so once you
-# can build and read a `PTDF` you can do the same for every other type.
+# can build and read a [`PTDF`](@ref) you can do the same for every other type.
 
 # ## Prerequisites
 #
@@ -10,7 +10,7 @@
 #   - A power system model loaded (see [Getting Started](@ref))
 #
 # The examples below load a small test system with `PowerSystemCaseBuilder`; in
-# your own work replace this with your own `System`.
+# your own work replace this with your own [`System`](@extref PowerSystems.System).
 
 import PowerNetworkMatrices as PNM
 import PowerSystemCaseBuilder as PSB
@@ -19,7 +19,7 @@ sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
 
 # ## Build any matrix the same way
 
-# Every matrix type is a constructor that takes the `System` and returns the
+# Every matrix type is a constructor that takes the [`System`](@extref PowerSystems.System) and returns the
 # matrix object. The call is identical across types — only the name changes:
 
 ptdf_matrix = PNM.PTDF(sys)
@@ -41,7 +41,7 @@ ptdf_matrix = PNM.PTDF(sys)
 # every constructor that accepts them; each has its own how-to.
 
 # Pull the underlying array out with the matching `get_*_data` accessor when you
-# need the raw `SparseMatrixCSC` / `Matrix` (`get_ptdf_data`, `get_lodf_data`, …):
+# need the raw [`SparseMatrixCSC`](@extref Julia SparseArrays.SparseMatrixCSC) / `Matrix` ([`get_ptdf_data`](@ref), [`get_lodf_data`](@ref), …):
 
 matrix_data = PNM.get_ptdf_data(ptdf_matrix);
 
@@ -53,19 +53,19 @@ matrix_data = PNM.get_ptdf_data(ptdf_matrix);
 
 # | Matrix            | Dimension 1 (rows) | Dimension 2 (columns) |
 # |:----------------- |:------------------ |:--------------------- |
-# | `IncidenceMatrix` | Arc tuples         | Bus numbers           |
-# | `PTDF`            | Arc tuples         | Bus numbers           |
-# | `LODF`            | Arc tuples         | Arc tuples            |
-# | `Ybus`            | Bus numbers        | Bus numbers           |
-# | `VirtualPTDF`     | Arc tuples         | Bus numbers           |
-# | `VirtualLODF`     | Arc tuples         | Arc tuples            |
-# | `VirtualMODF`     | Arc tuples         | Bus numbers           |
+# | [`IncidenceMatrix`](@ref) | Arc tuples         | Bus numbers           |
+# | [`PTDF`](@ref)            | Arc tuples         | Bus numbers           |
+# | [`LODF`](@ref)            | Arc tuples         | Arc tuples            |
+# | [`Ybus`](@ref)            | Bus numbers        | Bus numbers           |
+# | [`VirtualPTDF`](@ref)     | Arc tuples         | Bus numbers           |
+# | [`VirtualLODF`](@ref)     | Arc tuples         | Arc tuples            |
+# | [`VirtualMODF`](@ref)     | Arc tuples         | Bus numbers           |
 
-# A `PTDF` entry is a `(monitored arc, injection bus)` sensitivity:
+# A [`PTDF`](@ref) entry is a `(monitored arc, injection bus)` sensitivity:
 
 ptdf_matrix[(1, 2), 3]
 
-# A `LODF` entry is a `(monitored arc, outaged arc)` sensitivity — here *both*
+# A [`LODF`](@ref) entry is a `(monitored arc, outaged arc)` sensitivity — here *both*
 # dimensions are arc tuples, but the indexing call looks the same:
 
 lodf_matrix = PNM.LODF(sys)
@@ -81,8 +81,8 @@ PNM.get_axes(ptdf_matrix)
 PNM.get_lookup(ptdf_matrix)
 
 # !!! note
-#     For backward compatibility, branch **name** strings can also index `PTDF`
-#     and `LODF` (mapped to arc tuples internally via `get_branch_multiplier`).
+#     For backward compatibility, branch **name** strings can also index [`PTDF`](@ref)
+#     and [`LODF`](@ref) (mapped to arc tuples internally via `get_branch_multiplier`).
 #     Arc tuples are the recommended, unambiguous form.
 
 # ## Virtual matrices are drop-in
@@ -95,8 +95,8 @@ PNM.get_lookup(ptdf_matrix)
 vptdf_matrix = PNM.VirtualPTDF(sys)
 vptdf_matrix[(1, 2), 3]
 
-# `VirtualMODF` additionally serves post-contingency / post-modification rows; it
-# needs `PSY.Outage` supplemental attributes on the system to auto-register
+# [`VirtualMODF`](@ref) additionally serves post-contingency / post-modification rows; it
+# needs [`PSY.Outage`](@extref PowerSystems.Outage) supplemental attributes on the system to auto-register
 # contingencies (see [How to Define and Apply Contingencies](@ref)):
 
 # ```julia
@@ -110,8 +110,8 @@ vptdf_matrix[(1, 2), 3]
 
 # ## Building from pre-computed matrices
 
-# Some constructors accept already-built matrices instead of a `System`, to reuse
-# shared intermediates. For example, `PTDF` can be built from an
+# Some constructors accept already-built matrices instead of a [`System`](@extref PowerSystems.System), to reuse
+# shared intermediates. For example, [`PTDF`](@ref) can be built from an
 # [`IncidenceMatrix`](@ref) and a [`BA_Matrix`](@ref):
 
 a_matrix = PNM.IncidenceMatrix(sys)

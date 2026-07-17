@@ -26,8 +26,8 @@ import PowerSystemCaseBuilder as PSB
 # ## Step 1 — Start with the full network
 
 # We load a PSS/E test system built specifically to exercise network reduction,
-# and compute its `PTDF` matrix as a baseline. The matrix dimensions tell us how
-# big the problem is: `PTDF` is indexed by buses along one axis and branches
+# and compute its [`PTDF`](@ref) matrix as a baseline. The matrix dimensions tell us how
+# big the problem is: [`PTDF`](@ref) is indexed by buses along one axis and branches
 # (arcs) along the other.
 
 sys = PSB.build_system(PSB.PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
@@ -46,7 +46,7 @@ ptdf_full[(103, 104), 103]
 
 # Reductions are supplied to any matrix constructor through the
 # `network_reductions` keyword, as a vector of reduction specifications. They are
-# applied in order; running `RadialReduction` first is the usual choice, because
+# applied in order; running [`RadialReduction`](@ref) first is the usual choice, because
 # removing dangling buses can expose new degree-two buses for the second pass to
 # collapse.
 
@@ -75,8 +75,9 @@ PNM.get_removed_arcs(reduction_data)
 
 # That is enough to see what the reduction did. To query the reduction data in
 # depth — where each removed bus was folded, which algorithms ran, mapping an
-# original bus to its representative in the reduced matrix — see
-# [How to Inspect a Reduced Network](@ref).
+# original bus to its representative in the reduced matrix — see the
+# [`NetworkReductionData`](@ref) accessors in the
+# [Network reduction reference](@ref).
 
 # ## Step 4 — Confirm the payoff
 

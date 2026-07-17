@@ -28,9 +28,9 @@ PNM.is_factorized(aba)
 
 # ## Factorize an existing matrix
 
-# If you already built an `ABA_Matrix` without a factorization (the default,
+# If you already built an [`ABA_Matrix`](@ref) without a factorization (the default,
 # `factorize = false`), add one later with [`factorize`](@ref). This returns a
-# new `ABA_Matrix` that carries the factorization; the original is unchanged.
+# new [`ABA_Matrix`](@ref) that carries the factorization; the original is unchanged.
 
 aba_unfactorized = PNM.ABA_Matrix(sys)
 PNM.is_factorized(aba_unfactorized)
@@ -49,7 +49,7 @@ PNM.is_factorized(aba_factorized)
 
 # ## Notes
 #
-#   - Reference buses are excluded from `ABA_Matrix` so the matrix is invertible.
+#   - Reference buses are excluded from [`ABA_Matrix`](@ref) so the matrix is invertible.
 #   - `factorize` returns a fresh, factorized copy; it does not mutate its input.
 #   - See the [matrix type reference](../reference/matrix_types.md) for the
-#     `ABA_Matrix` structure and its factorized/unfactorized type aliases.
+#     [`ABA_Matrix`](@ref) structure and its factorized/unfactorized type aliases.

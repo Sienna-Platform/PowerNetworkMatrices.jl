@@ -53,11 +53,11 @@ PNM.find_subnetworks(adj.data, bus_numbers; subnetwork_algorithm = PNM.depth_fir
 
 # ## Notes
 #
-#   - `validate_connectivity` and `find_subnetworks` also accept a built matrix
-#     directly (`AdjacencyMatrix`, `Ybus`), avoiding a rebuild if you already
+#   - [`validate_connectivity`](@ref) and [`find_subnetworks`](@ref) also accept a built matrix
+#     directly ([`AdjacencyMatrix`](@ref), [`Ybus`](@ref)), avoiding a rebuild if you already
 #     have one.
 #   - The `subnetwork_algorithm` kwarg is threaded through the matrix
-#     constructors (e.g. `ABA_Matrix`), so islands are detected consistently at
+#     constructors (e.g. [`ABA_Matrix`](@ref)), so islands are detected consistently at
 #     build time.
 #   - See the [accessor reference](../reference/accessors.md) for the axis and
 #     lookup getters used above.

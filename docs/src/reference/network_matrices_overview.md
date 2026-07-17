@@ -104,13 +104,13 @@ The accepted element types for `row` and `column`, and how each resolves:
 
 !!! warning "Branch objects are not directly indexable"
     
-    A `PSY.ACBranch` component **cannot** be passed as an index — doing so raises
-    a `KeyError`. Although `Base.to_index(::PSY.ACBranch)` is defined (returning
-    the branch's arc tuple), the matrix `getindex` path routes only `PSY.ACBus`
-    and `PSY.Arc` through `Base.to_index`; branch components are not converted.
-    Index a branch by its **arc tuple** (`get_arc_tuple(branch, ...)` / the
-    branch's `PSY.Arc`), or, for `PTDF`/`LODF`/`VirtualPTDF`, by its **name
-    string**.
+    A [`ACBranch`](@extref PowerSystems.ACBranch) component **cannot** be passed as
+    an index — doing so raises a `KeyError`. Although `Base.to_index(::PSY.ACBranch)`
+    is defined (returning the branch's arc tuple), the matrix `getindex` path routes
+    only [`ACBus`](@extref PowerSystems.ACBus) and [`Arc`](@extref PowerSystems.Arc)
+    through `Base.to_index`; branch components are not converted. Index a branch by
+    its **arc tuple** (the branch's [`Arc`](@extref PowerSystems.Arc)), or, for
+    [`PTDF`](@ref)/[`LODF`](@ref)/[`VirtualPTDF`](@ref), by its **name string**.
 
 Only `PTDF`, `LODF`, and `VirtualPTDF` accept branch-name `String` indices;
 `LODF` requires a `String` for both dimensions when using names. Name indexing
