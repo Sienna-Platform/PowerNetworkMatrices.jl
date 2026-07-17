@@ -320,7 +320,7 @@ for PTDF analysis starting from system data.
 1. **Ybus Construction**: Creates system admittance matrix with specified reductions
 2. **Incidence Matrix**: Builds bus-branch connectivity matrix A
 3. **BA Matrix**: Computes branch susceptance weighted incidence matrix
-4. **PTDF Computation**: Calculates power transfer distribution factors using A^T × B^(-1) × A
+4. **PTDF Computation**: Calculates power transfer distribution factors using ``A^\\top B^{-1} A``
 5. **Distributed Slack**: Applies distributed slack correction if specified
 6. **Sparsification**: Removes small elements based on tolerance threshold
 
@@ -336,11 +336,11 @@ for PTDF analysis starting from system data.
 - **"MKLPardiso"**: Intel MKL Pardiso solver (requires MKL library, best for very large systems)
 
 # Mathematical Foundation
-The PTDF matrix is computed as:
+The PTDF matrix is computed as
+```math
+\\mathrm{PTDF} = (A^\\top B A)^{-1} A^\\top B,
 ```
-PTDF = (A^T × B × A)^(-1) × A^T × B
-```
-where A is the incidence matrix and B is the susceptance matrix.
+where ``A`` is the incidence matrix and ``B`` is the susceptance matrix.
 
 # Notes
 - Results are valid under DC power flow assumptions (linear approximation)
@@ -390,7 +390,7 @@ direct control over the underlying matrix computations.
 # Construction Process
 1. **Incidence Matrix**: Builds bus-branch connectivity matrix A (from Ybus matrix)
 2. **BA Matrix**: Computes branch susceptance weighted incidence matrix
-3. **PTDF Computation**: Calculates power transfer distribution factors using A^T × B^(-1) × A
+3. **PTDF Computation**: Calculates power transfer distribution factors using ``A^\\top B^{-1} A``
 4. **Distributed Slack**: Applies distributed slack correction if specified
 5. **Sparsification**: Removes small elements based on tolerance threshold
 
@@ -406,11 +406,11 @@ direct control over the underlying matrix computations.
 - **"MKLPardiso"**: Intel MKL Pardiso solver (requires MKL library, best for very large systems)
 
 # Mathematical Foundation
-The PTDF matrix is computed as:
+The PTDF matrix is computed as
+```math
+\\mathrm{PTDF} = (A^\\top B A)^{-1} A^\\top B,
 ```
-PTDF = (A^T × B × A)^(-1) × A^T × B
-```
-where A is the incidence matrix and B is the susceptance matrix.
+where ``A`` is the incidence matrix and ``B`` is the susceptance matrix.
 
 # Notes
 - Results are valid under DC power flow assumptions (linear approximation)
@@ -459,13 +459,13 @@ direct control over the underlying matrix computations.
 - `PTDF`: The constructed PTDF matrix structure with injection-to-flow sensitivity coefficients
 
 # Mathematical Computation
-The PTDF matrix is computed using the relationship:
-```
-PTDF = (A^T × B × A)^(-1) × A^T × B
+The PTDF matrix is computed using the relationship
+```math
+\\mathrm{PTDF} = (A^\\top B A)^{-1} A^\\top B,
 ```
 where:
-- A is the incidence matrix representing bus-branch connectivity
-- B is the diagonal susceptance matrix (embedded in BA matrix)
+- ``A`` is the incidence matrix representing bus-branch connectivity
+- ``B`` is the diagonal susceptance matrix (embedded in BA matrix)
 - The computation involves solving the ABA linear system for efficiency
 
 # Distributed Slack Handling

@@ -264,11 +264,11 @@ analysis starting from system data.
 - **"MKLPardiso"**: Intel MKL Pardiso solver (requires MKL, best for very large systems)
 
 # Mathematical Foundation
-The LODF matrix is computed using the relationship:
+The LODF matrix is computed using the relationship
+```math
+\\mathrm{LODF} = \\frac{A \\, \\mathrm{PTDF}}{1 - \\mathrm{diag}(A \\, \\mathrm{PTDF})},
 ```
-LODF = (A * PTDF) / (1 - diag(A * PTDF))
-```
-where A is the incidence matrix and PTDF is the power transfer distribution factor matrix.
+where ``A`` is the incidence matrix and ``\\mathrm{PTDF}`` is the power transfer distribution factor matrix.
 
 # Notes
 - Sparsification with `tol > eps()` can significantly reduce memory usage
@@ -339,13 +339,13 @@ This constructor is more efficient when the prerequisite matrices are already av
 - `LODF`: The constructed LODF matrix structure with line outage sensitivity coefficients
 
 # Mathematical Computation
-The LODF matrix is computed using the formula:
-```
-LODF = (A * PTDF) / (1 - diag(A * PTDF))
+The LODF matrix is computed using the formula
+```math
+\\mathrm{LODF} = \\frac{A \\, \\mathrm{PTDF}}{1 - \\mathrm{diag}(A \\, \\mathrm{PTDF})},
 ```
 where:
-- A is the incidence matrix representing bus-branch connectivity
-- PTDF contains power transfer distribution factors
+- ``A`` is the incidence matrix representing bus-branch connectivity
+- ``\\mathrm{PTDF}`` contains power transfer distribution factors
 - The denominator (1 - diagonal terms) accounts for the outaged line's own flow
 
 # Important Notes
@@ -440,13 +440,13 @@ efficient when the prerequisite matrices with factorization are already availabl
 - `LODF`: The constructed LODF matrix structure with line outage sensitivity coefficients
 
 # Mathematical Computation
-This method computes LODF using the factorized form:
-```
-LODF = (A * ABA^(-1) * BA) / (1 - diag(A * ABA^(-1) * BA))
+This method computes LODF using the factorized form
+```math
+\\mathrm{LODF} = \\frac{A\\, \\mathrm{ABA}^{-1} \\mathrm{BA}}{1 - \\mathrm{diag}(A\\, \\mathrm{ABA}^{-1} \\mathrm{BA})},
 ```
 where:
-- A is the incidence matrix
-- ABA^(-1) uses the factorized form from the ABA matrix (requires `ABA.K` to be factorized)
+- ``A`` is the incidence matrix
+- ``\\mathrm{ABA}^{-1}`` uses the factorized form from the ABA matrix (requires `ABA.K` to be factorized)
 - BA is the susceptance-weighted incidence matrix
 
 # Requirements and Limitations

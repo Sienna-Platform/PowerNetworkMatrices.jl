@@ -3,9 +3,10 @@
 
 Request automatic, condition-aware sparsification of a PTDF/LODF matrix. The
 matrix is sparsified with a *relative* per-row cutoff: an entry is dropped when
-
-    |entry| < α · max|row|,     α = clamp(safety · δ, $(string(1e-6)), $(string(1e-2)))
-
+```math
+|\\mathrm{entry}| < \\alpha \\cdot \\max|\\mathrm{row}|,
+\\qquad \\alpha = \\mathrm{clamp}(\\mathrm{safety} \\cdot \\delta, \\, 10^{-6}, \\, 10^{-2}),
+```
 where `δ` is the relative precision of the branch data. Because the cutoff is
 relative to each row's own peak, columns of large, ill-conditioned systems stay
 sparse regardless of the conditioning of `ABA`; the 1-norm condition estimate of
@@ -114,14 +115,14 @@ end
 """
     discover_data_precision(susceptances; q = 0.5, maxsig = 10, rtol = 1e-9) -> Float64
 
-Estimate relative data precision from branch susceptances `b_k`. Recovers the
-reactances `x_k = 1/b_k` (the susceptance hides the original precision; the
+Estimate relative data precision from branch susceptances ``b_k``. Recovers the
+reactances ``x_k = 1/b_k`` (the susceptance hides the original precision; the
 reciprocal does not), counts the significant figures of each, and returns
-`0.5·10^(-(s-1))` at the `q`-quantile of those counts, clamped to `[eps, 1e-2]`.
-`maxsig` is coupled to `rtol`: rounding to `s` figures carries a relative error of
-`0.5·10^(1-s)`, so `rtol = 1e-9` first accepts `s = 10` and no real data resolves
+``0.5 \\cdot 10^{-(s-1)}`` at the ``q``-quantile of those counts, clamped to `[eps, 1e-2]`.
+`maxsig` is coupled to `rtol`: rounding to ``s`` figures carries a relative error of
+``0.5 \\cdot 10^{1-s}``, so `rtol = 1e-9` first accepts ``s = 10`` and no real data resolves
 further. Full-precision data (e.g. computed equivalent branches) hits this `maxsig`
-cap and yields the tightest precision `5e-10`.
+cap and yields the tightest precision ``5 \\times 10^{-10}``.
 """
 function discover_data_precision(
     susceptances::AbstractVector{Float64};

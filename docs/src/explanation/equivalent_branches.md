@@ -9,7 +9,8 @@ aggregation does not.
 The aggregated-branch types themselves (`BranchesParallel`,
 `MixedBranchesParallel`, `BranchesSeries`, the internal
 `ThreeWindingTransformerWinding`, and the resulting `EquivalentBranch`) are
-described in the [aggregated-branch reference](../reference/aggregated_branches.md).
+documented by their docstrings in the
+[full public API](../reference/public.md) under the internal (non-exported) symbols.
 
 ## Two kinds of group
 

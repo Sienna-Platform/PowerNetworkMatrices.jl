@@ -132,7 +132,7 @@ signatures when you need to fix a concrete storage layout. All are exported, as 
   - [Matrix overview and indexing hub](network_matrices_overview.md) — how
     `A[row, col]` resolves and the per-type axis summary.
   - [Full public API](public.md) — authoritative docstrings and signatures.
-  - [Network reduction reference](network_reduction.md) — the
+  - [How to Apply Network Reductions at Construction](@ref) — the
     [`NetworkReduction`](@ref) spec types passed via `network_reductions`.
   - [Contingency and modification reference](contingencies.md) — types used to
     query [`VirtualMODF`](@ref).

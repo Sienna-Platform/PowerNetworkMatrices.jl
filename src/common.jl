@@ -587,15 +587,18 @@ end
 Compute the change in equivalent arc susceptance when multiple components are
 simultaneously tripped from a series chain.
 
-For a series chain with segments of susceptance b₁, b₂, ..., bₙ, the equivalent
-susceptance is: b_eq = 1 / (1/b₁ + 1/b₂ + ... + 1/bₙ).
+For a series chain with segments of susceptance ``b_1, b_2, \\ldots, b_n``, the
+equivalent susceptance is
+```math
+b_\\mathrm{eq} = \\frac{1}{1/b_1 + 1/b_2 + \\cdots + 1/b_n}.
+```
 
 Segments can be individual branches or `BranchesParallel` groups. When a tripped
 component is inside a parallel group, only that branch's susceptance is removed
 from the group — the rest of the parallel group remains in the series chain.
 
-Returns Δb = b_new - b_old (always negative for outages).
-If all segments are fully tripped, returns -b_eq (full arc outage).
+Returns ``\\Delta b = b_\\mathrm{new} - b_\\mathrm{old}`` (always negative for outages).
+If all segments are fully tripped, returns ``-b_\\mathrm{eq}`` (full arc outage).
 """
 function _compute_series_outage_delta_b(
     series_chain::BranchesSeries,

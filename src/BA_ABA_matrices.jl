@@ -175,7 +175,7 @@ end
 """
 Structure containing the ABA matrix and related power system analysis data.
 
-The ABA matrix represents the bus susceptance matrix computed as A^T * B * A, where A is the
+The ABA matrix represents the bus susceptance matrix computed as ``A^\\top B A``, where A is the
 incidence matrix and B is the branch susceptance matrix. This matrix is fundamental for DC
 power flow analysis, sensitivity calculations, and linear power system studies.
 
@@ -197,7 +197,7 @@ power flow analysis, sensitivity calculations, and linear power system studies.
         Container for network reduction information applied during matrix construction
 
 # Mathematical Properties
-- **Matrix Form**: ABA = A^T * B * A (bus susceptance matrix)
+- **Matrix Form**: ABA = ``A^\\top B A`` (bus susceptance matrix)
 - **Dimensions**: (n_buses - n_ref) × (n_buses - n_ref)
 - **Symmetry**: Positive definite symmetric matrix (for connected networks)
 - **Sparsity**: Inherits sparsity pattern from network topology
@@ -233,7 +233,7 @@ get_bus_lookup(M::ABA_Matrix) = M.lookup[1]
 """
     ABA_Matrix(sys::PSY.System; factorize::Bool = false, network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
 
-Construct an ABA_Matrix from a PowerSystems.System by computing A^T * B * A where A is the
+Construct an ABA_Matrix from a PowerSystems.System by computing ``A^\\top B A`` where A is the
 incidence matrix and B is the branch susceptance matrix. The resulting matrix is fundamental
 for DC power flow analysis and power system sensitivity studies.
 
@@ -261,7 +261,7 @@ for DC power flow analysis and power system sensitivity studies.
 1. **Ybus Construction**: Creates admittance matrix from system data
 2. **Incidence Matrix**: Computes bus-branch incidence matrix A
 3. **BA Matrix**: Forms branch susceptance weighted incidence matrix
-4. **ABA Computation**: Calculates A^T * B * A (bus susceptance matrix)
+4. **ABA Computation**: Calculates ``A^\\top B A`` (bus susceptance matrix)
 5. **Reference Bus Removal**: Excludes reference buses for invertibility
 6. **Optional Factorization**: Performs KLU decomposition if requested
 
@@ -287,7 +287,7 @@ end
 """
     ABA_Matrix(ybus::Ybus; factorize::Bool = false)
 
-Construct an ABA_Matrix from a Ybus matrix by computing A^T * B * A where A is the
+Construct an ABA_Matrix from a Ybus matrix by computing ``A^\\top B A`` where A is the
 incidence matrix and B is the branch susceptance matrix. The resulting matrix is fundamental
 for DC power flow analysis and power system sensitivity studies. Network reductions can be passed
 via the computed Ybus matrix.
@@ -308,7 +308,7 @@ via the computed Ybus matrix.
 # Mathematical Process
 1. **Incidence Matrix**: Computes bus-branch incidence matrix A (from Ybus matrix)
 2. **BA Matrix**: Forms branch susceptance weighted incidence matrix
-3. **ABA Computation**: Calculates A^T * B * A (bus susceptance matrix)
+3. **ABA Computation**: Calculates ``A^\\top B A`` (bus susceptance matrix)
 4. **Reference Bus Removal**: Excludes reference buses for invertibility
 5. **Optional Factorization**: Performs KLU decomposition if requested
 

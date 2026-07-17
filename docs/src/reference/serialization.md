@@ -42,5 +42,5 @@ their reduction data is empty regardless of how `ptdf` was built.
 ## See also
 
   - [Matrix type reference](matrix_types.md) — the [`PTDF`](@ref) type.
-  - [Network reduction reference](network_reduction.md) — [`NetworkReductionData`](@ref) and why it is not persisted.
+  - [`NetworkReductionData`](@ref) — the reduction record, and why it is not persisted.
   - [Public API](public.md) — full docstrings for [`to_hdf5`](@ref) and [`from_hdf5`](@ref).

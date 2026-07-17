@@ -4,7 +4,8 @@
 # passing reduction specs to the constructor. For the theory of what each
 # reduction does, see
 # [Network Reduction Theory](../explanation/network_reduction_theory.md); for the
-# full API, see [Network reduction reference](../reference/network_reduction.md).
+# reduction spec types and the [`NetworkReductionData`](@ref) record they produce,
+# see the [full public API](../reference/public.md).
 
 import PowerNetworkMatrices as PNM
 import PowerSystemCaseBuilder as PSB
@@ -75,6 +76,19 @@ ptdf = PNM.PTDF(sys;
 ybus = PNM.Ybus(sys; network_reductions = PNM.NetworkReduction[PNM.RadialReduction()])
 aba = PNM.ABA_Matrix(sys; network_reductions = PNM.NetworkReduction[PNM.RadialReduction()]);
 
+# ### Ordering and validation rules
+
+# The specs are applied in vector order, subject to a few rules (a violation throws
+# or warns at construction):
+#
+#   - each reduction **type** may appear at most once;
+#   - [`WardReduction`](@ref) must be **last** when present;
+#   - `ZeroImpedanceBranchReduction` may not be listed — it is auto-applied during
+#     [`Ybus`](@ref) construction;
+#   - a [`DegreeTwoReduction`](@ref) placed before a [`RadialReduction`](@ref) emits
+#     a warning, because running radial first usually exposes more degree-two buses
+#     for the second pass to collapse.
+
 # ## Interaction with `tol`
 
 # `network_reductions` composes with the sparsification `tol` keyword — the
@@ -94,8 +108,24 @@ ptdf = PNM.PTDF(
 # ## Reading the result
 
 # The applied reductions are recorded on the matrix. Retrieve them with
-# [`get_network_reduction_data`](@ref); see
-# [Network reduction reference](../reference/network_reduction.md) for the
-# accessors that read bus maps and removed elements.
+# [`get_network_reduction_data`](@ref):
 
 nrd = PNM.get_network_reduction_data(ptdf);
+
+# The [`NetworkReductionData`](@ref) record exposes what changed through like-named
+# `get_*` accessors — for example the eliminated buses:
+
+PNM.get_removed_buses(nrd)
+
+# ...and the eliminated arcs:
+
+PNM.get_removed_arcs(nrd)
+
+# To test whether a specific bus survived the reduction, check the bus-reduction
+# map's keys (radial and degree-two survivors are keys; Ward survivors are the
+# `study_buses`):
+
+3 in keys(PNM.get_bus_reduction_map(nrd))
+
+# See the [`NetworkReductionData`](@ref) docstring for the full field and accessor
+# list.

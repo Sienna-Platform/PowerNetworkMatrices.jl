@@ -38,12 +38,13 @@ The documentation follows the [Diátaxis](https://diataxis.fr/) framework, split
 into four kinds of material:
 
   - **[Tutorials](tutorials/generated_getting_started.md)** — learning-oriented
-    journeys. Start with [Getting Started](tutorials/generated_getting_started.md)
-    to compute a PTDF and read a sensitivity, then
-    [Network Reduction](tutorials/generated_tutorial_NetworkReduction.md).
-  - **[How-To Guides](how_to_guides/generated_compute_network_matrices.md)** —
-    task recipes for a specific goal (choose a solver, apply reductions, set a
-    tolerance, define contingencies, persist a PTDF, and more).
+    journeys. Start with [Getting Started](tutorials/generated_getting_started.md):
+    a guided tour that builds a PTDF, reads a sensitivity, swaps in a virtual
+    matrix, and reduces a network.
+  - **[How-To Guides](how_to_guides/generated_build_multiple_matrices.md)** —
+    task recipes for a specific goal (build matrices efficiently, choose a solver,
+    apply reductions, set a tolerance, define contingencies, diagnose connectivity,
+    persist a PTDF, and more).
   - **[Reference](reference/network_matrices_overview.md)** — exhaustive
     descriptions of every matrix type, accessor, and setting. Begin at the
     [Matrix Overview and Indexing](reference/network_matrices_overview.md) hub.

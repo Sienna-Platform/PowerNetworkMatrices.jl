@@ -1,8 +1,35 @@
+"""
+    AbstractBranchesParallel <: PSY.ACTransmission
+
+Internal supertype for a parallel group: two or more branches spanning the **same**
+bus pair (a double / multi circuit), produced when a network reduction folds
+parallel branches into one equivalent arc. Subtypes are [`BranchesParallel`](@ref)
+(homogeneous member types) and [`MixedBranchesParallel`](@ref) (mixed member types),
+both `PSY.ACTransmission` so a group can stand in for a real branch. Not exported.
+
+The equivalent series susceptance of a parallel group is the sum of its members'
+series susceptances. Three rating aggregations are available, each answering a
+different operational question: [`get_sum_of_max_rating`](@ref),
+[`get_single_element_contingency_rating`](@ref), and
+[`get_impedance_averaged_rating`](@ref).
+"""
 abstract type AbstractBranchesParallel <: PSY.ACTransmission end
 
-# `arc_key` is the group's canonical arc in original bus numbers (the seed member's
-# orientation). It is remapped with `nr` on read, so orientation no longer depends on the
-# order of `branches`.
+"""
+    BranchesParallel{T<:PSY.ACTransmission} <: AbstractBranchesParallel
+
+Homogeneous parallel group: every member has the same concrete branch type `T` (the
+inner constructor errors if `T` is not concrete — use [`MixedBranchesParallel`](@ref)
+for mixed types). Not exported; produced by network reduction, not constructed by
+users. `BranchesParallel(branches)` infers `arc_key` from the first member.
+
+# Fields
+- `branches::Vector{T}`: the parallel member branches.
+- `arc_key::Tuple{Int, Int}`: the group's canonical arc in original bus numbers (the
+  seed member's orientation), remapped through the [`NetworkReductionData`](@ref) on
+  read so orientation does not depend on the order of `branches`.
+- `equivalent_ybus`: cached 2×2 equivalent admittance block; `nothing` until populated.
+"""
 mutable struct BranchesParallel{T <: PSY.ACTransmission} <: AbstractBranchesParallel
     branches::Vector{T}
     arc_key::Tuple{Int, Int}
@@ -27,6 +54,19 @@ function BranchesParallel(branches::Vector{T}) where {T <: PSY.ACTransmission}
     return BranchesParallel{T}(branches, get_arc_tuple(first(branches)), nothing)
 end
 
+"""
+    MixedBranchesParallel <: AbstractBranchesParallel
+
+Heterogeneous parallel group: members of differing concrete branch types held under
+the abstract element type `PSY.ACTransmission`. The counterpart to the homogeneous
+[`BranchesParallel`](@ref). Not exported; produced by network reduction.
+
+# Fields
+- `branches::Vector{PSY.ACTransmission}`: the parallel member branches.
+- `arc_key::Tuple{Int, Int}`: canonical arc in original bus numbers (see
+  [`BranchesParallel`](@ref)).
+- `equivalent_ybus`: cached 2×2 equivalent admittance block; `nothing` until populated.
+"""
 mutable struct MixedBranchesParallel <: AbstractBranchesParallel
     branches::Vector{PSY.ACTransmission}
     arc_key::Tuple{Int, Int}

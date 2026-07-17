@@ -502,20 +502,22 @@ Concurrent callers serialize on `vlodf.solver_lock` and `_LIBKLU_LOCK`.
 
 Uses the Sherman-Morrison (matrix inversion lemma) formula derived from DC power flow
 sensitivity analysis. For a change Δb in the susceptance of arc e, the change in flow
-on monitoring arc ℓ per unit pre-change flow on arc e is:
-
-    partial_LODF[ℓ, e] = α · (b_ℓ / b_e) · H[ℓ,e] / (1 - α · H[e,e])
-
+on monitoring arc ``\\ell`` per unit pre-change flow on arc ``e`` is
+```math
+\\mathrm{partialLODF}[\\ell, e] = \\alpha \\, \\frac{b_\\ell}{b_e} \\, \\frac{H[\\ell, e]}{1 - \\alpha \\, H[e, e]},
+```
 where:
-- α = -Δb / b_e   (positive for outage/decrease, negative for increase)
-- H[ℓ, e] = (A · (ABA)⁻¹ · BA)[ℓ, e] = b_e · C[e, ℓ]  (computed via KLU solve)
-- b_ℓ = susceptance of monitoring arc ℓ
-- H[e,e] = PTDF_A_diag[e]
+- ``\\alpha = -\\Delta b / b_e`` (positive for outage/decrease, negative for increase)
+- ``H[\\ell, e] = (A \\, (\\mathrm{ABA})^{-1} \\, \\mathrm{BA})[\\ell, e] = b_e \\, C[e, \\ell]`` (computed via KLU solve)
+- ``b_\\ell`` is the susceptance of monitoring arc ``\\ell``
+- ``H[e, e]`` is `PTDF_A_diag[e]`
 
-When `delta_b = -b_e` (full outage), α = 1 and this reduces to the standard LODF column:
-    LODF[ℓ, e] = b_ℓ · C[e, ℓ] / (1 - H[e,e])
+When `delta_b = -b_e` (full outage), ``\\alpha = 1`` and this reduces to the standard LODF column
+```math
+\\mathrm{LODF}[\\ell, e] = \\frac{b_\\ell \\, C[e, \\ell]}{1 - H[e, e]}.
+```
 When `delta_b = 0`, returns zeros (no change).
-The self-element (ℓ = e) is overridden to -1.0 for full outage per standard LODF convention.
+The self-element (``\\ell = e``) is overridden to -1.0 for full outage per standard LODF convention.
 """
 function _getindex_partial(
     vlodf::VirtualLODF,

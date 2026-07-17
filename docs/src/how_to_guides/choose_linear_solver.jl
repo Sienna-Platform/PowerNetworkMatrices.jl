@@ -138,6 +138,6 @@ ptdf_matrix = PNM.PTDF(sys; linear_solver = "Dense");
 
 # ## Related Topics
 #
-#   - [How to Compute Network Matrices](@ref) - use these solvers to build matrices
+#   - [How to Build Multiple Matrices Without Repeating Work](@ref) - use these solvers to build matrices
 #   - Reference: [Tolerance and solver settings](../reference/tolerance_and_solvers.md) -
 #     the full solver-type and tolerance API

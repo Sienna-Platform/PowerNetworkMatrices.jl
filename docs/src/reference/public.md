@@ -10,7 +10,7 @@ are always authoritative. The symbols are grouped to mirror the topic-specific
 reference pages — follow the links for narrative context and worked examples:
 
   - [Matrix Overview](network_matrices_overview.md) and the matrix type reference
-  - [Network reduction reference](network_reduction.md)
+  - [Applying network reductions](../how_to_guides/generated_apply_network_reductions.md)
   - [Contingency & modification types](contingencies.md)
   - [Tolerance & solver settings](tolerance_and_solvers.md)
   - [Serialization](serialization.md)
@@ -44,7 +44,7 @@ Filter = t -> t in (
 ## Network reductions
 
 Reduction specifications, the reduction-data container, and its accessors. See
-the [Network reduction reference](network_reduction.md).
+[how to apply network reductions](../how_to_guides/generated_apply_network_reductions.md).
 
 ```@autodocs
 Modules = [PowerNetworkMatrices]
