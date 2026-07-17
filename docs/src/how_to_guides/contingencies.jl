@@ -54,51 +54,45 @@ contingencies = PNM.get_registered_contingencies(vmodf)
 # tuple `(from, to)` (or its integer index); the returned value is the full
 # post-contingency PTDF row for that arc — one sensitivity per bus.
 
-# Pick a monitored arc and a registered contingency:
+# Pick a monitored arc and outage a *different* arc — monitoring an element that
+# the contingency itself outages is undefined and raises. Here the spec is built
+# straight from an arc with the convenience [`NetworkModification`](@ref)
+# constructor:
 
-monitored_arc = first(PNM.get_arc_axis(vmodf));
-ctg = first(values(contingencies));
+arcs = PNM.get_arc_axis(vmodf);
+monitored_arc = arcs[1];
+ctg = PNM.NetworkModification(vmodf, arcs[2]);
 
-# The spec argument accepts three equivalent forms. By [`ContingencySpec`](@ref):
+# The returned row carries one post-contingency sensitivity per bus:
+
+row = vmodf[monitored_arc, ctg]
+
+# The second index accepts three equivalent forms — the
+# [`NetworkModification`](@ref) used above, a [`ContingencySpec`](@ref) from the
+# registered set, or the original [`PSY.Outage`](@extref PowerSystems.Outage) (by
+# its registered UUID). All resolve to the same [`NetworkModification`](@ref) and
+# share the cached Woodbury factors, so repeated queries for one contingency across
+# different monitored arcs reuse work:
 
 # ```julia
-# vmodf[monitored_arc, ctg]
-# ```
-
-# By the underlying [`NetworkModification`](@ref):
-
-# ```julia
-# vmodf[monitored_arc, ctg.modification]
-# ```
-
-# By the original [`PSY.Outage`](@extref PowerSystems.Outage) (its UUID must be registered):
-
-# ```julia
+# spec = first(values(contingencies))       # a registered ContingencySpec
+# vmodf[monitored_arc, spec]
+# vmodf[monitored_arc, spec.modification]   # its NetworkModification
+#
 # branch = first(PSY.get_components(PSY.ACTransmission, sys))
 # outage = first(PSY.get_supplemental_attributes(branch))
-# vmodf[monitored_arc, outage]
+# vmodf[monitored_arc, outage]              # the PSY.Outage, by UUID
 # ```
-
-# All three resolve to the same [`NetworkModification`](@ref) and share the cached
-# Woodbury factors, so repeated queries for the same contingency across different
-# monitored arcs reuse work.
 
 # ## Build a Modification Manually
 
-# When you want a contingency that is not backed by a [`PSY.Outage`](@extref PowerSystems.Outage), build a
-# [`NetworkModification`](@ref) directly. The simplest path is the convenience
-# constructor that outages an entire arc by bus pair — it looks up the arc's
-# susceptance and populates the deltas for you:
-
-# ```julia
-# mod = PNM.NetworkModification(vmodf, (1, 4))
-# vmodf[monitored_arc, mod]
-# ```
-
-# For full control, assemble the low-level building blocks. An
-# [`ArcModification`](@ref) is a susceptance change on one arc (`delta_b` negative
-# for an outage); a [`ShuntModification`](@ref) is an admittance change on one bus.
-# Both are indexed by their **integer** position in the matrix:
+# The convenience constructor used above (`NetworkModification(matrix, arc)`, or
+# `NetworkModification(matrix, branch)`) is the simplest path — it looks up the
+# arc's susceptance and populates the deltas for you. When you want full control,
+# assemble the low-level building blocks instead. An [`ArcModification`](@ref) is a
+# susceptance change on one arc (`delta_b` negative for an outage); a
+# [`ShuntModification`](@ref) is an admittance change on one bus. Both are indexed
+# by their **integer** position in the matrix:
 
 # ```julia
 # arc_index = PNM.get_arc_lookup(vmodf)[(1, 4)]
@@ -112,10 +106,9 @@ ctg = first(values(contingencies));
 # vmodf[monitored_arc, custom]
 # ```
 
-# Prefer the convenience constructors (`NetworkModification(matrix, arc)` or
-# `NetworkModification(matrix, branch)`) — they compute physically consistent
-# `delta_b` and Pi-model deltas from the network data, whereas hand-built
-# [`ArcModification`](@ref) values are your responsibility to get right.
+# Prefer the convenience constructors over hand-built [`ArcModification`](@ref)
+# values: they compute physically consistent `delta_b` and Pi-model deltas from the
+# network data, which is otherwise your responsibility to get right.
 
 # ## One-Shot Post-Modification Rows from a VirtualPTDF
 
@@ -124,14 +117,14 @@ ctg = first(values(contingencies));
 # [`get_post_modification_ptdf_row`](@ref). It applies a [`NetworkModification`](@ref)
 # through the same Woodbury correction:
 
-# ```julia
-# vptdf = PNM.VirtualPTDF(sys)
-# mod = PNM.NetworkModification(vptdf, (1, 4))
-# row = PNM.get_post_modification_ptdf_row(vptdf, monitored_arc, mod)
-#
-# # Equivalent indexing form
-# vptdf[monitored_arc, mod]
-# ```
+vptdf = PNM.VirtualPTDF(sys)
+varcs = PNM.get_arc_axis(vptdf);
+mod = PNM.NetworkModification(vptdf, varcs[2]);
+row_oneshot = PNM.get_post_modification_ptdf_row(vptdf, varcs[1], mod)
+
+# Indexing is the equivalent form — it returns the same row:
+
+isapprox(vptdf[varcs[1], mod], row_oneshot)
 
 # This function does **no caching** — each call recomputes. When querying many
 # monitored arcs for the *same* modification, precompute once with

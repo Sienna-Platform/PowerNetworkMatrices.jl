@@ -16,14 +16,6 @@ sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
 # automatic **relative per-row** cutoff, active only on large virtual matrices. It
 # defaults to `AutoTolerance()`.
 
-# ## Goal: keep the matrix exact
-
-# On a small or medium system the default already keeps every entry:
-# [`AutoTolerance`](@ref) is a no-op below the bus-count gate, so nothing is
-# dropped.
-
-ptdf = PNM.PTDF(sys);
-
 # ## Goal: apply a fixed, size-independent cutoff
 
 # Pass a `Float64` to drop any entry below an absolute magnitude, regardless of
@@ -53,11 +45,13 @@ PNM.discover_data_precision(susceptances)
 
 # ## Where each cutoff applies
 
-# `AutoTolerance` is a **no-op on small systems** (below the bus-count gate), so
-# every small test case stays exact; its relative drop is reserved for large
-# virtual matrices. A `Float64` `tol` is honored at any size. The dense
-# `PTDF`/`LODF` path never sparsifies under `AutoTolerance` (it preserves the
-# dense `Matrix{Float64}`), but a `Float64` `tol` still applies there.
+# [`AutoTolerance`](@ref) is a **no-op on small systems** (below the bus-count
+# gate), so every small test case stays exact; its relative drop is reserved for
+# large virtual matrices ([`VirtualPTDF`](@ref) / [`VirtualLODF`](@ref) /
+# [`VirtualMODF`](@ref)). A `Float64` `tol` is honored at any size. The dense
+# [`PTDF`](@ref) / [`LODF`](@ref) path never sparsifies under [`AutoTolerance`](@ref)
+# (it preserves the dense `Matrix{Float64}`), but a `Float64` `tol` still applies
+# there.
 
 # See [Tolerance and solver settings](../reference/tolerance_and_solvers.md) for
 # the `AutoTolerance` fields (`data_precision`, `safety`, `quantile`), the exact

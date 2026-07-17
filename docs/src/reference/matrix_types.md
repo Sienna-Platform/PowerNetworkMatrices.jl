@@ -71,8 +71,11 @@ where only a subset of rows is needed, and are **not** serializable.
     
     [`PTDF`](@ref)/[`VirtualPTDF`](@ref) take `dist_slack` as a
     `Dict{Int, Float64}` (bus → weight); [`VirtualLODF`](@ref) and
-    [`VirtualMODF`](@ref) take it as a `Vector{Float64}`. The empty default uses a
-    single reference bus. See [How to Use a Distributed Slack](@ref).
+    [`VirtualMODF`](@ref) take it as a `Vector{Float64}` (one weight per bus,
+    ordered like the bus axis). Weights need not sum to one — they are normalized
+    internally. The empty default uses a single reference bus. For why distributing
+    the slack changes the factors and how to choose weights, see
+    [Slack distribution and reference-bus conventions](../explanation/slack_conventions.md).
 
 ## Admittance and network-structure matrices
 
@@ -97,9 +100,13 @@ where only a subset of rows is needed, and are **not** serializable.
     column is dropped (one fewer column than the bus count).
   - **[`ABA_Matrix`](@ref)** — the reduced bus-susceptance matrix `Aᵀ · B · A` with
     reference buses removed for invertibility — the DC-power-flow system matrix.
-    Its `K` field optionally holds a KLU factorization; build it factorized
-    (`factorize = true`), or [`factorize`](@ref)/[`is_factorized`](@ref) after the
-    fact. See [How to Factorize and Reuse an ABA Matrix](@ref).
+    Its `K` field optionally holds a KLU factorization: build it factorized
+    (`factorize = true`), or call [`factorize`](@ref) afterward (it returns a fresh
+    factorized copy; [`is_factorized`](@ref) checks). The stored factorization is
+    consumed by the low-level `LODF(A::IncidenceMatrix, ABA::ABA_Matrix, BA::BA_Matrix)`
+    constructor — it reads `ABA.K` directly, so passing a pre-factorized ABA there
+    avoids re-factorizing. The `PTDF` constructors do not take an `ABA_Matrix` and
+    factorize internally, so there is no factorization to hand them.
   - **[`AdjacencyMatrix`](@ref)** — a symmetric bus-by-bus connectivity matrix
     (`Int8`): nonzero where two buses share a branch, zero on the diagonal. Used by
     [`validate_connectivity`](@ref) and [`find_subnetworks`](@ref).

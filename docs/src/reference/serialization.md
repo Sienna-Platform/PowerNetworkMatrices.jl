@@ -1,8 +1,8 @@
 # Serialization
 
 This page is the reference for persisting a matrix to disk and reading it back.
-For a task recipe see [How to Persist a PTDF to Disk](@ref). Both functions below
-are documented in full, with signatures, on the [public API page](public.md).
+Both functions below are documented in full, with signatures, on the
+[public API page](public.md).
 
 !!! warning "Serialization is PTDF-only and lossy for reductions"
     
@@ -41,7 +41,6 @@ their reduction data is empty regardless of how `ptdf` was built.
 
 ## See also
 
-  - [How to Persist a PTDF to Disk](@ref) — the task-oriented walkthrough.
   - [Matrix type reference](matrix_types.md) — the [`PTDF`](@ref) type.
   - [Network reduction reference](network_reduction.md) — [`NetworkReductionData`](@ref) and why it is not persisted.
   - [Public API](public.md) — full docstrings for [`to_hdf5`](@ref) and [`from_hdf5`](@ref).

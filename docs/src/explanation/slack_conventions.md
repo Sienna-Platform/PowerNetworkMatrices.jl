@@ -7,8 +7,10 @@ convention**, and it changes the PTDF.[^ptdf] This page explains single versus
 distributed slack, the role of the reference bus, and how the choice shows up in
 the sensitivities.
 
-For the mechanics of configuring a distributed slack, see the
-[distributed-slack how-to](../how_to_guides/generated_distributed_slack.md).
+For the mechanics of configuring a distributed slack — the `dist_slack` keyword and
+its per-matrix input type (`Dict{Int, Float64}` for [`PTDF`](@ref)/[`VirtualPTDF`](@ref)
+versus `Vector{Float64}` for [`VirtualLODF`](@ref)/[`VirtualMODF`](@ref)) — see the
+[matrix type reference](../reference/matrix_types.md).
 
 ## Why a reference is needed at all
 
