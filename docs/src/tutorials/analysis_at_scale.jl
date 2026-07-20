@@ -1,4 +1,3 @@
-#src EXECUTE = TRUE
 # # Analysis at Scale
 
 # The [first tutorial](@ref "Getting Started") screened a *single* outage on a small
@@ -18,20 +17,13 @@
 # disciplines around them.
 #
 # !!! note "About the example system"
-#     We use RTS-GMLC (73 buses) so the whole tutorial runs in seconds. It is small enough
-#     that the dense matrices would fit fine — the point is the *method*. Every line of
-#     code below is what you would run unchanged on a 20,000-bus grid, where the dense
-#     forms never could.
+#     We use a small network (73 buses) for demonstration purposes.
 
 import PowerNetworkMatrices as PNM
 import PowerSystems as PSY
 import PowerSystemCaseBuilder as PSB
-import Logging
 using LinearAlgebra: dot
 using DataFrames
-
-## Silence the informational build logs so the tutorial output stays readable.
-Logging.disable_logging(Logging.Info)
 
 sys = PSB.build_system(PSB.PSISystems, "RTS_GMLC_DA_sys");
 
