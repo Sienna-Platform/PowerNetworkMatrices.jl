@@ -49,8 +49,7 @@ Virtual matrices trade compute for memory: instead of materializing a dense
 matrix they store the factorized system data and compute any single row on
 demand, caching each row in an LRU `RowCache`. The cache is bounded by
 `max_cache_size` (default 100 MiB) as both a byte budget and a maximum row count;
-once either fills, the least-recently-used row is evicted, so memory stays capped
-while a re-read of an evicted row pays the solve again. They expose the same
+once either fills, the least-recently-used row is cleared. They expose the same
 identifier-based indexing as their dense counterparts, are best for large systems
 where only a subset of rows is needed, and are **not** serializable.
 

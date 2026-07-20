@@ -168,12 +168,6 @@ detailed voltage profiles, local dynamics, or exact AC behavior at eliminated
 locations — keep the full network for state estimation, protection coordination, or
 local voltage studies.
 
-## Further reading
-
-  - [`RadialReduction`](@ref)
-  - [`DegreeTwoReduction`](@ref)
-  - [`WardReduction`](@ref)
-
 ## References
 
 [^laplacian]: The matrix ``A^\top B A`` is a weighted graph Laplacian; see

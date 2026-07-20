@@ -1,3 +1,4 @@
+#src EXECUTE = TRUE
 # # Getting Started
 
 # This tutorial answers one operational question end to end with
@@ -12,6 +13,9 @@
 import Logging
 import PowerNetworkMatrices as PNM
 import PowerSystemCaseBuilder as PSB
+
+## Silence the informational build logs so the tutorial output stays readable.
+Logging.disable_logging(Logging.Info)
 
 # !!! note
 #

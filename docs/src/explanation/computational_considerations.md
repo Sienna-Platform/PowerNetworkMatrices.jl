@@ -1,24 +1,10 @@
 # Computational Considerations
 
-## Matrix construction
-
-All matrices in `PowerNetworkMatrices.jl` are derived from the [`Ybus`](@ref) (i.e.
-building any matrix starts with building the [`Ybus`](@ref)), and all network
-reductions are applied to the [`Ybus`](@ref) before computing the downstream
-matrices. This is key for performance and maintainability: looping through system
-objects is required only when building the [`Ybus`](@ref) (slow); subsequent
-operations are fast (often sparse) matrix operations, and a reduction defined once
-on the [`Ybus`](@ref) applies uniformly to every matrix.
-
 ## Sparsity
 
 Power networks are sparse — most buses connect to only a few others — and this is
-exploited via sparse linear solvers. The [`IncidenceMatrix`](@ref) and [`Ybus`](@ref)
-are very sparse. The sensitivity matrices ([`PTDF`](@ref), [`LODF`](@ref)) are the
-exception: they invert the grounded graph Laplacian `ABA = Aᵀ B A` — where `A` is
-the [`IncidenceMatrix`](@ref) and `B` the diagonal branch-susceptance matrix (see
-[`BA_Matrix`](@ref)) — and the inverse of a sparse Laplacian fills in, so they come
-out **dense**: one entry per bus in every
+exploited via sparse linear solvers, so the connectivitity matrices ([`IncidenceMatrix`](@ref) and [`Ybus`](@ref))
+are very sparse. The sensitivity matrices ([`PTDF`](@ref), [`LODF`](@ref)), however, are obviously dense: e.g., one entry per bus in every
 [`PTDF`](@ref) column, most of them negligible because a branch is nearly insensitive
 to an injection electrically far away.
 
@@ -59,7 +45,7 @@ applied to the *final* post-contingency row, after the exact Woodbury solve, so 
 error stays bounded by the cutoff however near-critical the contingency.
 
 When you need an exact result — to preserve KCL, to difference two small
-sensitivities, or to validate against a reference — pass a `Float64` `tol`
+sensitivities, or to validate against a reference — pass a `tol::Float64`
 (`tol = eps()` for an unsparsified matrix, or a deliberate fixed cutoff).
 
 ## Matrix sizes and complexity
