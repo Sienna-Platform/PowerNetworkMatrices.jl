@@ -1,10 +1,9 @@
 # Matrix overview & indexing
 
-This page is the reference hub for the network matrices provided by
-`PowerNetworkMatrices.jl` (PNM). It summarizes every matrix type, shows the shared
+This page summarizes every matrix type, shows the shared
 construction and indexing pattern, documents how element indexing (`A[row, column]`)
 resolves, and documents the accessor functions used to read data, axes, lookups,
-reference buses, reduction data, and provenance back out.
+reference buses, reduction data, and provenance
 
 All matrix types are concrete subtypes of the abstract supertype
 `PowerNetworkMatrix{T} <: AbstractArray{T, 2}` (`src/PowerNetworkMatrix.jl`). Because
@@ -38,8 +37,8 @@ The storage form is one of three kinds:
 | [`AdjacencyMatrix`](@ref)     | bus numbers | bus numbers | sparse           | signed bus–bus connectivity (Ybus sparsity pattern)         |
 | [`Ybus`](@ref)                | bus numbers | bus numbers | sparse (complex) | nodal admittance (topology + electrical parameters)         |
 | [`ArcAdmittanceMatrix`](@ref) | arc tuples  | bus numbers | sparse (complex) | off-diagonal Ybus entries; built as part of `Ybus`          |
-| [`BA_Matrix`](@ref)           | bus numbers | arc tuples  | sparse           | incidence weighted by branch susceptance                    |
-| [`ABA_Matrix`](@ref)          | bus numbers | bus numbers | sparse           | ``A B A^\top`` DC susceptance matrix; optionally factorized |
+| [`BA_Matrix`](@ref)           | bus numbers | arc tuples  | sparse           | ``B A``: incidence weighted by branch susceptance           |
+| [`ABA_Matrix`](@ref)          | bus numbers | bus numbers | sparse           | ``A^\top B A`` DC susceptance matrix; optionally factorized |
 | [`PTDF`](@ref)                | arc tuples  | bus numbers | dense            | power transfer distribution factors                         |
 | [`LODF`](@ref)                | arc tuples  | arc tuples  | dense            | line outage distribution factors                            |
 | [`VirtualPTDF`](@ref)         | arc tuples  | bus numbers | virtual          | lazy per-row PTDF                                           |
@@ -272,7 +271,7 @@ fields and accessors are documented on the [`NetworkReductionData`](@ref) docstr
 
 !!! note "Serialization drops reduction data"
     
-    A [`PTDF`](@ref) rehydrated from HDF5 via [`from_hdf5`](@ref) carries an
+    A [`PTDF`](@ref) loaded via [`from_hdf5`](@ref) carries an
     **empty** [`NetworkReductionData`](@ref). See the [`to_hdf5`](@ref) docstring.
 
 ### System provenance

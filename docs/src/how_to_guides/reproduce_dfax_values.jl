@@ -1,10 +1,10 @@
 # # Reproduce industry DFAX values
 
 # To validate `PowerNetworkMatrices` against the industry's "DFAX" vocabulary
-# (Distribution Factors, as used in PSS/E's DFAX activity[^psse] and downstream by
-# the NERC IDC[^idc] for TLR[^tlr] and Congestion Management Procedures[^cmp]),
+# (Distribution Factors, as used in PSS/E's DFAX activity and downstream by
+# the NERC IDC for TLR and Congestion Management Procedures),
 # follow the recipe below. Every flavor of DFAX — GSF, LSF, LODF, OTDF, transfer
-# DFAX, flowgate DFAX, and multi-element (N-k) DFAX[^defs] — is a special case of
+# DFAX, flowgate DFAX, and multi-element (N-k) DFAX — is a special case of
 # one unified formula. This guide reproduces each case with executable examples on
 # the RTS-GMLC system and checks the results against their closed-form references.
 
@@ -14,10 +14,10 @@
 # ## What is DFAX?
 
 # "DFAX" is shorthand for *distribution factor*. The term originated with
-# PSS/E's DFAX activity[^psse], which writes a `.dfx` file consumed by the NERC
-# Interchange Distribution Calculator (IDC)[^idc]. The IDC uses these distribution
-# factors during Transmission Loading Relief (TLR)[^tlr] procedures and Congestion
-# Management Procedures (CMP)[^cmp] — for example, applying a 5% threshold to
+# PSS/E's DFAX activity, which writes a `.dfx` file consumed by the NERC
+# Interchange Distribution Calculator (IDC). The IDC uses these distribution
+# factors during Transmission Loading Relief (TLR) procedures and Congestion
+# Management Procedures (CMP) — for example, applying a 5% threshold to
 # decide whether a given source-to-sink transfer is a "significant" contributor to
 # a monitored flowgate.
 
@@ -35,12 +35,22 @@
 # | Flowgate DFAX             | Transfer DFAX on a (monitored, contingency) pair | `VirtualMODF[m, ctg]·(s_v − k_v)`                                      |
 # | Multi-element (N-k) DFAX  | Same with multiple simultaneous outages          | `VirtualMODF` (multi-arc `NetworkModification`)                        |
 
-# The Phase Shifter Factor (PSF) is part of the broader DFAX vocabulary but is
-# not a first-class primitive in `PowerNetworkMatrices`. A phase shift is not a
-# topology change: it enters the DC model as a pair of nodal injections and is
-# read straight from the `PTDF`. See
-# [How to Compute Phase Shifter Factors](@ref) for that recipe; this guide covers the
-# flow-based distribution factors.
+# ### The Phase Shifter Factor (PSF)
+#
+# The **Phase Shifter Factor** belongs to the same vocabulary but is not a
+# first-class primitive, because a phase shift is not a topology change — it enters
+# the DC model as a pair of nodal injections. A shift ``\alpha`` on branch ``c``
+# from bus ``f`` to bus ``t``, with series susceptance ``b_c``, is equivalent to
+# injecting ``+b_c\,\alpha`` at ``f`` and ``-b_c\,\alpha`` at ``t``. Since the
+# `PTDF` already maps injections to flows, the sensitivity of a monitored arc ``m``
+# to that shift is read straight from two `PTDF` columns:
+#
+# ```math
+# \mathrm{PSF}[m, c] \;=\; b_c \,\bigl(\mathrm{PTDF}[m, f] - \mathrm{PTDF}[m, t]\bigr),
+# ```
+#
+# where ``b_c`` is `PSY.get_series_susceptance` of the phase-shifting transformer.
+# The rest of this guide covers the flow-based distribution factors.
 
 # ## The unified DFAX formula
 
@@ -90,13 +100,13 @@ vmodf = PNM.VirtualMODF(sys);
 
 # The simplest special case sets ``k_v = 0`` (the slack absorbs the sink) and
 # ``s_v = e_b`` (a unit vector at one bus). The unified formula collapses to
-# a single `PTDF` entry — this is the **Generation Shift Factor**[^defs]:
+# a single `PTDF` entry — this is the **Generation Shift Factor**:
 
 m = (107, 203);     # monitored arc AB1 (Area 1 → Area 2)
 b = 101;            # injection bus in Area 1
 gsf = ptdf[m, b]
 
-# The **Load Shift Factor**[^defs] is the same quantity with the opposite sign
+# The **Load Shift Factor** is the same quantity with the opposite sign
 # (loads withdraw power instead of inject):
 
 lsf = -gsf
@@ -177,7 +187,7 @@ tdf_pre =
 
 # ## OTDF (single contingency, point source)
 
-# The **Outage Transfer Distribution Factor**[^defs] is the GSF you would observe
+# The **Outage Transfer Distribution Factor** is the GSF you would observe
 # if a specific outage were already in effect. For a single-element
 # contingency on arc ``c``, OTDF has a closed-form expression in terms of
 # `PTDF` and `LODF`:
@@ -188,7 +198,7 @@ tdf_pre =
 
 # This is the unified formula with ``C = \{c\}`` and the slack absorbing the
 # sink. `VirtualMODF` computes the same quantity through the Woodbury
-# identity[^woodbury], which generalizes naturally to multi-element contingencies (see
+# identity, which generalizes naturally to multi-element contingencies (see
 # the N-k section below). For a single outage the two routes agree:
 
 c = (113, 215);                       # contingency: AB2 outage
@@ -222,13 +232,13 @@ flowgate_dfax =
     sum(w * row_c[bus_lookup[bn]] for (bn, w) in src_weights) -
     sum(w * row_c[bus_lookup[bn]] for (bn, w) in snk_weights)
 
-# The NERC 5% rule[^tlr] treats a transfer as a "significant" contributor to a
+# The NERC 5% rule treats a transfer as a "significant" contributor to a
 # flowgate when the absolute DFAX exceeds 0.05. The check is one line:
 
 significant = abs(flowgate_dfax) >= 0.05
 
 # When `significant == true`, the transfer is subject to curtailment or
-# mitigation under the relevant TLR[^tlr] / CMP[^cmp] procedure.
+# mitigation under the relevant TLR procedure.
 
 # ## N-k DFAX (multi-element contingency)
 
@@ -337,21 +347,3 @@ report = sort(DataFrame(rows), :dfax; by = abs, rev = true)
 # a single outage and many bus injections to evaluate. The decision is about
 # which *direction* of the matrix you traverse most often, not about which
 # one is "correct".
-
-# ## References
-#
-# [^psse]: Siemens PTI, *PSS®E Program Operation Manual* — the DFAX (Distribution
-#     Factor) activity, which writes the `.dfx` file. <https://www.siemens.com/psse>
-# [^idc]: North American Electric Reliability Corporation, *Interchange
-#     Distribution Calculator (IDC)*. <https://www.nerc.com>
-# [^tlr]: NERC Reliability Standard IRO-006, *Transmission Loading Relief (TLR)*,
-#     including the 5% distribution-factor significance threshold.
-#     <https://www.nerc.com/pa/Stand/Pages/ReliabilityStandards.aspx>
-# [^cmp]: Regional Congestion Management Procedures (CMP) — e.g. the NERC/ISO
-#     seams-coordination processes that consume DFAX values. <https://www.nerc.com>
-# [^defs]: A. J. Wood, B. F. Wollenberg, and G. B. Sheblé, *Power Generation,
-#     Operation, and Control*, 3rd ed., Wiley, 2013 — definitions of the shift and
-#     distribution factors (GSF, LSF, PTDF, LODF, OTDF).
-# [^woodbury]: The Sherman–Morrison–Woodbury identity; see G. H. Golub and
-#     C. F. Van Loan, *Matrix Computations*, 4th ed., Johns Hopkins, 2013, §2.1.4,
-#     or <https://en.wikipedia.org/wiki/Woodbury_matrix_identity>.

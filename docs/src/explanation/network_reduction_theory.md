@@ -123,6 +123,37 @@ and overall impedances are preserved; the eliminated bus and its explicit branch
 are replaced by one equivalent branch. Avoid it where the degree-two bus carries
 measurements, controls, or a significant shunt.
 
+## Ward reduction
+
+Radial and degree-two reduction eliminate *individual* buses by their local degree.
+[`WardReduction`](@ref) instead removes a whole **external subsystem** at once,
+keeping only a chosen set of **study buses** and preserving how the external network
+responds as seen from them.
+
+Partition the buses into three groups: the **study** buses to retain, the
+**external** buses to eliminate, and the **boundary** buses — study buses that a
+retained branch connects directly to the external area. Ward equivalencing is a Kron
+(Schur-complement) elimination of the external block of the [`Ybus`](@ref): with the
+admittance matrix partitioned into study/boundary (``s``) and external (``e``) parts,
+
+```math
+Y_{eq} = Y_{ss} - Y_{se}\,Y_{ee}^{-1}\,Y_{es}.
+```
+
+The correction term ``-Y_{se}Y_{ee}^{-1}Y_{es}`` is fully dense over the boundary
+buses; it is realized as a set of **equivalent branches between boundary buses** plus
+**equivalent shunt admittances** at them, so the reduced network reproduces the
+driving-point and transfer behavior the study area would see from the original
+external network. Unlike degree-two reduction — which is exact for the DC flows it
+preserves — a Ward equivalent is exact only for the operating state its external
+injections encode; it is a boundary-matched approximation for other states, which is
+why the study area is chosen to contain everything of interest.
+
+Ward reduction needs a non-empty boundary: with no branch crossing between study and
+external areas there is nothing to match against, and the external buses cannot be
+folded onto the study set by impedance criteria (a degenerate case the implementation
+flags rather than guessing an equivalent).
+
 ## Combining reductions
 
 Reductions can be applied in sequence, and order matters — each pass can expose new
@@ -141,6 +172,7 @@ local voltage studies.
 
   - [`RadialReduction`](@ref)
   - [`DegreeTwoReduction`](@ref)
+  - [`WardReduction`](@ref)
 
 ## References
 

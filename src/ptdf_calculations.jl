@@ -322,7 +322,7 @@ for PTDF analysis starting from system data.
 1. **Ybus Construction**: Creates system admittance matrix with specified reductions
 2. **Incidence Matrix**: Builds bus-branch connectivity matrix A
 3. **BA Matrix**: Computes branch susceptance weighted incidence matrix
-4. **PTDF Computation**: Calculates power transfer distribution factors using ``A^\\top B^{-1} A``
+4. **PTDF Computation**: Calculates power transfer distribution factors using ``A^\\top B A``
 5. **Distributed Slack**: Applies distributed slack correction if specified
 6. **Sparsification**: Removes small elements based on tolerance threshold
 
@@ -343,7 +343,8 @@ The PTDF matrix is computed as
 ```math
 \\mathrm{PTDF} = (A^\\top B A)^{-1} A^\\top B,
 ```
-where ``A`` is the incidence matrix and ``B`` is the susceptance matrix.
+where ``A`` is the incidence matrix (the [`IncidenceMatrix`](@ref)) and ``B`` the branch
+susceptance matrix (see [`BA_Matrix`](@ref)).
 
 # Notes
 - Results are valid under DC power flow assumptions (linear approximation)
@@ -416,7 +417,8 @@ The PTDF matrix is computed as
 ```math
 \\mathrm{PTDF} = (A^\\top B A)^{-1} A^\\top B,
 ```
-where ``A`` is the incidence matrix and ``B`` is the susceptance matrix.
+where ``A`` is the incidence matrix (the [`IncidenceMatrix`](@ref)) and ``B`` the branch
+susceptance matrix (see [`BA_Matrix`](@ref)).
 
 # Notes
 - Results are valid under DC power flow assumptions (linear approximation)

@@ -347,7 +347,7 @@ The LODF matrix is computed using the formula
 \\mathrm{LODF} = \\frac{A \\, \\mathrm{PTDF}}{1 - \\mathrm{diag}(A \\, \\mathrm{PTDF})},
 ```
 where:
-- ``A`` is the incidence matrix representing bus-branch connectivity
+- ``A`` is the incidence matrix (the [`IncidenceMatrix`](@ref)) representing bus-branch connectivity
 - ``\\mathrm{PTDF}`` contains power transfer distribution factors
 - The denominator (1 - diagonal terms) accounts for the outaged line's own flow
 
@@ -448,9 +448,9 @@ This method computes LODF using the factorized form
 \\mathrm{LODF} = \\frac{A\\, \\mathrm{ABA}^{-1} \\mathrm{BA}}{1 - \\mathrm{diag}(A\\, \\mathrm{ABA}^{-1} \\mathrm{BA})},
 ```
 where:
-- ``A`` is the incidence matrix
-- ``\\mathrm{ABA}^{-1}`` uses the factorized form from the ABA matrix (requires `ABA.K` to be factorized)
-- BA is the susceptance-weighted incidence matrix
+- ``A`` is the incidence matrix (the [`IncidenceMatrix`](@ref))
+- ``\\mathrm{ABA}^{-1}`` uses the factorized form from the [`ABA_Matrix`](@ref) (requires `ABA.K` to be factorized)
+- ``\\mathrm{BA}`` is the susceptance-weighted incidence matrix (the [`BA_Matrix`](@ref))
 
 # Requirements and Limitations
 - **Factorization Required**: The ABA matrix should be pre-factorized (contains KLU factorization) for efficiency

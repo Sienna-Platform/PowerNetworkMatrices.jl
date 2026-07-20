@@ -108,7 +108,7 @@ ptdf_matrix = PNM.PTDF(sys; linear_solver = "Dense");
 # ### Singular `ABA`: prefer KLU
 
 # The two default solvers differ in how they treat a singular `ABA` matrix.
-# `AppleAccelerateLU` **silently factorizes a singular matrix and returns garbage**,
+# `AppleAccelerateLU` silently factorizes a singular matrix and returns garbage,
 # whereas KLU raises. Prefer `"KLU"` whenever the `ABA` matrix may be singular — for
 # example a full outage that isolates a bus, such as a 3-winding transformer's
 # zero-injection star bus:
@@ -125,23 +125,6 @@ ptdf_matrix = PNM.PTDF(sys; linear_solver = "Dense");
 # `PNM.set_linalg_backend_check` / `PNM.get_linalg_backend_check`, and
 # `PNM.check_linalg_backend` (reports the active BLAS/LAPACK library and whether the
 # requested backend is loaded).
-
-# ## Switching Solvers
-
-# You can easily switch between solvers to compare performance:
-
-# ```julia
-# using BenchmarkTools
-#
-# # Benchmark KLU
-# @btime ptdf_klu = PNM.PTDF($sys; linear_solver = "KLU")
-#
-# # Benchmark Dense
-# @btime ptdf_dense = PNM.PTDF($sys; linear_solver = "Dense")
-#
-# # Benchmark MKLPardiso (if available)
-# @btime ptdf_mkl = PNM.PTDF($sys; linear_solver = "MKLPardiso")
-# ```
 
 # ## Troubleshooting
 

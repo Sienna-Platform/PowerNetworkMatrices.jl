@@ -2,7 +2,9 @@
 Structure containing the BA matrix and related network topology data.
 
 The BA matrix represents the branch-bus incidence matrix weighted by branch susceptances,
-computed as the product of the incidence matrix A and the susceptance matrix B.
+computed as the product `B * A` of the incidence matrix `A` (the [`IncidenceMatrix`](@ref))
+and the susceptance matrix `B` — the diagonal matrix of branch series susceptances
+(`b = 1/x` under the DC approximation).
 
 # Fields
 - `data::SparseArrays.SparseMatrixCSC{Float64, Int}`:
@@ -175,9 +177,10 @@ end
 """
 Structure containing the ABA matrix and related power system analysis data.
 
-The ABA matrix represents the bus susceptance matrix computed as ``A^\\top B A``, where A is the
-incidence matrix and B is the branch susceptance matrix. This matrix is fundamental for DC
-power flow analysis, sensitivity calculations, and linear power system studies.
+The ABA matrix represents the bus susceptance matrix computed as ``A^\\top B A``, where `A` is the
+incidence matrix (the [`IncidenceMatrix`](@ref)) and `B` the branch susceptance matrix (see
+[`BA_Matrix`](@ref)). This matrix is fundamental for DC power flow analysis, sensitivity
+calculations, and linear power system studies.
 
 # Fields
 - `data::SparseArrays.SparseMatrixCSC{Float64, Int}`:

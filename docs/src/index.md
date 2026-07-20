@@ -35,14 +35,13 @@ into four kinds of material:
     scale with virtual matrices and cache control.
   - **[How-To Guides](how_to_guides/generated_build_multiple_matrices.md)** —
     task recipes for a specific goal (build matrices efficiently, choose a solver,
-    reproduce industry DFAX values, compute phase-shifter factors, define
-    contingencies, diagnose connectivity).
+    reproduce industry DFAX values, define contingencies, diagnose connectivity).
   - **[Reference](reference/network_matrices_overview.md)** — exhaustive
     descriptions of every matrix type, accessor, and setting. Begin at the
     [Matrix Overview and Indexing](reference/network_matrices_overview.md) hub.
   - **[Explanation](explanation/dc_power_flow_approximation.md)** — the concepts
-    and trade-offs: the DC approximation, network-reduction theory, virtual vs.
-    materialized matrices, concurrency, and slack conventions.
+    and trade-offs: the DC approximation, network-reduction theory, computational
+    considerations, concurrency, and slack conventions.
 
 ## About
 

@@ -104,7 +104,9 @@ end
 vlodf_pinned = PNM.VirtualLODF(sys; max_cache_size = 50, persistent_arcs = watchlist)
 
 # Now the watchlist rows survive every full screen, so repeated studies never pay to
-# rebuild them. [`VirtualPTDF`](@ref) takes the same keyword.
+# rebuild them. [`VirtualPTDF`](@ref) takes the same keyword. Pinned rows still count
+# against the cache budget, so the constructor errors if the pinned set alone would
+# exceed `max_cache_size`.
 
 # ## Step 5 — Reclaim the memory when you are done
 
@@ -128,9 +130,9 @@ empty!(vlodf.cache)
 
 # ## Where to go next
 #
-#   - [Virtual vs. materialized matrices](@ref) — when a virtual matrix is the right
-#     call and how the LRU trade-off actually works. The same drop-in swap applies to
-#     sensitivities via [`VirtualPTDF`](@ref).
+#   - [Virtual (on-demand) matrices](@ref) — the reference on the row cache and when a
+#     virtual matrix is the right call. The same drop-in swap applies to sensitivities
+#     via [`VirtualPTDF`](@ref).
 #   - [How to Define and Apply Contingencies](@ref) — [`VirtualMODF`](@ref) for
 #     multi-element post-contingency factors, the next step past single-line screening.
 #   - [Getting Started](@ref) — the first tutorial, if you skipped straight here.

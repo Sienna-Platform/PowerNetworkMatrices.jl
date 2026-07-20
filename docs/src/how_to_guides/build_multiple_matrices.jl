@@ -2,10 +2,9 @@
 
 # Every matrix constructor that takes a [`System`](@extref PowerSystems.System)
 # rebuilds the same intermediates from scratch — the [`Ybus`](@ref), the incidence
-# matrix `A`, and the susceptance-weighted `BA`. When you need several matrices for
-# the same system, that repeated work adds up. This guide shows how to compute the
-# shared pieces once and feed them to the constructors that accept pre-built
-# matrices.
+# matrix `A` ([`IncidenceMatrix`](@ref)), and the susceptance-weighted `BA`
+# ([`BA_Matrix`](@ref)). This guide shows how to compute the shared pieces once and
+# feed them to the constructors that accept pre-built matrices.
 
 import PowerNetworkMatrices as PNM
 import PowerSystemCaseBuilder as PSB
@@ -16,8 +15,8 @@ sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
 
 # The construction dependency chain is
 #
-# > [`Ybus`](@ref) → ([`IncidenceMatrix`](@ref), [`BA_Matrix`](@ref)) →
-# > [`ABA_Matrix`](@ref) / [`PTDF`](@ref), and [`PTDF`](@ref) → [`LODF`](@ref).
+# > Ybus → IncidenceMatrix, BA_Matrix →
+# > `ABA_Matrix / PTDF, and PTDF → LODF.
 #
 # The [`Ybus`](@ref) is the expensive shared root. Build it — and the incidence and
 # BA matrices derived from it — exactly once:
@@ -58,14 +57,6 @@ vptdf = PNM.VirtualPTDF(ybus)
 #     consistent. Pass `network_reductions` once, to the [`Ybus`](@ref) call, and
 #     everything downstream inherits it. See the [`NetworkReduction`](@ref) docstring
 #     for the keyword and its rules.
-
-# ## When this matters
-
-# For a small system the savings are negligible — build straight from the
-# [`System`](@extref PowerSystems.System) and keep the code simple. Reuse pays off
-# when the [`Ybus`](@ref) build and factorization are expensive (large systems) and
-# you need more than one matrix: for example a [`PTDF`](@ref) and a [`LODF`](@ref),
-# or several matrices under the same network reduction.
 
 # ## See also
 #

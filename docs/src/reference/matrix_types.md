@@ -1,11 +1,5 @@
 # Matrix type reference
 
-This page describes what each matrix type PowerNetworkMatrices exports
-represents and the gotchas specific to it. It is a companion to the
-[matrix overview and indexing hub](network_matrices_overview.md), which covers how
-`A[row, col]` resolves. For the authoritative constructor signatures, keyword
-arguments, and every docstring, see the [full public API](public.md).
-
 Unless noted otherwise, every type below is a subtype of the common supertype
 `PowerNetworkMatrix` and shares the same indexing and accessor interface.
 
@@ -34,20 +28,18 @@ Several types store their `data` **transposed** for efficiency
 ## Distribution-factor matrices
 
 [`PTDF`](@ref) and [`LODF`](@ref) are dense distribution-factor matrices sharing
-construction options (`linear_solver`, `tol`) and arc-tuple indexing; they differ
-only in what each entry means.
+construction options (`linear_solver`, `tol`) and arc-tuple indexing.
 
   - **[`PTDF`](@ref)** — the Power Transfer Distribution Factor matrix.
     `PTDF[arc, bus]` is the sensitivity of the flow on `arc` to a unit injection
-    at `bus`, under the DC approximation. Rows are arcs, columns are buses.
+    at `bus`, under the DC approximation.
   - **[`LODF`](@ref)** — the Line Outage Distribution Factor matrix.
     `LODF[monitored, outaged]` is the fraction of `outaged`'s pre-outage flow that
-    redistributes onto `monitored`. **Both** dimensions are arcs; diagonal entries
+    redistributes onto `monitored`. Both dimensions are arcs; diagonal entries
     are structurally `-1.0`, and are preserved when sparsifying.
 
-Network reductions reach both through the `Ybus` `kwargs...`
-(`network_reductions = [...]`) — there is no `reduce_*` keyword. `LODF(A, PTDFm)`
-warns and densifies if the supplied [`PTDF`](@ref) was itself sparsified, since
+Network reductions reach both through `YBus(...; network_reductions = [...])`.
+`LODF(A, PTDF)` warns and densifies if the supplied [`PTDF`](@ref) was itself sparsified, since
 that degrades LODF accuracy. Only [`PTDF`](@ref) supports HDF5 serialization (see
 the [`to_hdf5`](@ref) / [`from_hdf5`](@ref) docstrings).
 
@@ -55,7 +47,10 @@ the [`to_hdf5`](@ref) / [`from_hdf5`](@ref) docstrings).
 
 Virtual matrices trade compute for memory: instead of materializing a dense
 matrix they store the factorized system data and compute any single row on
-demand, caching each row in an LRU `RowCache`. They expose the same
+demand, caching each row in an LRU `RowCache`. The cache is bounded by
+`max_cache_size` (default 100 MiB) as both a byte budget and a maximum row count;
+once either fills, the least-recently-used row is evicted, so memory stays capped
+while a re-read of an evicted row pays the solve again. They expose the same
 identifier-based indexing as their dense counterparts, are best for large systems
 where only a subset of rows is needed, and are **not** serializable.
 
@@ -95,11 +90,15 @@ where only a subset of rows is needed, and are **not** serializable.
     `A[arc, bus]` is `+1` at the from-bus, `-1` at the to-bus, `0` otherwise
     (exactly two nonzeros per arc row). Structural building block for the DC
     matrices.
-  - **[`BA_Matrix`](@ref)** — the susceptance-weighted incidence matrix `B · A`.
-    Axes match [`IncidenceMatrix`](@ref); stored transposed. The reference-bus
-    column is dropped (one fewer column than the bus count).
-  - **[`ABA_Matrix`](@ref)** — the reduced bus-susceptance matrix `Aᵀ · B · A` with
-    reference buses removed for invertibility — the DC-power-flow system matrix.
+  - **[`BA_Matrix`](@ref)** — the susceptance-weighted incidence matrix `B · A`,
+    where `B` is the diagonal matrix of branch series susceptances (`b = 1/x` under
+    the DC approximation) and `A` the [`IncidenceMatrix`](@ref). Axes match
+    [`IncidenceMatrix`](@ref); stored transposed. The reference-bus column is dropped
+    (one fewer column than the bus count).
+  - **[`ABA_Matrix`](@ref)** — the reduced bus-susceptance matrix `Aᵀ · B · A`
+    (`A` the [`IncidenceMatrix`](@ref), `B` the branch susceptance — see
+    [`BA_Matrix`](@ref)) with reference buses removed for invertibility — the
+    DC-power-flow system matrix.
     Its `K` field optionally holds a KLU factorization: build it factorized
     (`factorize = true`), or call [`factorize`](@ref) afterward (it returns a fresh
     factorized copy; [`is_factorized`](@ref) checks). The stored factorization is
