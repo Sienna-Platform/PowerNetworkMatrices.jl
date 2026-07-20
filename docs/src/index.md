@@ -16,21 +16,11 @@ does not own the data model.
 `PowerNetworkMatrices.jl` is an active project under development, and we welcome
 your feedback, suggestions, and bug reports.
 
-## The matrix taxonomy
+## Installation
 
-| Matrix                                                                | What it is                                  |
-|:--------------------------------------------------------------------- |:------------------------------------------- |
-| [`Ybus`](@ref)                                                        | Complex nodal admittance matrix             |
-| [`IncidenceMatrix`](@ref)                                             | Branch–bus connection topology              |
-| [`AdjacencyMatrix`](@ref)                                             | Bus–bus connection topology                 |
-| [`BA_Matrix`](@ref) / [`ABA_Matrix`](@ref)                            | DC susceptance forms                        |
-| [`PTDF`](@ref)                                                        | Power transfer distribution factors         |
-| [`LODF`](@ref)                                                        | Line outage distribution factors            |
-| [`VirtualPTDF`](@ref) / [`VirtualLODF`](@ref) / [`VirtualMODF`](@ref) | Lazy, row-on-demand forms for large systems |
-
-Matrices index directly by bus numbers and branch/arc identifiers (e.g.
-`ptdf["branch_name", bus_number]`) and transparently handle electrical islands
-and network reductions.
+```text
+] add PowerNetworkMatrices
+```
 
 ## Where to start
 
@@ -53,12 +43,6 @@ into four kinds of material:
   - **[Explanation](explanation/dc_power_flow_approximation.md)** — the concepts
     and trade-offs: the DC approximation, network-reduction theory, virtual vs.
     materialized matrices, concurrency, and slack conventions.
-
-## Installation
-
-```text
-] add PowerNetworkMatrices
-```
 
 ## About
 

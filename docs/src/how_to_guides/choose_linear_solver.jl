@@ -9,14 +9,13 @@
 #
 #  1. **`"KLU"`** - sparse
 #     [KLU](https://github.com/DrTimothyAldenDavis/SuiteSparse) factorization
-#     (part of SuiteSparse). Always available (built-in `KLUWrapper` submodule);
-#     the default off Apple hardware.
+#     Always available (built-in `KLUWrapper` submodule); the default off Apple hardware.
 #  2. **`"AppleAccelerateLU"`** - sparse LU via Apple's
 #     [Accelerate sparse solvers](https://developer.apple.com/documentation/accelerate/sparse_solvers).
 #     Always compiled in (built-in `AccelerateWrapper` submodule) but
 #     runtime-gated to macOS 15.5+ on Apple hardware, where it is the default.
 #  3. **`"MKLPardiso"`** - Intel's
-#     [oneMKL PARDISO](https://www.intel.com/content/www/us/en/docs/onemkl/developer-reference-c/current/onemkl-pardiso-parallel-direct-sparse-solver-interface.html),
+#     [oneMKL PARDISO](https://www.intel.com/content/www/us/en/docs/onemkl/developer-reference-c/),
 #     wrapped by [`Pardiso.jl`](https://github.com/JuliaSparse/Pardiso.jl). A
 #     weak-dependency package extension: only loaded once you also add and import
 #     `Pardiso.jl`.

@@ -1,26 +1,24 @@
 # # Getting Started
 
-# In this tutorial we answer a real operational question about a network, end to
-# end, with `PowerNetworkMatrices.jl` (PNM):
+# This tutorial answers one operational question end to end with
+# `PowerNetworkMatrices.jl` (PNM):
 #
-# > **If a key transmission line trips, which other lines are most at risk of
-# > overloading?**
+# > If a key transmission line trips, which other lines are most at risk of overloading?
 #
-# Answering it takes three of PNM's matrices in turn — a [`PTDF`](@ref) to see how
-# power routes today, an [`LODF`](@ref) to see where a tripped line's flow goes, and
-# a network *reduction* to make the study cheap enough to repeat at scale. Each builds
-# on the last, so read top to bottom; by the end you will have used the core of the
-# package on one continuous problem.
+# We take it in three moves — a [`PTDF`](@ref) to see how power routes today, an
+# [`LODF`](@ref) to see where a tripped line's flow goes, and a network *reduction* to
+# make the study cheap enough to repeat.
 
+import Logging
 import PowerNetworkMatrices as PNM
 import PowerSystemCaseBuilder as PSB
 
 # !!! note
 #
-#     `PowerSystemCaseBuilder.jl` is a helper library for reproducing the examples
-#     in this documentation. See the
-#     [PowerSystemCaseBuilder documentation](https://sienna-platform.github.io/PowerSystemCaseBuilder.jl/stable)
-#     for how to load your own data.
+#     `PowerSystemCaseBuilder.jl` only supplies the ready-made example systems used
+#     throughout this documentation. To build a
+#     [`System`](@extref PowerSystems.System) from your own data, see the
+#     [PowerSystems.jl documentation](https://sienna-platform.github.io/PowerSystems.jl/stable).
 
 # ## Step 1 — Load the network
 
@@ -28,27 +26,28 @@ import PowerSystemCaseBuilder as PSB
 # We use a small IEEE-14-style test network; in your own work you would build the
 # [`System`](@extref PowerSystems.System) from your data files instead.
 
-sys = PSB.build_system(PSB.PSSEParsingTestSystems, "psse_14_network_reduction_test_system");
+sys = Logging.with_logger(Logging.NullLogger()) do
+    PSB.build_system(PSB.PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
+end;
 
 # The line we are worried about is the one running between buses `103` and `104` — a
-# central corridor in this grid. Our whole analysis is about what happens to the rest
-# of the network if that line goes out.
+# central link in this grid. Our whole analysis is about what happens to the rest of the
+# network if that line goes out.
 
 # ## Step 2 — See how power routes today with a PTDF
 
-# The [`PTDF`](@ref) (Power Transfer Distribution Factor) matrix is the natural first
-# stop: before asking what happens when a line trips, we want to know how power flows
-# through the network in the first place. Build it by calling the constructor on the
-# system — this computes the whole matrix once and stores it, along with the axes that
-# let you index it by physical network elements.
+# Before asking what happens when a line trips, we need to know how power flows through
+# the network today. That is the [`PTDF`](@ref) (Power Transfer Distribution Factor)
+# matrix. Build it by calling the constructor on the system — this computes the whole
+# matrix once and stores it with the axes that let you index it by physical elements.
 
 ptdf = PNM.PTDF(sys)
 
 # Each entry answers one question: *if one unit of power is injected at a given bus
 # (and withdrawn at the reference bus), how much of it flows along a given branch?*
 # Index by an **arc tuple** `(from_bus, to_bus)` and a **bus number** directly — the
-# matrix maps those to its internal positions for you. Here is our corridor's response
-# to an injection at bus `103`:
+# matrix maps those to its internal positions for you. Here is line `(103, 104)`'s
+# response to an injection at bus `103`:
 
 ptdf[(103, 104), 103]
 
@@ -57,19 +56,29 @@ ptdf[(103, 104), 103]
 # That large fraction tells us `(103, 104)` is a dominant path for power leaving bus
 # `103` — exactly why its outage is worth studying.
 
-# Compare a bus that barely touches this corridor:
+# Compare a bus that barely touches this line:
 
 ptdf[(103, 104), 102]
 
 # About `0.01` — an injection at bus `102` splits away through other paths and hardly
-# loads our line. And the **reference bus** is special: injecting there changes
-# nothing, so its column is exactly zero.
+# loads it. The **reference bus** is special: since every injection is withdrawn there,
+# injecting *at* it moves nothing, so its whole PTDF column is exactly zero. You do not
+# have to know which bus that is ahead of time — ask the matrix:
 
-ptdf[(103, 104), 101]
+ref_buses = PNM.get_ref_bus(ptdf)
 
-# So bus `101` is the reference here. A whole column of the PTDF is one bus's influence
-# on this corridor; a whole row is how one corridor responds to every bus. This is the
-# background flow picture. Now the outage.
+# One reference bus per electrical island; here there is a single island with bus `101`.
+# Confirm its column is zero by checking a couple of unrelated branches:
+
+ptdf[(103, 104), only(ref_buses)]
+
+#-
+
+ptdf[(102, 103), only(ref_buses)]
+
+# Both exactly `0.0`. A whole column of the PTDF is one bus's influence on every branch;
+# a whole row is how one branch responds to every bus. This is the background flow
+# picture. Now the outage.
 
 # ## Step 3 — Where does a tripped line's flow go? Ask the LODF
 
@@ -80,9 +89,9 @@ ptdf[(103, 104), 101]
 
 lodf = PNM.LODF(sys)
 
-# Trip our corridor and scan every other branch for the share it inherits. We keep only
-# the branches that pick up a meaningful fraction and rank them worst-first — this is
-# exactly the screen an operator runs:
+# Trip our line and scan every other branch for the share it inherits. We keep only the
+# branches that pick up a meaningful fraction and rank them worst-first — this is exactly
+# the screen an operator runs:
 
 outaged = (103, 104)
 responders = [(arc, lodf[arc, outaged]) for arc in lodf.axes[1] if arc != outaged]
@@ -92,10 +101,10 @@ responders
 
 # There is our answer. Branch `(102, 103)` inherits **the entire** flow of the tripped
 # line (a factor of `-1.0`): it is the series partner on the far side of bus `103`, so
-# it is by far the most at risk. Behind it, two parallel corridors each absorb about
-# `65%` — the `101–115–102` path and the `101–117–118–104` path — and branch
-# `(102, 104)` takes the remaining `35%`. Every other branch is untouched. An operator
-# would watch `(102, 103)` first, then those two corridors.
+# it is by far the most at risk. Behind it, two parallel paths each absorb about `65%` —
+# the `101–115–102` path and the `101–117–118–104` path — and branch `(102, 104)` takes
+# the remaining `35%`. Every other branch is untouched. An operator would watch
+# `(102, 103)` first, then those two paths.
 
 # The sign carries meaning too: a negative factor means the redistributed flow runs
 # *against* the monitored branch's `(from, to)` orientation. You can always pull a
@@ -124,8 +133,15 @@ size(ptdf_reduced), size(ptdf)
 
 ptdf_reduced[(103, 104), 103]
 
-# A smaller, faster matrix that gives the same answer for every element that survived
-# the reduction. Note that we indexed with the **arc tuple** `(103, 104)` throughout:
+# The same holds for the outage screen. Rebuild the [`LODF`](@ref) with the same
+# reductions and the worst-responder factor from Step 3 is identical:
+
+lodf_reduced = PNM.LODF(sys; network_reductions = reductions)
+lodf_reduced[(102, 103), (103, 104)]
+
+# Still `-1.0`. A smaller, faster pair of matrices that gives the same answer for every
+# element that survived the reduction. Note that we indexed with the **arc tuple**
+# `(103, 104)` throughout:
 # arc tuples are the canonical, unambiguous identifier and they survive reductions,
 # where named branches may be merged away. That is why they are the identifier to reach
 # for in code that runs before and after a reduction.
