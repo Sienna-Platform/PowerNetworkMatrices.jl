@@ -27,5 +27,10 @@ by the reference bus of the subnetworks if they exist
 """
 function find_subnetworks(sys::PSY.System)
     sbn, ref_buses = _find_subnetworks(sys)
-    return assign_reference_buses!(sbn, Set(ref_buses))
+    ref_angles = Dict{Int, Float64}(
+        PSY.get_number(b) => PSY.get_angle(b) for
+        b in PSY.get_components(PSY.ACBus, sys) if
+        PSY.get_bustype(b) == PSY.ACBusTypes.REF
+    )
+    return assign_reference_buses!(sbn, Set(ref_buses), ref_angles)
 end

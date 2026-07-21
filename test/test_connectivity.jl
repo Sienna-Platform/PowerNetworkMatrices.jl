@@ -232,3 +232,120 @@ end
     )
     @test sub_1 == sub_2
 end
+
+@testset "assign_reference_buses! supports multiple swings per island (multi-swing)" begin
+    # A network island may hold more than one swing (reference) bus; each is a valid
+    # fixed-complex-voltage anchor. assign_reference_buses! must accept that (not error) and
+    # key the island by its smallest-angle swing (tie-break: smallest bus number).
+    # Island A = {1,2,3} with two swings (1 and 2); island B = {4,5} with one swing (4).
+
+    # Unequal angles: swing 2 has the smaller angle, so it keys island A (NOT bus number 1).
+    subnetworks = Dict{Int, Set{Int}}(3 => Set([1, 2, 3]), 5 => Set([4, 5]))
+    ref_buses = Set([1, 2, 4])
+    ref_angles = Dict(1 => 0.20, 2 => 0.05, 4 => 0.0)
+    groups = PNM.assign_reference_buses!(subnetworks, ref_buses, ref_angles)
+    @test length(groups) == 2
+    for (k, buses) in groups
+        @test k in intersect(ref_buses, buses)   # keyed by one of its OWN swings
+    end
+    @test haskey(groups, 2) && groups[2] == Set([1, 2, 3])   # min-angle swing
+    @test Set([4, 5]) in values(groups)
+
+    # Equal angles (e.g. flat start): tie-break on smallest bus number → swing 1.
+    sub2 = Dict{Int, Set{Int}}(3 => Set([1, 2, 3]), 5 => Set([4, 5]))
+    groups2 = PNM.assign_reference_buses!(
+        sub2, Set([1, 2, 4]), Dict(1 => 0.0, 2 => 0.0, 4 => 0.0),
+    )
+    @test haskey(groups2, 1) && groups2[1] == Set([1, 2, 3])
+end
+
+@testset "get_ref_bus_position survives a ZIBR merge of the island representative" begin
+    # Regression: assign_reference_buses! keys an island by its smallest-angle swing,
+    # independent of which bus a ZeroImpedanceBranchReduction later merges away. When the
+    # representative itself gets merged (here: a star of REF/PV/PQ leaves collapses into
+    # hub bus 10, and leaf 12 -- the smallest-angle swing -- is the chosen representative),
+    # get_ref_bus_position must resolve the removed representative to its surviving bus
+    # via reverse_bus_search_map instead of throwing a bare KeyError.
+    function _mk_star_bus(number, name, bustype, angle)
+        return ACBus(;
+            number = number,
+            name = name,
+            available = true,
+            bustype = bustype,
+            angle = angle,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+    end
+    function _mk_star_jumper!(sys, name, from, to)
+        arc = Arc(; from = from, to = to)
+        add_component!(sys, arc)
+        add_component!(
+            sys,
+            Line(;
+                name = name,
+                available = true,
+                active_power_flow = 0.0,
+                reactive_power_flow = 0.0,
+                arc = arc,
+                r = 0.0,
+                x = 1e-4,   # susceptance 1e4 >= default ZIBR threshold
+                b = (from = 0.0, to = 0.0),
+                rating = 1.0,
+                angle_limits = (min = -1.5, max = 1.5),
+            ),
+        )
+    end
+
+    sys = System(100.0)
+    hub = _mk_star_bus(10, "hub", ACBusTypes.REF, 0.30)
+    leaf11 = _mk_star_bus(11, "leaf11", ACBusTypes.PV, 0.0)
+    leaf12 = _mk_star_bus(12, "leaf12", ACBusTypes.REF, 0.01)   # smallest angle -> representative
+    leaf13 = _mk_star_bus(13, "leaf13", ACBusTypes.PQ, 0.0)
+    leaf14 = _mk_star_bus(14, "leaf14", ACBusTypes.PQ, 0.0)
+    leaf15 = _mk_star_bus(15, "leaf15", ACBusTypes.PQ, 0.0)
+    # Two buses on ordinary (non-zero-impedance) lines so the reduced network still has
+    # non-reference buses left for ABA_Matrix to build a non-trivial system from.
+    pq20 = _mk_star_bus(20, "pq20", ACBusTypes.PQ, 0.0)
+    pq21 = _mk_star_bus(21, "pq21", ACBusTypes.PQ, 0.0)
+    for b in (hub, leaf11, leaf12, leaf13, leaf14, leaf15, pq20, pq21)
+        add_component!(sys, b)
+    end
+    _mk_star_jumper!(sys, "J11", hub, leaf11)
+    _mk_star_jumper!(sys, "J12", hub, leaf12)
+    _mk_star_jumper!(sys, "J13", hub, leaf13)
+    _mk_star_jumper!(sys, "J14", hub, leaf14)
+    _mk_star_jumper!(sys, "J15", hub, leaf15)
+    function _mk_star_normal_line!(sys, name, from, to)
+        arc = Arc(; from = from, to = to)
+        add_component!(sys, arc)
+        add_component!(
+            sys,
+            Line(;
+                name = name,
+                available = true,
+                active_power_flow = 0.0,
+                reactive_power_flow = 0.0,
+                arc = arc,
+                r = 0.0,
+                x = 0.1,
+                b = (from = 0.0, to = 0.0),
+                rating = 1.0,
+                angle_limits = (min = -1.5, max = 1.5),
+            ),
+        )
+    end
+    _mk_star_normal_line!(sys, "N20", hub, pq20)
+    _mk_star_normal_line!(sys, "N21", pq20, pq21)
+
+    ybus = Ybus(sys)
+    @test Set(keys(PNM.get_bus_lookup(ybus))) == Set([10, 20, 21])
+
+    ref_bus_positions = PNM.get_ref_bus_position(ybus)
+    @test all(1 .<= ref_bus_positions .<= length(PNM.get_bus_axis(ybus)))
+    @test PNM.get_bus_axis(ybus)[only(ref_bus_positions)] == 10
+
+    aba = ABA_Matrix(ybus; factorize = true)
+    @test aba isa ABA_Matrix
+end
