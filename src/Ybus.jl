@@ -943,11 +943,6 @@ function Ybus(
     for r in network_reductions
         _reject_zibr_in_user_reductions(r)
     end
-    units_base = PSY.get_units_base(sys)
-    if units_base != "SYSTEM_BASE"
-        @warn "Setting the system unit base from $units_base to SYSTEM_BASE for matrix construction"
-        PSY.set_units_base_system!(sys, "SYSTEM_BASE")
-    end
     user_irreducible = Set{Int}(irreducible_buses)
     ref_bus_numbers = Set{Int}()
     # Seed the user set and ZIBR spec into the container so every reduction step and
