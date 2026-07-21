@@ -29,9 +29,9 @@ function _is_zero_impedance_branch(
     min_x_eps::Float64,
     resistance_tolerance::Float64,
 )
-    r = PSY.get_r(br)
+    r = PSY.get_r(br, PSY.SU)
     abs(r) <= resistance_tolerance || return false
-    x = PSY.get_x(br)
+    x = PSY.get_x(br, PSY.SU)
     return abs(_series_admittance(r, x, min_x_eps)) >= susceptance_threshold
 end
 
