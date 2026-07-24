@@ -80,6 +80,8 @@ import LinearAlgebra: BLAS.gemm
 import LinearAlgebra: ldiv!, mul!, I, dot
 import LinearAlgebra: LAPACK.getrf!, LAPACK.getrs!
 import Preferences
+import Logging
+import PrecompileTools
 
 include("KLUWrapper/KLUWrapper.jl")
 import .KLUWrapper:
@@ -170,5 +172,7 @@ function _calculate_PTDF_matrix_MKLPardiso end
 function _calculate_LODF_matrix_MKLPardiso end
 function _pardiso_sequential_LODF! end
 function _pardiso_single_LODF! end
+
+include("precompile.jl")
 
 end
