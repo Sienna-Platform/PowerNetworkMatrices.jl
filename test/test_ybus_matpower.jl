@@ -11,7 +11,14 @@
         readdlm(joinpath(TEST_DATA_DIR, "ybus_10k_vals_re.csv"), real(YBUS_ELTYPE))
     matpower_vals_im =
         readdlm(joinpath(TEST_DATA_DIR, "ybus_10k_vals_im.csv"), real(YBUS_ELTYPE))
-    ybus_pnm = Ybus(sys)
+    # MATPOWER's makeYbus does no zero-impedance bus merging, so disable PNM's
+    # auto-applied ZeroImpedanceBranchReduction to compare the unreduced matrices.
+    ybus_pnm = Ybus(
+        sys;
+        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+            susceptance_threshold = Inf,
+        ),
+    )
     @test nnz(ybus_pnm.data) ==
           length(filter(!iszero, matpower_vals_re .+ im .* matpower_vals_im))
     for (col, row, val_re, val_im) in
@@ -30,7 +37,14 @@ end
         readdlm(joinpath(TEST_DATA_DIR, "ybus_cats_vals_re.csv"), real(YBUS_ELTYPE))
     matpower_vals_im =
         readdlm(joinpath(TEST_DATA_DIR, "ybus_cats_vals_im.csv"), real(YBUS_ELTYPE))
-    ybus_pnm = Ybus(sys)
+    # MATPOWER's makeYbus does no zero-impedance bus merging, so disable PNM's
+    # auto-applied ZeroImpedanceBranchReduction to compare the unreduced matrices.
+    ybus_pnm = Ybus(
+        sys;
+        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+            susceptance_threshold = Inf,
+        ),
+    )
     @test nnz(ybus_pnm.data) ==
           length(filter(!iszero, matpower_vals_re .+ im .* matpower_vals_im))
     for (col, row, val_re, val_im) in
@@ -62,7 +76,14 @@ end
             joinpath(TEST_DATA_DIR, "ybus_case5_transformers_vals_im.csv"),
             real(YBUS_ELTYPE),
         )
-    ybus_pnm = Ybus(sys)
+    # MATPOWER's makeYbus does no zero-impedance bus merging, so disable PNM's
+    # auto-applied ZeroImpedanceBranchReduction to compare the unreduced matrices.
+    ybus_pnm = Ybus(
+        sys;
+        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+            susceptance_threshold = Inf,
+        ),
+    )
     @test nnz(ybus_pnm.data) ==
           length(filter(!iszero, matpower_vals_re .+ im .* matpower_vals_im))
     for (col, row, val_re, val_im) in

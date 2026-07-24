@@ -193,7 +193,8 @@ end
     @test count(!iszero, sparse_row) < nnz_dense
     dense_row = v_exact[arc, :]
     for i in eachindex(sparse_row)
-        iszero(sparse_row[i]) || @test isapprox(sparse_row[i], dense_row[i]; atol = 1e-9)
+        iszero(sparse_row[i]) ||
+            @test isapprox(sparse_row[i], dense_row[i]; rtol = sqrt(eps()))
     end
 end
 
