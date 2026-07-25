@@ -110,7 +110,7 @@ end
 
 @testset "BA: phase-shifting transformer susceptance ignores the phase angle" begin
     # A phase shifter's off-diagonal Ybus is asymmetric, so a single entry folds α into b. BA
-    # must match the phase-independent PSY.get_series_susceptance = 1/(a x): b independent of α.
+    # must match the phase-independent PNM.get_series_susceptance = 1/(a x): b independent of α.
     function _mk_pst_sys(α)
         sys, buses = _mk_bus_system(3)
         arc12 = Arc(; from = buses[1], to = buses[2])
@@ -118,19 +118,22 @@ end
         _add_test_line!(sys, "L12", arc12, 0.0, 0.1)
         arc23 = Arc(; from = buses[2], to = buses[3])
         add_component!(sys, arc23)
-        pst = PhaseShiftingTransformer(;
+        pst = PSY.TwoWindingTransformer(;
             name = "PST23",
-            available = true,
-            active_power_flow = 0.0,
-            reactive_power_flow = 0.0,
-            arc = arc23,
-            r = 0.01,
-            x = 0.2,
-            primary_shunt = 0.0,
-            tap = 1.05,
-            α = α,
-            rating = 1.0,
-            base_power = 100.0,
+            circuit = PSY.TransformerCircuit(;
+                available = true,
+                arc = arc23,
+                tap = 1.05,
+                α = α,
+                r = 0.01,
+                x = 0.2,
+                active_power_flow = 0.0,
+                reactive_power_flow = 0.0,
+                rating = 1.0,
+                base_power = 100.0,
+                base_voltage_primary = 1.0,
+            ),
+            magnetizing_shunt = 0.0,
         )
         add_component!(sys, pst)
         return sys, pst
@@ -144,7 +147,7 @@ end
     end
 
     _, pst = _mk_pst_sys(0.0)
-    target = PSY.get_series_susceptance(pst)  # 1 / (tap * x) = 1 / (1.05 * 0.2)
+    target = PNM.get_series_susceptance(pst, PSY.SU)  # 1 / (tap * x) = 1 / (1.05 * 0.2)
     for α in (0.0, 0.3, -0.5)
         sys, _ = _mk_pst_sys(α)
         b = _pst_susceptance(sys)

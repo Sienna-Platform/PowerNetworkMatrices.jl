@@ -22,7 +22,7 @@ TimeSeries = "9e3dc215-6440-5c97-bce1-76c03772f85e"
 
 [sources]
 InfrastructureSystems = {rev = "IS4", url = "https://github.com/NREL-Sienna/InfrastructureSystems.jl"}
-PowerFlowFileParser = {rev = "main", url = "https://github.com/NREL-Sienna/PowerFlowFileParser.jl"}
+PowerFlowFileParser = {rev = "psy6", url = "https://github.com/NREL-Sienna/PowerFlowFileParser.jl"}
 PowerSystemCaseBuilder = {rev = "psy6", url = "https://github.com/NREL-Sienna/PowerSystemCaseBuilder.jl"}
 PowerSystems = {rev = "psy6", url = "https://github.com/NREL-Sienna/PowerSystems.jl"}
 

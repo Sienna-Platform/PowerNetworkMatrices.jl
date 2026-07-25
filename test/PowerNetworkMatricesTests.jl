@@ -24,8 +24,13 @@ Aqua.test_undefined_exports(PowerNetworkMatrices)
 Aqua.test_ambiguities(PowerNetworkMatrices)
 Aqua.test_stale_deps(PowerNetworkMatrices; ignore = [:Pardiso])
 Aqua.test_deps_compat(PowerNetworkMatrices)
-Aqua.find_persistent_tasks_deps(PowerNetworkMatrices)
-Aqua.test_persistent_tasks(PowerNetworkMatrices)
+# `find_persistent_tasks_deps`/`test_persistent_tasks` are deliberately not run: they
+# precompile PNM inside a throwaway temp project that does not inherit this repo's
+# `[sources]` git pins, so PowerSystems resolves to the *registered* release instead of the
+# psy6 branch and PNM fails to load there (`UndefVarError: TransformerCircuit not defined in
+# PowerSystems`) for reasons unrelated to persistent tasks. PSY and PowerFlows stop at
+# `test_deps_compat` for the same reason; restore these once psy6 is released and the pins
+# come off.
 
 const BASE_DIR = dirname(dirname(Base.find_package("PowerNetworkMatrices")))
 const TEST_DATA_DIR = joinpath(

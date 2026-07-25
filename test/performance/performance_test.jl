@@ -51,6 +51,14 @@ function record_failure(label)
     end
 end
 
+# Contingencies on phase-shifting branches are unsupported (PNM's
+# `_assert_not_phase_shifting` throws), so they are skipped when registering outages. Phase
+# shifting is per-circuit data rather than a type, so this dispatches like PNM's own
+# `_skip_parallel_reduction` instead of testing a type.
+_skip_contingency(::ACTransmission) = false
+_skip_contingency(t::TwoWindingTransformer) = PSY.is_phase_shifting(t)
+_skip_contingency(t::ThreeWindingTransformer) = PSY.is_phase_shifting(t)
+
 for (group, name) in systems
     sys = build_system(group, name)
     # Dense PTDF/LODF are infeasible for very large systems; they exercise VirtualPTDF and a
@@ -117,7 +125,7 @@ for (group, name) in systems
         max_ctgs = is_large ? MAX_LARGE_SYSTEM_CONTINGENCIES : typemax(Int)
         added = 0
         for branch in get_components(ACTransmission, modf_sys)
-            typeof(branch) <: PhaseShiftingTransformer && continue
+            _skip_contingency(branch) && continue
             added >= max_ctgs && break
             outage = FixedForcedOutage(; outage_status = 1.0)
             add_supplemental_attribute!(modf_sys, branch, outage)

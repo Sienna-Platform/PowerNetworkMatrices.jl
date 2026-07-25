@@ -96,15 +96,14 @@ Construct a BA_Matrix from a Ybus matrix.
 # Phase-independent DC series susceptance for a phase-shifting-transformer arc, read from its
 # branch component(s) so the phase angle is ignored (`get_series_susceptance` is `1/(a x)`; the
 # shift is applied separately as an injection by the power-flow solver). A phase shifter is
-# always a direct, parallel, or three-winding branch, so this finds it; returns `NaN` otherwise.
+# always a direct or parallel branch, so this finds it; returns `NaN` otherwise. Three-winding
+# circuits need no separate lookup: `add_to_branch_maps!` files each available circuit into
+# `direct_branch_map` as a `ThreeWindingTransformerCircuit`.
 function _arc_component_susceptance(nr_data::NetworkReductionData, arc::Tuple{Int, Int})
     direct_map = get_direct_branch_map(nr_data)
-    haskey(direct_map, arc) && return get_series_susceptance(direct_map[arc])
+    haskey(direct_map, arc) && return get_series_susceptance(direct_map[arc], PSY.SU)
     parallel_map = get_parallel_branch_map(nr_data)
-    haskey(parallel_map, arc) && return get_series_susceptance(parallel_map[arc])
-    transformer3W_map = get_transformer3W_map(nr_data)
-    haskey(transformer3W_map, arc) &&
-        return get_series_susceptance(transformer3W_map[arc])
+    haskey(parallel_map, arc) && return get_series_susceptance(parallel_map[arc], PSY.SU)
     return NaN
 end
 
