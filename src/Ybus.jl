@@ -279,14 +279,13 @@ function add_to_branch_maps!(
     parallel_branch_map = get_parallel_branch_map(nr)
     reverse_parallel_branch_map = get_reverse_parallel_branch_map(nr)
     arc_tuple = get_arc_tuple(arc, nr)
-    # A phase shifter is never folded into a parallel-equivalent group: the parallel
-    # susceptance model cannot represent a per-branch phase shift.
-    if haskey(parallel_branch_map, arc_tuple) && !_is_phase_shifting(br)
+    # Phase-shifting members are legitimate group members (the ZIR merge path already
+    # produces them): Ybus and per-member flow evaluation are exact; the single-π
+    # equivalent constraint is enforced in `_get_equivalent_physical_branch_parameters`.
+    if haskey(parallel_branch_map, arc_tuple)
         _push_parallel_branch!(parallel_branch_map, arc_tuple, br)
         reverse_parallel_branch_map[br] = arc_tuple
-    elseif haskey(direct_branch_map, arc_tuple) &&
-           !_is_phase_shifting(direct_branch_map[arc_tuple]) &&
-           !_is_phase_shifting(br)
+    elseif haskey(direct_branch_map, arc_tuple)
         corresponding_branch = direct_branch_map[arc_tuple]
         delete!(direct_branch_map, arc_tuple)
         delete!(reverse_direct_branch_map, corresponding_branch)

@@ -848,6 +848,86 @@ function _mk_bus_system(n::Int)
     return sys, buses
 end
 
+# Detached components suffice for map-filing tests: `add_to_branch_maps!` only reads arc bus
+# numbers, never impedances (which require an attached system).
+function _mk_detached_pst_fixture()
+    b1 = ACBus(;
+        number = 1, name = "b1", available = true, bustype = ACBusTypes.REF,
+        angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
+        base_voltage = 230.0,
+    )
+    b2 = ACBus(;
+        number = 2, name = "b2", available = true, bustype = ACBusTypes.PV,
+        angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
+        base_voltage = 230.0,
+    )
+    function _mk_fixture_line(name)
+        return Line(;
+            name = name, available = true, active_power_flow = 0.0,
+            reactive_power_flow = 0.0, arc = Arc(; from = b1, to = b2),
+            r = 0.0, x = 0.1, b = (from = 0.0, to = 0.0), rating = 1.0,
+            angle_limits = (min = -1.5, max = 1.5),
+        )
+    end
+    function _mk_fixture_pst(name, α)
+        return PSY.TwoWindingTransformer(;
+            name = name,
+            circuit = PSY.TransformerCircuit(;
+                arc = Arc(; from = b1, to = b2), tap = 1.0, α = α,
+                available = true, active_power_flow = 0.0, reactive_power_flow = 0.0,
+                rating = 1.0, base_power = 100.0, base_voltage_primary = 230.0,
+                r = 0.0, x = 0.2,
+            ),
+            magnetizing_shunt = Complex(0.0, 0.0),
+        )
+    end
+    return (
+        _mk_fixture_line("L1"),
+        _mk_fixture_line("L2"),
+        _mk_fixture_pst("PST1", 0.15),
+        _mk_fixture_pst("PST2", 0.10),
+    )
+end
+
+# Every branch filed on the arc must be reachable in exactly one reverse map, and the arc must
+# live in exactly one forward map.
+function _assert_arc_maps_complete(nr, branches)
+    arc_tuple = (1, 2)
+    direct = PNM.get_direct_branch_map(nr)
+    parallel = PNM.get_parallel_branch_map(nr)
+    if length(branches) == 1
+        @test haskey(direct, arc_tuple)
+        @test !haskey(parallel, arc_tuple)
+        @test PNM.get_reverse_direct_branch_map(nr)[branches[1]] == arc_tuple
+    else
+        @test !haskey(direct, arc_tuple)
+        @test haskey(parallel, arc_tuple)
+        @test length(parallel[arc_tuple]) == length(branches)
+        for br in branches
+            @test PNM.get_reverse_parallel_branch_map(nr)[br] == arc_tuple
+        end
+    end
+end
+
+@testset "issue 305: add_to_branch_maps! never drops a co-arc branch" begin
+    (line, line2, pst1, pst2) = _mk_detached_pst_fixture()
+    orderings = [
+        [line, pst1],          # regular first, shifter second (issue's table)
+        [pst1, line],          # shifter first
+        [pst1, pst2],          # PST ∥ PST (m-bossart's question)
+        [line, pst1, pst2],    # Line+PST+PST (orennia-juan's question)
+        [pst1, pst2, line],    # shifters first, regular last
+        [line, line2, pst1],   # shifter joins an existing homogeneous group
+    ]
+    for branches in orderings
+        nr = PNM.NetworkReductionData()
+        for br in branches
+            PNM.add_to_branch_maps!(nr, PSY.get_arc(br), br)
+        end
+        _assert_arc_maps_complete(nr, branches)
+    end
+end
+
 # Add a `Line` named `name` on `arc` with series impedance `(r, x)` and no charging.
 function _add_test_line!(sys, name, arc, r, x)
     add_component!(
