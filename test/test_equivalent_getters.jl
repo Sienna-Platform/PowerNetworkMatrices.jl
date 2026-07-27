@@ -58,6 +58,17 @@
     emergency_rating_eq = PNM.get_equivalent_emergency_rating(bp)
     @test emergency_rating_eq ≈ 250.0 atol = 1e-6
 
+    # A parallel group's normal-operation equivalent rating is the sum of its members: every
+    # circuit on the arc carries flow at once. The N-1 value is reserved for a parallel block
+    # embedded in a series chain (`_series_member_rating`).
+    @test PNM.get_equivalent_rating(bp) ≈ 250.0 atol = 1e-6
+
+    # Regression: `branch_flow_limits` used to reach a `get_equivalent_rating` with no
+    # parallel-group method and raise a MethodError.
+    fl_bp = PNM.branch_flow_limits(bp)
+    @test fl_bp.from_to ≈ 250.0 atol = 1e-6
+    @test fl_bp.to_from ≈ 250.0 atol = 1e-6
+
     bs = PNM.BranchesSeries()
     PNM.add_branch!(bs, line1, :FromTo)
     PNM.add_branch!(bs, line2, :FromTo)

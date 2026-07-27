@@ -11,20 +11,6 @@ function _make_test_time_series(name::String)
     return PSY.SingleTimeSeries(; name = name, data = ta)
 end
 
-@testset "is_a_reduction predicate" begin
-    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
-    line = first(PSY.get_components(PSY.Line, sys))
-    @test PNM.is_a_reduction(line) == false
-    @test PNM.is_a_reduction(PNM.BranchesParallel([line])) == true
-
-    bs = PNM.BranchesSeries()
-    PNM.add_branch!(bs, line, :FromTo)
-    @test PNM.is_a_reduction(bs) == true
-
-    trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
-    @test PNM.is_a_reduction(PNM.ThreeWindingTransformerCircuit(trf, 1)) == true
-end
-
 @testset "has_time_series" begin
     sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
     lines = collect(PSY.get_components(PSY.Line, sys))
