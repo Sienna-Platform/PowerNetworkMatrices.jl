@@ -487,10 +487,12 @@ end
 Compute the post-modification PTDF row for a monitored arc under the given modification.
 Gets or computes Woodbury factors, then applies the Woodbury correction.
 
-For N-1 contingencies, the result satisfies:
-```julia
-post_ptdf[mon, :] = pre_ptdf[mon, :] + LODF[mon, e] * pre_ptdf[e, :]
+For N-1 contingencies, the result satisfies
+```math
+\\mathrm{post}[\\mathrm{mon}, :] = \\mathrm{pre}[\\mathrm{mon}, :] + \\mathrm{LODF}[\\mathrm{mon}, e] \\, \\mathrm{pre}[e, :],
 ```
+where ``\\mathrm{pre}`` and ``\\mathrm{post}`` are the base and post-contingency PTDF and
+``e`` is the outaged arc.
 """
 function _compute_modf_entry(
     vmodf::VirtualMODF,

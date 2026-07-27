@@ -4,7 +4,8 @@ Structure containing the BA matrix and related network topology data.
 The BA matrix represents the branch-bus incidence matrix weighted by branch susceptances,
 computed as the product ``B A`` of the incidence matrix ``A`` (the [`IncidenceMatrix`](@ref))
 and the susceptance matrix ``B`` — the diagonal matrix of branch series susceptances
-(``b = 1/x`` under the DC approximation).
+(``b = 1/x`` under the DC approximation, or ``b = 1/(a x)`` for a branch with off-nominal
+tap ratio ``a``).
 
 # Fields
 - `data::SparseArrays.SparseMatrixCSC{Float64, Int}`:
@@ -207,7 +208,7 @@ calculations, and linear power system studies.
 
 # Notes
 - Reference buses are excluded from the matrix to ensure invertibility
-- Factorization enables efficient solving of linear systems ``Ax = b``
+- Factorization enables efficient solving of linear systems ``\\mathrm{ABA}\\, \\theta = P``
 - Used primarily for DC power flow analysis and power system sensitivity studies
 - Supports various network reduction techniques for computational efficiency
 """
