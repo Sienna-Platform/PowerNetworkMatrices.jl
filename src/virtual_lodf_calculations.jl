@@ -504,7 +504,7 @@ Uses the Sherman-Morrison (matrix inversion lemma) formula derived from DC power
 sensitivity analysis. For a change ``\\Delta b`` in the susceptance of arc ``e``, the change in flow
 on monitoring arc ``\\ell`` per unit pre-change flow on arc ``e`` is
 ```math
-\\mathrm{partialLODF}[\\ell, e] = \\alpha \\, \\frac{b_\\ell}{b_e} \\, \\frac{H[\\ell, e]}{1 - \\alpha \\, H[e, e]},
+\\mathrm{partialLODF}[\\ell, e] = \\alpha \\, \\frac{b_\\ell}{b_e} \\, \\frac{H[\\ell, e]}{1 - \\alpha \\, H[e, e]}
 ```
 where:
 - ``\\alpha = -\\Delta b / b_e`` (positive for outage/decrease, negative for increase)

@@ -448,7 +448,7 @@ efficient when the prerequisite matrices with factorization are already availabl
 # Mathematical Computation
 This method computes LODF using the factorized form ``H = A\\, \\mathrm{ABA}^{-1} \\mathrm{BA}``,
 ```math
-\\mathrm{LODF}[\\ell, e] = \\frac{H[\\ell, e]}{1 - H[e, e]},
+\\mathrm{LODF}[\\ell, e] = \\frac{H[\\ell, e]}{1 - H[e, e]}
 ```
 where:
 - ``A`` is the incidence matrix (the [`IncidenceMatrix`](@ref))
