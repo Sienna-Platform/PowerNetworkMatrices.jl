@@ -1,6 +1,6 @@
 # PowerNetworkMatrices.jl (PNM) — psy6 branch
 
-The linear-algebra layer of the psy6 stack: Ybus, Incidence/Adjacency, BA/ABA, PTDF, LODF, lazy Virtual{PTDF,LODF,MODF}, contingency machinery (`ContingencySpec`, Woodbury updates), and **network reductions, which PNM owns exclusively**. Purely computational — the data model is PSY's. Layer 2; consumed by PowerFlows and PowerOperationsModels. Platform conventions: `.claude/Sienna.md`; workspace architecture: `/home/jdlara/Sienna_work/psy6/CLAUDE.md`.
+The linear-algebra layer of the psy6 stack: Ybus, Incidence/Adjacency, BA/ABA, PTDF, LODF, lazy Virtual{PTDF,LODF,MODF}, contingency machinery (`ContingencySpec`, Woodbury updates), and **network reductions, which PNM owns exclusively**. Purely computational — the data model is PSY's. Layer 2; consumed by PowerFlows and PowerOperationsModels. Platform conventions: `.claude/Sienna.md`; workspace architecture: the psy6 workspace root `CLAUDE.md`.
 
 ## The ownership contract (defining psy6 fact)
 
@@ -74,7 +74,7 @@ julia --project=docs docs/make.jl
 julia --project=scripts/formatter -e 'include("scripts/formatter/formatter_code.jl")'
 ```
 
-Compile-check: `julia --project=/home/jdlara/Sienna_work/psy6 -e 'using PowerNetworkMatrices'`.
+Compile-check: `julia --project=<psy6-workspace-root> -e 'using PowerNetworkMatrices'`.
 
 ReTest notes: don't use `@test_logs` to assert warnings (MethodError on failure) — use a custom `AbstractLogger`; verify testset registration with `run_tests(dry=true)`. The formatter also walks `docs/` with `format_markdown=true` — fenced blocks must carry a language label (`bash`/`text`/`julia`) or it aborts.
 
