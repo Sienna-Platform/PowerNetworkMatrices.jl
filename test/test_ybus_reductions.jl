@@ -928,6 +928,89 @@ end
     end
 end
 
+# Attached 3-bus system with L1 ∥ PST on (1, 2) and L2 on (2, 3). Attached (not detached, as
+# in `_mk_detached_pst_fixture`) because impedance reads need `base_value`, which only
+# `add_component!` populates.
+function _mk_line_pst_parallel_system(; pst_r = 0.0)
+    sys, buses = _mk_bus_system(3)
+    function _mk_sys_line(name, f, t)
+        arc = Arc(; from = buses[f], to = buses[t])
+        add_component!(sys, arc)
+        add_component!(
+            sys,
+            Line(;
+                name = name, available = true, active_power_flow = 0.0,
+                reactive_power_flow = 0.0, arc = arc, r = 0.0, x = 0.1,
+                b = (from = 0.0, to = 0.0), rating = 1.0,
+                angle_limits = (min = -1.5, max = 1.5),
+            ),
+        )
+        return arc
+    end
+    pst_arc = _mk_sys_line("L1", 1, 2)
+    _mk_sys_line("L2", 2, 3)
+    # PST shares L1's Arc — a second `Arc(; from = buses[1], to = buses[2])` collides on the
+    # auto-derived component name ("b1 -> b2"), same reasoning as `_mk_zi_parallel_sys` above.
+    add_component!(
+        sys,
+        PSY.TwoWindingTransformer(;
+            name = "PST",
+            circuit = PSY.TransformerCircuit(;
+                arc = pst_arc, tap = 1.0, α = 0.15, available = true,
+                active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
+                base_power = 100.0, base_voltage_primary = 230.0,
+                r = pst_r, x = 0.2,
+            ),
+            magnetizing_shunt = Complex(0.0, 0.0),
+        ),
+    )
+    return sys
+end
+
+@testset "issue 305: Line ∥ PST — Ybus, NRD completeness, BA susceptance" begin
+    sys = _mk_line_pst_parallel_system()
+    ybus = Ybus(sys)
+    nr = ybus.network_reduction_data
+
+    # NRD completeness: both branches on (1, 2) are in the parallel maps.
+    parallel = PNM.get_parallel_branch_map(nr)
+    @test haskey(parallel, (1, 2))
+    @test length(parallel[(1, 2)]) == 2
+    @test !haskey(PNM.get_direct_branch_map(nr), (1, 2))
+    reverse_parallel = PNM.get_reverse_parallel_branch_map(nr)
+    for br in parallel[(1, 2)]
+        @test reverse_parallel[br] == (1, 2)
+    end
+
+    # Group ybus entries match the accumulated Ybus (independent code path), including
+    # the phase-shift asymmetry. Bus 1 touches only the group, so its diagonal and both
+    # off-diagonals compare directly. Bus 2 also carries L2 (arc (2, 3)), so its diagonal
+    # in the accumulated Ybus is the group's contribution plus L2's own — isolate L2's
+    # share via the single-branch overload before comparing.
+    bl = ybus.lookup[1]
+    ip = bl[1]
+    iq = bl[2]
+    aware = PNM.ybus_branch_entries(parallel[(1, 2)], nr)
+    @test !isapprox(aware[2], aware[3])
+    @test aware[1] ≈ ybus.data[ip, ip]
+    @test aware[2] ≈ ybus.data[ip, iq]
+    @test aware[3] ≈ ybus.data[iq, ip]
+    l2 = PNM.get_direct_branch_map(nr)[(2, 3)]
+    l2_self = PNM.ybus_branch_entries(l2)[1]
+    @test aware[4] + l2_self ≈ ybus.data[iq, iq]
+
+    # BA takes the asymmetric-arc fallback: b = sum of member susceptances (α-independent).
+    # BA_Matrix stores the transpose of the docstring's row/column description — bus is the
+    # first axis/index and arc is the second (`get_bus_axis` = axes[1], `get_arc_axis` =
+    # axes[2]) — so the (from-bus, arc) entry is `ba.data[bus_ix, arc_ix]`.
+    ba = BA_Matrix(ybus)
+    b_expected = sum(
+        PNM.get_series_susceptance(br, PSY.SU) for br in parallel[(1, 2)]
+    )
+    arc_ix = findfirst(==((1, 2)), ba.axes[2])
+    @test ba.data[bl[1], arc_ix] ≈ b_expected
+end
+
 # Add a `Line` named `name` on `arc` with series impedance `(r, x)` and no charging.
 function _add_test_line!(sys, name, arc, r, x)
     add_component!(
