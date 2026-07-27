@@ -6,7 +6,7 @@
 # ([`BA_Matrix`](@ref)). This guide shows how to compute the shared pieces once and
 # feed them to the constructors that accept pre-built matrices.
 
-import PowerNetworkMatrices as PNM
+using PowerNetworkMatrices
 import PowerSystemCaseBuilder as PSB
 
 sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
@@ -15,39 +15,39 @@ sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
 
 # The construction dependency chain is
 #
-# > Ybus → IncidenceMatrix, BA_Matrix →
-# > `ABA_Matrix / PTDF, and PTDF → LODF.
+# > `Ybus` → `IncidenceMatrix`, `BA_Matrix` →
+# > `ABA_Matrix` / `PTDF`, and `PTDF` → `LODF`.
 #
 # The [`Ybus`](@ref) is the expensive shared root. Build it — and the incidence and
 # BA matrices derived from it — exactly once:
 
-ybus = PNM.Ybus(sys)
-A = PNM.IncidenceMatrix(ybus)
-BA = PNM.BA_Matrix(ybus)
+ybus = Ybus(sys)
+A = IncidenceMatrix(ybus)
+BA = BA_Matrix(ybus)
 
 # ## Reuse them across constructors
 
 # [`PTDF`](@ref) accepts the incidence and BA matrices directly, skipping its own
 # [`Ybus`](@ref) build:
 
-ptdf = PNM.PTDF(A, BA)
+ptdf = PTDF(A, BA)
 
 # [`LODF`](@ref) can be built straight from a [`PTDF`](@ref) you already have,
 # reusing that work too — no second factorization of the network:
 
-lodf = PNM.LODF(A, ptdf)
+lodf = LODF(A, ptdf)
 
 # Alternatively, the factorized [`ABA_Matrix`](@ref) route builds [`LODF`](@ref)
 # from the same `A` and `BA`. All three inputs must share the same network
 # reduction — which they do here, because they all descend from one `ybus`:
 
-aba = PNM.ABA_Matrix(ybus; factorize = true)
-lodf_via_aba = PNM.LODF(A, aba, BA)
+aba = ABA_Matrix(ybus; factorize = true)
+lodf_via_aba = LODF(A, aba, BA)
 
 # Virtual matrices likewise accept a pre-built [`Ybus`](@ref), so the lazy forms
 # reuse the same root:
 
-vptdf = PNM.VirtualPTDF(ybus)
+vptdf = VirtualPTDF(ybus)
 
 # !!! note "Keep reductions consistent"
 #

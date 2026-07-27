@@ -80,15 +80,16 @@
 # system and constructs the three matrices the rest of the tutorial uses.
 
 import PowerSystems as PSY
+using PowerNetworkMatrices
 import PowerNetworkMatrices as PNM
 import PowerSystemCaseBuilder as PSB
 using DataFrames
 
 sys = PSB.build_system(PSB.PSISystems, "RTS_GMLC_DA_sys");
 
-ptdf = PNM.PTDF(sys);
-lodf = PNM.LODF(sys);
-vmodf = PNM.VirtualMODF(sys);
+ptdf = PTDF(sys);
+lodf = LODF(sys);
+vmodf = VirtualMODF(sys);
 
 # `VirtualMODF` is the most general object — it can compute post-modification
 # PTDF rows under any contingency. We also build `PTDF` and `LODF` up front
@@ -206,7 +207,7 @@ otdf_closed = ptdf[m, b] + lodf[m, c] * ptdf[c, b]
 
 #
 
-ctg = PNM.NetworkModification(vmodf, c);
+ctg = NetworkModification(vmodf, c);
 row_c = vmodf[m, ctg];
 bus_lookup = PNM.get_bus_lookup(vmodf);
 otdf_vmodf = row_c[bus_lookup[b]]
@@ -249,10 +250,10 @@ significant = abs(flowgate_dfax) >= 0.05
 # modification by merging the `arc_modifications` of each single-arc
 # `NetworkModification` into one combined object:
 
-mod_ab2 = PNM.NetworkModification(vmodf, (113, 215));    # AB2 outage
-mod_ab3 = PNM.NetworkModification(vmodf, (123, 217));    # AB3 outage
+mod_ab2 = NetworkModification(vmodf, (113, 215));    # AB2 outage
+mod_ab3 = NetworkModification(vmodf, (123, 217));    # AB3 outage
 
-ctg_n2 = PNM.NetworkModification(
+ctg_n2 = NetworkModification(
     "AB2_and_AB3_out",
     vcat(collect(mod_ab2.arc_modifications),
         collect(mod_ab3.arc_modifications)),
@@ -288,9 +289,9 @@ flowgate_dfax_n2 =
 
 monitored = [(107, 203), (113, 215), (123, 217)];   # AB1, AB2, AB3
 
-ctg_ab2 = PNM.NetworkModification(vmodf, (113, 215));
-ctg_ab3 = PNM.NetworkModification(vmodf, (123, 217));
-ctg_ab2_ab3 = PNM.NetworkModification(
+ctg_ab2 = NetworkModification(vmodf, (113, 215));
+ctg_ab3 = NetworkModification(vmodf, (123, 217));
+ctg_ab2_ab3 = NetworkModification(
     "AB2_and_AB3_out",
     vcat(collect(ctg_ab2.arc_modifications),
         collect(ctg_ab3.arc_modifications)),

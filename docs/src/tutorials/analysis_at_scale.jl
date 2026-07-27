@@ -1,24 +1,13 @@
 # # Analysis at Scale
 
-# The [first tutorial](@ref "Getting Started") screened a *single* outage on a small
-# network with dense matrices. The everyday bulk-reliability job is bigger: the full
-# **N-1 screen** — trip every line in turn, and for each trip check whether any surviving
-# line is pushed past its rating. Pose it as one question:
+# > Across every single-line outage, which contingencies drive a surviving line closest to — or past — its limit?
 #
-# > *Across every single-line outage, which contingencies drive a surviving line closest
-# > to — or past — its limit?*
+# A dense [`PTDF`](@ref) or [`LODF`](@ref) is an `O(N²)` array of `Float64`, which on a real interconnection is tens of gigabytes, and a screen reads each row exactly once. This tutorial makes use of **virtual** matrices that compute rows on demand.
 #
-# The analysis itself is ordinary DC N-1: base-case flows from a [`PTDF`](@ref), then
-# post-contingency flows from an [`LODF`](@ref), compared against line ratings. What makes
-# it a *scale* problem is the matrices. A dense [`PTDF`](@ref) or [`LODF`](@ref) is an
-# `O(N²)` array of `Float64` — on a real interconnection that is tens of gigabytes, and a
-# screen reads each row exactly once. So we never materialize them: we run the identical
-# study on **virtual** matrices that compute rows on demand, and add a few memory
-# disciplines around them.
-#
-# !!! note "About the example system"
+# !!! note
 #     We use a small network (73 buses) for demonstration purposes.
 
+using PowerNetworkMatrices
 import PowerNetworkMatrices as PNM
 import PowerSystems as PSY
 import PowerSystemCaseBuilder as PSB
@@ -29,15 +18,11 @@ sys = PSB.build_system(PSB.PSISystems, "RTS_GMLC_DA_sys");
 
 # ## Step 1 — Set up the study: base-case flows and limits
 
-# Post-contingency flow needs two ordinary ingredients: the flow each line carries *now*,
-# and the limit it must stay under.
+# A post-contingency flow requires the flow each line carries at present and the limit it must stay under.
 
-# **Base-case flows.** Under the DC approximation a line's flow is its [`PTDF`](@ref) row
-# dotted with the vector of net bus injections (generation minus load). We build the
-# injection vector straight from the system — accumulating per bus, because a bus can host
-# several generators and loads — ordered to match the matrix's bus axis:
+# **Base-case flows.** Under the DC approximation a line's flow is its [`PTDF`](@ref) row dotted with the vector of net bus injections, that is, generation minus load. We build the injection vector from the system, accumulating per bus because a bus can host several generators and loads, ordered to match the matrix's bus axis.
 
-vptdf = PNM.VirtualPTDF(sys)
+vptdf = VirtualPTDF(sys)
 bus_lookup = PNM.get_bus_lookup(vptdf)
 
 injection = zeros(Float64, length(bus_lookup))
@@ -52,13 +37,9 @@ for load in PSY.get_components(d -> !isa(d, PSY.FixedAdmittance), PSY.ElectricLo
     injection[bus_lookup[PSY.get_number(PSY.get_bus(load))]] -= PSY.get_active_power(load)
 end
 
-# The system defaults to its per-unit *system base*, so these injections — and the ratings
-# we read below — are already on the same `100`-MVA base and directly comparable. The
-# injections need not sum to zero; the reference bus balances the difference, exactly as
-# the [`PTDF`](@ref) assumes.
+# The system defaults to its per-unit *system base*, so these injections and the ratings read below are already on the same `100`-MVA base and are directly comparable. The injections do not need to sum to zero because the reference bus balances the difference.
 
-# Now the base flow on every line. Each `vptdf[arc, :]` computes that line's [`PTDF`](@ref)
-# row on first access and caches it — one pass touches each row once:
+# The base flow on every line follows. Each `vptdf[arc, :]` computes that line's [`PTDF`](@ref) row on first access and caches it, so one pass touches each row once.
 
 arcs = vptdf.axes[1]
 base_flow = Dict(arc => dot(vptdf[arc, :], injection) for arc in arcs);
@@ -66,11 +47,10 @@ base_flow = Dict(arc => dot(vptdf[arc, :], injection) for arc in arcs);
 # !!! note
 #     Building *every* base flow this way touches the whole [`PTDF`](@ref), one row at a
 #     time. When only the base flows are needed, the sparse `ABA`/`BA` DC solve
-#     ([`ABA_Matrix`](@ref), [`BA_Matrix`](@ref)) gets them in a single factorization; the
-#     row-at-a-time route here is what the N-1 screen below needs anyway.
+#     ([`ABA_Matrix`](@ref), [`BA_Matrix`](@ref)) obtains them in a single factorization;
+#     the row-at-a-time route here is what the N-1 screen below requires anyway.
 
-# **Line limits.** Read each branch's rating and key it by arc. Parallel branches share an
-# arc, so we sum their ratings into the combined corridor limit:
+# **Line limits.** Each branch's rating is read and keyed by arc. Parallel branches share an arc, so their ratings are summed into the combined corridor limit.
 
 line_rating = Dict{Tuple{Int, Int}, Float64}()
 for branch in PSY.get_components(PSY.ACTransmission, sys)
@@ -79,23 +59,15 @@ for branch in PSY.get_components(PSY.ACTransmission, sys)
     line_rating[key] = get(line_rating, key, 0.0) + PSY.get_rating(branch)
 end
 
-# ## Step 2 — Screen every contingency on a virtual LODF
+# ## Step 2 — Screen every contingency on a VirtualLODF
 
-# The [`LODF`](@ref) gives the redistribution: when `outaged` trips, line `monitored`
-# picks up `LODF[monitored, outaged]` of the outaged line's pre-trip flow. So the
-# post-contingency flow on `monitored` is `base_flow[monitored] +
-# LODF[monitored, outaged] · base_flow[outaged]`, and its **loading** is that over its
-# rating.
+# The [`LODF`](@ref) gives the redistribution: when `outaged` trips, line `monitored` picks up `LODF[monitored, outaged]` of the outaged line's pre-trip flow. The post-contingency flow on `monitored` is therefore `base_flow[monitored] + LODF[monitored, outaged] · base_flow[outaged]`, and its **loading** is that quantity over its rating.
 
-# [`VirtualLODF`](@ref) builds and indexes exactly like the dense [`LODF`](@ref) — same
-# constructor, same `[monitored, outaged]` indexing — but never forms the whole matrix.
-# `max_cache_size` caps the row cache in MiB:
+# [`VirtualLODF`](@ref) is constructed and indexed exactly like the dense [`LODF`](@ref), with the same constructor and the same `[monitored, outaged]` indexing, but never forms the whole matrix. `max_cache_size` caps the row cache in MiB.
 
-vlodf = PNM.VirtualLODF(sys; max_cache_size = 100)
+vlodf = VirtualLODF(sys; max_cache_size = 100)
 
-# A **row** — one monitored line's factors against every outage — is the unit the cache
-# stores, so we sweep row by row: compute each monitored line's row once, then score it
-# against every outage. We keep, for each outage, the single worst-loaded survivor:
+# A **row**, meaning one monitored line's factors against every outage, is the unit the cache stores, so the sweep proceeds row by row: compute each monitored line's row once, then score it against every outage. For each outage we keep the single worst-loaded survivor.
 
 lines = vlodf.axes[1]
 outage_col = vlodf.lookup[2]
@@ -115,8 +87,7 @@ for monitored in lines
     end
 end
 
-# Rank the outages by the worst loading they cause — the top of this list is the operator's
-# work queue:
+# Ranking the outages by the worst loading they cause gives the screen's result.
 
 screen = sort(
     DataFrame(;
@@ -127,75 +98,32 @@ screen = sort(
     :loading; rev = true,
 )
 
-# There is the answer. The day-ahead schedule is **not** N-1 secure — most single-line
-# outages here push some surviving line over its rating:
+# The day-ahead schedule is **not** N-1 secure: most single-line outages here push some surviving line over its rating.
 
 count(>(1.0), screen.loading)
 
-# The worst contingency drives a line to roughly `1.3×` its limit. Notice the top pair:
-# tripping `(107, 108)` overloads `(107, 203)` and vice versa — they are a tightly coupled
-# corridor, each inheriting essentially the *entire* flow of the other. The numbers are
-# identical to a dense [`LODF`](@ref); the difference is that we never held one.
+# The worst contingency drives a line to roughly `1.3×` its limit. The top pair is reciprocal — tripping `(107, 108)` overloads `(107, 203)` and vice versa — because they form a tightly coupled corridor in which each inherits essentially the entire flow of the other. The numbers are identical to those of a dense [`LODF`](@ref); the difference is that no dense matrix was ever stored.
 
-# **The memory story.** The sweep visited every row, so all of them are now cached:
+# The sweep visited every row, so all of them are now cached.
 
 length(vlodf.cache)
 
-# On RTS-GMLC that is ~108 short rows — a rounding error in memory, which is why nothing
-# was evicted. At real scale it is the opposite: the rows do not all fit, and
-# `max_cache_size` is the hard ceiling. Once the cache is full the **least-recently-used**
-# row is dropped; a full screen still completes, trading a bounded memory footprint for
-# recomputing an evicted row if the screen returns to it. That trade is what lets an N-1
-# screen run on a grid whose dense [`LODF`](@ref) would never fit.
+# On RTS-GMLC that is approximately 108 short rows, a negligible memory footprint, which is why nothing was evicted. At realistic scale the situation is the opposite: the rows do not all fit, and `max_cache_size` is a hard ceiling. Once the cache is full the **least-recently-used** row is dropped. A full screen still completes, trading a bounded memory footprint for the recomputation of an evicted row should the screen return to it. That trade is what allows an N-1 screen to run on a grid whose dense [`LODF`](@ref) would not fit.
 
 # ## Step 3 — Reuse rows across operating points
 
-# This screen is not run once. It reruns every operating point — but the [`LODF`](@ref) is
-# a property of the **topology**, not the dispatch: the factors do not change from hour to
-# hour, only the base flows they multiply do. So a study that reruns the screen wants its
-# rows to *stay* resident rather than be recomputed each pass.
+# This screen is not run once. It reruns at every operating point, but the [`LODF`](@ref) is a property of the **topology** rather than the dispatch: the factors do not change from hour to hour, only the base flows they multiply. A study that reruns the screen therefore wants its rows to remain resident rather than be recomputed on each pass.
 
-# In practice you monitor a defined set of facilities every cycle — here, the inter-area
-# tie corridors. Declare them up front as `persistent_arcs`: those rows are held in the
-# cache and **exempt from eviction**, so no amount of churn from the rest of a screen can
-# force them to be re-solved:
+# In practice a defined set of facilities is monitored every cycle, here the inter-area tie corridors. Declaring them up front as `persistent_arcs` holds those rows in the cache and makes them **exempt from eviction**, so no amount of churn from the rest of a screen can force them to be re-solved.
 
 tie_lines = [(107, 203), (113, 215), (123, 217)]
-vlodf_watch = PNM.VirtualLODF(sys; persistent_arcs = tie_lines, max_cache_size = 100)
+vlodf_watch = VirtualLODF(sys; persistent_arcs = tie_lines, max_cache_size = 100)
 
-# Across repeated operating points you now recompute only the base flows (cheap) and read
-# the tie-line factors straight from the pinned rows. [`VirtualPTDF`](@ref) takes the same
-# keyword. Pinned rows still count against the budget, so the constructor errors if the
-# pinned set alone would exceed `max_cache_size`.
+# Across repeated operating points only the base flows are recomputed, which is cheap, and the tie-line factors are read straight from the pinned rows. [`VirtualPTDF`](@ref) takes the same keyword. Pinned rows still count against the budget, so the constructor errors if the pinned set alone would exceed `max_cache_size`.
 
-# ## Step 4 — Shrink the network to scale further
+# ## Step 4 — Reclaim the memory
 
-# A second lever is to make the matrices smaller before you build them. Real grids carry
-# buses that add nothing to a redistribution screen — dead-end (radial) buses and
-# pass-through (degree-two) buses. Supplying `network_reductions` removes them (see
-# [Getting Started](@ref) for the guarantee that surviving sensitivities are unchanged):
-
-reductions = PNM.NetworkReduction[PNM.RadialReduction(), PNM.DegreeTwoReduction()]
-vlodf_reduced = PNM.VirtualLODF(sys; network_reductions = reductions)
-length(vlodf.axes[1]), length(vlodf_reduced.axes[1])
-
-# RTS-GMLC is compact and meshed, so only a handful of arcs drop here; on a full
-# interconnection with long sub-transmission tails, reduction routinely removes a large
-# fraction of the network. Either way the screen's answer is untouched — the worst
-# contingency's factor is identical before and after:
-
-vlodf[(107, 203), (107, 108)], vlodf_reduced[(107, 203), (107, 108)]
-
-# Both essentially `1.0`: when `(107, 108)` trips, `(107, 203)` still inherits its entire
-# flow. (One caveat when screening a *reduced* network against ratings: a degree-two merge
-# fuses several branches into one equivalent arc whose limit is an aggregate — reach for
-# [`get_single_element_contingency_rating`](@ref) and the related aggregated-rating
-# accessors rather than a single branch's `PSY.get_rating`.)
-
-# ## Step 5 — Reclaim the memory when you are done
-
-# For [`VirtualPTDF`](@ref) / [`VirtualLODF`](@ref), empty the row cache in place to free
-# it (pinned rows go too, with a warning):
+# For [`VirtualPTDF`](@ref) and [`VirtualLODF`](@ref), the row cache is emptied in place to free it. Pinned rows are removed too, with a warning.
 
 empty!(vlodf.cache)
 
@@ -206,4 +134,4 @@ empty!(vlodf.cache)
 #   - [How to Define and Apply Contingencies](@ref) — [`VirtualMODF`](@ref) for
 #     multi-element post-contingency factors, the next step past single-line screening.
 #   - [Computational Considerations](@ref) — the sparsity and complexity behind why the
-#     dense matrices are the ones you avoid at scale.
+#     dense matrices are the ones to avoid at scale.

@@ -133,7 +133,7 @@ struct with an empty cache.
 - `tol::Float64 = eps()`:
         Tolerance related to sparsification and values to drop.
 - `max_cache_size::Int`:
-        max cache size in MiB (initialized as MAX_CACHE_SIZE_MiB).
+        max cache size in MiB (initialized as `MAX_CACHE_SIZE_MiB`).
 - `persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}()`:
         arcs to be evaluated as soon as the VirtualPTDF is created (initialized as empty vector of tuples).
 - `network_reduction::NetworkReduction`:
@@ -211,7 +211,7 @@ The return is a VirtualPTDF struct with an empty cache.
 - `tol::Float64 = eps()`:
         Tolerance related to sparsification and values to drop.
 - `max_cache_size::Int`:
-        max cache size in MiB (initialized as MAX_CACHE_SIZE_MiB).
+        max cache size in MiB (initialized as `MAX_CACHE_SIZE_MiB`).
 - `persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}()`:
         arcs to be evaluated as soon as the VirtualPTDF is created (initialized as empty vector of tuples).
 """

@@ -214,7 +214,8 @@ end
 
 """
 Validates that the user bus input is consistent with the ybus axes and the prior reductions.
-Is used to check `irreducible_buses` for `Radial` and `DegreeTwo` reductions and `study_buses` for `WardReduction`.
+Is used to check `irreducible_buses` for [`RadialReduction`](@ref) and
+[`DegreeTwoReduction`](@ref), and `study_buses` for [`WardReduction`](@ref).
 """
 function validate_buses(A::PowerNetworkMatrix, buses::Set{Int})
     reverse_bus_search_map = get_network_reduction_data(A).reverse_bus_search_map
@@ -259,8 +260,8 @@ reference bus positions.
         BA matrix.
 
 NOTE:
-- evaluates A with "calculate_A_matrix", or extract A.data (if A::IncidenceMatrix)
-- evaluates BA with "calculate_BA_matrix", or extract BA.data (if A::BA_Matrix)
+- evaluates A with `calculate_A_matrix`, or extracts `A.data` (if `A::IncidenceMatrix`)
+- evaluates BA with `calculate_BA_matrix`, or extracts `BA.data` (if `BA::BA_Matrix`)
 """
 function calculate_ABA_matrix(
     A::SparseArrays.SparseMatrixCSC{Int8, Int},
@@ -498,7 +499,7 @@ end
         -> Tuple{Symbol, Union{Tuple{Int, Int}, Nothing}}
 
 Classify a branch component by looking up which reverse map it belongs to in the
-`NetworkReductionData`. Returns `(tag, arc_tuple)` where `tag` is one of:
+[`NetworkReductionData`](@ref). Returns `(tag, arc_tuple)` where `tag` is one of:
 - `:direct`       -- branch is the sole branch on its arc
 - `:parallel`     -- branch is one of several parallel branches on its arc
 - `:series`       -- branch is part of a series chain on its arc

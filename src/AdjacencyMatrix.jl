@@ -7,7 +7,7 @@ This matrix describes the directed connectivity between buses, where non-zero en
 electrical connections through transmission lines, transformers, or other network elements.
 
 The matrix is indexed using bus numbers, which do not need to be sequential. Each element
-`A[i,j]` is non-zero if there is a direct electrical connection between bus `i` and bus `j`.
+``A[i,j]`` is non-zero if there is a direct electrical connection between bus ``i`` and bus ``j``.
 Diagonal elements are typically zero since self-loops are not meaningful in power network topology.
 
 # Fields

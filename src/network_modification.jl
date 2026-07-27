@@ -105,7 +105,7 @@ end
 """
     _compute_arc_ybus_delta(nr, arc_tuple, delta_b) -> NTuple{4, YBUS_ELTYPE}
 
-Compute the Pi-model Ybus delta `(ΔY11, ΔY12, ΔY21, ΔY22)` for an arc modification by
+Compute the Pi-model Ybus delta ``(\\Delta Y_{11}, \\Delta Y_{12}, \\Delta Y_{21}, \\Delta Y_{22})`` for an arc modification by
 dispatching to the per-map handler that owns `arc_tuple`.
 """
 function _compute_arc_ybus_delta(
@@ -140,8 +140,8 @@ end
 """
 $(TYPEDSIGNATURES)
 
-Construct a full arc outage `NetworkModification` by bus-pair tuple.
-Looks up arc susceptance from the matrix and sets `Δb = -b_arc`.
+Construct a full arc outage [`NetworkModification`](@ref) by bus-pair tuple.
+Looks up arc susceptance from the matrix and sets ``\\Delta b = -b_\\mathrm{arc}``.
 """
 function NetworkModification(mat::PowerNetworkMatrix, arc::Tuple{Int, Int})
     arc_lookup = get_arc_lookup(mat)
@@ -158,7 +158,7 @@ end
 """
 $(TYPEDSIGNATURES)
 
-Construct a `NetworkModification` from a branch component using network
+Construct a [`NetworkModification`](@ref) from a branch component using network
 reduction reverse maps to classify the branch as direct, parallel, or series.
 """
 function NetworkModification(mat::PowerNetworkMatrix, branch::PSY.ACTransmission)
@@ -175,7 +175,7 @@ end
 """
 $(TYPEDSIGNATURES)
 
-Construct a `NetworkModification` from a `ThreeWindingTransformer` component.
+Construct a [`NetworkModification`](@ref) from a `PSY.ThreeWindingTransformer` component.
 Automatically decomposes the transformer into its three winding arcs and classifies
 each one. For a partial outage (single winding trip), use a
 `ThreeWindingTransformerWinding` instead.
@@ -242,7 +242,7 @@ end
 """
 $(TYPEDSIGNATURES)
 
-Construct a `NetworkModification` from a `PSY.Outage` supplemental attribute.
+Construct a [`NetworkModification`](@ref) from a `PSY.Outage` supplemental attribute.
 Resolves the outage's associated `ACTransmission` components through the system,
 classifies each by the matrix's network reduction maps, and builds the
 modification. Handles multi-component outages with series-chain grouping.
@@ -609,7 +609,7 @@ end
 """
     compute_ybus_delta(ybus::Ybus, mod::NetworkModification) -> SparseMatrixCSC{YBUS_ELTYPE, Int}
 
-Compute the sparse ΔYbus matrix from a canonical `NetworkModification`.
+Compute the sparse ``\\Delta Y_\\mathrm{bus}`` matrix from a canonical `NetworkModification`.
 Combines arc modifications (branch outages producing Pi-model deltas) and
 shunt modifications (diagonal admittance changes) into a single sparse delta.
 
@@ -657,8 +657,8 @@ end
 """
     apply_ybus_modification(ybus::Ybus, mod::NetworkModification) -> SparseMatrixCSC
 
-Apply a canonical NetworkModification to a Ybus, returning the modified sparse matrix.
-Convenience wrapper around `compute_ybus_delta`.
+Apply a canonical [`NetworkModification`](@ref) to a [`Ybus`](@ref), returning the modified
+sparse matrix. Convenience wrapper around [`compute_ybus_delta`](@ref).
 """
 function apply_ybus_modification(
     ybus::Ybus,

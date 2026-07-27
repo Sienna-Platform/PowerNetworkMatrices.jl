@@ -2,15 +2,16 @@
 Structure containing the Power Transfer Distribution Factor (PTDF) matrix and related power system data.
 
 The PTDF matrix contains sensitivity coefficients that quantify how power injections at buses
-affect the power flows on transmission lines. Each element PTDF[i,j] represents the incremental
-change in flow on line i due to a unit power injection at bus j, under DC power flow assumptions.
+affect the power flows on transmission lines. Each element ``\\mathrm{PTDF}[i,j]`` represents the
+incremental change in flow on line ``i`` due to a unit power injection at bus ``j``, under DC power
+flow assumptions.
 
 # Fields
 - `data::M <: AbstractArray{Float64, 2}`:
         The PTDF matrix data stored in transposed form for computational efficiency.
         Element (i,j) represents the sensitivity of line j flow to bus i injection
 - `axes::Ax`:
-        Tuple containing (bus_numbers, branch_identifiers) for matrix dimensions
+        Tuple containing `(bus_numbers, branch_identifiers)` for matrix dimensions
 - `lookup::L <: NTuple{2, Dict}`:
         Tuple of dictionaries providing fast lookup from bus/branch identifiers to matrix indices
 - `subnetwork_axes::Dict{Int, Ax}`:
@@ -21,9 +22,9 @@ change in flow on line i due to a unit power injection at bus j, under DC power 
         Container for network reduction information applied during matrix construction
 
 # Mathematical Properties
-- **Matrix Form**: PTDF[i,j] = ∂f_i/∂P_j where f_i is flow on line i, P_j is injection at bus j
-- **Dimensions**: (n_buses × n_arcs) for all buses and impedance arcs
-- **Linear Superposition**: Total flow = Σ(PTDF[i,j] × P_j) for all injections P_j
+- **Matrix Form**: ``\\mathrm{PTDF}[i,j] = \\partial f_i / \\partial P_j`` where ``f_i`` is flow on line ``i`` and ``P_j`` is injection at bus ``j``
+- **Dimensions**: `(n_buses × n_arcs)` for all buses and impedance arcs
+- **Linear Superposition**: ``f_i = \\sum_j \\mathrm{PTDF}[i,j] \\, P_j`` over all injections ``P_j``
 - **Physical Meaning**: Values represent the fraction of bus injection that flows through each line
 - **Reference Bus**: Rows corresponding to reference buses are typically zero
 
@@ -396,7 +397,7 @@ direct control over the underlying matrix computations.
 # Construction Process
 1. **Incidence Matrix**: Builds bus-branch connectivity matrix A (from Ybus matrix)
 2. **BA Matrix**: Computes branch susceptance weighted incidence matrix
-3. **PTDF Computation**: Calculates power transfer distribution factors using ``A^\\top B^{-1} A``
+3. **PTDF Computation**: Calculates power transfer distribution factors using ``A^\\top B A``
 4. **Distributed Slack**: Applies distributed slack correction if specified
 5. **Sparsification**: Removes small elements based on tolerance threshold
 

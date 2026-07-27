@@ -56,7 +56,7 @@ with only one connection that do not affect the electrical behavior of the core 
 - `A::SparseArrays.SparseMatrixCSC{Int8, Int}`:
         The incidence matrix data representing bus-branch connectivity structure
 - `arc_map::Dict{Tuple{Int, Int}, Int}`:
-        Dictionary mapping branch endpoint pairs (from_bus, to_bus) to matrix row indices
+        Dictionary mapping branch endpoint pairs `(from_bus, to_bus)` to matrix row indices
 - `bus_map::Dict{Int, Int}`:
         Dictionary mapping bus numbers to matrix column indices
 - `ref_bus_positions::Set{Int}`:

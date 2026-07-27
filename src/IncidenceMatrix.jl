@@ -4,15 +4,15 @@ Structure containing the network incidence matrix and related topology data.
 The incidence matrix A represents the bus-branch connectivity of the power network, where
 each row corresponds to a branch and each column corresponds to a bus. Elements are:
 - +1 for the "from" bus of a branch
-- -1 for the "to" bus of a branch  
+- -1 for the "to" bus of a branch
 - 0 for buses not connected to the branch
 
 # Fields
 - `data::SparseArrays.SparseMatrixCSC{Int8, Int}`:
-        The incidence matrix data with dimensions (n_branches × n_buses). Values are {-1, 0, +1}
+        The incidence matrix data with dimensions `(n_branches × n_buses)`. Values are {-1, 0, +1}
         representing the directed connectivity between branches and buses
 - `axes::Ax`:
-        Tuple containing (arc_identifiers, bus_numbers) where arcs are branch endpoint pairs
+        Tuple containing `(arc_identifiers, bus_numbers)` where arcs are branch endpoint pairs
         and buses are the network bus numbers
 - `lookup::L <: NTuple{2, Dict}`:
         Tuple of dictionaries providing fast lookup from arc/bus identifiers to matrix indices
@@ -22,14 +22,14 @@ each row corresponds to a branch and each column corresponds to a bus. Elements 
         Container for network reduction information applied during matrix construction
 
 # Mathematical Properties
-- **Matrix Dimensions**: (n_branches × n_buses)
+- **Matrix Dimensions**: `(n_branches × n_buses)`
 - **Element Values**: {-1, 0, +1} representing directed branch-bus connectivity
 - **Row Sum**: Each row sums to zero (conservation at branch level)
-- **Rank**: Rank is (n_buses - n_islands) for connected networks
+- **Rank**: Rank is `(n_buses - n_islands)` for connected networks
 - **Sparsity**: Very sparse with exactly 2 non-zero elements per branch row
 
 # Applications
-- **Power Flow**: Forms the basis for DC power flow equations: P = A^T * f
+- **Power Flow**: Forms the basis for DC power flow equations: ``P = A^\\top f``
 - **Sensitivity Analysis**: Used in PTDF and LODF calculations
 - **Network Analysis**: Identifies connected components and network structure
 - **Topology Processing**: Enables network reduction and equivalencing algorithms
@@ -38,7 +38,7 @@ each row corresponds to a branch and each column corresponds to a bus. Elements 
 - Each branch contributes exactly one row with two non-zero entries (+1, -1)
 - Reference buses are preserved in the matrix but identified separately
 - Supports various network reduction techniques for computational efficiency
-- Essential building block for BA_Matrix and ABA_Matrix constructions
+- Essential building block for [`BA_Matrix`](@ref) and [`ABA_Matrix`](@ref) constructions
 """
 struct IncidenceMatrix{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
        PowerNetworkMatrix{Int8}
@@ -103,7 +103,7 @@ and creating the bus-branch connectivity matrix fundamental to power system anal
         Whether to include constant impedance loads as shunt admittances in the network model
 - `subnetwork_algorithm=iterative_union_find`: 
         Algorithm used for identifying electrical islands and connected components
-- Additional keyword arguments are passed to the underlying `Ybus` constructor
+- Additional keyword arguments are passed to the underlying [`Ybus`](@ref) constructor
 
 # Returns
 - `IncidenceMatrix`: The constructed incidence matrix structure containing:
@@ -119,8 +119,8 @@ and creating the bus-branch connectivity matrix fundamental to power system anal
 5. **Network Reductions**: Applies specified reduction algorithms if provided
 
 # Applications
-- **Foundation Matrix**: Essential for constructing BA_Matrix and ABA_Matrix
-- **DC Power Flow**: Enables linearized power flow analysis through P = A^T * f
+- **Foundation Matrix**: Essential for constructing [`BA_Matrix`](@ref) and [`ABA_Matrix`](@ref)
+- **DC Power Flow**: Enables linearized power flow analysis through ``P = A^\\top f``
 - **Sensitivity Analysis**: Required for PTDF, LODF, and other sensitivity calculations
 - **Network Analysis**: Supports topology processing and network equivalencing
 
@@ -168,8 +168,8 @@ structure already captured in the Ybus matrix.
 5. **Metadata Transfer**: Preserves reference bus positions and network reduction information
 
 # Mathematical Properties
-- **Matrix Form**: A[i,j] = +1 if branch i originates at bus j, -1 if it terminates at bus j, 0 otherwise
-- **Dimensions**: (n_branches × n_buses) including all network branches and buses
+- **Matrix Form**: ``A[i,j] = +1`` if branch ``i`` originates at bus ``j``, ``-1`` if it terminates at bus ``j``, ``0`` otherwise
+- **Dimensions**: `(n_branches × n_buses)` including all network branches and buses
 - **Sparsity**: Exactly 2 non-zero entries per branch row (except for isolated buses)
 - **Consistency**: Maintains the same network topology and reduction state as the source Ybus
 
@@ -177,7 +177,7 @@ structure already captured in the Ybus matrix.
 - This constructor is more efficient when a Ybus matrix is already available
 - Preserves all network reduction information from the source matrix
 - Isolated buses are handled explicitly to maintain network completeness
-- Essential for creating downstream matrices like BA_Matrix and ABA_Matrix from existing Ybus
+- Essential for creating downstream matrices like [`BA_Matrix`](@ref) and [`ABA_Matrix`](@ref) from an existing Ybus
 """
 function IncidenceMatrix(ybus::Ybus)
     nr = ybus.network_reduction_data

@@ -221,7 +221,7 @@ contingency registrations, so subsequent queries will simply recompute. Use
 
 [^woodbury]: The Sherman–Morrison–Woodbury identity; see G. H. Golub and
     C. F. Van Loan, *Matrix Computations*, 4th ed., Johns Hopkins, 2013, §2.1.4,
-    or [https://en.wikipedia.org/wiki/Woodbury_matrix_identity](https://en.wikipedia.org/wiki/Woodbury_matrix_identity).
+    or [Woodbury matrix identity](https://en.wikipedia.org/wiki/Woodbury_matrix_identity).
 [^mod030]: NERC Reliability Standard MOD-030, *Flowgate Methodology* (Available
     Flowgate Capability). [https://www.nerc.com](https://www.nerc.com)
 [^lodf]: The line outage distribution factor and its expression in terms of the

@@ -2,7 +2,7 @@
 Serialize the PTDF to an HDF5 file.
 
 Only the dense [`PTDF`](@ref) type can be serialized; there is no HDF5 path for
-`LODF`, `Ybus`, the DC susceptance matrices, or any virtual matrix. The file
+[`LODF`](@ref), [`Ybus`](@ref), the DC susceptance matrices, or any virtual matrix. The file
 stores the matrix data, `tol`, axes, lookups, and per-subnetwork axes, but **not**
 the [`NetworkReductionData`](@ref): a PTDF built with `network_reductions` loses
 that context on a round-trip and is rehydrated with an empty reduction. Keep the

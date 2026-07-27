@@ -30,7 +30,7 @@ cache and skips the recomputation.
 - `A::SparseArrays.SparseMatrixCSC{Int8, Int}`:
         Incidence matrix.
 - `PTDF_A_diag::Vector{Float64}`:
-        Diagonal of `PTDF·A` (H[e,e] values). Lazily populated on the first
+        Diagonal of ``\\mathrm{PTDF} \\, A`` (``H[e,e]`` values). Lazily populated on the first
         read of `vmodf.PTDF_A_diag`; empty until then.
 - `arc_susceptances::Vector{Float64}`:
         Effective susceptance for each arc.
@@ -41,7 +41,7 @@ cache and skips the recomputation.
 - `dist_slack::Vector{Float64}`:
         Distributed slack bus weights.
 - `axes::Ax`:
-        Tuple of (arc_axis, bus_axis).
+        Tuple of `(arc_axis, bus_axis)`.
 - `lookup::L`:
         Tuple of lookup dictionaries for indexing.
 - `valid_ix::Vector{Int}`:
@@ -276,7 +276,7 @@ auto-applied during `Ybus` construction.
         A `Float64` applies a fixed absolute cutoff; an [`AutoTolerance`](@ref)
         (the default) applies a relative per-row cutoff so requested columns stay
         sparse on large systems.
-- `max_cache_size::Int`: Max cache size in MiB per contingency (default: MAX_CACHE_SIZE_MiB)
+- `max_cache_size::Int`: Max cache size in MiB per contingency (default: `MAX_CACHE_SIZE_MiB`)
 - `network_reductions::Vector{NetworkReduction}`: Network reductions to apply
 - `automatically_register_outages::Bool`: Register all system Outage attributes (default: true)
 """
@@ -488,7 +488,9 @@ Compute the post-modification PTDF row for a monitored arc under the given modif
 Gets or computes Woodbury factors, then applies the Woodbury correction.
 
 For N-1 contingencies, the result satisfies:
-    post_ptdf[mon, :] = pre_ptdf[mon, :] + LODF[mon, e] * pre_ptdf[e, :]
+```julia
+post_ptdf[mon, :] = pre_ptdf[mon, :] + LODF[mon, e] * pre_ptdf[e, :]
+```
 """
 function _compute_modf_entry(
     vmodf::VirtualMODF,
@@ -624,11 +626,11 @@ end
     clear_all_caches!(vmodf::VirtualMODF)
 
 Clear all caches including contingency registrations. After calling this function,
-the `VirtualMODF` object is effectively empty and cannot be queried — it has
-no registered contingencies. To restore functionality, a new `VirtualMODF` must
+the [`VirtualMODF`](@ref) object is effectively empty and cannot be queried — it has
+no registered contingencies. To restore functionality, a new [`VirtualMODF`](@ref) must
 be constructed from a `PSY.System`.
 
-Use `clear_caches!` instead to preserve contingency registrations while
+Use [`clear_caches!`](@ref) instead to preserve contingency registrations while
 freeing computation cache memory.
 """
 function clear_all_caches!(vmodf::VirtualMODF)

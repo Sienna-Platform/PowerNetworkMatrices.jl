@@ -27,9 +27,9 @@ your feedback, suggestions, and bug reports.
 The documentation follows the [Diátaxis](https://diataxis.fr/) framework, split
 into four kinds of material:
 
-  - **[Tutorials](tutorials/generated_getting_started.md)** — learning-oriented
-    journeys, each answering one question end to end. Start with
-    [Getting Started](tutorials/generated_getting_started.md), which screens a line
+  - **[Tutorials](tutorials/generated_introduction.md)** — learning-oriented
+    journeys, each answering one question end to end. Start with the
+    [Introduction](tutorials/generated_introduction.md), which screens a line
     outage on a small network with a PTDF, an LODF, and a reduction; then
     [Analysis at Scale](tutorials/generated_analysis_at_scale.md) does the same at
     scale with virtual matrices and cache control.

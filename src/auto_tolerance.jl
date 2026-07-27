@@ -7,13 +7,13 @@ matrix is sparsified with a *relative* per-row cutoff: an entry is dropped when
 |\\mathrm{entry}| < \\alpha \\cdot \\max|\\mathrm{row}|,
 \\qquad \\alpha = \\mathrm{clamp}(\\mathrm{safety} \\cdot \\delta, \\, 10^{-6}, \\, 10^{-2}),
 ```
-where `δ` is the relative precision of the branch data. Because the cutoff is
+where ``\\delta`` is the relative precision of the branch data. Because the cutoff is
 relative to each row's own peak, columns of large, ill-conditioned systems stay
 sparse regardless of the conditioning of `ABA`; the 1-norm condition estimate of
 `ABA` is still computed and logged as a diagnostic, but never multiplies the
 cutoff.
 
-- `data_precision`: relative precision `δ` of the branch parameters. `:auto`
+- `data_precision`: relative precision ``\\delta`` of the branch parameters. `:auto`
   (default) discovers it from the branch susceptances (see
   [`discover_data_precision`](@ref)); a `Float64` sets it explicitly (e.g. `1e-3`
   for reactances good to 0.1%).
@@ -30,7 +30,7 @@ the large virtual matrices ([`VirtualPTDF`](@ref) / [`VirtualLODF`](@ref) /
 a no-op, preserving the `Matrix{Float64}` element type.
 
 A plain `Float64` `tol` is accepted by every constructor and applies a fixed *absolute*
-cutoff (`|entry| < tol`) at any system size, dense or virtual — the backward-compatible,
+cutoff (``|\\mathrm{entry}| < \\mathrm{tol}``) at any system size, dense or virtual — the backward-compatible,
 exact-tolerance path.
 
 # Examples

@@ -38,7 +38,7 @@ construction options (`linear_solver`, `tol`) and arc-tuple indexing.
     redistributes onto `monitored`. Both dimensions are arcs; diagonal entries
     are structurally `-1.0`, and are preserved when sparsifying.
 
-Network reductions reach both through `YBus(...; network_reductions = [...])`.
+Network reductions reach both through `Ybus(...; network_reductions = [...])`.
 `LODF(A, PTDF)` warns and densifies if the supplied [`PTDF`](@ref) was itself sparsified, since
 that degrades LODF accuracy. Only [`PTDF`](@ref) supports HDF5 serialization (see
 the [`to_hdf5`](@ref) / [`from_hdf5`](@ref) docstrings).

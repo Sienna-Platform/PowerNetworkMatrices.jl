@@ -29,6 +29,7 @@
 
 # The examples below use a small test system loaded with `PowerSystemCaseBuilder`:
 
+using PowerNetworkMatrices
 import PowerNetworkMatrices as PNM
 import PowerSystemCaseBuilder as PSB
 
@@ -45,9 +46,9 @@ sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
 #
 # Use [`PTDF`](@ref) with the KLU solver (the default off Apple hardware):
 
-ptdf_matrix = PNM.PTDF(sys)  # platform default
-## or explicitly:
-ptdf_matrix = PNM.PTDF(sys; linear_solver = "KLU");
+ptdf_matrix = PTDF(sys)  # platform default
+# or explicitly:
+ptdf_matrix = PTDF(sys; linear_solver = "KLU");
 
 # ### Use Apple Accelerate When:
 #
@@ -56,7 +57,9 @@ ptdf_matrix = PNM.PTDF(sys; linear_solver = "KLU");
 #
 # Select it explicitly with:
 
-ptdf_matrix = PNM.PTDF(sys; linear_solver = "AppleAccelerateLU");
+# ```julia
+# ptdf_matrix = PTDF(sys; linear_solver = "AppleAccelerateLU");
+# ```
 
 # ### Use Dense When:
 #
@@ -66,7 +69,7 @@ ptdf_matrix = PNM.PTDF(sys; linear_solver = "AppleAccelerateLU");
 #
 # Specify the Dense solver explicitly:
 
-ptdf_matrix = PNM.PTDF(sys; linear_solver = "Dense");
+ptdf_matrix = PTDF(sys; linear_solver = "Dense");
 
 # ### Use MKLPardiso When:
 #
@@ -80,7 +83,7 @@ ptdf_matrix = PNM.PTDF(sys; linear_solver = "Dense");
 
 # ```julia
 # using Pardiso   # loads the MKLPardisoExt extension
-# ptdf_matrix = PNM.PTDF(sys; linear_solver = "MKLPardiso")
+# ptdf_matrix = PTDF(sys; linear_solver = "MKLPardiso")
 # ```
 
 # ## Performance Considerations
@@ -114,7 +117,7 @@ ptdf_matrix = PNM.PTDF(sys; linear_solver = "Dense");
 # zero-injection star bus:
 
 # ```julia
-# ptdf = PNM.PTDF(sys; linear_solver = "KLU")   # safe when singularity is possible
+# ptdf = PTDF(sys; linear_solver = "KLU")   # safe when singularity is possible
 # ```
 
 # ### Persisting a preferred backend

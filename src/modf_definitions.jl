@@ -110,7 +110,7 @@ No dependency on `PSY.System` after construction.
 
 Modification vectors are converted to tuples at construction time to guarantee
 immutability. This is required because `NetworkModification` is used as a `Dict`
-key (via custom `hash`/`==`) in VirtualMODF caches; mutable fields would
+key (via custom `hash`/`==`) in [`VirtualMODF`](@ref) caches; mutable fields would
 silently corrupt lookups if modified after insertion.
 """
 struct NetworkModification

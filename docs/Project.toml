@@ -9,6 +9,9 @@ PowerSystemCaseBuilder = "f00506e0-b84f-492a-93c2-c0a9afc4364e"
 PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
 PrettyTables = "08abe8d2-0d0c-5749-adfa-8a2ac140af0d"
 
+[sources]
+PowerNetworkMatrices = {path = ".."}
+
 [compat]
 Documenter = "1"
 julia = "^1.10"

@@ -2,9 +2,9 @@
 Structure containing the Line Outage Distribution Factor (LODF) matrix and related power system data.
 
 The LODF matrix contains sensitivity coefficients that quantify how the outage of one transmission
-line affects the power flows on all other lines in the system. Each element LODF[i,j] represents
-the change in flow on line i when line j is taken out of service, normalized by the pre-outage
-flow on line j.
+line affects the power flows on all other lines in the system. Each element ``\\mathrm{LODF}[i,j]``
+represents the change in flow on line ``i`` when line ``j`` is taken out of service, normalized by
+the pre-outage flow on line ``j``.
 
 # Fields
 - `data::M <: AbstractArray{Float64, 2}`:
@@ -22,8 +22,8 @@ flow on line j.
         Container for network reduction information applied during matrix construction
 
 # Mathematical Properties
-- **Matrix Form**: LODF[i,j] = ∂f_i/∂P_j where f_i is flow on line i, P_j is injection change due to line j outage
-- **Dimensions**: (n_branches × n_branches) for all transmission lines in the system
+- **Matrix Form**: ``\\mathrm{LODF}[i,j] = \\partial f_i / \\partial P_j`` where ``f_i`` is flow on line ``i`` and ``P_j`` is the injection change due to the outage of line ``j``
+- **Dimensions**: `(n_branches × n_branches)` for all transmission lines in the system
 - **Diagonal Elements**: Always -1 (100% flow reduction on the outaged line itself)
 - **Symmetry**: Generally non-symmetric matrix reflecting directional flow sensitivities
 - **Physical Meaning**: Values represent fraction of pre-outage flow that redistributes to other lines
@@ -203,7 +203,8 @@ end
     Computes the LODF matrix using the internal Apple Accelerate backend
     (`AccelerateWrapper`). Available only on macOS. Shape mirrors
     `_calculate_LODF_matrix_KLU(a, ptdf)` exactly: factor the diagonal "demand"
-    matrix `diag(1 - PTDF·A)` and solve in place against `a · ptdf`.
+    matrix ``\\mathrm{diag}(1 - \\mathrm{PTDF} \\, A)`` and solve in place against
+    ``A \\, \\mathrm{PTDF}``.
 
     # Arguments
     - `a::SparseArrays.SparseMatrixCSC{Int8, Int}`: Incidence Matrix
@@ -428,8 +429,8 @@ efficient when the prerequisite matrices with factorization are already availabl
 
 # Arguments
 - `A::IncidenceMatrix`: The incidence matrix containing bus-branch connectivity information
-- `ABA::ABA_Matrix`: The bus susceptance matrix (A^T * B * A), preferably with KLU factorization
-- `BA::BA_Matrix`: The branch susceptance weighted incidence matrix (B * A)
+- `ABA::ABA_Matrix`: The bus susceptance matrix ``A^\\top B A``, preferably with KLU factorization
+- `BA::BA_Matrix`: The branch susceptance weighted incidence matrix ``B A``
 
 # Keyword Arguments
 - `linear_solver::String = "KLU"`:

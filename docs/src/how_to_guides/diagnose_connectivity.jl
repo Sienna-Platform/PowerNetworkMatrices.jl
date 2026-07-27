@@ -6,7 +6,7 @@
 # This guide walks through the check, then deliberately breaks a network so you can see
 # exactly what a fragmented result looks like — and how to get back.
 
-import PowerNetworkMatrices as PNM
+using PowerNetworkMatrices
 import PowerSystems as PSY
 import PowerSystemCaseBuilder as PSB
 
@@ -17,19 +17,19 @@ sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
 # [`validate_connectivity`](@ref) returns `true` when the system forms a single
 # connected component:
 
-PNM.validate_connectivity(sys)
+validate_connectivity(sys)
 
 # [`find_subnetworks`](@ref) shows the decomposition behind that answer: a `Dict`
 # mapping each island's reference bus to the set of bus numbers in it. A connected
 # system yields a **single** entry:
 
-PNM.find_subnetworks(sys)
+find_subnetworks(sys)
 
 # Both functions also accept an already-built [`AdjacencyMatrix`](@ref) or
 # [`Ybus`](@ref), so a matrix you already have on hand is reused instead of rebuilt:
 
-adj = PNM.AdjacencyMatrix(sys)
-PNM.validate_connectivity(adj)
+adj = AdjacencyMatrix(sys)
+validate_connectivity(adj)
 
 # ## Step 2 — Disconnect a bus and watch it split
 
@@ -51,12 +51,12 @@ end
 
 # The network is now split. `validate_connectivity` reports it:
 
-PNM.validate_connectivity(sys)
+validate_connectivity(sys)
 
 # ...and `find_subnetworks` returns **two** entries — the main island, and bus `5`
 # stranded on its own:
 
-PNM.find_subnetworks(sys)
+find_subnetworks(sys)
 
 # There is the diagnosis. That second island — the isolated `{5}` — has no reference
 # bus of its own, which is exactly the block that would have made `ABA` singular. The
@@ -72,11 +72,11 @@ for br in incident
     PSY.set_available!(br, true)
 end
 
-PNM.validate_connectivity(sys)
+validate_connectivity(sys)
 
 # ...and the decomposition is back to a single island, identical to where we started:
 
-PNM.find_subnetworks(sys)
+find_subnetworks(sys)
 
 # ## Choosing a traversal algorithm
 
@@ -93,7 +93,7 @@ PNM.find_subnetworks(sys)
 # keyword also threads through the matrix constructors, so islands are detected the same
 # way at build time as by an explicit [`find_subnetworks`](@ref) call:
 
-PNM.ABA_Matrix(sys; subnetwork_algorithm = PNM.depth_first_search);
+ABA_Matrix(sys; subnetwork_algorithm = depth_first_search);
 
 # ## See also
 #

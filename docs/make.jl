@@ -16,7 +16,7 @@ make_literate_folder("how_to_guides")
 pages = OrderedDict(
     "Welcome Page" => "index.md",
     "Tutorials" => Any[
-        "Getting Started" => "tutorials/generated_getting_started.md",
+        "Introduction" => "tutorials/generated_introduction.md",
         "Analysis at Scale" => "tutorials/generated_analysis_at_scale.md",
     ],
     "How-To Guides" => Any[

@@ -16,6 +16,7 @@
 #   - `PowerNetworkMatrices.jl` and `PowerSystems.jl` installed
 #   - A power system model
 
+using PowerNetworkMatrices
 import PowerNetworkMatrices as PNM
 import PowerSystems as PSY
 import PowerSystemCaseBuilder as PSB
@@ -41,12 +42,12 @@ end
 # public `register_contingency` — construct the matrix from a system that already
 # carries its outages.
 
-vmodf = PNM.VirtualMODF(sys)
+vmodf = VirtualMODF(sys)
 
 # Inspect what was registered with [`get_registered_contingencies`](@ref). It
 # returns a `Dict{UUID, ContingencySpec}` keyed by the source outage's UUID:
 
-contingencies = PNM.get_registered_contingencies(vmodf)
+contingencies = get_registered_contingencies(vmodf)
 
 # ## Query a Monitored Arc Under a Contingency
 
@@ -61,7 +62,7 @@ contingencies = PNM.get_registered_contingencies(vmodf)
 
 arcs = PNM.get_arc_axis(vmodf);
 monitored_arc = arcs[1];
-ctg = PNM.NetworkModification(vmodf, arcs[2]);
+ctg = NetworkModification(vmodf, arcs[2]);
 
 # The returned row carries one post-contingency sensitivity per bus:
 
@@ -119,13 +120,13 @@ row = vmodf[monitored_arc, ctg]
 
 # ```julia
 # arc_index = PNM.get_arc_lookup(vmodf)[(1, 4)]
-# arc_mod = PNM.ArcModification(arc_index, -5.0)   # Δb removes the arc's susceptance
+# arc_mod = ArcModification(arc_index, -5.0)   # Δb removes the arc's susceptance
 #
 # bus_index = PNM.get_bus_lookup(vmodf)[3]
-# shunt_mod = PNM.ShuntModification(bus_index, ComplexF32(-0.1im))
+# shunt_mod = ShuntModification(bus_index, ComplexF32(-0.1im))
 #
 # # Combine arc and shunt changes into one modification (label, arcs, shunts, islanding)
-# custom = PNM.NetworkModification("arc_and_shunt", [arc_mod], [shunt_mod], false)
+# custom = NetworkModification("arc_and_shunt", [arc_mod], [shunt_mod], false)
 # vmodf[monitored_arc, custom]
 # ```
 
@@ -140,10 +141,10 @@ row = vmodf[monitored_arc, ctg]
 # [`get_post_modification_ptdf_row`](@ref). It applies a [`NetworkModification`](@ref)
 # through the same Woodbury correction:
 
-vptdf = PNM.VirtualPTDF(sys)
+vptdf = VirtualPTDF(sys)
 varcs = PNM.get_arc_axis(vptdf);
-mod = PNM.NetworkModification(vptdf, varcs[2]);
-row_oneshot = PNM.get_post_modification_ptdf_row(vptdf, varcs[1], mod)
+mod = NetworkModification(vptdf, varcs[2]);
+row_oneshot = get_post_modification_ptdf_row(vptdf, varcs[1], mod)
 
 # Indexing is the equivalent form — it returns the same row:
 

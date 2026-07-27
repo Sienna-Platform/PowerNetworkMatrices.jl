@@ -70,15 +70,15 @@ Every matrix type is a constructor that takes the
 identical across types — only the name changes:
 
 ```julia
-import PowerNetworkMatrices as PNM
+using PowerNetworkMatrices
 import PowerSystemCaseBuilder as PSB
 
 sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
 
-ptdf = PNM.PTDF(sys)
-lodf = PNM.LODF(sys)
-ybus = PNM.Ybus(sys)
-aba = PNM.ABA_Matrix(sys)
+ptdf = PTDF(sys)
+lodf = LODF(sys)
+ybus = Ybus(sys)
+aba = ABA_Matrix(sys)
 ```
 
 The shared build-time keywords — `network_reductions`, `tol`, `linear_solver`,
@@ -148,7 +148,6 @@ compatibility but is slower and less direct than arc-tuple indexing.
 using PowerNetworkMatrices
 import PowerSystems as PSY
 import PowerSystemCaseBuilder as PSB
-import PowerNetworkMatrices as PNM
 
 sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
 ptdf = PTDF(sys)
@@ -218,6 +217,8 @@ prefix (commonly aliased `PNM.`) and are documented here.
     assumes a full outage) does not cover.
 
 ```julia
+import PowerNetworkMatrices as PNM
+
 PNM.get_axes(ptdf)     # (bus-number vector, arc-tuple vector)
 PNM.get_lookup(ptdf)   # (bus lookup Dict, arc lookup Dict)
 PNM.get_data(ybus)     # raw SparseMatrixCSC
@@ -248,7 +249,7 @@ They are defined only for the dimensions a matrix actually has:
 | `ABA_Matrix`          | `axes[1]`         | — (both dims bus) |
 | `PTDF`                | `axes[1]`         | `axes[2]`         |
 | `LODF`                | — (both dims arc) | `axes[1]`         |
-| `VirtualPTDF`         | ✓                 | ✓                 |
+| `VirtualPTDF`         | `axes[1]`         | `axes[2]`         |
 | `VirtualLODF`         | — (both dims arc) | `axes[1]`         |
 | `VirtualMODF`         | `axes[2]`         | `axes[1]`         |
 
@@ -300,6 +301,3 @@ This overview is the entry point. Detailed reference lives on the sibling pages:
     symbol, including the reduction specs, `NetworkReductionData`, and the
     aggregated-branch rating functions.
   - [Internals](internals.md) — the KLU and Accelerate solver submodules.
-
-```
-```

@@ -8,7 +8,7 @@ electrical parameters needed for power flow calculations and network analysis.
 # Fields
 - `data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int}`: Sparse Y-bus matrix with complex admittance values
 - `adjacency_data::SparseArrays.SparseMatrixCSC{Int8, Int}`: Network connectivity information
-- `axes::Ax`: Tuple of bus axis vectors for indexing (bus_numbers, bus_numbers)
+- `axes::Ax`: Tuple of bus axis vectors for indexing `(bus_numbers, bus_numbers)`
 - `lookup::L`: Tuple of lookup dictionaries mapping bus numbers to matrix indices
 - `subnetwork_axes::Dict{Int, Ax}`: Bus axes for each electrical island/subnetwork
 - `arc_subnetwork_axis::Dict{Int, Vector{Tuple{Int, Int}}}`: Arc axes for each subnetwork
@@ -25,7 +25,7 @@ electrical parameters needed for power flow calculations and network analysis.
 
 # Usage
 The Y-bus is fundamental for:
-- Power flow analysis: V = Y⁻¹I
+- Power flow analysis: ``V = Y^{-1} I``
 - Short circuit calculations
 - Network impedance analysis
 - Sensitivity analysis (PTDF/LODF)
@@ -101,7 +101,7 @@ end
 Build a Y-bus matrix from the system and return its default network reduction data.
 
 This function constructs a Y-bus matrix with no network reductions applied and returns
-the resulting `NetworkReductionData`, which contains the basic bus and branch mappings
+the resulting [`NetworkReductionData`](@ref), which contains the basic bus and branch mappings
 for the system without any reduction algorithms.
 
 # Arguments
@@ -300,8 +300,8 @@ connecting to a virtual star bus. Each available winding is mapped separately.
 - `br::PSY.ThreeWindingTransformer`: Three-winding transformer to add
 
 # Implementation Details
-- Only adds arcs for available windings (checked via PSY.get_available_*)
-- Maintains transformer3W_map and reverse_transformer3W_map
+- Only adds arcs for available windings (checked via `PSY.get_available_*`)
+- Maintains `transformer3W_map` and `reverse_transformer3W_map`
 - Each winding is numbered (1=primary, 2=secondary, 3=tertiary)
 """
 function add_to_branch_maps!(
@@ -1146,17 +1146,17 @@ end
 
 Generate unique arc axis from from-bus and to-bus index vectors.
 
-Creates a vector of unique (from_bus, to_bus) tuples representing the arcs (branches)
+Creates a vector of unique `(from_bus, to_bus)` tuples representing the arcs (branches)
 in the system. Used for constructing arc admittance matrices and organizing
 network topology data.
 
 # Arguments
-- `fb::Vector{Int}`: Vector of from-bus indices into bus_axis
-- `tb::Vector{Int}`: Vector of to-bus indices into bus_axis
+- `fb::Vector{Int}`: Vector of from-bus indices into `bus_axis`
+- `tb::Vector{Int}`: Vector of to-bus indices into `bus_axis`
 - `bus_axis::Vector{Int}`: Vector of bus numbers
 
 # Returns
-- `Vector{Tuple{Int, Int}}`: Unique arcs as (from_bus_number, to_bus_number) tuples
+- `Vector{Tuple{Int, Int}}`: Unique arcs as `(from_bus_number, to_bus_number)` tuples
 
 # Examples
 ```julia
@@ -1190,7 +1190,7 @@ corresponding arc list for matrix indexing.
 - `ybus::Ybus`: Y-bus matrix containing subnetwork information
 
 # Returns
-- `Dict{Int, Tuple{Vector{Int}, Vector{Tuple{Int, Int}}}}`: Dictionary mapping reference bus numbers to (bus_axis, arc_axis) tuples for each subnetwork
+- `Dict{Int, Tuple{Vector{Int}, Vector{Tuple{Int, Int}}}}`: Dictionary mapping reference bus numbers to `(bus_axis, arc_axis)` tuples for each subnetwork
 
 # Implementation Details
 - Combines bus axes from `ybus.subnetwork_axes` with arc axes from `ybus.arc_subnetwork_axis`
@@ -1226,7 +1226,7 @@ list for matrix indexing.
 - `ybus::Ybus`: Y-bus matrix containing subnetwork information
 
 # Returns
-- `Dict{Int, Tuple{Vector{Tuple{Int, Int}}, Vector{Int}}}`: Dictionary mapping reference bus numbers to (arc_axis, bus_axis) tuples for each subnetwork
+- `Dict{Int, Tuple{Vector{Tuple{Int, Int}}, Vector{Int}}}`: Dictionary mapping reference bus numbers to `(arc_axis, bus_axis)` tuples for each subnetwork
 
 # Implementation Details
 - Swaps order compared to `make_bus_arc_subnetwork_axes` (arc first, bus second)

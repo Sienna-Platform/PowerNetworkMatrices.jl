@@ -114,4 +114,4 @@ capacity, N-1 security, or realistic DC loading.
 
 [^circuits]: Series and parallel combination of admittances/impedances is
     elementary circuit theory; see
-    [https://en.wikipedia.org/wiki/Series_and_parallel_circuits](https://en.wikipedia.org/wiki/Series_and_parallel_circuits).
+    [Series and parallel circuits](https://en.wikipedia.org/wiki/Series_and_parallel_circuits).
