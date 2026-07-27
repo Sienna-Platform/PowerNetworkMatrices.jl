@@ -1011,6 +1011,15 @@ end
     @test ba.data[bl[1], arc_ix] ≈ b_expected
 end
 
+@testset "issue 305: group-level _is_phase_shifting" begin
+    (line, line2, pst1, pst2) = _mk_detached_pst_fixture()
+    @test PNM._is_phase_shifting(PNM.MixedBranchesParallel([line, pst1]))
+    @test !PNM._is_phase_shifting(PNM.BranchesParallel([line, line2]))
+    @test PNM._is_phase_shifting(
+        PNM.BranchesParallel(PSY.TwoWindingTransformer[pst1, pst2]),
+    )
+end
+
 # Add a `Line` named `name` on `arc` with series impedance `(r, x)` and no charging.
 function _add_test_line!(sys, name, arc, r, x)
     add_component!(

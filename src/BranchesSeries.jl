@@ -104,6 +104,12 @@ Base.length(bs::BranchesSeries) =
 
 Base.eltype(::Type{BranchesSeries}) = PSY.ACTransmission
 
+# Chain segments can themselves be parallel groups, so this recurses through
+# `_is_phase_shifting(::AbstractBranchesParallel)` (BranchesParallel.jl).
+function _is_phase_shifting(bs::BranchesSeries)
+    return any(_is_phase_shifting, bs)
+end
+
 function get_series_susceptance(
     series_chain::BranchesSeries,
     units::IS.AbstractUnitSystem,

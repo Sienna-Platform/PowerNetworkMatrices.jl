@@ -46,6 +46,12 @@ function add_branch!(mbp::MixedBranchesParallel, branch::PSY.ACTransmission)
     push!(mbp.branches, branch)
 end
 
+# The blanket `_is_phase_shifting(::PSY.ACTransmission) = false` in definitions.jl would
+# silently answer for groups; a group shifts when any member does.
+function _is_phase_shifting(bp::AbstractBranchesParallel)
+    return any(_is_phase_shifting, bp.branches)
+end
+
 function get_name(bp::AbstractBranchesParallel)
     base_string = _longest_starting_substring(PSY.get_name.(bp.branches)...)
     if isempty(base_string)
