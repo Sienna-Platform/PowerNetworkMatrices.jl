@@ -376,7 +376,6 @@ end
             base_power = 100.0,
             base_voltage_primary = 1.0,
             base_voltage_secondary = 1.0,
-            winding_group_number = WindingGroupNumber.GROUP_11,
             r = 0.122,  # resistance
             x = 0.1,   # reactance
         ),
@@ -394,7 +393,6 @@ end
             base_power = 100.0,
             base_voltage_primary = 1.0,
             base_voltage_secondary = 1.0,
-            winding_group_number = WindingGroupNumber.GROUP_11,
             r = 0.3,  # resistance
             x = 0.13,   # reactance
         ),

@@ -128,7 +128,6 @@ end
             rating = 80.0,
             base_power = 100.0,
             base_voltage_primary = 230.0,
-            winding_group_number = WindingGroupNumber.GROUP_11,
             r = 0.122,
             x = 0.10,
         ),
