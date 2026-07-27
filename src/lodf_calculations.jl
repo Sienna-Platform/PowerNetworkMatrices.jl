@@ -232,7 +232,7 @@ function _lodf_from_system(
 )
     # Keep the intermediate PTDF dense (tol = eps()); the from-PTDF LODF needs an
     # unsparsified PTDF for accuracy, and only the LODF itself is sparsified.
-    ptdf = PTDF(A, BA; tol = eps())
+    ptdf = PTDF(A, BA; linear_solver = linear_solver, tol = eps())
     return LODF(A, ptdf; linear_solver = linear_solver, tol = tol)
 end
 
