@@ -489,7 +489,7 @@ Gets or computes Woodbury factors, then applies the Woodbury correction.
 
 For N-1 contingencies, the result satisfies
 ```math
-\\mathrm{post}[\\mathrm{mon}, :] = \\mathrm{pre}[\\mathrm{mon}, :] + \\mathrm{LODF}[\\mathrm{mon}, e] \\, \\mathrm{pre}[e, :],
+\\mathrm{post}[\\mathrm{mon}, :] = \\mathrm{pre}[\\mathrm{mon}, :] + \\mathrm{LODF}[\\mathrm{mon}, e] \\, \\mathrm{pre}[e, :]
 ```
 where ``\\mathrm{pre}`` and ``\\mathrm{post}`` are the base and post-contingency PTDF and
 ``e`` is the outaged arc.

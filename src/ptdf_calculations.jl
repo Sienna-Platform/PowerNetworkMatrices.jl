@@ -342,7 +342,7 @@ for PTDF analysis starting from system data.
 # Mathematical Foundation
 The PTDF matrix is computed as
 ```math
-\\mathrm{PTDF} = B A (A^\\top B A)^{-1},
+\\mathrm{PTDF} = B A (A^\\top B A)^{-1}
 ```
 where ``A`` is the incidence matrix (the [`IncidenceMatrix`](@ref)) and ``B`` the branch
 susceptance matrix (see [`BA_Matrix`](@ref)). The `data` field holds the transpose
@@ -417,7 +417,7 @@ direct control over the underlying matrix computations.
 # Mathematical Foundation
 The PTDF matrix is computed as
 ```math
-\\mathrm{PTDF} = B A (A^\\top B A)^{-1},
+\\mathrm{PTDF} = B A (A^\\top B A)^{-1}
 ```
 where ``A`` is the incidence matrix (the [`IncidenceMatrix`](@ref)) and ``B`` the branch
 susceptance matrix (see [`BA_Matrix`](@ref)). The `data` field holds the transpose
@@ -474,7 +474,7 @@ direct control over the underlying matrix computations.
 # Mathematical Computation
 The PTDF matrix is computed using the relationship
 ```math
-\\mathrm{PTDF} = B A (A^\\top B A)^{-1},
+\\mathrm{PTDF} = B A (A^\\top B A)^{-1}
 ```
 where:
 - ``A`` is the incidence matrix representing bus-branch connectivity

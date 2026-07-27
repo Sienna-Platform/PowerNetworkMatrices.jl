@@ -5,7 +5,7 @@ Request automatic, condition-aware sparsification of a PTDF/LODF matrix. The
 matrix is sparsified with a *relative* per-row cutoff: an entry is dropped when
 ```math
 |\\mathrm{entry}| < \\alpha \\cdot \\max|\\mathrm{row}|,
-\\qquad \\alpha = \\mathrm{clamp}(\\mathrm{safety} \\cdot \\delta, \\, 10^{-6}, \\, 10^{-2}),
+\\qquad \\alpha = \\mathrm{clamp}(\\mathrm{safety} \\cdot \\delta, \\, 10^{-6}, \\, 10^{-2})
 ```
 where ``\\delta`` is the relative precision of the branch data. Because the cutoff is
 relative to each row's own peak, columns of large, ill-conditioned systems stay

@@ -298,7 +298,7 @@ analysis starting from system data.
 With ``H = A \\, \\mathrm{PTDF}``, the sensitivity of monitored line ``\\ell`` to the outage
 of line ``e`` is
 ```math
-\\mathrm{LODF}[\\ell, e] = \\frac{H[\\ell, e]}{1 - H[e, e]},
+\\mathrm{LODF}[\\ell, e] = \\frac{H[\\ell, e]}{1 - H[e, e]}
 ```
 where ``A`` is the incidence matrix and ``\\mathrm{PTDF}`` is the power transfer distribution factor matrix.
 
@@ -347,7 +347,7 @@ This constructor is more efficient when the prerequisite matrices are already av
 With ``H = A \\, \\mathrm{PTDF}``, the sensitivity of monitored line ``\\ell`` to the outage
 of line ``e`` is
 ```math
-\\mathrm{LODF}[\\ell, e] = \\frac{H[\\ell, e]}{1 - H[e, e]},
+\\mathrm{LODF}[\\ell, e] = \\frac{H[\\ell, e]}{1 - H[e, e]}
 ```
 where:
 - ``A`` is the incidence matrix (the [`IncidenceMatrix`](@ref)) representing bus-branch connectivity

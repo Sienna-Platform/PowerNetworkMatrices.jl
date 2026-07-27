@@ -3,7 +3,7 @@
 ## Sparsity
 
 Power networks are sparse — most buses connect to only a few others — and this is
-exploited via sparse linear solvers, so the connectivitity matrices ([`IncidenceMatrix`](@ref) and [`Ybus`](@ref))
+exploited via sparse linear solvers, so the connectivity matrices ([`IncidenceMatrix`](@ref) and [`Ybus`](@ref))
 are very sparse. The sensitivity matrices ([`PTDF`](@ref), [`LODF`](@ref)), however, are obviously dense: e.g., one entry per bus in every
 [`PTDF`](@ref) column, most of them negligible because a branch is nearly insensitive
 to an injection electrically far away.
