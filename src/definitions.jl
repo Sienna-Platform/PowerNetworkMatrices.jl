@@ -17,14 +17,18 @@ const AUTO_TOLERANCE_BUS_LIMIT = 2000
 
 DEFAULT_LODF_CHUNK_SIZE = 18_000
 
-# A phase-shifting branch must not be folded into a parallel-equivalent group: the parallel
-# susceptance model cannot represent a per-branch phase shift. Phase shifting is a per-winding
-# data property, so the skip is data-driven via `PSY.is_phase_shifting` rather than a type
-# list.
-_skip_parallel_reduction(::PSY.ACTransmission) = false
-_skip_parallel_reduction(b::PSY.TwoWindingTransformer) = PSY.is_phase_shifting(b)
-_skip_parallel_reduction(w::ThreeWindingTransformerCircuit) =
-    PSY.is_phase_shifting(w.circuit)
+# Phase shifting is a per-circuit data property, so this is data-driven via
+# `PSY.is_phase_shifting` rather than a type list. Non-transformer branches never shift;
+# `ThreeWindingTransformerCircuit` is covered by the `PSY.is_phase_shifting` method it
+# defines for itself.
+_is_phase_shifting(::PSY.ACTransmission) = false
+_is_phase_shifting(
+    t::Union{
+        PSY.TwoWindingTransformer,
+        PSY.ThreeWindingTransformer,
+        ThreeWindingTransformerCircuit,
+    },
+) = PSY.is_phase_shifting(t)
 
 # Singleton types for linear solver dispatch, enabling compile-time method resolution.
 abstract type LinearSolverType end

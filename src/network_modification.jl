@@ -295,10 +295,9 @@ function NetworkModification(mat::PowerNetworkMatrix, sys::PSY.System, outage::P
     arc_ax = get_arc_axis(mat)
     for component in all_components
         _is_three_winding_transformer(component) || continue
-        # Only the star-bus number is needed here — read it straight off winding 1's arc
-        # instead of constructing a full `ThreeWindingTransformerCircuit` (which also derives
-        # and floors the star-leg impedance, unused on this path).
-        star_num = PSY.get_number(PSY.get_to(PSY.get_arc(PSY.get_circuits(component)[1])))
+        # Every circuit's arc ends at the star bus, so read it off the first one.
+        star_num =
+            PSY.get_number(PSY.get_to(PSY.get_arc(first(PSY.get_circuits(component)))))
         t3w_mods = [m for m in direct_mods if arc_ax[m.arc_index][2] == star_num]
         is_island = is_island || _3wt_real_bus_islanding(mat, t3w_mods)
     end
@@ -443,8 +442,8 @@ function _classify_outage_component!(
     if !PSY.get_available(component)
         return
     end
-    for winding_num in 1:3
-        winding = ThreeWindingTransformerCircuit(component, winding_num)
+    for (winding_num, circuit) in enumerate(PSY.get_circuits(component))
+        winding = ThreeWindingTransformerCircuit(component, circuit, winding_num)
         if !get_equivalent_available(winding)
             continue
         end
@@ -496,8 +495,8 @@ function _classify_branch_modification(
         return ArcModification[]
     end
     mods = ArcModification[]
-    for winding_num in 1:3
-        winding = ThreeWindingTransformerCircuit(branch, winding_num)
+    for (winding_num, circuit) in enumerate(PSY.get_circuits(branch))
+        winding = ThreeWindingTransformerCircuit(branch, circuit, winding_num)
         if !get_equivalent_available(winding)
             continue
         end

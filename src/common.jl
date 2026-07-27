@@ -1,11 +1,3 @@
-function _add_to_collection!(
-    collection_br::Vector{PSY.ACTransmission},
-    branch::PSY.ACTransmission,
-)
-    push!(collection_br, branch)
-    return
-end
-
 """
     _build_bus_to_valid_idx(n_buses, valid_ix) -> Vector{Int}
 
@@ -21,14 +13,6 @@ function _build_bus_to_valid_idx(n_buses::Int, valid_ix::Vector{Int})
         bus_to_valid_idx[b] = i
     end
     return bus_to_valid_idx
-end
-
-function _add_to_collection!(
-    collection_tr3w::Vector{PSY.ThreeWindingTransformer},
-    transformer_tr3w::PSY.ThreeWindingTransformer,
-)
-    push!(collection_tr3w, transformer_tr3w)
-    return
 end
 
 function get_bus_index(bus_no::Int, bus_lookup::Dict{Int, Int}, nr::NetworkReductionData)
@@ -50,23 +34,8 @@ end
 
 function get_bus_indices(arc::PSY.Arc, bus_lookup::Dict{Int, Int}, nr::NetworkReductionData)
     check_arc_validity(arc, IS.get_name(arc))
-    reverse_bus_search_map = get_reverse_bus_search_map(nr)
-    fr_bus_number = PSY.get_number(PSY.get_from(arc))
-    if haskey(reverse_bus_search_map, fr_bus_number)
-        fr_bus_number_reduced = reverse_bus_search_map[fr_bus_number]
-    else
-        fr_bus_number_reduced = fr_bus_number
-    end
-    fr_bus_ix = bus_lookup[fr_bus_number_reduced]
-
-    to_bus_number = PSY.get_number(PSY.get_to(arc))
-    if haskey(reverse_bus_search_map, to_bus_number)
-        to_bus_number_reduced = reverse_bus_search_map[to_bus_number]
-    else
-        to_bus_number_reduced = to_bus_number
-    end
-    to_bus_ix = bus_lookup[to_bus_number_reduced]
-    return fr_bus_ix, to_bus_ix
+    fr_bus_number, to_bus_number = get_arc_tuple(arc, nr)
+    return bus_lookup[fr_bus_number], bus_lookup[to_bus_number]
 end
 
 function check_arc_validity(arc::PSY.Arc, name::String)
@@ -98,15 +67,6 @@ function get_arc_tuple(arc::PSY.Arc, nr::NetworkReductionData)
     )
 end
 
-function get_arc_tuple(tr::ThreeWindingTransformerCircuit, nr::NetworkReductionData)
-    reverse_bus_search_map = get_reverse_bus_search_map(nr)
-    arc_tuple_original = get_arc_tuple(tr)
-    return (
-        get(reverse_bus_search_map, arc_tuple_original[1], arc_tuple_original[1]),
-        get(reverse_bus_search_map, arc_tuple_original[2], arc_tuple_original[2]),
-    )
-end
-
 function get_arc_tuple(br::PSY.ACTransmission, nr::NetworkReductionData)
     get_arc_tuple(PSY.get_arc(br), nr)
 end
@@ -132,10 +92,15 @@ end
 get_arc_tuple(arc::PSY.Arc) =
     (PSY.get_number(PSY.get_from(arc)), PSY.get_number(PSY.get_to(arc)))
 
-function get_switched_admittances(sys::PSY.System, reverse_bus_search_map)
-    collection = Vector{PSY.SwitchedAdmittance}()
-    for sa in
-        collect(PSY.get_components(x -> PSY.get_available(x), PSY.SwitchedAdmittance, sys))
+# Available shunt components whose bus survived the reduction (a shunt on an eliminated bus
+# is already folded into its parent bus's diagonal).
+function _get_retained_shunts(
+    ::Type{T},
+    sys::PSY.System,
+    reverse_bus_search_map,
+) where {T <: PSY.StaticInjection}
+    collection = Vector{T}()
+    for sa in PSY.get_components(PSY.get_available, T, sys)
         if !haskey(reverse_bus_search_map, PSY.get_number(PSY.get_bus(sa)))
             push!(collection, sa)
         end
@@ -143,16 +108,11 @@ function get_switched_admittances(sys::PSY.System, reverse_bus_search_map)
     return collection
 end
 
-function get_fixed_admittances(sys::PSY.System, reverse_bus_search_map)
-    collection = Vector{PSY.FixedAdmittance}()
-    for sa in
-        collect(PSY.get_components(x -> PSY.get_available(x), PSY.FixedAdmittance, sys))
-        if !haskey(reverse_bus_search_map, PSY.get_number(PSY.get_bus(sa)))
-            push!(collection, sa)
-        end
-    end
-    return collection
-end
+get_switched_admittances(sys::PSY.System, reverse_bus_search_map) =
+    _get_retained_shunts(PSY.SwitchedAdmittance, sys, reverse_bus_search_map)
+
+get_fixed_admittances(sys::PSY.System, reverse_bus_search_map) =
+    _get_retained_shunts(PSY.FixedAdmittance, sys, reverse_bus_search_map)
 
 function _add_branch_to_lookup!(
     branch_lookup::Dict{String, Int},
@@ -376,39 +336,15 @@ function get_equivalent_physical_branch_parameters(
     return _get_equivalent_physical_branch_parameters(segment.equivalent_ybus)
 end
 
-is_a_reduction(::PSY.ACTransmission) = false
-
+# Recurses through PNM's own `has_time_series`, not PSY's, so a member that is itself a PNM
+# wrapper (a nested group, or a `ThreeWindingTransformerCircuit`, which PSY cannot answer for)
+# resolves correctly.
 function has_time_series(
-    branch::BranchesSeries,
+    branch::Union{BranchesSeries, AbstractBranchesParallel},
     ts_type::Type{T},
     ts_name::String,
 ) where {T <: PSY.TimeSeriesData}
-    for b in branch
-        if is_a_reduction(b)
-            if has_time_series(b, ts_type, ts_name)
-                return true
-            end
-            continue
-        end
-
-        if has_time_series(b, ts_type, ts_name)
-            return true
-        end
-    end
-    return false
-end
-
-function has_time_series(
-    branch::AbstractBranchesParallel,
-    ts_type::Type{T},
-    ts_name::String,
-) where {T <: PSY.TimeSeriesData}
-    for b in branch
-        if PSY.has_time_series(b, ts_type, ts_name)
-            return true
-        end
-    end
-    return false
+    return any(b -> has_time_series(b, ts_type, ts_name), branch)
 end
 
 function has_time_series(
@@ -490,39 +426,13 @@ end
 """
     _assert_not_phase_shifting(component::PSY.ACTransmission)
 
-No-op for non-transformer branches; transformer methods below throw for phase shifters.
+Throws `ErrorException` when `component` is phase shifting; no-op otherwise. Phase shifting
+is a per-circuit data property surfaced by `_is_phase_shifting`, not a distinct type.
 """
-_assert_not_phase_shifting(::PSY.ACTransmission) = nothing
-
-"""
-    _assert_not_phase_shifting(component::Union{PSY.TwoWindingTransformer, PSY.ThreeWindingTransformer})
-
-Throws `ErrorException` when the transformer is phase shifting; no-op otherwise.
-
-Phase shifting is a per-winding data property surfaced by the `PSY.is_phase_shifting`
-predicate, not a distinct type.
-"""
-function _assert_not_phase_shifting(
-    component::Union{PSY.TwoWindingTransformer, PSY.ThreeWindingTransformer},
-)
-    if PSY.is_phase_shifting(component)
+function _assert_not_phase_shifting(component::PSY.ACTransmission)
+    if _is_phase_shifting(component)
         error(
             "Contingencies on phase-shifting transformers are not supported. " *
-            "Component: $(PSY.get_name(component)).",
-        )
-    end
-    return nothing
-end
-
-# A `ThreeWindingTransformerCircuit` is `<: PSY.ACTransmission` but is not a PSY transformer
-# type, so the methods above would not inspect it; check its underlying winding directly.
-# Reachable: the generic `_classify_outage_component!`/`_classify_branch_modification`
-# (network_modification.jl) call `_assert_not_phase_shifting` on every classified branch,
-# and the 3W-parent methods recurse into them with the winding wrapper.
-function _assert_not_phase_shifting(component::ThreeWindingTransformerCircuit)
-    if PSY.is_phase_shifting(component.circuit)
-        error(
-            "Contingencies on phase-shifting transformer windings are not supported. " *
             "Component: $(get_name(component)).",
         )
     end
@@ -542,7 +452,10 @@ function _segment_susceptance_after_outage(
     segment::PSY.ACTransmission,
     tripped_set::Set{<:PSY.ACTransmission},
 )::Float64
-    return segment ∈ tripped_set ? 0.0 : get_series_susceptance(segment, PSY.SU)
+    if segment ∈ tripped_set
+        return 0.0
+    end
+    return get_series_susceptance(segment, PSY.SU)
 end
 
 function _segment_susceptance_after_outage(
@@ -596,7 +509,7 @@ function _compute_series_outage_delta_b(
     remaining_inv_sum = 0.0
     for segment in series_chain
         b_seg = _segment_susceptance_after_outage(segment, tripped_set)
-        if b_seg == 0.0
+        if iszero(b_seg)
             return -b_old
         end
         remaining_inv_sum += 1.0 / b_seg

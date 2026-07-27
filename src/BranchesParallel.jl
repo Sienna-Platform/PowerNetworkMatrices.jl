@@ -100,6 +100,24 @@ end
 # series groups live in common.jl, which is included after NetworkReductionData so `nr` can be
 # typed.
 
+# The single home for the group-rating `nothing` policy: a `PSY.TransformerCircuit` rating may
+# be `nothing` (unlike a `Line`, whose rating is always a `Float64`), so aggregate only over
+# the members with a known rating and propagate `nothing` when none is known. The `Float64`
+# accumulator keeps the eltype concrete — `filter(!isnothing, …)` would retain the union.
+function _aggregate_known_ratings(agg, rating_of, branches)
+    known = Float64[]
+    for br in branches
+        r = rating_of(br)
+        if !isnothing(r)
+            push!(known, r)
+        end
+    end
+    if isempty(known)
+        return nothing
+    end
+    return agg(known)
+end
+
 """
     get_sum_of_max_rating(bp::AbstractBranchesParallel) -> Union{Nothing, Float64}
 
@@ -107,16 +125,11 @@ Sum of the individual branch ratings, treating each circuit as independently loa
 up to its own thermal limit. This is the least conservative aggregate and assumes
 unconstrained flow steering across the parallel group.
 
-Members with no known rating (transformer windings carry `rating::Union{Nothing, Float64}`)
+Members with no known rating (transformer circuits carry `rating::Union{Nothing, Float64}`)
 are skipped; returns `nothing` only when no member has a known rating.
 """
-# A `TransformerCircuit` rating may be `nothing` (unlike a `Line`, whose rating is always a
-# `Float64`), so a `ThreeWindingTransformerCircuit` member can contribute `nothing`.
-# Aggregate over the members with a known rating and propagate `nothing` only when none is
-# known (matching how `branch_flow_limits` carries `nothing` forward without erroring).
 function get_sum_of_max_rating(bp::AbstractBranchesParallel)
-    ratings = filter(!isnothing, get_equivalent_rating.(bp.branches))
-    return isempty(ratings) ? nothing : sum(ratings)
+    return _aggregate_known_ratings(sum, get_equivalent_rating, bp.branches)
 end
 
 """
@@ -129,9 +142,11 @@ Members with no known rating are skipped; returns `nothing` only when no member 
 rating (see [`get_sum_of_max_rating`](@ref)).
 """
 function get_single_element_contingency_rating(bp::AbstractBranchesParallel)
-    # See `get_sum_of_max_rating` for the `nothing` policy (skip unrated members).
-    ratings = filter(!isnothing, get_equivalent_rating.(bp.branches))
-    return isempty(ratings) ? nothing : sum(ratings) - maximum(ratings)
+    return _aggregate_known_ratings(
+        r -> sum(r) - maximum(r),
+        get_equivalent_rating,
+        bp.branches,
+    )
 end
 
 """
@@ -147,14 +162,23 @@ weighting denominator); returns `nothing` only when no member has a known rating
 [`get_sum_of_max_rating`](@ref)).
 """
 function get_impedance_averaged_rating(bp::AbstractBranchesParallel)
-    # The susceptance weights must share a consistent impedance base across the
-    # group, so use system base (SU) like the sibling `compute_parallel_multiplier`.
-    # Within a parallel group (a single bus pair) this equals the natural-units
-    # weighting; device base would mix bases when the branches differ in base power.
-    # Requires the branches to be attached to a system.
-    # `get_series_susceptance` (see BranchAdmittance.jl) is tap-aware for
-    # two-winding transformers.
-    b_total = sum(get_series_susceptance(br, PSY.SU) for br in bp.branches)
+    # The susceptance weights must share a consistent impedance base across the group, so use
+    # system base (SU) like the sibling `compute_parallel_multiplier`. Within a parallel group
+    # (a single bus pair) this equals the natural-units weighting; device base would mix bases
+    # when the branches differ in base power. Requires the branches to be attached to a system.
+    # Σᵢ (bᵢ/b_total)·rᵢ == (Σᵢ bᵢ·rᵢ)/b_total, so one pass and no stored per-member state.
+    b_total = 0.0
+    numerator = 0.0
+    any_known = false
+    for br in bp.branches
+        b = get_series_susceptance(br, PSY.SU)
+        b_total += b
+        r = get_equivalent_rating(br)
+        if !isnothing(r)
+            numerator += b * r
+            any_known = true
+        end
+    end
     if !isfinite(b_total) || iszero(b_total)
         throw(
             ArgumentError(
@@ -162,18 +186,31 @@ function get_impedance_averaged_rating(bp::AbstractBranchesParallel)
             ),
         )
     end
-    ratings = get_equivalent_rating.(bp.branches)
-    all(isnothing, ratings) && return nothing
-    return sum(
-        get_series_susceptance(br, PSY.SU) / b_total * r
-        for (br, r) in zip(bp.branches, ratings) if !isnothing(r)
-    )
+    if !any_known
+        return nothing
+    end
+    return numerator / b_total
 end
 
 # Series-chain rating contribution for a parallel block: dispatch arm for
-# `get_equivalent_rating(::BranchesSeries)` defined in BranchesSeries.jl.
+# `get_equivalent_rating(::BranchesSeries)` defined in BranchesSeries.jl. A chain is only as
+# strong as its weakest link *after* a contingency, so a parallel block inside a chain
+# contributes its N-1 rating rather than its normal-operation total.
 _series_member_rating(bp::AbstractBranchesParallel) =
     get_single_element_contingency_rating(bp)
+
+"""
+    get_equivalent_rating(bp::AbstractBranchesParallel) -> Union{Nothing, Float64}
+
+Normal-operation rating of the equivalent arc: the sum of the members' ratings, since every
+circuit on the arc carries flow simultaneously. This is [`get_sum_of_max_rating`](@ref); the
+N-1 variant [`get_single_element_contingency_rating`](@ref) is what a series chain uses for an
+embedded parallel block (see `_series_member_rating`).
+
+Members with no known rating are skipped; returns `nothing` only when no member has a known
+rating.
+"""
+get_equivalent_rating(bp::AbstractBranchesParallel) = get_sum_of_max_rating(bp)
 
 """
     get_equivalent_emergency_rating(bp::AbstractBranchesParallel) -> Union{Nothing, Float64}
@@ -186,11 +223,7 @@ Members with no known rating are skipped; returns `nothing` only when no member 
 rating (see [`get_sum_of_max_rating`](@ref)).
 """
 function get_equivalent_emergency_rating(bp::AbstractBranchesParallel)
-    # Sum the members' emergency ratings (full capacity under emergency), skipping members
-    # with no known rating; propagate `nothing` only when none is known. See
-    # `get_sum_of_max_rating` for the policy.
-    ratings = filter(!isnothing, get_equivalent_emergency_rating.(bp.branches))
-    return isempty(ratings) ? nothing : sum(ratings)
+    return _aggregate_known_ratings(sum, get_equivalent_emergency_rating, bp.branches)
 end
 
 """
@@ -205,17 +238,6 @@ function get_equivalent_available(bp::AbstractBranchesParallel)
 end
 
 PSY.get_available(bp::AbstractBranchesParallel) = get_equivalent_available(bp)
-
-"""
-    get_equivalent_α(bp::AbstractBranchesParallel)
-
-Get the phase angle shift for parallel branches.
-Returns the average phase angle shift across all parallel branches.
-Returns 0.0 if branches don't support phase angle shift (e.g., lines).
-"""
-function get_equivalent_α(bp::AbstractBranchesParallel)
-    # Need to check the PS books
-end
 
 function Base.iterate(bp::AbstractBranchesParallel)
     return iterate(bp.branches)
@@ -261,5 +283,3 @@ end
 function Base.show(io::IO, x::MIME{Symbol("text/plain")}, y::AbstractBranchesParallel)
     show(io, x, y.branches)
 end
-
-is_a_reduction(::AbstractBranchesParallel) = true

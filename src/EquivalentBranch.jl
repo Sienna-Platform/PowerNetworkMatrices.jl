@@ -13,7 +13,7 @@ Represents the equivalent parameters of a network branch for power flow calculat
 - `equivalent_tap::Float64`: Equivalent transformer tap ratio
 - `equivalent_shift::Float64`: Equivalent phase shift angle (radians)
 """
-mutable struct EquivalentBranch
+struct EquivalentBranch
     equivalent_r::Float64
     equivalent_x::Float64
     equivalent_g_from::Float64

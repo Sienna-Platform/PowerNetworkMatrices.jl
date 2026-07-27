@@ -122,17 +122,12 @@ Series chains can be composed of PSY.ACTransmission branches and parallel groups
 For series circuits, the rating is limited by the weakest link: Rating_total = min(Rating1, Rating2, ..., Ratingn).
 Parallel members contribute their N-1 single-element-contingency rating.
 
-Members with no known rating (transformer windings carry `rating::Union{Nothing, Float64}`)
+Members with no known rating (transformer circuits carry `rating::Union{Nothing, Float64}`)
 do not bind the minimum and are skipped; returns `nothing` only when no member has a known
 rating.
 """
 function get_equivalent_rating(bs::BranchesSeries)
-    # A series member's rating may be `nothing` (an unrated `ThreeWindingTransformerCircuit`,
-    # or a parallel block whose members are all unrated); a member with no known limit does
-    # not bind the weakest-link minimum, so skip it. Propagate `nothing` only when no member
-    # has a known rating. See `get_sum_of_max_rating` (BranchesParallel.jl) for the policy.
-    ratings = filter(!isnothing, [_series_member_rating(branch) for branch in bs])
-    return isempty(ratings) ? nothing : minimum(ratings)
+    return _aggregate_known_ratings(minimum, _series_member_rating, bs)
 end
 
 _series_member_rating(branch::PSY.ACTransmission) = get_equivalent_rating(branch)
@@ -176,10 +171,7 @@ Members with no known rating do not bind the minimum and are skipped; returns `n
 when no member has a known rating (see [`get_equivalent_rating`](@ref)).
 """
 function get_equivalent_emergency_rating(bs::BranchesSeries)
-    # Minimum emergency rating for series branches (weakest link); skip members with no known
-    # rating (see `get_equivalent_rating(::BranchesSeries)` for the `nothing` policy).
-    ratings = filter(!isnothing, [get_equivalent_emergency_rating(branch) for branch in bs])
-    return isempty(ratings) ? nothing : minimum(ratings)
+    return _aggregate_known_ratings(minimum, get_equivalent_emergency_rating, bs)
 end
 
 """
@@ -235,17 +227,6 @@ end
 
 PSY.get_available(bs::BranchesSeries) = get_equivalent_available(bs)
 
-"""
-    get_equivalent_α(bs::BranchesSeries)
-
-Get the phase angle shift for series branches.
-Returns the sum of phase angle shifts across all series branches.
-Returns 0.0 if branches don't support phase angle shift (e.g., lines).
-"""
-function get_equivalent_α(bs::BranchesSeries)
-    # Need to check how to develop this one
-end
-
 function add_to_map(series_circuit::BranchesSeries, filters::Dict)
     if isempty(filters)
         return true
@@ -281,5 +262,3 @@ end
 function Base.show(io::IO, x::MIME{Symbol("text/plain")}, y::BranchesSeries)
     show(io, x, y.branches)
 end
-
-is_a_reduction(::BranchesSeries) = true
