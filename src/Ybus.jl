@@ -264,9 +264,14 @@ reverse lookup dictionaries for efficient access.
 - `br::PSY.ACTransmission`: AC transmission branch to add
 
 # Implementation Details
-- If arc already has a direct branch, converts to parallel mapping
-- If arc already has parallel branches, adds to existing set
-- Otherwise creates new direct mapping
+- If arc already has a parallel group, pushes `br` into it (`_push_parallel_branch!`);
+  a type mismatch against the group promotes it to `MixedBranchesParallel` and emits a `@warn`
+- If arc already has a direct branch, promotes both branches into a new group
+  (`_make_parallel_branch_pair`): homogeneous `BranchesParallel{T}` when types match,
+  `MixedBranchesParallel` with a `@warn` otherwise
+- Otherwise creates a new direct mapping
+- Phase-shifting members are grouped like any other branch — never dropped or forced direct
+  (issue #305)
 - Maintains reverse lookup consistency
 """
 function add_to_branch_maps!(

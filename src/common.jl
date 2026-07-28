@@ -277,11 +277,12 @@ function sparsify(dense_array::Vector{Float64}, tol::Float64)
 end
 
 """
-    _get_equivalent_physical_branch_parameters(equivalent_ybus::Matrix{$YBUS_ELTYPE})
+    _get_equivalent_physical_branch_parameters(equivalent_ybus::Matrix{$YBUS_ELTYPE}, context::String = "")
 
 Takes as input a 2x2 Matrix{$YBUS_ELTYPE} representing the Ybus contribution of either an
 AbstractBranchesParallel (homogeneous or mixed) or BranchesSeries object.
 Returns a dictionary of equivalent parameters, matching the PowerModels data format.
+`context` is appended to the error message raised when no single-π equivalent exists.
 """
 function _get_equivalent_physical_branch_parameters(
     equivalent_ybus::Matrix{YBUS_ELTYPE},
