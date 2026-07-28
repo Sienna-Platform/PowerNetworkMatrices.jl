@@ -212,6 +212,32 @@ end
     @test isapprox(result, ybus_ref.data, atol = 1e-4)
 end
 
+@testset "issue 305: contingencies on a Line ∥ PST group" begin
+    sys = _mk_line_pst_parallel_system()
+    line = get_component(Line, sys, "L1")
+    pst = get_component(TwoWindingTransformer, sys, "PST")
+    vptdf = VirtualPTDF(sys)
+
+    # Tripping the non-shifting member classifies as a parallel-arc modification
+    # carrying only that member's susceptance.
+    mod = NetworkModification(vptdf, line)
+    @test length(mod.arc_modifications) == 1
+    @test isapprox(
+        mod.arc_modifications[1].delta_b,
+        -PNM.get_series_susceptance(line, PSY.SU),
+    )
+
+    # Tripping the phase-shifting member is rejected loudly.
+    err = try
+        NetworkModification(vptdf, pst)
+        nothing
+    catch ex
+        ex
+    end
+    @test err isa ErrorException
+    @test occursin("phase-shifting", err.msg)
+end
+
 @testset "ArcModification stores correct Ybus delta entries" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     vptdf = VirtualPTDF(sys)
