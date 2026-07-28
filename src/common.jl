@@ -283,7 +283,10 @@ Takes as input a 2x2 Matrix{$YBUS_ELTYPE} representing the Ybus contribution of 
 AbstractBranchesParallel (homogeneous or mixed) or BranchesSeries object.
 Returns a dictionary of equivalent parameters, matching the PowerModels data format.
 """
-function _get_equivalent_physical_branch_parameters(equivalent_ybus::Matrix{YBUS_ELTYPE})
+function _get_equivalent_physical_branch_parameters(
+    equivalent_ybus::Matrix{YBUS_ELTYPE},
+    context::String = "",
+)
     y_11, y_12, y_21, y_22 = equivalent_ybus
     if isapprox(y_12, y_21)
         tap = 1.0
@@ -294,8 +297,8 @@ function _get_equivalent_physical_branch_parameters(equivalent_ybus::Matrix{YBUS
         if !isapprox(0.0, real(ratio); atol = 1e-6)
             error(
                 "Equivalent parameters for the series or parallel reduction of branches results \
-          in a real part of the phase shift angle. This indicates invalid data for the branches being reduced \
-          possible due to branches in parallel with different phase angles.",
+          in a real part of the phase shift angle. A lossy phase-shifting circuit in parallel \
+          with other branches has no single-π equivalent. $(context)",
             )
         end
         shift = imag(ratio)
@@ -333,7 +336,10 @@ function get_equivalent_physical_branch_parameters(
     if isnothing(segment.equivalent_ybus)
         populate_equivalent_ybus!(segment, nr)
     end
-    return _get_equivalent_physical_branch_parameters(segment.equivalent_ybus)
+    return _get_equivalent_physical_branch_parameters(
+        segment.equivalent_ybus,
+        "Offending group: $(get_name(segment)).",
+    )
 end
 
 # Recurses through PNM's own `has_time_series`, not PSY's, so a member that is itself a PNM

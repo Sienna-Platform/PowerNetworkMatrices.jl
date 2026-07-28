@@ -1020,6 +1020,32 @@ end
     )
 end
 
+@testset "issue 305: equivalent branch for shifted parallel groups" begin
+    # Lossless members: |y12| == |y21|, the single-π equivalent is exact.
+    sys = _mk_line_pst_parallel_system()
+    ybus = Ybus(sys)
+    nr = ybus.network_reduction_data
+    eq = PNM.arc_equivalent_branch(nr, (1, 2))
+    @test eq isa PNM.EquivalentBranch
+    # The extracted shift is intermediate between the members' angles (0 and 0.15).
+    @test 0.0 < abs(PNM.get_equivalent_shift(eq)) < 0.15
+
+    # Lossy members: no single-π equivalent exists; the error must name the group.
+    # pst_r = 0.05 clears the atol = 1e-6 real-part tolerance in
+    # `_get_equivalent_physical_branch_parameters`; smaller r can be absorbed by it.
+    sys_lossy = _mk_line_pst_parallel_system(; pst_r = 0.05)
+    ybus_lossy = Ybus(sys_lossy)
+    nr_lossy = ybus_lossy.network_reduction_data
+    err = try
+        PNM.arc_equivalent_branch(nr_lossy, (1, 2))
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("Offending group", err.msg)
+end
+
 # Add a `Line` named `name` on `arc` with series impedance `(r, x)` and no charging.
 function _add_test_line!(sys, name, arc, r, x)
     add_component!(

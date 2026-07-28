@@ -110,6 +110,19 @@ function _is_phase_shifting(bs::BranchesSeries)
     return any(_is_phase_shifting, bs)
 end
 
+# `BranchesSeries` has no `name` field, so the generic `PSY.ACTransmission` fallback
+# (`get_name(device::T) where {T <: PSY.ACTransmission}`, NetworkReductionData.jl) errors on
+# it. Unqualified `get_name` on each segment recurses through nested parallel/series segments
+# the same way `_is_phase_shifting` does.
+function get_name(bs::BranchesSeries)
+    names = [get_name(br) for br in bs]
+    base_string = _longest_starting_substring(names...)
+    if isempty(base_string)
+        base_string = join(names, "_") * "_"
+    end
+    return base_string *= "series_chain"
+end
+
 function get_series_susceptance(
     series_chain::BranchesSeries,
     units::IS.AbstractUnitSystem,
