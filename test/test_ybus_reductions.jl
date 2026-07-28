@@ -931,7 +931,7 @@ end
 # Attached 3-bus system with L1 ∥ PST on (1, 2) and L2 on (2, 3). Attached (not detached, as
 # in `_mk_detached_pst_fixture`) because impedance reads need `base_value`, which only
 # `add_component!` populates.
-function _mk_line_pst_parallel_system(; pst_r = 0.0)
+function _mk_line_pst_parallel_system(; pst_r = 0.0, pst_x = 0.2)
     sys, buses = _mk_bus_system(3)
     function _mk_sys_line(name, f, t)
         arc = Arc(; from = buses[f], to = buses[t])
@@ -959,7 +959,7 @@ function _mk_line_pst_parallel_system(; pst_r = 0.0)
                 arc = pst_arc, tap = 1.0, α = 0.15, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0,
-                r = pst_r, x = 0.2,
+                r = pst_r, x = pst_x,
             ),
             magnetizing_shunt = Complex(0.0, 0.0),
         ),
@@ -1202,4 +1202,73 @@ end
     # Bus 4 therefore stays in the single island; the susceptance matrix stays nonsingular.
     @test length(yb.subnetwork_axes) == 1
     @test all(isfinite, ABA_Matrix(yb; factorize = false).data.nzval)
+end
+
+@testset "parallel multiplier resolves members by identity" begin
+    # `get_series_susceptance` needs an attached system (device-base -> system-base unit
+    # conversion reads `base_value`, populated only by `add_component!`); detached fixture
+    # components error here, unlike the map-filing tests above that never read impedances.
+    sys, buses = _mk_bus_system(2)
+    arc = Arc(; from = buses[1], to = buses[2])
+    add_component!(sys, arc)
+    line = Line(;
+        name = "L1", available = true, active_power_flow = 0.0,
+        reactive_power_flow = 0.0, arc = arc, r = 0.0, x = 0.1,
+        b = (from = 0.0, to = 0.0), rating = 1.0,
+        angle_limits = (min = -1.5, max = 1.5),
+    )
+    add_component!(sys, line)
+    pst1 = PSY.TwoWindingTransformer(;
+        name = "PST1",
+        circuit = PSY.TransformerCircuit(;
+            arc = arc, tap = 1.0, α = 0.0,
+            available = true, active_power_flow = 0.0, reactive_power_flow = 0.0,
+            rating = 1.0, base_power = 100.0, base_voltage_primary = 230.0,
+            r = 0.0, x = 0.2,
+        ),
+        magnetizing_shunt = Complex(0.0, 0.0),
+    )
+    add_component!(sys, pst1)
+
+    # line: x=0.1 -> b=10; pst1: tap=1.0, x=0.2 -> b=5
+    group = PNM.MixedBranchesParallel([line, pst1])
+    @test PNM.compute_parallel_multiplier(group, line) ≈ 10.0 / 15.0
+    @test PNM.compute_parallel_multiplier(group, pst1) ≈ 5.0 / 15.0
+
+    # Name collision across concrete types: was silently double-counted, now loud.
+    pst_same_name = PSY.TwoWindingTransformer(;
+        name = PSY.get_name(line),
+        circuit = PSY.TransformerCircuit(;
+            arc = arc, tap = 1.0, α = 0.0,
+            available = true, active_power_flow = 0.0, reactive_power_flow = 0.0,
+            rating = 1.0, base_power = 100.0, base_voltage_primary = 230.0,
+            r = 0.0, x = 0.2,
+        ),
+        magnetizing_shunt = Complex(0.0, 0.0),
+    )
+    add_component!(sys, pst_same_name)
+    collided = PNM.MixedBranchesParallel([line, pst_same_name])
+    err = try
+        PNM.compute_parallel_multiplier(collided, PSY.get_name(line))
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("matches 2", err.msg)
+
+    # Unambiguous name still resolves (delegates to the identity method).
+    @test PNM.compute_parallel_multiplier(group, PSY.get_name(line)) ≈ 10.0 / 15.0
+
+    # Non-member is a loud error. Never dereferenced for susceptance, so the detached
+    # fixture (no system attachment) is fine here.
+    (_, line2, _, _) = _mk_detached_pst_fixture()
+    err2 = try
+        PNM.compute_parallel_multiplier(group, line2)
+        nothing
+    catch e
+        e
+    end
+    @test err2 isa ErrorException
+    @test occursin("not a member", err2.msg)
 end

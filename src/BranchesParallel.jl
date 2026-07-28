@@ -78,21 +78,57 @@ function _longest_starting_substring(branch_names...)
     return first_name[1:n_chars]
 end
 
+"""
+    compute_parallel_multiplier(parallel_branch_set, branch) -> Float64
+
+Susceptance fraction `b_branch / b_total` of one member of a parallel group. The member is
+resolved by object identity; passing a component that is not in the group is an error.
+"""
+function compute_parallel_multiplier(
+    parallel_branch_set::AbstractBranchesParallel,
+    branch::PSY.ACTransmission,
+)
+    b_total = 0.0
+    b_branch = 0.0
+    found = false
+    for br in parallel_branch_set
+        # `get_series_susceptance` (see BranchAdmittance.jl) is tap-aware for
+        # two-winding transformers and dispatches PNM's three-winding winding wrapper.
+        if br === branch
+            b_branch = get_series_susceptance(br, PSY.SU)
+            found = true
+        end
+        b_total += get_series_susceptance(br, PSY.SU)
+    end
+    if !found
+        error(
+            "Branch $(get_name(branch)) is not a member of parallel group " *
+            "$(get_name(parallel_branch_set)).",
+        )
+    end
+    return b_branch / b_total
+end
+
+# Name-based lookup kept for callers that only hold a name (PTDF row API, PowerFlows).
+# PSY names are unique per concrete type only, so a name may match several members of a
+# mixed group; that was silently double-counted before — now it must resolve to exactly one.
 function compute_parallel_multiplier(
     parallel_branch_set::AbstractBranchesParallel,
     branch_name::String,
 )
-    b_total = 0.0
-    b_branch = 0.0
+    matches = PSY.ACTransmission[]
     for br in parallel_branch_set
-        # `get_series_susceptance` (see BranchAdmittance.jl) is tap-aware for
-        # two-winding transformers and dispatches PNM's three-winding winding wrapper.
-        if PSY.get_name(br) == branch_name
-            b_branch += get_series_susceptance(br, PSY.SU)
+        if get_name(br) == branch_name
+            push!(matches, br)
         end
-        b_total += get_series_susceptance(br, PSY.SU)
     end
-    return b_branch / b_total
+    if length(matches) != 1
+        error(
+            "Branch name $(branch_name) matches $(length(matches)) members of parallel " *
+            "group $(get_name(parallel_branch_set)); resolve by component identity.",
+        )
+    end
+    return compute_parallel_multiplier(parallel_branch_set, first(matches))
 end
 
 function get_series_susceptance(

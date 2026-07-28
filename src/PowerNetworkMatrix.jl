@@ -359,12 +359,21 @@ function get_branch_multiplier(A::T, branch_name::String) where {T <: PowerNetwo
     end
 
     if !isempty(nr.reverse_parallel_branch_map)
-        for (k, v) in nr.reverse_parallel_branch_map
-            if branch_name == PSY.get_name(k)
-                parallel_branch_set = nr.parallel_branch_map[v]
-                multiplier = compute_parallel_multiplier(parallel_branch_set, branch_name)
-                return multiplier, v
-            end
+        matches = [
+            (k, v) for
+            (k, v) in nr.reverse_parallel_branch_map if branch_name == get_name(k)
+        ]
+        if length(matches) > 1
+            error(
+                "Branch name $(branch_name) matches $(length(matches)) parallel-group " *
+                "members; name-based lookup is ambiguous.",
+            )
+        end
+        if length(matches) == 1
+            matched, matched_arc = only(matches)
+            parallel_branch_set = nr.parallel_branch_map[matched_arc]
+            multiplier = compute_parallel_multiplier(parallel_branch_set, matched)
+            return multiplier, matched_arc
         end
     end
 
