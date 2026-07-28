@@ -368,6 +368,209 @@ function get_equivalent_physical_branch_parameters(
     return _get_equivalent_physical_branch_parameters(segment.equivalent_ybus, segment)
 end
 
+# α of one parallel-group member expressed in the group's arc frame: anti-parallel members
+# (post-ZIR merge) enter with a negated angle, mirroring ybus_branch_entries(bp, nr).
+function _oriented_member_phase_shift(
+    br::PSY.ACTransmission,
+    bp::AbstractBranchesParallel,
+    nr::NetworkReductionData,
+)
+    α = get_series_phase_shift(br)
+    if get_arc_tuple(br, nr) != get_arc_tuple(bp, nr)
+        return -α
+    end
+    return α
+end
+
+"""
+    get_series_phase_shift(bp::AbstractBranchesParallel, nr) -> Float64
+
+Susceptance-weighted equivalent DC phase shift of a parallel group,
+`Σ bₘ·αₘ / Σ bₘ`, in the group's arc frame. Exact for the DC model even when members are
+lossy (unlike the single-π extraction in `get_equivalent_physical_branch_parameters`).
+"""
+function get_series_phase_shift(bp::AbstractBranchesParallel, nr::NetworkReductionData)
+    b_total = 0.0
+    b_alpha = 0.0
+    for br in bp
+        b = get_series_susceptance(br, PSY.SU)
+        b_total += b
+        b_alpha += b * _oriented_member_phase_shift(br, bp, nr)
+    end
+    return b_alpha / b_total
+end
+
+_segment_phase_shift(seg::PSY.ACTransmission, ::NetworkReductionData) =
+    get_series_phase_shift(seg)
+_segment_phase_shift(seg::AbstractBranchesParallel, nr::NetworkReductionData) =
+    get_series_phase_shift(seg, nr)
+
+"""
+    get_series_phase_shift(bs::BranchesSeries, nr) -> Float64
+
+Equivalent DC phase shift of a series chain: segment angles add along the chain
+(`:ToFrom` segments negated). Exact for the DC model.
+"""
+function get_series_phase_shift(bs::BranchesSeries, nr::NetworkReductionData)
+    total = 0.0
+    for (ix, seg) in enumerate(bs)
+        α = _segment_phase_shift(seg, nr)
+        if bs.segment_orientations[ix] == :ToFrom
+            α = -α
+        end
+        total += α
+    end
+    return total
+end
+
+"""
+    arc_dc_phase_shift(nr::NetworkReductionData, arc::Tuple{Int, Int}) -> Float64
+
+Equivalent DC phase-shift angle α of the retained `arc`, resolved through whichever
+reduction map owns it and oriented to match `arc` (a reverse-keyed hit negates). Total on
+every mapped arc -- added Ward-equivalent arcs shift by 0.0. Throws if `arc` is in no map.
+This is the α that `BA_Matrix` deliberately excludes from its susceptances
+(`_arc_component_susceptance`); the DC solver applies it as the injection
+[`arc_dc_shift_injection`](@ref).
+"""
+function arc_dc_phase_shift(nr::NetworkReductionData, arc::Tuple{Int, Int})
+    direct = get(get_direct_branch_map(nr), arc, nothing)
+    if !isnothing(direct)
+        return get_series_phase_shift(direct)
+    end
+    rev = (arc[2], arc[1])
+    for map in (get_series_branch_map(nr), get_parallel_branch_map(nr))
+        forward = get(map, arc, nothing)
+        if !isnothing(forward)
+            return get_series_phase_shift(forward, nr)
+        end
+        reversed = get(map, rev, nothing)
+        if !isnothing(reversed)
+            return -get_series_phase_shift(reversed, nr)
+        end
+    end
+    if haskey(get_added_arc_impedance_map(nr), arc)
+        return 0.0
+    end
+    error("Arc $(arc) not found in any network reduction map.")
+end
+
+"""
+    arc_dc_shift_injection(nr::NetworkReductionData, arc::Tuple{Int, Int}) -> Float64
+
+`b_eq·α_eq` for the retained `arc` in system base -- the magnitude of the DC phase-shift
+injection pair (`+b·α` at the from bus, `−b·α` at the to bus) and of the arc-flow offset
+(`f = b·Δθ − b·α`). Zero for every non-shifted arc. `b_eq` matches `BA_Matrix`'s value on
+every shifted arc (both use `get_series_susceptance` there).
+"""
+function arc_dc_shift_injection(nr::NetworkReductionData, arc::Tuple{Int, Int})
+    α = arc_dc_phase_shift(nr, arc)
+    iszero(α) && return 0.0
+    return _arc_dc_susceptance(nr, arc) * α
+end
+
+# b of the map entry owning `arc` (orientation-symmetric, so no reverse negation). Only
+# reached for shifted arcs, which are always direct/parallel/series -- never Ward-added.
+function _arc_dc_susceptance(nr::NetworkReductionData, arc::Tuple{Int, Int})
+    rev = (arc[2], arc[1])
+    direct_map = get_direct_branch_map(nr)
+    haskey(direct_map, arc) && return get_series_susceptance(direct_map[arc], PSY.SU)
+    for map in (get_series_branch_map(nr), get_parallel_branch_map(nr))
+        haskey(map, arc) && return get_series_susceptance(map[arc], PSY.SU)
+        haskey(map, rev) && return get_series_susceptance(map[rev], PSY.SU)
+    end
+    error("Arc $(arc) not found in any network reduction map.")
+end
+
+"""
+    compute_parallel_circulating_flow(bp, nr, branch) -> Float64
+
+DC circulating-flow component of one member of a parallel group, `bₘ·(α_eq − αₘ)` in the
+group's arc frame (per unit, system base). The member's total DC flow is
+`compute_parallel_multiplier(bp, branch)·f_arc + compute_parallel_circulating_flow(bp, nr, branch)`;
+the circulating components sum to zero over the group. Member resolved by object identity;
+a non-member is an error.
+"""
+function compute_parallel_circulating_flow(
+    bp::AbstractBranchesParallel,
+    nr::NetworkReductionData,
+    branch::PSY.ACTransmission,
+)
+    if !any(br === branch for br in bp)
+        error(
+            "Branch $(get_name(branch)) is not a member of parallel group " *
+            "$(get_name(bp)).",
+        )
+    end
+    α_eq = get_series_phase_shift(bp, nr)
+    b = get_series_susceptance(branch, PSY.SU)
+    return b * (α_eq - _oriented_member_phase_shift(branch, bp, nr))
+end
+
+# Combined series impedance of a reduction aggregate from member r/x alone (no shunts, no
+# tap, no α) -- the loss-estimate equivalent that exists even when a lossy shifted group has
+# no single-π representation. Orientation-symmetric.
+function _dc_series_impedance(br::PSY.ACTransmission)
+    return complex(PSY.get_r(br, PSY.SU), PSY.get_x(br, PSY.SU))
+end
+
+function _dc_series_impedance(t::PSY.TwoWindingTransformer)
+    return _dc_series_impedance(PSY.get_circuit(t))
+end
+
+function _dc_series_impedance(c::PSY.TransformerCircuit)
+    return complex(PSY.get_r(c, PSY.SU), PSY.get_x(c, PSY.SU))
+end
+
+function _dc_series_impedance(tw::ThreeWindingTransformerCircuit)
+    return _dc_series_impedance(tw.circuit)
+end
+
+function _dc_series_impedance(bp::AbstractBranchesParallel)
+    return inv(sum(inv(_dc_series_impedance(br)) for br in bp))
+end
+
+function _dc_series_impedance(bs::BranchesSeries)
+    return sum(_dc_series_impedance(seg) for seg in bs)
+end
+
+# Non-shifting aggregates keep the exact single-π value (bit-identical to
+# arc_equivalent_branch); shifting aggregates take the member-impedance combination, which
+# is total where the single-π extraction throws (lossy shifted groups).
+function _dc_equivalent_resistance(
+    group::Union{AbstractBranchesParallel, BranchesSeries},
+    nr::NetworkReductionData,
+)
+    if !_is_phase_shifting(group)
+        return get_equivalent_r(get_equivalent_physical_branch_parameters(group, nr))
+    end
+    return real(_dc_series_impedance(group))
+end
+
+"""
+    arc_dc_resistance(nr::NetworkReductionData, arc::Tuple{Int, Int}) -> Float64
+
+Equivalent series resistance of the retained `arc` for DC loss estimation (`r·P²`),
+system base. Total on every mapped arc -- including lossy shifted parallel groups, where
+[`arc_equivalent_branch`](@ref) has no single-π equivalent and throws.
+"""
+function arc_dc_resistance(nr::NetworkReductionData, arc::Tuple{Int, Int})
+    direct = get(get_direct_branch_map(nr), arc, nothing)
+    if !isnothing(direct)
+        return get_equivalent_r(equivalent_branch(direct))
+    end
+    rev = (arc[2], arc[1])
+    for map in (get_series_branch_map(nr), get_parallel_branch_map(nr))
+        haskey(map, arc) && return _dc_equivalent_resistance(map[arc], nr)
+        haskey(map, rev) && return _dc_equivalent_resistance(map[rev], nr)
+    end
+    added = get(get_added_arc_impedance_map(nr), arc, nothing)
+    if !isnothing(added)
+        return get_equivalent_r(equivalent_branch(added))
+    end
+    error("Arc $(arc) not found in any network reduction map.")
+end
+
 # Recurses through PNM's own `has_time_series`, not PSY's, so a member that is itself a PNM
 # wrapper (a nested group, or a `ThreeWindingTransformerCircuit`, which PSY cannot answer for)
 # resolves correctly.

@@ -81,6 +81,10 @@ get_series_susceptance(
     units::IS.AbstractUnitSystem,
 ) = get_series_susceptance(segment.circuit, units)
 
+function get_series_phase_shift(tw::ThreeWindingTransformerCircuit)
+    return get_series_phase_shift(tw.circuit)
+end
+
 """
     get_equivalent_r(tw::ThreeWindingTransformerCircuit)
 

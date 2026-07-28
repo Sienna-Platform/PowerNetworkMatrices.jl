@@ -74,6 +74,26 @@ get_series_susceptance(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem) 
     (1 / PSY.get_x(c, units)) / PSY.get_tap(c)
 
 """
+    get_series_phase_shift(br) -> Float64
+
+Phase-shift angle α (radians) of the series element of a branch's π-model, in the branch's
+own from → to orientation. Non-transformer branches never shift. This is the exact stored
+angle for the DC injection model (`f = b·(θ_f − θ_t − α)`), unlike the numerically recovered
+`get_equivalent_shift` of an aggregate's `EquivalentBranch`.
+"""
+function get_series_phase_shift(::PSY.ACTransmission)
+    return 0.0
+end
+
+function get_series_phase_shift(c::PSY.TransformerCircuit)
+    return PSY.get_α(c)
+end
+
+function get_series_phase_shift(t::PSY.TwoWindingTransformer)
+    return get_series_phase_shift(PSY.get_circuit(t))
+end
+
+"""
     equivalent_branch(b; min_x_eps) -> EquivalentBranch
 
 The π-model of a single branch in **impedance** form: `(r, x, g_from, b_from, g_to, b_to,
