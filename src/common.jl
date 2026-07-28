@@ -277,33 +277,46 @@ function sparsify(dense_array::Vector{Float64}, tol::Float64)
 end
 
 """
-    _get_equivalent_physical_branch_parameters(equivalent_ybus::Matrix{$YBUS_ELTYPE}, context::String = "")
+    _get_equivalent_physical_branch_parameters(equivalent_ybus::Matrix{$YBUS_ELTYPE})
+    _get_equivalent_physical_branch_parameters(
+        equivalent_ybus::Matrix{$YBUS_ELTYPE},
+        segment::Union{AbstractBranchesParallel, BranchesSeries},
+    )
 
 Takes as input a 2x2 Matrix{$YBUS_ELTYPE} representing the Ybus contribution of either an
 AbstractBranchesParallel (homogeneous or mixed) or BranchesSeries object.
 Returns a dictionary of equivalent parameters, matching the PowerModels data format.
-`context` is appended to the error message raised when no single-π equivalent exists.
+When a `segment` is provided, `get_name(segment)` is appended to the error message raised
+when no single-π equivalent exists; this lookup runs only on that error path, never on
+the success path.
 """
-function _get_equivalent_physical_branch_parameters(
-    equivalent_ybus::Matrix{YBUS_ELTYPE},
-    context::String = "",
+function _phase_shift_error_message()
+    return "Equivalent parameters for the series or parallel reduction of branches results \
+in a real part of the phase shift angle. This can occur when a lossy phase-shifting \
+circuit is in parallel with other branches."
+end
+
+function _phase_shift_tap_shift(y_12::YBUS_ELTYPE, y_21::YBUS_ELTYPE)
+    isapprox(y_12, y_21) && return 1.0, 0.0
+    ratio = log(y_21 / y_12) / 2
+    isapprox(0.0, real(ratio); atol = 1e-6) || error(_phase_shift_error_message())
+    return 1.0, imag(ratio)
+end
+
+function _phase_shift_tap_shift(
+    y_12::YBUS_ELTYPE,
+    y_21::YBUS_ELTYPE,
+    segment::Union{AbstractBranchesParallel, BranchesSeries},
 )
-    y_11, y_12, y_21, y_22 = equivalent_ybus
-    if isapprox(y_12, y_21)
-        tap = 1.0
-        shift = 0.0
-    else
-        tap = 1.0
-        ratio = log(y_21 / y_12) / 2
-        if !isapprox(0.0, real(ratio); atol = 1e-6)
-            error(
-                "Equivalent parameters for the series or parallel reduction of branches results \
-          in a real part of the phase shift angle. A lossy phase-shifting circuit in parallel \
-          with other branches has no single-π equivalent. $(context)",
-            )
-        end
-        shift = imag(ratio)
-    end
+    isapprox(y_12, y_21) && return 1.0, 0.0
+    ratio = log(y_21 / y_12) / 2
+    isapprox(0.0, real(ratio); atol = 1e-6) ||
+        error("$(_phase_shift_error_message()) Offending group: $(get_name(segment)).")
+    return 1.0, imag(ratio)
+end
+
+function _build_equivalent_branch(equivalent_ybus::Matrix{YBUS_ELTYPE}, tap, shift)
+    y_11, y_12, _, y_22 = equivalent_ybus
     y_l = y_12 * -1 * exp(1 * shift * im)
     z_12 = 1 / y_l
     r = real(z_12)
@@ -313,6 +326,21 @@ function _get_equivalent_physical_branch_parameters(
     g_to = real(y_22 - y_l)
     b_to = imag(y_22 - y_l)
     return EquivalentBranch(r, x, g_from, b_from, g_to, b_to, tap, shift)
+end
+
+function _get_equivalent_physical_branch_parameters(equivalent_ybus::Matrix{YBUS_ELTYPE})
+    _, y_12, y_21, _ = equivalent_ybus
+    tap, shift = _phase_shift_tap_shift(y_12, y_21)
+    return _build_equivalent_branch(equivalent_ybus, tap, shift)
+end
+
+function _get_equivalent_physical_branch_parameters(
+    equivalent_ybus::Matrix{YBUS_ELTYPE},
+    segment::Union{AbstractBranchesParallel, BranchesSeries},
+)
+    _, y_12, y_21, _ = equivalent_ybus
+    tap, shift = _phase_shift_tap_shift(y_12, y_21, segment)
+    return _build_equivalent_branch(equivalent_ybus, tap, shift)
 end
 
 # `get_equivalent_physical_branch_parameters` / `populate_equivalent_ybus!` live here (rather
@@ -337,10 +365,7 @@ function get_equivalent_physical_branch_parameters(
     if isnothing(segment.equivalent_ybus)
         populate_equivalent_ybus!(segment, nr)
     end
-    return _get_equivalent_physical_branch_parameters(
-        segment.equivalent_ybus,
-        "Offending group: $(get_name(segment)).",
-    )
+    return _get_equivalent_physical_branch_parameters(segment.equivalent_ybus, segment)
 end
 
 # Recurses through PNM's own `has_time_series`, not PSY's, so a member that is itself a PNM
