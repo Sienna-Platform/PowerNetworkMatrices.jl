@@ -280,7 +280,7 @@ end
     _get_equivalent_physical_branch_parameters(equivalent_ybus::AbstractMatrix{<:Complex})
     _get_equivalent_physical_branch_parameters(
         equivalent_ybus::AbstractMatrix{<:Complex},
-        segment::Union{AbstractBranchesParallel, BranchesSeries},
+        segment::AbstractReductionAggregate,
     )
 
 Recover π-model parameters (PowerModels data format) from a 2x2 two-port representing the Ybus
@@ -318,7 +318,7 @@ end
 function _phase_shift_tap_shift(
     y_12::Complex,
     y_21::Complex,
-    segment::Union{AbstractBranchesParallel, BranchesSeries},
+    segment::AbstractReductionAggregate,
 )
     isapprox(y_12, y_21) && return 1.0, 0.0
     ratio = log(y_21 / y_12) / 2
@@ -355,7 +355,7 @@ end
 
 function _get_equivalent_physical_branch_parameters(
     equivalent_ybus::AbstractMatrix{<:Complex},
-    segment::Union{AbstractBranchesParallel, BranchesSeries},
+    segment::AbstractReductionAggregate,
 )
     # Column-major again: the first off-diagonal read is M[2,1]. See `_build_equivalent_branch`.
     tap, shift = _phase_shift_tap_shift(
@@ -373,7 +373,7 @@ end
 # is the single *declared* ComplexF32 -> ComplexF64 conversion point in this path: series chains
 # arrive at Ybus storage precision, parallel groups at ComplexF64. See `CACHED_TWO_PORT`.
 function populate_equivalent_ybus!(
-    segment::Union{AbstractBranchesParallel, BranchesSeries},
+    segment::AbstractReductionAggregate,
     nr::NetworkReductionData,
 )
     segment.equivalent_ybus = ybus_branch_entries(segment, nr)
@@ -385,7 +385,7 @@ end
 # `CACHED_TWO_PORT`): the old ComplexF32 field cost ~7e-8 relative on the recovered shift and
 # left the `real(ratio)` representability test only ~8 Float32 eps wide.
 function get_equivalent_physical_branch_parameters(
-    segment::Union{AbstractBranchesParallel, BranchesSeries},
+    segment::AbstractReductionAggregate,
     nr::NetworkReductionData,
 )
     if !segment.equivalent_ybus_populated
@@ -452,11 +452,9 @@ end
 
 _segment_phase_shift(seg::PSY.ACTransmission, ::NetworkReductionData) =
     get_series_phase_shift(seg)
-_segment_phase_shift(seg::AbstractBranchesParallel, nr::NetworkReductionData) =
-    get_series_phase_shift(seg, nr)
-# A chain would otherwise match the blanket `ACTransmission` method and call the single-branch
+# An aggregate would otherwise match the blanket method and call the single-branch
 # `get_series_phase_shift`, which has no method for it.
-_segment_phase_shift(seg::BranchesSeries, nr::NetworkReductionData) =
+_segment_phase_shift(seg::AbstractReductionAggregate, nr::NetworkReductionData) =
     get_series_phase_shift(seg, nr)
 
 """
@@ -715,11 +713,9 @@ function get_partition_rating(pe::ParallelEquivalent)
 end
 
 _segment_has_single_pi(::PSY.ACTransmission, ::NetworkReductionData) = true
-_segment_has_single_pi(bp::AbstractBranchesParallel, nr::NetworkReductionData) =
-    has_single_pi_equivalent(bp, nr)
-# A nested chain would otherwise match the blanket method and answer `true` unconditionally.
-_segment_has_single_pi(bs::BranchesSeries, nr::NetworkReductionData) =
-    has_single_pi_equivalent(bs, nr)
+# An aggregate would otherwise match the blanket method and answer `true` unconditionally.
+_segment_has_single_pi(seg::AbstractReductionAggregate, nr::NetworkReductionData) =
+    has_single_pi_equivalent(seg, nr)
 
 """
     has_single_pi_equivalent(bs::BranchesSeries, nr) -> Bool
@@ -782,7 +778,7 @@ end
 # arc_equivalent_branch); shifting aggregates take the member-impedance combination, which
 # is total where the single-π extraction throws (lossy shifted groups).
 function _dc_equivalent_resistance(
-    group::Union{AbstractBranchesParallel, BranchesSeries},
+    group::AbstractReductionAggregate,
     nr::NetworkReductionData,
 )
     if !_is_phase_shifting(group)
@@ -802,10 +798,20 @@ system base. Total on every mapped arc -- including lossy shifted parallel group
 # own equivalent; aggregates go through the shifted-group-aware combination.
 _dc_entry_resistance(br::PSY.ACTransmission, ::NetworkReductionData) =
     get_equivalent_r(equivalent_branch(br))
-_dc_entry_resistance(group::AbstractBranchesParallel, nr::NetworkReductionData) =
+_dc_entry_resistance(group::AbstractReductionAggregate, nr::NetworkReductionData) =
     _dc_equivalent_resistance(group, nr)
-_dc_entry_resistance(group::BranchesSeries, nr::NetworkReductionData) =
-    _dc_equivalent_resistance(group, nr)
+
+"""
+    get_equivalent_available(seg::AbstractReductionAggregate) -> Bool
+
+Availability of a reduction aggregate: every member must be available for the equivalent arc to
+be. Parallel groups and series chains share the rule, so both dispatch here.
+"""
+function get_equivalent_available(seg::AbstractReductionAggregate)
+    return all(PSY.get_available(branch) for branch in seg)
+end
+
+PSY.get_available(seg::AbstractReductionAggregate) = get_equivalent_available(seg)
 
 function arc_dc_resistance(nr::NetworkReductionData, arc::Tuple{Int, Int})
     entry, _ = _resolve_arc_entry(nr, arc)
@@ -816,7 +822,7 @@ end
 # wrapper (a nested group, or a `ThreeWindingTransformerCircuit`, which PSY cannot answer for)
 # resolves correctly.
 function has_time_series(
-    branch::Union{BranchesSeries, AbstractBranchesParallel},
+    branch::AbstractReductionAggregate,
     ts_type::Type{T},
     ts_name::String,
 ) where {T <: PSY.TimeSeriesData}

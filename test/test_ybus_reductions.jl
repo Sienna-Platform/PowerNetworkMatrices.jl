@@ -319,6 +319,37 @@ end
     @test 8 ∈ PNM.get_bus_axis(ybus)
 end
 
+@testset "min_x_eps substitutes for a zero-impedance transformer" begin
+    # ZeroImpedanceBranchReduction excludes transformer arcs, so nothing downstream rescues a
+    # transformer with r == x == 0: before `min_x_eps` reached the circuit methods, its
+    # admittance came out NaN and Ybus assembly died on the `isfinite` guard.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    t = get_component(TwoWindingTransformer, sys, "Trans4")
+    set_r!(t, 0.0 * PSY.SU)
+    set_x!(t, 0.0 * PSY.SU)
+
+    min_x_eps = 1e-3
+    eb = PNM.equivalent_branch(t; min_x_eps = min_x_eps)
+    @test PNM.get_equivalent_r(eb) ≈ 0.0 atol = 1e-12
+    @test PNM.get_equivalent_x(eb) ≈ min_x_eps atol = 1e-12
+
+    adm = PNM.branch_admittance(t; min_x_eps = min_x_eps)
+    @test isfinite(adm.g)
+    @test isfinite(adm.b)
+    @test adm.b ≈ -1.0 / min_x_eps atol = 1e-6
+
+    # The whole matrix builds off the ZIR-configured substitute rather than erroring.
+    ybus = Ybus(
+        sys;
+        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+            minimum_retained_impedance = min_x_eps,
+        ),
+    )
+    @test all(isfinite, ybus.data.nzval)
+    @test 7 ∈ PNM.get_bus_axis(ybus)
+    @test 8 ∈ PNM.get_bus_axis(ybus)
+end
+
 @testset "ZeroImpedanceBranchReduction: degenerate 3WT merge promotes windings to a parallel group" begin
     # A NON-winding zero-impedance branch between two REAL terminal buses of the same
     # three-winding transformer gets ZIR-merged. Both winding arcs then remap to the same

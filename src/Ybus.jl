@@ -483,6 +483,15 @@ function ybus_branch_entries(
     return ybus_reduced[1, 1], ybus_reduced[1, 2], ybus_reduced[2, 1], ybus_reduced[2, 2]
 end
 
+# ZIBR's substitute reactance for r=x=0 branches; falls back when no spec is on the NRD.
+function _minimum_retained_impedance(nr::NetworkReductionData)
+    zir = get_zero_impedance_reduction(get_reductions(nr))
+    if isnothing(zir)
+        return ZERO_IMPEDANCE_X_EPSILON
+    end
+    return get_minimum_retained_impedance(zir)
+end
+
 """Handles ybus entries for most 2-node AC branches. The types handled here are:
 `Line`, `DiscreteControlledACBranch`, and `TwoWindingTransformer`.
 """
@@ -499,11 +508,10 @@ function _ybus!(
     nr::NetworkReductionData,
 )
     add_branch_entries_to_indexing_maps!(num_bus, branch_ix, nr, fb, tb, br)
-    # ZIBR's substitute reactance for r=x=0 branches; fall back if no spec on the NRD.
-    zir = get_zero_impedance_reduction(get_reductions(nr))
-    min_x_eps =
-        isnothing(zir) ? ZERO_IMPEDANCE_X_EPSILON : get_minimum_retained_impedance(zir)
-    add_branch_entries_to_ybus!(y11, y12, y21, y22, branch_ix, br; min_x_eps = min_x_eps)
+    add_branch_entries_to_ybus!(
+        y11, y12, y21, y22, branch_ix, br;
+        min_x_eps = _minimum_retained_impedance(nr),
+    )
     return
 end
 
@@ -521,14 +529,17 @@ function _ybus!(
     nr::NetworkReductionData,
 )
     add_to_branch_maps!(nr, br)
+    min_x_eps = _minimum_retained_impedance(nr)
     n_entries = 0
     for (i, circuit) in enumerate(PSY.get_circuits(br))
         PSY.get_available(circuit) || continue
         term_ix, star_ix = get_bus_indices(PSY.get_arc(circuit), num_bus, nr)
         fb[offset_ix + ix + n_entries] = term_ix
         tb[offset_ix + ix + n_entries] = star_ix
-        (Y11, Y12, Y21, Y22) =
-            ybus_branch_entries(ThreeWindingTransformerCircuit(br, circuit, i))
+        (Y11, Y12, Y21, Y22) = ybus_branch_entries(
+            ThreeWindingTransformerCircuit(br, circuit, i);
+            min_x_eps = min_x_eps,
+        )
         y11[offset_ix + ix + n_entries] = Y11
         y12[offset_ix + ix + n_entries] = Y12
         y21[offset_ix + ix + n_entries] = Y21

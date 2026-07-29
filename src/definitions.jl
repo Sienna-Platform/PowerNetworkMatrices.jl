@@ -10,6 +10,17 @@ const CACHED_TWO_PORT = NTuple{4, ComplexF64}
 const EMPTY_TWO_PORT =
     (zero(ComplexF64), zero(ComplexF64), zero(ComplexF64), zero(ComplexF64))
 
+"""
+An aggregate of branches occupying a single retained arc after a network reduction: a
+`BranchesParallel`/`MixedBranchesParallel` group or a `BranchesSeries` chain.
+
+Aggregates subtype `PSY.ACTransmission`, so without this intermediate layer they match blanket
+`::PSY.ACTransmission` methods that assume a single physical branch — silently, in the cases
+that return a value rather than erroring. Dispatch on this type whenever a method needs the
+reduction-aware `(segment, nr)` form instead.
+"""
+abstract type AbstractReductionAggregate <: PSY.ACTransmission end
+
 const KiB = 1024
 const MiB = KiB * KiB
 const GiB = MiB * KiB

@@ -58,10 +58,13 @@
     emergency_rating_eq = PNM.get_equivalent_emergency_rating(bp)
     @test emergency_rating_eq ≈ 250.0 atol = 1e-6
 
-    # A parallel group's normal-operation equivalent rating is the sum of its members: every
-    # circuit on the arc carries flow at once. The N-1 value is reserved for a parallel block
-    # embedded in a series chain (`_series_member_rating`).
+    # `get_equivalent_rating` is the unexported in-PNM fallback and sums its members: every
+    # circuit on the arc carries flow at once. It is not what consumers get by default — a
+    # series chain applies the N-1 value to an embedded parallel block
+    # (`_series_member_rating`), and POM selects the aggregate per `DeviceModel`, also
+    # defaulting to N-1.
     @test PNM.get_equivalent_rating(bp) ≈ 250.0 atol = 1e-6
+    @test PNM.get_single_element_contingency_rating(bp) ≈ 100.0 atol = 1e-6
 
     # Regression: `branch_flow_limits` used to reach a `get_equivalent_rating` with no
     # parallel-group method and raise a MethodError.

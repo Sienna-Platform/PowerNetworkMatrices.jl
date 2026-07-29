@@ -1,4 +1,4 @@
-mutable struct BranchesSeries <: PSY.ACTransmission
+mutable struct BranchesSeries <: AbstractReductionAggregate
     branches::Dict{DataType, Vector{<:PSY.ACTransmission}}
     needs_insertion_order::Bool
     insertion_order::Vector{Tuple{DataType, Int}}
@@ -236,19 +236,6 @@ function get_equivalent_emergency_rating(branch::PSY.GenericArcImpedance)
     @debug "GenericArcImpedance $(get_name(branch)) has no emergency rating. Using max_flow as a proxy instead."
     return PSY.get_max_flow(branch, PSY.DU)
 end
-
-"""
-    get_equivalent_available(bs::BranchesSeries)
-
-Get the availability status for series branches.
-All branches in series must be available for the series circuit to be available.
-"""
-function get_equivalent_available(bs::BranchesSeries)
-    # All branches must be available
-    return all(PSY.get_available(branch) for branch in bs)
-end
-
-PSY.get_available(bs::BranchesSeries) = get_equivalent_available(bs)
 
 function add_to_map(series_circuit::BranchesSeries, filters::Dict)
     if isempty(filters)

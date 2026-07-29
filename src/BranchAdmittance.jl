@@ -7,7 +7,10 @@
 # Split a two-winding transformer's complex magnetizing shunt onto the π-model from/to shunt
 # slots per its `PSY.TwoWindingTransformerShuntLocation`: PRIMARY places the full value on
 # the from side, SECONDARY on the to side, SPLIT the full value on both sides.
-function _magnetizing_shunt_split(y_shunt::Complex, location)
+function _magnetizing_shunt_split(
+    y_shunt::ComplexF64,
+    location::PSY.TwoWindingTransformerShuntLocation,
+)
     g, b = real(y_shunt), imag(y_shunt)
     if location == PSY.TwoWindingTransformerShuntLocation.PRIMARY
         return (g_fr = g, b_fr = b, g_to = 0.0, b_to = 0.0)
@@ -26,7 +29,11 @@ end
 # The shunt lives on the parent transformer and lands on circuit 1 only, per its
 # `PSY.ThreeWindingTransformerShuntLocation`: PRIMARY on the terminal (from) side, STAR on
 # the star-node (to) side. Circuits 2 and 3 carry no shunt.
-function _three_winding_shunt_split(y_shunt::Complex, location, winding_number::Int)
+function _three_winding_shunt_split(
+    y_shunt::ComplexF64,
+    location::PSY.ThreeWindingTransformerShuntLocation,
+    winding_number::Int,
+)
     winding_number == 1 || return (g_fr = 0.0, b_fr = 0.0, g_to = 0.0, b_to = 0.0)
     g, b = real(y_shunt), imag(y_shunt)
     if location == PSY.ThreeWindingTransformerShuntLocation.PRIMARY
@@ -67,8 +74,11 @@ get_series_susceptance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSyste
 """
     get_series_susceptance(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem)
 
-Tap-divided series susceptance of a transformer circuit. Both arities route here: the circuit
-owns `x` and `tap`, so the convention is stated once.
+Tap-divided series susceptance of a transformer circuit: `(1/x)/tap`. The
+[`PSY.TwoWindingTransformer`](@ref) method and the `ThreeWindingTransformerCircuit` wrapper
+both delegate here, since series `x` and `tap` live on the circuit at either arity.
+The wrapper delegates explicitly because it subtypes `PSY.ACTransmission`, not
+`PSY.TransformerCircuit`, and would otherwise reach the tap-free generic method above.
 """
 get_series_susceptance(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem) =
     (1 / PSY.get_x(c, units)) / PSY.get_tap(c)
@@ -93,23 +103,6 @@ function get_series_phase_shift(t::PSY.TwoWindingTransformer)
     return get_series_phase_shift(PSY.get_circuit(t))
 end
 
-"""
-    equivalent_branch(b; min_x_eps) -> EquivalentBranch
-
-The π-model of a single branch in **impedance** form: `(r, x, g_from, b_from, g_to, b_to,
-tap, shift)`. This is PNM's single source of truth for branch electrical parameters — both
-[`branch_admittance`](@ref) (admittance form) and [`ybus_branch_entries`](@ref) (Ybus 2×2)
-are derived from it, and [`arc_equivalent_branch`](@ref) resolves any arc to one.
-
-Methods exist for lines, `GenericArcImpedance` Ward equivalents, and transformer circuits of
-either arity — a transformer's series data lives on its `PSY.TransformerCircuit`, so 2W and
-3W differ only in which shunt-placement enum applies.
-
-The from/to shunts carry the real `PSY.get_g` conductance. A caller wanting PowerModels'
-`get_branch_to_pm` convention (which drops `g`) must zero it at that boundary.
-
-`min_x_eps` substitutes for `x` when `r == x == 0`, matching Ybus assembly.
-"""
 # Both π shunts in one pass: the explicit-units getters convert the whole from/to pair, so
 # reading each once and taking both fields statically halves the unit-conversion work.
 # ComplexF64, not YBUS_ELTYPE — the π layer is Float64; narrowing happens at Ybus storage.
@@ -121,14 +114,42 @@ end
 
 _get_shunts(::PSY.DiscreteControlledACBranch) = (zero(ComplexF64), zero(ComplexF64))
 
-# Kept out of line so the `@warn` body does not blow `equivalent_branch`'s inlining budget:
-# without this, the whole π chain stops inlining into `ybus_branch_entries` and the unit-tap
-# test in `_pi_to_ybus` can no longer constant-fold for lines.
-@noinline function _warn_zero_impedance(b, min_x_eps)
-    @warn "Branch $(PSY.get_name(b)) has r=0.0 and x=0.0; substituting x=$(min_x_eps) to avoid division by zero. This branch will be reduced by ZeroImpedanceBranchReduction unless its endpoints are irreducible."
+# Kept out of line so the `@warn` body does not count against the caller's inlining budget.
+# ZIR merges a zero-impedance line's endpoints but excludes transformer arcs, so the
+# substitution is transient for a line and permanent for a transformer.
+@noinline function _warn_zero_impedance(b::PSY.ACTransmission, min_x_eps::Float64)
+    fate = if _is_transformer(b)
+        "ZeroImpedanceBranchReduction excludes transformer arcs, so the substituted reactance is retained."
+    else
+        "This branch will be reduced by ZeroImpedanceBranchReduction unless its endpoints are irreducible."
+    end
+    @warn "Branch $(get_name(b)) has r=0.0 and x=0.0; substituting x=$(min_x_eps) to avoid division by zero. $fate"
     return
 end
 
+# `@inline` because the explicit-units getters expand past the inliner's cost model (~35 IR
+# statements each, from the `base_value` check and its error branch), so without it
+# `equivalent_branch` stays an out-of-line call in `branch_admittance` on the line path. The
+# transformer methods below are deliberately unannotated: forcing them inline inflates the
+# caller and measures no faster. Keep nothing between the docstring and the definition — a
+# comment there silently detaches the docstring.
+"""
+    equivalent_branch(b; min_x_eps) -> EquivalentBranch
+
+The π-model of a single branch in **impedance** form: `(r, x, g_from, b_from, g_to, b_to,
+tap, shift)`. This is PNM's single source of truth for branch electrical parameters — both
+[`branch_admittance`](@ref) (admittance form) and `ybus_branch_entries` (Ybus 2×2) are
+derived from it, and [`arc_equivalent_branch`](@ref) resolves any arc to one.
+
+Methods exist for lines, `GenericArcImpedance` Ward equivalents, and transformer circuits of
+either arity — a transformer's series data lives on its `PSY.TransformerCircuit`, so 2W and
+3W differ only in which shunt-placement enum applies.
+
+The from/to shunts carry the real `PSY.get_g` conductance. A caller wanting PowerModels'
+`get_branch_to_pm` convention (which drops `g`) must zero it at that boundary.
+
+`min_x_eps` substitutes for `x` when `r == x == 0`, for every branch type.
+"""
 @inline function equivalent_branch(
     b::PSY.ACTransmission;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
@@ -154,8 +175,14 @@ function equivalent_branch(
     b::PSY.GenericArcImpedance;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
+    r = PSY.get_r(b, PSY.DU)
+    x = PSY.get_x(b, PSY.DU)
+    if iszero(r) && iszero(x)
+        _warn_zero_impedance(b, min_x_eps)
+        x = min_x_eps
+    end
     return EquivalentBranch(
-        PSY.get_r(b, PSY.DU), PSY.get_x(b, PSY.DU),
+        r, x,
         0.0, 0.0, 0.0, 0.0,
         1.0, 0.0,
     )
@@ -169,7 +196,7 @@ function equivalent_branch(
         PSY.get_magnetizing_shunt(b, PSY.SU),
         PSY.get_shunt_location(b),
     )
-    return _circuit_equivalent_branch(PSY.get_circuit(b), sh)
+    return _circuit_equivalent_branch(PSY.get_circuit(b), sh, b, min_x_eps)
 end
 
 function equivalent_branch(
@@ -182,14 +209,27 @@ function equivalent_branch(
         PSY.get_shunt_location(transformer),
         get_winding_number(w),
     )
-    return _circuit_equivalent_branch(w.circuit, sh)
+    return _circuit_equivalent_branch(w.circuit, sh, w, min_x_eps)
 end
 
 # The whole of "a transformer is a circuit": the circuit owns r/x/tap/α for both arities, so
-# 2W and 3W differ only in which shunt-split rule produced `sh`.
-function _circuit_equivalent_branch(circuit::PSY.TransformerCircuit, sh)
+# 2W and 3W differ only in which shunt-split rule produced `sh`. `br` is the nameable owner —
+# a bare `PSY.TransformerCircuit` has no `get_name`, so the warning cannot be raised from here
+# without it.
+function _circuit_equivalent_branch(
+    circuit::PSY.TransformerCircuit,
+    sh::@NamedTuple{g_fr::Float64, b_fr::Float64, g_to::Float64, b_to::Float64},
+    br::PSY.ACTransmission,
+    min_x_eps::Float64,
+)
+    r = PSY.get_r(circuit, PSY.SU)
+    x = PSY.get_x(circuit, PSY.SU)
+    if iszero(r) && iszero(x)
+        _warn_zero_impedance(br, min_x_eps)
+        x = min_x_eps
+    end
     return EquivalentBranch(
-        PSY.get_r(circuit, PSY.SU), PSY.get_x(circuit, PSY.SU),
+        r, x,
         sh.g_fr, sh.b_fr, sh.g_to, sh.b_to,
         PSY.get_tap(circuit), PSY.get_α(circuit),
     )
@@ -202,7 +242,10 @@ end
 `g + im*b == 1 / (r + im*x)` is the series admittance. The admittance-form view of
 [`equivalent_branch`](@ref); see it for the shunt and unit conventions.
 """
-function branch_admittance(b; min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON)
+function branch_admittance(
+    b::PSY.ACTransmission;
+    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+)
     return _to_admittance(equivalent_branch(b; min_x_eps = min_x_eps))
 end
 
@@ -223,7 +266,7 @@ end
 `BranchesParallel` group), built from PNM's reduction-aware equivalent physical branch
 parameters. Series/parallel equivalents of lines carry `tap == 1`.
 """
-function branch_admittance(segment, nr::NetworkReductionData)
+function branch_admittance(segment::AbstractReductionAggregate, nr::NetworkReductionData)
     return _to_admittance(get_equivalent_physical_branch_parameters(segment, nr))
 end
 
@@ -276,9 +319,7 @@ needs more than one π branch. Use [`arc_equivalent_branches`](@ref) for the tot
 # the reduction-aware recovery, which throws when no single π exists.
 _single_arc_equivalent(br::PSY.ACTransmission, ::NetworkReductionData) =
     equivalent_branch(br)
-_single_arc_equivalent(group::AbstractBranchesParallel, nr::NetworkReductionData) =
-    get_equivalent_physical_branch_parameters(group, nr)
-_single_arc_equivalent(group::BranchesSeries, nr::NetworkReductionData) =
+_single_arc_equivalent(group::AbstractReductionAggregate, nr::NetworkReductionData) =
     get_equivalent_physical_branch_parameters(group, nr)
 
 function arc_equivalent_branch(nr::NetworkReductionData, arc::Tuple{Int, Int})
@@ -339,12 +380,19 @@ end
     _pi_to_ybus(adm) -> (Y11, Y12, Y21, Y22)
 
 Ybus 2x2 for a π-model tuple. The unit-tap case is split out as an optimisation, not for
-correctness: with `equivalent_branch` inlined the `tap == 1` test constant-folds for lines, so
-the `exp` and three complex divisions vanish from the emitted code. (Division by `1.0 + 0.0im`
-*is* bit-exact for finite values — only the sign of a zero can differ, which no downstream
-comparison observes.)
+correctness: a line's π-model is built with literal `tap`/`shift`, so inference constant-folds
+the `tap == 1` test and the `exp` and three complex divisions vanish from the emitted code.
+(Division by `1.0 + 0.0im` *is* bit-exact for finite values — only the sign of a zero can
+differ, which no downstream comparison observes.)
 """
-function _pi_to_ybus(adm)
+function _pi_to_ybus(
+    adm::@NamedTuple{
+        g::Float64, b::Float64,
+        g_fr::Float64, b_fr::Float64,
+        g_to::Float64, b_to::Float64,
+        tap::Float64, shift::Float64,
+    },
+)
     Y_l = complex(adm.g, adm.b)
     y_fr = complex(adm.g_fr, adm.b_fr)
     y_to = complex(adm.g_to, adm.b_to)

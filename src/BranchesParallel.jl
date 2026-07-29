@@ -1,4 +1,4 @@
-abstract type AbstractBranchesParallel <: PSY.ACTransmission end
+abstract type AbstractBranchesParallel <: AbstractReductionAggregate end
 
 # `arc_key` is the group's canonical arc in original bus numbers (the seed member's
 # orientation). It is remapped with `nr` on read, so orientation no longer depends on the
@@ -273,9 +273,14 @@ _series_member_rating(bp::AbstractBranchesParallel) =
     get_equivalent_rating(bp::AbstractBranchesParallel) -> Union{Nothing, Float64}
 
 Normal-operation rating of the equivalent arc: the sum of the members' ratings, since every
-circuit on the arc carries flow simultaneously. This is [`get_sum_of_max_rating`](@ref); the
-N-1 variant [`get_single_element_contingency_rating`](@ref) is what a series chain uses for an
-embedded parallel block (see `_series_member_rating`).
+circuit on the arc carries flow simultaneously. This is [`get_sum_of_max_rating`](@ref), and it
+is the unexported generic fallback used inside PNM by [`branch_flow_limits`](@ref) and
+`get_partition_rating`.
+
+It is **not** the aggregate a consumer gets by default. A series chain applies the N-1 variant
+[`get_single_element_contingency_rating`](@ref) to an embedded parallel block (see
+`_series_member_rating`), and POM selects the aggregate per `DeviceModel` — also defaulting to
+N-1. Pick the named aggregator explicitly rather than relying on this fallback.
 
 Members with no known rating are skipped; returns `nothing` only when no member has a known
 rating.
@@ -285,9 +290,8 @@ get_equivalent_rating(bp::AbstractBranchesParallel) = get_sum_of_max_rating(bp)
 """
     get_equivalent_emergency_rating(bp::AbstractBranchesParallel) -> Union{Nothing, Float64}
 
-Calculate the total emergency rating for branches in parallel.
-For parallel circuits, the emergency rating is the sum of individual emergency ratings divided by the number of circuits.
-This provides a conservative estimate that accounts for potential overestimation of total capacity.
+Sum of the members' emergency ratings, matching `get_equivalent_rating`'s normal-operation
+convention: every circuit on the arc carries flow simultaneously.
 
 Members with no known rating are skipped; returns `nothing` only when no member has a known
 rating (see [`get_sum_of_max_rating`](@ref)).
@@ -295,19 +299,6 @@ rating (see [`get_sum_of_max_rating`](@ref)).
 function get_equivalent_emergency_rating(bp::AbstractBranchesParallel)
     return _aggregate_known_ratings(sum, get_equivalent_emergency_rating, bp.branches)
 end
-
-"""
-    get_equivalent_available(bp::AbstractBranchesParallel)
-
-Get the availability status for parallel branches.
-All branches in parallel must be available for the parallel circuit to be available.
-"""
-function get_equivalent_available(bp::AbstractBranchesParallel)
-    # All branches must be available
-    return all(PSY.get_available(branch) for branch in bp.branches)
-end
-
-PSY.get_available(bp::AbstractBranchesParallel) = get_equivalent_available(bp)
 
 function Base.iterate(bp::AbstractBranchesParallel)
     return iterate(bp.branches)
