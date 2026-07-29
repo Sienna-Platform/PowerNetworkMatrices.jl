@@ -94,11 +94,14 @@ Compile-check: `julia --project=test -e 'using PowerNetworkMatrices'`.
 
 **The docs build is a required gate — `docs/make.jl` must pass.** Treat a docs failure like a test failure, and fix `missing_docs` by registering the docstring in `@autodocs`/`@docs`, never by silencing with `warnonly`.
 
-Local caveat, not an exemption: `docs/Project.toml` currently carries no `[sources]`, so it resolves registry PSY against `InfrastructureSystems#IS4` and dies precompiling with `UndefVarError: SystemUnitsSettings`. Until that env is pinned to `PowerSystems#psy6`, the gate only runs in CI — so docstring edits land unverified locally and need care:
+`docs/Project.toml` carries its own `[sources]`, mirroring `test/Project.toml`. It must: the CI workflow runs `Pkg.develop(PackageSpec(path=pwd()))`, and **`[sources]` is not inherited from a dev'd dependency**, so the root pins never reach the docs environment. Without them it resolves registry PowerSystems against `InfrastructureSystems#IS4` and dies precompiling with `UndefVarError: SystemUnitsSettings`. `[sources]` entries also require a matching `[deps]` entry, which is why IS and PowerFlowFileParser are listed there despite not being imported by the docs.
 
-  - Only **exported** symbols render (`docs/src/reference/public.md` is `@autodocs Public = true`; `internals.md` covers only the `KLUWrapper`/`AccelerateWrapper` submodules). An `@ref` to an unexported symbol is a broken link — prefer plain backticks for internal names.
-  - Newly *attaching* a docstring on an exported symbol makes its `@ref`s resolve for the first time, which can surface broken links that were previously dead text. Audit them when you fix an attachment.
-  - Pinning `docs/Project.toml` to the psy6 sources is the real fix and would restore the gate locally.
+Two ref rules, both learned from a red gate:
+
+  - **`public.md` renders private docstrings too.** `@autodocs Public = true` leaves `Private` at its default `true`, so *every* PNM docstring is rendered and every `@ref` in it is validated — being unexported is no shield.
+  - **Cross-package `@ref` does not resolve.** `[`PSY.Foo`](@ref)` fails: Documenter looks in `Main`. `DocumenterInterLinks` maps PowerSystems' *stable* docs, which predate the psy6 transformer types, so `@extref` fails too. Use plain backticks for any PSY name.
+
+A docstring that is silently detached (see below) hides its own broken refs. Attaching one makes them resolve for the first time — audit its refs in the same edit.
 
 **A comment between a docstring and its definition silently detaches the docstring** — Julia does not bridge it, and you get no warning; the symbol just reports "No documentation found". This bit `equivalent_branch`, whose docstring sat above an intervening comment and was dead text for its whole life. Put explanatory comments *above* the docstring, and verify with `@doc PNM.f`.
 

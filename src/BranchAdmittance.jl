@@ -50,8 +50,8 @@ end
 """
     get_series_susceptance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem)
 
-Series susceptance `1/x` of an [`ACTransmission`](@ref PSY.ACTransmission) branch, from
-the stored series reactance alone. [`PSY.TwoWindingTransformer`](@ref) has a more specific
+Series susceptance `1/x` of an `PSY.ACTransmission` branch, from
+the stored series reactance alone. `PSY.TwoWindingTransformer` has a more specific
 method (below) that additionally divides by the winding tap ratio
 (`PSY.get_tap(PSY.get_circuit(t))`). This is a deliberate asymmetry: only the susceptance
 form is tap-divided; Ybus/PTDF/LODF assembly needs the tap-divided value, while callers that
@@ -63,7 +63,7 @@ get_series_susceptance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem) =
 """
     get_series_susceptance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem)
 
-Series susceptance of a [`PSY.TwoWindingTransformer`](@ref): the generic `ACTransmission`
+Series susceptance of a `PSY.TwoWindingTransformer`: the generic `ACTransmission`
 value (`1/x`) divided by the winding tap ratio `PSY.get_tap(PSY.get_circuit(t))`. A
 fixed-ratio transformer has `tap = 1.0`, so this is a no-op for it and matches the plain
 `ACTransmission` value.
@@ -75,7 +75,7 @@ get_series_susceptance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSyste
     get_series_susceptance(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem)
 
 Tap-divided series susceptance of a transformer circuit: `(1/x)/tap`. The
-[`PSY.TwoWindingTransformer`](@ref) method and the `ThreeWindingTransformerCircuit` wrapper
+`PSY.TwoWindingTransformer` method and the `ThreeWindingTransformerCircuit` wrapper
 both delegate here, since series `x` and `tap` live on the circuit at either arity.
 The wrapper delegates explicitly because it subtypes `PSY.ACTransmission`, not
 `PSY.TransformerCircuit`, and would otherwise reach the tap-free generic method above.
@@ -298,6 +298,13 @@ function _reverse_equivalent_branch(eb::EquivalentBranch)
     )
 end
 
+# Single branches (direct and added-Ward alike) carry their own equivalent; aggregates go through
+# the reduction-aware recovery, which throws when no single π exists.
+_single_arc_equivalent(br::PSY.ACTransmission, ::NetworkReductionData) =
+    equivalent_branch(br)
+_single_arc_equivalent(group::AbstractReductionAggregate, nr::NetworkReductionData) =
+    get_equivalent_physical_branch_parameters(group, nr)
+
 """
     arc_equivalent_branch(nr::NetworkReductionData, arc::Tuple{Int, Int}) -> EquivalentBranch
 
@@ -307,21 +314,14 @@ parallel group, a series chain, or an added Ward-equivalent impedance. The resul
 oriented `from -> to` to match `arc`.
 
 This is the accessor consumers should use instead of walking
-[`get_direct_branch_map`](@ref)/[`get_parallel_branch_map`](@ref)/[`get_series_branch_map`](@ref)
-themselves — PNM owns the reduction bookkeeping, so an arc's parameters resolve here.
+`get_direct_branch_map`/`get_parallel_branch_map`/`get_series_branch_map` themselves — PNM owns
+the reduction bookkeeping, so an arc's parameters resolve here.
 
 Throws if `arc` is in no map.
 
 Throws for a parallel group that mixes phase-shift angles with impedance angles — that group
 needs more than one π branch. Use [`arc_equivalent_branches`](@ref) for the total accessor.
 """
-# Single branches (direct and added-Ward alike) carry their own equivalent; aggregates go through
-# the reduction-aware recovery, which throws when no single π exists.
-_single_arc_equivalent(br::PSY.ACTransmission, ::NetworkReductionData) =
-    equivalent_branch(br)
-_single_arc_equivalent(group::AbstractReductionAggregate, nr::NetworkReductionData) =
-    get_equivalent_physical_branch_parameters(group, nr)
-
 function arc_equivalent_branch(nr::NetworkReductionData, arc::Tuple{Int, Int})
     entry, reversed = _resolve_arc_entry(nr, arc)
     equivalent = _single_arc_equivalent(entry, nr)

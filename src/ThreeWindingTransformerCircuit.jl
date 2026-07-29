@@ -1,7 +1,7 @@
 """
     ThreeWindingTransformerCircuit <: PSY.ACTransmission
 
-Internal object representing a single circuit of a [`PSY.ThreeWindingTransformer`](@ref).
+Internal object representing a single circuit of a `PSY.ThreeWindingTransformer`.
 Do not export.
 
 This structure decomposes a three-winding transformer into individual circuit components
@@ -53,6 +53,10 @@ end
 
 get_transformer(tw::ThreeWindingTransformerCircuit) = tw.transformer
 get_winding_number(tw::ThreeWindingTransformerCircuit) = tw.winding_number
+# Extends the PSY getter rather than adding a PNM-local one: `Base.show(::Component)` derives
+# `get_$field` and calls it whenever PSY exposes that name, so a wrapper with a `circuit` field
+# and no `PSY.get_circuit` method throws a MethodError on display.
+PSY.get_circuit(tw::ThreeWindingTransformerCircuit) = tw.circuit
 # Lets callers key reduction maps by the parent transformer type.
 get_transformer_type(tw::ThreeWindingTransformerCircuit) = typeof(tw.transformer)
 
@@ -67,7 +71,7 @@ end
 
 Series susceptance of the star leg for the DC/reduction model: `(1/x)/tap`, computed from
 the circuit's star-leg reactance alone (r-free) and divided by the circuit tap ratio — the
-same convention as the [`PSY.TwoWindingTransformer`](@ref) method in `BranchAdmittance.jl`,
+same convention as the `PSY.TwoWindingTransformer` method in `BranchAdmittance.jl`,
 and reactance-additive like the generic `ACTransmission` `1/x` method, so all branch kinds
 combine consistently in the reduction sums (`BranchesSeries`/`BranchesParallel`,
 `virtual_factor_helpers`, `network_modification`) and in `BA_Matrix` assembly. The sign
@@ -103,7 +107,7 @@ get_equivalent_x(tw::ThreeWindingTransformerCircuit) = PSY.get_x(tw.circuit, PSY
     get_equivalent_rating(tw::ThreeWindingTransformerCircuit)
 
 The circuit's own rating (MVA, device base). May be `nothing` when unset, mirroring how a
-[`PSY.Line`](@ref)'s rating is surfaced; there is no parent-level rating to fall back to.
+`PSY.Line`'s rating is surfaced; there is no parent-level rating to fall back to.
 """
 get_equivalent_rating(tw::ThreeWindingTransformerCircuit) =
     PSY.get_rating(tw.circuit, PSY.DU)
