@@ -277,26 +277,38 @@ function sparsify(dense_array::Vector{Float64}, tol::Float64)
 end
 
 """
-    _get_equivalent_physical_branch_parameters(equivalent_ybus::Matrix{$YBUS_ELTYPE})
+    _get_equivalent_physical_branch_parameters(equivalent_ybus::AbstractMatrix{<:Complex})
     _get_equivalent_physical_branch_parameters(
-        equivalent_ybus::Matrix{$YBUS_ELTYPE},
+        equivalent_ybus::AbstractMatrix{<:Complex},
         segment::Union{AbstractBranchesParallel, BranchesSeries},
     )
 
-Takes as input a 2x2 Matrix{$YBUS_ELTYPE} representing the Ybus contribution of either an
-AbstractBranchesParallel (homogeneous or mixed) or BranchesSeries object.
-Returns a dictionary of equivalent parameters, matching the PowerModels data format.
-When a `segment` is provided, `get_name(segment)` is appended to the error message raised
-when no single-π equivalent exists; this lookup runs only on that error path, never on
-the success path.
+Recover π-model parameters (PowerModels data format) from a 2x2 two-port representing the Ybus
+contribution of an `AbstractBranchesParallel` (homogeneous or mixed) or a `BranchesSeries`.
+Callers pass ComplexF64; the `YBUS_ELTYPE` (ComplexF32) `equivalent_ybus` cache field is for
+Ybus assembly only.
+
+A single π-model exists only when `abs(y_12) == abs(y_21)` — otherwise the recovered phase
+shift has a real part, which no π-model can express. That happens exactly when a group mixes
+phase-shift angles with impedance angles. Such a group is still exactly representable, as
+*several* parallel π branches: see [`equivalent_partitions`](@ref) and
+[`arc_equivalent_branches`](@ref). When a `segment` is provided its name is appended to the
+error raised in the impossible case; that lookup runs only on the error path.
+
+Note the recovered shift is `imag(log(y_21 / y_12)) / 2`, which for a lossless group is
+`atan(Σbₘ sin αₘ / Σbₘ cos αₘ)` — a nonlinear function of the member angles, *not* the
+susceptance-weighted average the DC model uses (that is only its small-angle limit). Never
+write a test oracle here by reusing a DC α.
 """
 function _phase_shift_error_message()
     return "Equivalent parameters for the series or parallel reduction of branches results \
 in a real part of the phase shift angle. This can occur when a lossy phase-shifting \
-circuit is in parallel with other branches."
+circuit is in parallel with other branches. Such a group has no single π equivalent; use \
+`arc_equivalent_branches` (or `equivalent_partitions`) for the exact multi-branch \
+representation."
 end
 
-function _phase_shift_tap_shift(y_12::YBUS_ELTYPE, y_21::YBUS_ELTYPE)
+function _phase_shift_tap_shift(y_12::Complex, y_21::Complex)
     isapprox(y_12, y_21) && return 1.0, 0.0
     ratio = log(y_21 / y_12) / 2
     isapprox(0.0, real(ratio); atol = 1e-6) || error(_phase_shift_error_message())
@@ -304,8 +316,8 @@ function _phase_shift_tap_shift(y_12::YBUS_ELTYPE, y_21::YBUS_ELTYPE)
 end
 
 function _phase_shift_tap_shift(
-    y_12::YBUS_ELTYPE,
-    y_21::YBUS_ELTYPE,
+    y_12::Complex,
+    y_21::Complex,
     segment::Union{AbstractBranchesParallel, BranchesSeries},
 )
     isapprox(y_12, y_21) && return 1.0, 0.0
@@ -315,9 +327,15 @@ function _phase_shift_tap_shift(
     return 1.0, imag(ratio)
 end
 
-function _build_equivalent_branch(equivalent_ybus::Matrix{YBUS_ELTYPE}, tap, shift)
-    y_11, y_12, _, y_22 = equivalent_ybus
-    y_l = y_12 * -1 * exp(1 * shift * im)
+function _build_equivalent_branch(equivalent_ybus::AbstractMatrix{<:Complex}, tap, shift)
+    # Index explicitly: destructuring a 2x2 iterates COLUMN-major, so `a, b, c, d = M` binds
+    # `b` to M[2,1] (= Y21), not M[1,2]. The recovery genuinely wants Y21 here — that is what
+    # makes the returned shift carry the same sign as PSY's stored α — but spelling it out
+    # keeps the next reader from "fixing" the order.
+    y_11 = equivalent_ybus[1, 1]
+    y_21 = equivalent_ybus[2, 1]
+    y_22 = equivalent_ybus[2, 2]
+    y_l = y_21 * -1 * exp(1 * shift * im)
     z_12 = 1 / y_l
     r = real(z_12)
     x = imag(z_12)
@@ -328,44 +346,56 @@ function _build_equivalent_branch(equivalent_ybus::Matrix{YBUS_ELTYPE}, tap, shi
     return EquivalentBranch(r, x, g_from, b_from, g_to, b_to, tap, shift)
 end
 
-function _get_equivalent_physical_branch_parameters(equivalent_ybus::Matrix{YBUS_ELTYPE})
-    _, y_12, y_21, _ = equivalent_ybus
-    tap, shift = _phase_shift_tap_shift(y_12, y_21)
+function _get_equivalent_physical_branch_parameters(
+    equivalent_ybus::AbstractMatrix{<:Complex},
+)
+    tap, shift = _phase_shift_tap_shift(equivalent_ybus[2, 1], equivalent_ybus[1, 2])
     return _build_equivalent_branch(equivalent_ybus, tap, shift)
 end
 
 function _get_equivalent_physical_branch_parameters(
-    equivalent_ybus::Matrix{YBUS_ELTYPE},
+    equivalent_ybus::AbstractMatrix{<:Complex},
     segment::Union{AbstractBranchesParallel, BranchesSeries},
 )
-    _, y_12, y_21, _ = equivalent_ybus
-    tap, shift = _phase_shift_tap_shift(y_12, y_21, segment)
+    # Column-major again: the first off-diagonal read is M[2,1]. See `_build_equivalent_branch`.
+    tap, shift = _phase_shift_tap_shift(
+        equivalent_ybus[2, 1],
+        equivalent_ybus[1, 2],
+        segment,
+    )
     return _build_equivalent_branch(equivalent_ybus, tap, shift)
 end
 
 # `get_equivalent_physical_branch_parameters` / `populate_equivalent_ybus!` live here (rather
 # than in BranchesParallel.jl / BranchesSeries.jl) because they take a `NetworkReductionData`,
 # which is defined in a file included after those two.
-function populate_equivalent_ybus!(bp::AbstractBranchesParallel, nr::NetworkReductionData)
-    Y11, Y12, Y21, Y22 = ybus_branch_entries(bp, nr)
-    bp.equivalent_ybus = YBUS_ELTYPE[Y11 Y12; Y21 Y22]
+# One method for both aggregate types — `ybus_branch_entries` already dispatches. The assignment
+# is the single *declared* ComplexF32 -> ComplexF64 conversion point in this path: series chains
+# arrive at Ybus storage precision, parallel groups at ComplexF64. See `CACHED_TWO_PORT`.
+function populate_equivalent_ybus!(
+    segment::Union{AbstractBranchesParallel, BranchesSeries},
+    nr::NetworkReductionData,
+)
+    segment.equivalent_ybus = ybus_branch_entries(segment, nr)
+    segment.equivalent_ybus_populated = true
     return
 end
 
-function populate_equivalent_ybus!(bs::BranchesSeries, nr::NetworkReductionData)
-    ybus_series_chain = _build_chain_ybus(bs, nr)
-    bs.equivalent_ybus = _reduce_internal_nodes(ybus_series_chain)
-    return
-end
-
+# Reads the cached two-port, populating it on first use. The cache is ComplexF64 (see
+# `CACHED_TWO_PORT`): the old ComplexF32 field cost ~7e-8 relative on the recovered shift and
+# left the `real(ratio)` representability test only ~8 Float32 eps wide.
 function get_equivalent_physical_branch_parameters(
     segment::Union{AbstractBranchesParallel, BranchesSeries},
     nr::NetworkReductionData,
 )
-    if isnothing(segment.equivalent_ybus)
+    if !segment.equivalent_ybus_populated
         populate_equivalent_ybus!(segment, nr)
     end
-    return _get_equivalent_physical_branch_parameters(segment.equivalent_ybus, segment)
+    Y11, Y12, Y21, Y22 = segment.equivalent_ybus
+    return _get_equivalent_physical_branch_parameters(
+        ComplexF64[Y11 Y12; Y21 Y22],
+        segment,
+    )
 end
 
 # α of one parallel-group member expressed in the group's arc frame: anti-parallel members
@@ -400,9 +430,33 @@ function get_series_phase_shift(bp::AbstractBranchesParallel, nr::NetworkReducti
     return b_alpha / b_total
 end
 
+# Single traversal of the reduction maps, shared by every arc-keyed accessor below. Probe order
+# is load-bearing: a direct branch must win over a composite arc on the same key. `reversed` is
+# true only for a group found under the opposite orientation — the direct and added maps are
+# probed forward only, matching the pre-consolidation behavior pinned in
+# `test_arc_resolution_characterization.jl`.
+function _resolve_arc_entry(nr::NetworkReductionData, arc::Tuple{Int, Int})
+    direct = get(get_direct_branch_map(nr), arc, nothing)
+    isnothing(direct) || return (direct, false)
+    rev = (arc[2], arc[1])
+    for map in (get_series_branch_map(nr), get_parallel_branch_map(nr))
+        forward = get(map, arc, nothing)
+        isnothing(forward) || return (forward, false)
+        reversed = get(map, rev, nothing)
+        isnothing(reversed) || return (reversed, true)
+    end
+    added = get(get_added_arc_impedance_map(nr), arc, nothing)
+    isnothing(added) || return (added, false)
+    return error("Arc $(arc) not found in any network reduction map.")
+end
+
 _segment_phase_shift(seg::PSY.ACTransmission, ::NetworkReductionData) =
     get_series_phase_shift(seg)
 _segment_phase_shift(seg::AbstractBranchesParallel, nr::NetworkReductionData) =
+    get_series_phase_shift(seg, nr)
+# A chain would otherwise match the blanket `ACTransmission` method and call the single-branch
+# `get_series_phase_shift`, which has no method for it.
+_segment_phase_shift(seg::BranchesSeries, nr::NetworkReductionData) =
     get_series_phase_shift(seg, nr)
 
 """
@@ -434,25 +488,14 @@ This is the α that `BA_Matrix` deliberately excludes from its susceptances
 [`arc_dc_shift_injection`](@ref).
 """
 function arc_dc_phase_shift(nr::NetworkReductionData, arc::Tuple{Int, Int})
-    direct = get(get_direct_branch_map(nr), arc, nothing)
-    if !isnothing(direct)
-        return get_series_phase_shift(direct)
+    entry, reversed = _resolve_arc_entry(nr, arc)
+    # An added Ward arc is a `GenericArcImpedance`, so the blanket
+    # `get_series_phase_shift(::PSY.ACTransmission) = 0.0` already reports it as unshifted.
+    α = _segment_phase_shift(entry, nr)
+    if reversed
+        return -α
     end
-    rev = (arc[2], arc[1])
-    for map in (get_series_branch_map(nr), get_parallel_branch_map(nr))
-        forward = get(map, arc, nothing)
-        if !isnothing(forward)
-            return get_series_phase_shift(forward, nr)
-        end
-        reversed = get(map, rev, nothing)
-        if !isnothing(reversed)
-            return -get_series_phase_shift(reversed, nr)
-        end
-    end
-    if haskey(get_added_arc_impedance_map(nr), arc)
-        return 0.0
-    end
-    error("Arc $(arc) not found in any network reduction map.")
+    return α
 end
 
 """
@@ -471,15 +514,18 @@ end
 
 # b of the map entry owning `arc` (orientation-symmetric, so no reverse negation). Only
 # reached for shifted arcs, which are always direct/parallel/series -- never Ward-added.
+# Susceptance is orientation-symmetric, so a reverse hit needs no sign change. An added Ward arc
+# is rejected rather than answered: it carries no series element the DC shift injection can use,
+# and this is only ever reached for a shifted arc, which is never Ward-added.
+_dc_entry_susceptance(br::PSY.ACTransmission) = get_series_susceptance(br, PSY.SU)
+_dc_entry_susceptance(br::PSY.GenericArcImpedance) = error(
+    "Arc backed by added Ward-equivalent impedance $(get_name(br)) has no series " *
+    "susceptance for the DC phase-shift injection.",
+)
+
 function _arc_dc_susceptance(nr::NetworkReductionData, arc::Tuple{Int, Int})
-    rev = (arc[2], arc[1])
-    direct_map = get_direct_branch_map(nr)
-    haskey(direct_map, arc) && return get_series_susceptance(direct_map[arc], PSY.SU)
-    for map in (get_series_branch_map(nr), get_parallel_branch_map(nr))
-        haskey(map, arc) && return get_series_susceptance(map[arc], PSY.SU)
-        haskey(map, rev) && return get_series_susceptance(map[rev], PSY.SU)
-    end
-    error("Arc $(arc) not found in any network reduction map.")
+    entry, _ = _resolve_arc_entry(nr, arc)
+    return _dc_entry_susceptance(entry)
 end
 
 """
@@ -534,6 +580,204 @@ function _dc_series_impedance(bs::BranchesSeries)
     return sum(_dc_series_impedance(seg) for seg in bs)
 end
 
+# Members whose series impedances share a phase angle have `|Y12| == |Y21|` no matter how
+# their alphas differ, because `phase(yₘ/tₘ) == -phase(zₘ)` for a real tap: the two sums
+# `Σ(yₘ/tₘ)e^{±jαₘ}` become complex conjugates of each other times a common phase factor.
+# Bucketing on this angle is therefore what makes each partition exactly single-π
+# representable. Tolerance is loose enough to bucket members whose r/x agree to 9 digits.
+const PARTITION_ANGLE_ATOL = 1e-9
+
+function _member_impedance_angle(br)
+    z = _dc_series_impedance(br)
+    if iszero(z)
+        # An r == x == 0 member gets a substitute reactance during Ybus assembly, so bucket it
+        # as purely reactive rather than letting `angle(0) == 0` group it with resistive members.
+        return π / 2
+    end
+    return angle(z)
+end
+
+function _partition_members_by_impedance_angle(bp::AbstractBranchesParallel)
+    buckets = Vector{PSY.ACTransmission}[]
+    angles = Float64[]
+    for br in bp
+        θ = _member_impedance_angle(br)
+        ix = findfirst(a -> isapprox(a, θ; atol = PARTITION_ANGLE_ATOL), angles)
+        if isnothing(ix)
+            push!(angles, θ)
+            push!(buckets, PSY.ACTransmission[br])
+        else
+            push!(buckets[ix], br)
+        end
+    end
+    return buckets
+end
+
+# A single π-model for a two-port requires |Y12| == |Y21|; anything else needs a phase shift
+# with a real part, which no π-model can express.
+function _is_single_pi_representable(Y12::Complex, Y21::Complex)
+    return isapprox(abs(Y12), abs(Y21); rtol = 1e-9, atol = 1e-12)
+end
+
+# Accumulated two-port of an arbitrary member subset, expressed in `reference`'s frame. A bus
+# merge can fold an anti-parallel branch into a group, so a member keyed the other way has its
+# 2x2 swapped. This is the single orientation-handling loop; `ybus_branch_entries(bp, nr)`
+# delegates here so the convention lives in exactly one place.
+function _subset_two_port(
+    members,
+    reference::Tuple{Int, Int},
+    nr::NetworkReductionData,
+)
+    Y11 = Y12 = Y21 = Y22 = zero(ComplexF64)
+    for br in members
+        (y11, y12, y21, y22) = ybus_branch_entries(br)
+        if get_arc_tuple(br, nr) != reference
+            Y11 += y22
+            Y12 += y21
+            Y21 += y12
+            Y22 += y11
+        else
+            Y11 += y11
+            Y12 += y12
+            Y21 += y21
+            Y22 += y22
+        end
+    end
+    return (Y11, Y12, Y21, Y22)
+end
+
+"""
+    has_single_pi_equivalent(bp::AbstractBranchesParallel, nr) -> Bool
+
+Whether the whole group collapses to one π-model. False exactly when the group mixes
+phase-shift angles *and* impedance angles, which makes `|Y12| != |Y21|` — a phase shift with a
+real part, which no π-model can express. Use
+[`equivalent_partitions`](@ref) for the total representation.
+"""
+function has_single_pi_equivalent(bp::AbstractBranchesParallel, nr::NetworkReductionData)
+    (_, Y12, Y21, _) = ybus_branch_entries(bp, nr)
+    return _is_single_pi_representable(Y12, Y21)
+end
+
+"""
+    equivalent_partitions(bp::AbstractBranchesParallel, nr) -> Vector{ParallelEquivalent}
+
+Exact representation of a parallel group as one or more parallel π branches, in the group's arc
+frame. Returns a single element whenever the group is single-π representable (the common case,
+including a lossless phase shifter beside a lossless line, and any group with uniform α);
+otherwise one element per impedance-angle partition. The partitions' π-models sum back to
+`ybus_branch_entries(bp, nr)` exactly, which is the invariant the tests pin.
+
+This is the total counterpart of `get_equivalent_physical_branch_parameters`, which can only
+return a single π and therefore throws on lossy shifted groups (PNM issue #231).
+"""
+function equivalent_partitions(bp::AbstractBranchesParallel, nr::NetworkReductionData)
+    reference = get_arc_tuple(bp, nr)
+    Y11, Y12, Y21, Y22 = _subset_two_port(bp, reference, nr)
+    # Whole-group representability is checked BEFORE partitioning: a group with uniform α but
+    # mixed impedance angles has several angle buckets yet still collapses to one π.
+    if _is_single_pi_representable(Y12, Y21)
+        member_groups = [Vector{PSY.ACTransmission}(bp.branches)]
+    else
+        member_groups = _partition_members_by_impedance_angle(bp)
+    end
+    return [
+        ParallelEquivalent(members, _partition_equivalent(members, reference, nr, bp))
+        for members in member_groups
+    ]
+end
+
+# Bucketing by impedance angle guarantees representability in exact arithmetic, but the two
+# predicates carry different tolerances, so re-assert per bucket rather than emit a wrong π.
+function _partition_equivalent(
+    members::Vector{PSY.ACTransmission},
+    reference::Tuple{Int, Int},
+    nr::NetworkReductionData,
+    bp::AbstractBranchesParallel,
+)
+    Y11, Y12, Y21, Y22 = _subset_two_port(members, reference, nr)
+    _is_single_pi_representable(Y12, Y21) || error(
+        "Partitioning group $(get_name(bp)) by impedance angle left a slice with no \
+single-π equivalent (|Y12| = $(abs(Y12)), |Y21| = $(abs(Y21))). Members: \
+$(join(get_name.(members), ", ")).",
+    )
+    return _get_equivalent_physical_branch_parameters(ComplexF64[Y11 Y12; Y21 Y22], bp)
+end
+
+"""
+    get_partition_rating(pe::ParallelEquivalent) -> Union{Nothing, Float64}
+
+Summed rating of the partition's members, or `nothing` when any member's rating is unknown —
+matching `get_equivalent_rating(::AbstractBranchesParallel)` semantics for a subset.
+"""
+function get_partition_rating(pe::ParallelEquivalent)
+    return _aggregate_known_ratings(sum, get_equivalent_rating, get_members(pe))
+end
+
+_segment_has_single_pi(::PSY.ACTransmission, ::NetworkReductionData) = true
+_segment_has_single_pi(bp::AbstractBranchesParallel, nr::NetworkReductionData) =
+    has_single_pi_equivalent(bp, nr)
+# A nested chain would otherwise match the blanket method and answer `true` unconditionally.
+_segment_has_single_pi(bs::BranchesSeries, nr::NetworkReductionData) =
+    has_single_pi_equivalent(bs, nr)
+
+"""
+    has_single_pi_equivalent(bs::BranchesSeries, nr) -> Bool
+
+Whether the chain collapses to one π-model. A cascade is representable exactly when every
+segment is: the segments' asymmetry ratios multiply, so one non-representable segment makes the
+whole chain non-representable. Unlike a parallel group, a chain has no multi-branch remedy —
+parallel branches cannot express a cascade.
+"""
+function has_single_pi_equivalent(bs::BranchesSeries, nr::NetworkReductionData)
+    for seg in bs
+        _segment_has_single_pi(seg, nr) || return false
+    end
+    return true
+end
+
+_arc_equivalents(br::PSY.ACTransmission, ::NetworkReductionData) = [equivalent_branch(br)]
+
+_arc_equivalents(bp::AbstractBranchesParallel, nr::NetworkReductionData) =
+    get_equivalent.(equivalent_partitions(bp, nr))
+
+function _arc_equivalents(bs::BranchesSeries, nr::NetworkReductionData)
+    for seg in bs
+        _segment_has_single_pi(seg, nr) && continue
+        error(
+            "Series chain $(get_name(bs)) contains segment $(get_name(seg)), a parallel \
+group with no single-π equivalent (it mixes phase-shift angles with impedance angles). A \
+cascade cannot be split into parallel branches, so this chain has no π representation at \
+all. Either exclude that group's buses from the degree-two reduction so the intermediate \
+bus is retained, or consume this arc through the DC API (`arc_dc_phase_shift`, \
+`arc_dc_resistance`), which is exact for it.",
+        )
+    end
+    return [get_equivalent_physical_branch_parameters(bs, nr)]
+end
+
+"""
+    arc_equivalent_branches(nr::NetworkReductionData, arc::Tuple{Int, Int}) -> Vector{EquivalentBranch}
+
+Every π branch needed to represent the retained `arc` exactly, oriented `from -> to` to match
+`arc`. One element for a direct branch, a Ward-added impedance, a single-π-representable group,
+or a representable chain; more than one only for a parallel group that mixes phase-shift angles
+with impedance angles (PNM issue #231). Prefer this over [`arc_equivalent_branch`](@ref) in any
+consumer that can emit several branches between one bus pair — PowerModels keys branches by
+index, so it can.
+
+Throws if `arc` is in no reduction map, or if the arc is a series chain containing a
+non-representable parallel segment (which has no π representation in any count).
+"""
+function arc_equivalent_branches(nr::NetworkReductionData, arc::Tuple{Int, Int})
+    entry, reversed = _resolve_arc_entry(nr, arc)
+    equivalents = _arc_equivalents(entry, nr)
+    if reversed
+        return _reverse_equivalent_branch.(equivalents)
+    end
+    return equivalents
+end
+
 # Non-shifting aggregates keep the exact single-π value (bit-identical to
 # arc_equivalent_branch); shifting aggregates take the member-impedance combination, which
 # is total where the single-π extraction throws (lossy shifted groups).
@@ -554,21 +798,18 @@ Equivalent series resistance of the retained `arc` for DC loss estimation (`r·P
 system base. Total on every mapped arc -- including lossy shifted parallel groups, where
 [`arc_equivalent_branch`](@ref) has no single-π equivalent and throws.
 """
+# Resistance is orientation-symmetric. Single branches (direct and added-Ward alike) take their
+# own equivalent; aggregates go through the shifted-group-aware combination.
+_dc_entry_resistance(br::PSY.ACTransmission, ::NetworkReductionData) =
+    get_equivalent_r(equivalent_branch(br))
+_dc_entry_resistance(group::AbstractBranchesParallel, nr::NetworkReductionData) =
+    _dc_equivalent_resistance(group, nr)
+_dc_entry_resistance(group::BranchesSeries, nr::NetworkReductionData) =
+    _dc_equivalent_resistance(group, nr)
+
 function arc_dc_resistance(nr::NetworkReductionData, arc::Tuple{Int, Int})
-    direct = get(get_direct_branch_map(nr), arc, nothing)
-    if !isnothing(direct)
-        return get_equivalent_r(equivalent_branch(direct))
-    end
-    rev = (arc[2], arc[1])
-    for map in (get_series_branch_map(nr), get_parallel_branch_map(nr))
-        haskey(map, arc) && return _dc_equivalent_resistance(map[arc], nr)
-        haskey(map, rev) && return _dc_equivalent_resistance(map[rev], nr)
-    end
-    added = get(get_added_arc_impedance_map(nr), arc, nothing)
-    if !isnothing(added)
-        return get_equivalent_r(equivalent_branch(added))
-    end
-    error("Arc $(arc) not found in any network reduction map.")
+    entry, _ = _resolve_arc_entry(nr, arc)
+    return _dc_entry_resistance(entry, nr)
 end
 
 # Recurses through PNM's own `has_time_series`, not PSY's, so a member that is itself a PNM

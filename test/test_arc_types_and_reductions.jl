@@ -151,7 +151,8 @@ end
     @test_throws ErrorException PNM.BranchesParallel{PSY.ACTransmission}(
         PSY.ACTransmission[line, tap],
         (1, 2),
-        nothing,
+        PNM.EMPTY_TWO_PORT,
+        false,
     )
 
     # MixedBranchesParallel holds heterogeneous branches.

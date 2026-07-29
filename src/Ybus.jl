@@ -231,7 +231,8 @@ function _push_parallel_branch_dispatch!(
     parallel_branch_map[arc_tuple] = MixedBranchesParallel(
         PSY.ACTransmission[existing.branches..., br],
         existing.arc_key,
-        nothing,
+        EMPTY_TWO_PORT,
+        false,
     )
     return
 end
@@ -314,6 +315,11 @@ Three-winding transformers are modeled using a star (wye) configuration with one
 circuit connecting to a virtual star bus. Each available circuit is a one-to-one arc, so it
 is stored in the direct branch maps under its own star-point arc.
 
+Each circuit is filed through the same merge-aware path as any other `PSY.ACTransmission`
+(the 3-arg `add_to_branch_maps!`), so a winding whose star-point arc coincides with an
+already-registered branch (a `Line`, another winding, or an existing parallel group) is
+merged into a parallel group rather than silently overwriting the earlier entry.
+
 # Arguments
 - `nr::NetworkReductionData`: Network reduction data to modify
 - `br::PSY.ThreeWindingTransformer`: Three-winding transformer to add
@@ -326,14 +332,10 @@ function add_to_branch_maps!(
     nr::NetworkReductionData,
     br::PSY.ThreeWindingTransformer,
 )
-    direct_branch_map = get_direct_branch_map(nr)
-    reverse_direct_branch_map = get_reverse_direct_branch_map(nr)
     for (i, circuit) in enumerate(PSY.get_circuits(br))
         if PSY.get_available(circuit)
-            arc_tuple = get_arc_tuple(PSY.get_arc(circuit), nr)
             winding = ThreeWindingTransformerCircuit(br, circuit, i)
-            direct_branch_map[arc_tuple] = winding
-            reverse_direct_branch_map[winding] = arc_tuple
+            add_to_branch_maps!(nr, PSY.get_arc(circuit), winding)
         end
     end
     return
@@ -465,27 +467,10 @@ function ybus_branch_entries(
     nr::NetworkReductionData;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
-    # A bus merge can fold an anti-parallel branch into the group; swap its 2x2 so the
-    # equivalent is correct in the key's frame for asymmetric branches (transformers).
-    reference = get_arc_tuple(parallel_br, nr)
-    # Accumulate in ComplexF64 (the per-branch entry type): keeps the sum type-stable and
-    # full-precision; callers narrow to YBUS_ELTYPE when storing.
-    Y11 = Y12 = Y21 = Y22 = zero(ComplexF64)
-    for br in parallel_br
-        (y11, y12, y21, y22) = ybus_branch_entries(br)
-        if get_arc_tuple(br, nr) != reference
-            Y11 += y22
-            Y12 += y21
-            Y21 += y12
-            Y22 += y11
-        else
-            Y11 += y11
-            Y12 += y12
-            Y21 += y21
-            Y22 += y22
-        end
-    end
-    return (Y11, Y12, Y21, Y22)
+    # Pass the group itself, not `collect(parallel_br)`: `collect` yields a `Vector{Any}`
+    # (only `BranchesSeries` defines `eltype`), which both allocates per call on the Ybus
+    # assembly path and forces the loop's calls dynamic.
+    return _subset_two_port(parallel_br, get_arc_tuple(parallel_br, nr), nr)
 end
 
 function ybus_branch_entries(
@@ -1631,6 +1616,10 @@ function _remap_merged_bus_in_branch_maps!(
         push!(parallel_to_insert, new_arc => val)
     end
     for (new_arc, val) in parallel_to_insert
+        # A re-keyed group keeps its `arc_key`, but `get_arc_tuple(bp, nr)` resolves that through
+        # the bus map this remap just changed — so any cached two-port is now in a stale frame.
+        # Membership changes below invalidate via `add_branch!`; this covers the move-only paths.
+        invalidate_equivalent_ybus!(val)
         reverse_new_arc = (new_arc[2], new_arc[1])
         if haskey(nr.parallel_branch_map, new_arc)
             @debug "Bus merge collision on parallel arc $new_arc: merging incoming group ($(length(val)) branch(es)) into existing group."

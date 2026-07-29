@@ -3,7 +3,8 @@ mutable struct BranchesSeries <: PSY.ACTransmission
     needs_insertion_order::Bool
     insertion_order::Vector{Tuple{DataType, Int}}
     segment_orientations::Vector{Symbol}
-    equivalent_ybus::Union{Matrix{YBUS_ELTYPE}, Nothing}
+    equivalent_ybus::CACHED_TWO_PORT
+    equivalent_ybus_populated::Bool
 end
 
 BranchesSeries() = BranchesSeries(
@@ -11,7 +12,8 @@ BranchesSeries() = BranchesSeries(
     false,
     Vector{Tuple{DataType, Int}}(),
     Vector{Symbol}(),
-    nothing,
+    EMPTY_TWO_PORT,
+    false,
 )
 
 function add_branch!(
@@ -19,6 +21,8 @@ function add_branch!(
     branch::T,
     orientation,
 ) where {T <: PSY.ACTransmission}
+    # Clear the cached two-port up front so every early return below is covered.
+    invalidate_equivalent_ybus!(bs)
     push!(bs.segment_orientations, orientation)
     if isempty(bs.branches)
         # add the branch just once and return

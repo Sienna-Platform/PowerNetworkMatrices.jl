@@ -32,3 +32,23 @@ get_equivalent_g_to(eb::EquivalentBranch) = eb.equivalent_g_to
 get_equivalent_b_to(eb::EquivalentBranch) = eb.equivalent_b_to
 get_equivalent_tap(eb::EquivalentBranch) = eb.equivalent_tap
 get_equivalent_shift(eb::EquivalentBranch) = eb.equivalent_shift
+
+"""
+    ParallelEquivalent
+
+One exactly-representable slice of a parallel branch group: the member branches that share an
+impedance angle, together with the single π-model `EquivalentBranch` that reproduces their
+combined two-port. A group needs more than one of these only when it mixes phase-shift angles
+*and* impedance angles, in which case no single π-model exists for the whole group.
+
+# Fields
+- `members::Vector{PSY.ACTransmission}`: the group members in this partition
+- `equivalent::EquivalentBranch`: their exact combined π-model
+"""
+struct ParallelEquivalent
+    members::Vector{PSY.ACTransmission}
+    equivalent::EquivalentBranch
+end
+
+get_members(pe::ParallelEquivalent) = pe.members
+get_equivalent(pe::ParallelEquivalent) = pe.equivalent

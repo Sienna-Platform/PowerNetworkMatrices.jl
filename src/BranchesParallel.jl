@@ -6,12 +6,14 @@ abstract type AbstractBranchesParallel <: PSY.ACTransmission end
 mutable struct BranchesParallel{T <: PSY.ACTransmission} <: AbstractBranchesParallel
     branches::Vector{T}
     arc_key::Tuple{Int, Int}
-    equivalent_ybus::Union{Matrix{YBUS_ELTYPE}, Nothing}
+    equivalent_ybus::CACHED_TWO_PORT
+    equivalent_ybus_populated::Bool
 
     function BranchesParallel{T}(
         branches::Vector{T},
         arc_key::Tuple{Int, Int},
-        equivalent_ybus::Union{Matrix{YBUS_ELTYPE}, Nothing},
+        equivalent_ybus::CACHED_TWO_PORT,
+        equivalent_ybus_populated::Bool,
     ) where {T <: PSY.ACTransmission}
         if !isconcretetype(T)
             error(
@@ -19,31 +21,53 @@ mutable struct BranchesParallel{T <: PSY.ACTransmission} <: AbstractBranchesPara
                 "Use MixedBranchesParallel for groups with mixed branch types. Got T=$T.",
             )
         end
-        return new{T}(branches, arc_key, equivalent_ybus)
+        return new{T}(branches, arc_key, equivalent_ybus, equivalent_ybus_populated)
     end
 end
 
 function BranchesParallel(branches::Vector{T}) where {T <: PSY.ACTransmission}
-    return BranchesParallel{T}(branches, get_arc_tuple(first(branches)), nothing)
+    return BranchesParallel{T}(
+        branches,
+        get_arc_tuple(first(branches)),
+        EMPTY_TWO_PORT,
+        false,
+    )
 end
 
 mutable struct MixedBranchesParallel <: AbstractBranchesParallel
     branches::Vector{PSY.ACTransmission}
     arc_key::Tuple{Int, Int}
-    equivalent_ybus::Union{Matrix{YBUS_ELTYPE}, Nothing}
+    equivalent_ybus::CACHED_TWO_PORT
+    equivalent_ybus_populated::Bool
 end
 
 function MixedBranchesParallel(branches::Vector{<:PSY.ACTransmission})
     typed = Vector{PSY.ACTransmission}(branches)
-    return MixedBranchesParallel(typed, get_arc_tuple(first(typed)), nothing)
+    return MixedBranchesParallel(
+        typed,
+        get_arc_tuple(first(typed)),
+        EMPTY_TWO_PORT,
+        false,
+    )
+end
+
+# The cached two-port is a function of the member set and the group's arc frame, so any change
+# to either must clear it or later queries return a stale equivalent.
+function invalidate_equivalent_ybus!(segment)
+    segment.equivalent_ybus_populated = false
+    return
 end
 
 function add_branch!(bp::BranchesParallel{T}, branch::T) where {T <: PSY.ACTransmission}
     push!(bp.branches, branch)
+    invalidate_equivalent_ybus!(bp)
+    return
 end
 
 function add_branch!(mbp::MixedBranchesParallel, branch::PSY.ACTransmission)
     push!(mbp.branches, branch)
+    invalidate_equivalent_ybus!(mbp)
+    return
 end
 
 # The blanket `_is_phase_shifting(::PSY.ACTransmission) = false` in definitions.jl would
@@ -52,10 +76,14 @@ function _is_phase_shifting(bp::AbstractBranchesParallel)
     return any(_is_phase_shifting, bp.branches)
 end
 
+# PNM's `get_name`, not `PSY.get_name`: a group can contain a `ThreeWindingTransformerCircuit`
+# (windings register through the merge-aware branch-map path), and that wrapper has no `name`
+# field for PSY to read.
 function get_name(bp::AbstractBranchesParallel)
-    base_string = _longest_starting_substring(PSY.get_name.(bp.branches)...)
+    member_names = get_name.(bp.branches)
+    base_string = _longest_starting_substring(member_names...)
     if isempty(base_string)
-        base_string = join(PSY.get_name.(bp.branches), "_") * "_"
+        base_string = join(member_names, "_") * "_"
     end
     return base_string *= "double_circuit"
 end

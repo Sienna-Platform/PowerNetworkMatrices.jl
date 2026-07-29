@@ -268,21 +268,26 @@ This is the accessor consumers should use instead of walking
 themselves — PNM owns the reduction bookkeeping, so an arc's parameters resolve here.
 
 Throws if `arc` is in no map.
+
+Throws for a parallel group that mixes phase-shift angles with impedance angles — that group
+needs more than one π branch. Use [`arc_equivalent_branches`](@ref) for the total accessor.
 """
+# Single branches (direct and added-Ward alike) carry their own equivalent; aggregates go through
+# the reduction-aware recovery, which throws when no single π exists.
+_single_arc_equivalent(br::PSY.ACTransmission, ::NetworkReductionData) =
+    equivalent_branch(br)
+_single_arc_equivalent(group::AbstractBranchesParallel, nr::NetworkReductionData) =
+    get_equivalent_physical_branch_parameters(group, nr)
+_single_arc_equivalent(group::BranchesSeries, nr::NetworkReductionData) =
+    get_equivalent_physical_branch_parameters(group, nr)
+
 function arc_equivalent_branch(nr::NetworkReductionData, arc::Tuple{Int, Int})
-    direct = get(get_direct_branch_map(nr), arc, nothing)
-    if !isnothing(direct)
-        return equivalent_branch(direct)
+    entry, reversed = _resolve_arc_entry(nr, arc)
+    equivalent = _single_arc_equivalent(entry, nr)
+    if reversed
+        return _reverse_equivalent_branch(equivalent)
     end
-    reduced = _reduced_arc_equivalent_branch(nr, arc)
-    if !isnothing(reduced)
-        return reduced
-    end
-    added = get(get_added_arc_impedance_map(nr), arc, nothing)
-    if !isnothing(added)
-        return equivalent_branch(added)
-    end
-    error("Arc $(arc) not found in any network reduction map.")
+    return equivalent
 end
 
 # Parallel/series equivalent for `arc`, oriented to match it. A group may be keyed by the
