@@ -312,13 +312,16 @@ end
 Add a three-winding transformer to the branch maps in NetworkReductionData.
 
 Three-winding transformers are modeled using a star (wye) configuration with one arc per
-circuit connecting to a virtual star bus. Each available circuit is a one-to-one arc, so it
-is stored in the direct branch maps under its own star-point arc.
+circuit connecting to a virtual star bus.
 
 Each circuit is filed through the same merge-aware path as any other `PSY.ACTransmission`
 (the 3-arg `add_to_branch_maps!`), so a winding whose star-point arc coincides with an
 already-registered branch (a `Line`, another winding, or an existing parallel group) is
 merged into a parallel group rather than silently overwriting the earlier entry.
+
+A unique star bus does not make that collision unreachable: arc keys resolve through
+`get_arc_tuple`, which remaps both endpoints, so two windings land on the same key as soon as
+a reduction merges two of this transformer's terminal buses.
 
 # Arguments
 - `nr::NetworkReductionData`: Network reduction data to modify
