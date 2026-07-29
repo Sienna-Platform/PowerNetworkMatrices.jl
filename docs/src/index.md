@@ -9,7 +9,7 @@ CurrentModule = PowerNetworkMatrices
 `PowerNetworkMatrices.jl` is a [`Julia`](http://www.julialang.org) package for
 building the network matrices used in DC/AC power flow, sensitivity, and
 contingency analysis. Given a `PowerSystems.jl` [`System`](@extref PowerSystems.System), it produces the
-linear-algebra layer of the [Sienna](https://www.nrel.gov/analysis/sienna.html)
+linear-algebra layer of the [Sienna](https://www.nlr.gov/analysis/sienna.html)
 power-systems platform: it reads the network data and returns matrix objects, it
 does not own the data model.
 
@@ -47,4 +47,4 @@ into four kinds of material:
 
 `PowerNetworkMatrices.jl` has been developed as part of the Scalable Integrated
 Infrastructure Planning (SIIP) initiative at the U.S. Department of Energy's
-National Renewable Energy Laboratory ([NREL](https://www.nrel.gov/)).
+National Laboratory of the Rockies (formerly known as NREL) ([NLR](https://www.nlr.gov/)).

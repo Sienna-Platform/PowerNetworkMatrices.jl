@@ -7,6 +7,7 @@
 using PowerNetworkMatrices
 import PowerNetworkMatrices as PNM
 import PowerSystemCaseBuilder as PSB
+using Logging
 
 # !!! note
 #
@@ -19,7 +20,9 @@ import PowerSystemCaseBuilder as PSB
 
 # Network matrices are built from a [`PowerSystems.System`](@extref PowerSystems.System).
 
-sys = PSB.build_system(PSB.PSSEParsingTestSystems, "psse_14_network_reduction_test_system"); #hide
+sys = with_logger(NullLogger()) do
+    PSB.build_system(PSB.PSSEParsingTestSystems, "psse_14_network_reduction_test_system");
+end
 
 # We will focus on the line between buses `103` and `104`.
 
