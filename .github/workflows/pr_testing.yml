@@ -35,9 +35,6 @@ jobs:
           files: ./lcov.info
           flags: unittests
           name: codecov-umbrella
-          # Codecov's ingest service still indexes this repo under the pre-rename
-          # owner; Sienna-Platform/... returns 404 while NREL-Sienna/... returns 202.
-          # Revert to ${{ github.repository }} once the Codecov org is resynced.
-          slug: NREL-Sienna/PowerNetworkMatrices.jl
+          slug: ${{ github.repository }}
           fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
