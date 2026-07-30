@@ -312,6 +312,25 @@ function _mk_zibr_merged_representative_system()
     return sys
 end
 
+@testset "A reduction re-keys a removed subnetwork representative to a surviving bus" begin
+    # Regression: _make_subnetwork_axes replaced a removed representative with `pop!(axis_1)`
+    # -- an arbitrary island member that the same reduction could also be removing, and which
+    # `pop!` then deleted from the island's own bus list. That left subnetwork_axes keyed by a
+    # bus absent from the matrix, which only worked because get_ref_bus_position chased the
+    # reduction's reverse map at lookup time. The key must be a live bus by construction.
+    sys = _mk_zibr_merged_representative_system()
+    ybus = Ybus(sys)
+    bus_lookup = PNM.get_bus_lookup(ybus)
+
+    for (ref_bus, subnetwork_axis) in ybus.subnetwork_axes
+        @test haskey(bus_lookup, ref_bus)
+        @test ref_bus in subnetwork_axis[1]
+    end
+
+    # Leaf 12 was the representative and ZIBR merged it into hub 10, so 10 inherits the role.
+    @test PNM.get_ref_bus(ybus) == [10]
+end
+
 @testset "get_ref_bus_position survives a ZIBR merge of the island representative" begin
     # Regression: assign_reference_buses! keys an island by its smallest-angle swing,
     # independent of which bus a ZeroImpedanceBranchReduction later merges away. When the

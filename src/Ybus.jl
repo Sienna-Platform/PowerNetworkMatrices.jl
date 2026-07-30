@@ -2046,13 +2046,27 @@ function _make_subnetwork_axes(
             push!(subnetwork_key_removed, k)
         end
     end
+    reverse_bus_search_map = get_reverse_bus_search_map(get_network_reduction_data(ybus))
     for k in subnetwork_key_removed
-        axis_1, axis_2 = pop!(subnetwork_axes, k)
-        new_ref_bus = pop!(axis_1)
+        axis_1, axis_2 = subnetwork_axes[k]
+        surviving_buses = setdiff(axis_1, bus_numbers_to_remove)
+        # An island losing every bus is dropped by the empty-subnetwork sweep below; re-keying
+        # it would only swap one dead key for another.
+        isempty(surviving_buses) && continue
+        # The bus the old representative was folded into inherits the role, so the reference
+        # bus stays electrically the same bus. Only a removal that merges nothing (no reverse
+        # map entry) falls back to an order-independent pick.
+        merge_target = get(reverse_bus_search_map, k, k)
+        if merge_target in surviving_buses
+            new_ref_bus = merge_target
+        else
+            new_ref_bus = minimum(surviving_buses)
+        end
+        delete!(subnetwork_axes, k)
         subnetwork_axes[new_ref_bus] = (axis_1, axis_2)
         # If a reference bus key is reduced, change the arc subnetwork axis key as well:
         arc_subnetwork_axis[new_ref_bus] = pop!(arc_subnetwork_axis, k)
-        @warn "Original reference bus $k removed during reduction; assigning arbitrary reference bus to be $new_ref_bus."
+        @warn "Original reference bus $k removed during reduction; reassigning the subnetwork reference bus to $new_ref_bus."
     end
     empty_subnetwork_keys = Set{Int}()
     for (k, values) in subnetwork_axes
