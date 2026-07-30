@@ -63,31 +63,6 @@ end
 get_axes(M::Ybus) = M.axes
 get_lookup(M::Ybus) = M.lookup
 get_ref_bus(M::Ybus) = sort!(collect(keys(M.subnetwork_axes)))
-# A subnetwork's representative can itself be merged away by a later reduction (e.g.
-# ZeroImpedanceBranchReduction folding a swing into another bus); resolve it through the
-# reduction's reverse map to the surviving bus it now shares a position with.
-function get_ref_bus_position(M::Ybus)
-    bus_lookup = get_bus_lookup(M)
-    reverse_bus_search_map = get_reverse_bus_search_map(get_network_reduction_data(M))
-    return [
-        _resolve_ref_bus_position(bus_lookup, reverse_bus_search_map, x)
-        for x in keys(M.subnetwork_axes)
-    ]
-end
-
-function _resolve_ref_bus_position(
-    bus_lookup::Dict{Int, Int},
-    reverse_bus_search_map::Dict{Int, Int},
-    bus_number::Int,
-)
-    haskey(bus_lookup, bus_number) && return bus_lookup[bus_number]
-    surviving_bus = get(reverse_bus_search_map, bus_number, bus_number)
-    haskey(bus_lookup, surviving_bus) && return bus_lookup[surviving_bus]
-    error(
-        "Reference bus $bus_number is not present in the Ybus bus lookup, and its " *
-        "reduction-mapped surviving bus $surviving_bus is not present either.",
-    )
-end
 
 """Get the [`NetworkReduction`](@ref) data applied to this matrix."""
 get_network_reduction_data(M::Ybus) = M.network_reduction_data

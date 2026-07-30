@@ -53,8 +53,6 @@ end
 get_axes(M::IncidenceMatrix) = M.axes
 get_lookup(M::IncidenceMatrix) = M.lookup
 get_ref_bus(M::IncidenceMatrix) = sort!(collect(keys(M.subnetwork_axes)))
-get_ref_bus_position(M::IncidenceMatrix) =
-    [get_bus_lookup(M)[x] for x in keys(M.subnetwork_axes)]
 get_network_reduction_data(M::IncidenceMatrix) = M.network_reduction_data
 get_arc_axis(M::IncidenceMatrix) = M.axes[1]
 get_arc_lookup(M::IncidenceMatrix) = M.lookup[1]
