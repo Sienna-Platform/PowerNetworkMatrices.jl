@@ -36,11 +36,12 @@ jobs:
         if: matrix.julia-version != 'nightly'
         with:
           directories: src,ext
-      - uses: codecov/codecov-action@v4
+      - uses: codecov/codecov-action@v5
         if: matrix.julia-version != 'nightly'
         with:
-          file: ./lcov.info
+          files: ./lcov.info
           flags: unittests
           name: codecov-umbrella
-          fail_ci_if_error: false
+          slug: ${{ github.repository }}
+          fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
