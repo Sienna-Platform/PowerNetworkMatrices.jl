@@ -1,5 +1,5 @@
-# Tests for the π-model branch admittance helpers (`branch_admittance`,
-# `reduced_arc_admittance`, `winding_admittance`, `three_winding_arcs`, `branch_flow_limits`).
+# Tests for the π-model branch admittance helpers (`equivalent_branch`, `branch_admittance`,
+# `reduced_arc_admittance`, `arc_equivalent_branch`, `three_winding_arcs`, `branch_flow_limits`).
 
 @testset "branch_admittance primitives" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
@@ -50,8 +50,8 @@ end
     # differ from any single constituent branch's own admittance. This is the whole point of
     # leveraging the reduction-aware equivalent rather than a single branch's value. Compare
     # against a plain `Line` member — PNM wrapper members (nested parallel/series segments,
-    # 3W windings) resolve through their dedicated `branch_admittance`/`winding_admittance`
-    # methods, not the single-arg physical-branch form.
+    # 3W windings) resolve through their own `branch_admittance` methods, not the single-arg
+    # physical-branch form.
     members = collect(chain)
     @test length(members) >= 2
     line_members = filter(m -> m isa PSY.Line, members)
@@ -60,7 +60,7 @@ end
         @test !isapprox(resolved.b, member_b; rtol = 1e-3)
     end
 
-    # Reversed-orientation arc exercises the `_reverse_admittance` path: series b is symmetric,
+    # Reversed-orientation arc exercises the `_reverse_equivalent_branch` path: series b is symmetric,
     # from/to shunts swap, and any phase shift negates.
     if !haskey(series_map, (to_no, from_no))
         reversed = PNM.reduced_arc_admittance(nr, to_no, from_no)
@@ -157,7 +157,7 @@ function _add_star_buses!(sys, busD; numbers = (101, 102, 103))
     end
 end
 
-@testset "ThreeWindingTransformer winding_admittance and three_winding_arcs decomposition" begin
+@testset "ThreeWindingTransformer branch_admittance and three_winding_arcs decomposition" begin
     # Unit test the per-circuit admittance helper against a real PNM
     # `ThreeWindingTransformerCircuit`: for a circuit whose derived star-leg impedance is
     # R + jX the helper must return the series admittance 1/(R + jX), the parent's PNM shunt
@@ -171,7 +171,7 @@ end
     )
 
     w = PNM.ThreeWindingTransformerCircuit(transformer3w, 1)
-    adm = PNM.winding_admittance(w)
+    adm = PNM.branch_admittance(w)
 
     r = PNM.get_equivalent_r(w)
     x = PNM.get_equivalent_x(w)
@@ -179,11 +179,11 @@ end
     @test isapprox(adm.g, real(y); atol = 1e-12)
     @test isapprox(adm.b, imag(y); atol = 1e-12)
 
-    b_sh = PNM.get_equivalent_b(w)
+    eb = PNM.equivalent_branch(w)
     @test adm.g_fr == 0.0
-    @test adm.b_fr == b_sh.from
+    @test adm.b_fr == PNM.get_equivalent_b_from(eb)
     @test adm.g_to == 0.0
-    @test adm.b_to == b_sh.to
+    @test adm.b_to == PNM.get_equivalent_b_to(eb)
     @test adm.tap == 1.0
 
     # `three_winding_arcs` decomposes the device into its three circuits, exposing the
@@ -196,7 +196,7 @@ end
     @test arcs[2].arc == PSY.get_arc(circuits[2])
     @test arcs[3].arc == PSY.get_arc(circuits[3])
     # Circuit admittance computed from the decomposition matches the standalone helper.
-    @test PNM.winding_admittance(arcs[1].circuit).b ≈ adm.b
+    @test PNM.branch_admittance(arcs[1].circuit).b ≈ adm.b
 end
 
 @testset "PST-3W winding series susceptance (pinned behavior)" begin
@@ -258,14 +258,21 @@ end
     @test tap3 == 1.05
     tw3 = PNM.ThreeWindingTransformerCircuit(t, 3)
     @test PNM.get_series_susceptance(tw3, PSY.SU) ≈ 10000.0 / 1.05
+
+    # (d) `units` selects the reactance base, matching the `TwoWindingTransformer` and
+    # generic `ACTransmission` methods. It was previously accepted and ignored, so a DU
+    # request silently returned the SU value.
+    circuit3 = PSY.get_circuits(t)[3]
+    @test PNM.get_series_susceptance(tw3, PSY.DU) ≈
+          (1 / PSY.get_x(circuit3, PSY.DU)) / tap3
 end
 
-@testset "winding_admittance applies the winding tap for all 3W windings" begin
+@testset "branch_admittance applies the winding tap for all 3W windings" begin
     # !!! note "Tap contract"
-    #     `winding_admittance` reads `get_equivalent_tap(w)` (== the winding's own
+    #     `branch_admittance` reads `get_equivalent_tap(w)` (== the winding's own
     #     `PSY.get_tap`) for all 3W windings, phase-shifting or not. This test pins that a
     #     plain (non-phase-shifting) winding with a non-unit tap flows its real tap through
-    #     `winding_admittance`.
+    #     `branch_admittance`.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
     busD = PSY.get_component(PSY.ACBus, sys, "nodeD")
     sec_bus, ter_bus, star_bus = _add_star_buses!(sys, busD; numbers = (501, 502, 503))
@@ -276,7 +283,7 @@ end
     winding1 = PSY.get_circuits(t3w)[1]
     PSY.set_tap!(winding1, 1.05)
     w1 = PNM.ThreeWindingTransformerCircuit(t3w, 1)
-    adm = PNM.winding_admittance(w1)
+    adm = PNM.branch_admittance(w1)
     @test adm.tap == 1.05
     @test adm.tap != 1.0
 end
@@ -488,7 +495,7 @@ end
         @test isapprox(Y11, Y_t + (fr ? y_shunt : 0.0 + 0.0im); atol = 1e-12)
         @test isapprox(Y22, Y_t + (to ? y_shunt : 0.0 + 0.0im); atol = 1e-12)
 
-        adm = PNM.winding_admittance(w1)
+        adm = PNM.branch_admittance(w1)
         @test adm.g_fr == (fr ? real(y_shunt) : 0.0)
         @test adm.b_fr == (fr ? imag(y_shunt) : 0.0)
         @test adm.g_to == (to ? real(y_shunt) : 0.0)
@@ -501,12 +508,69 @@ end
             (c11, _, _, c22) = PNM.ybus_branch_entries(wc)
             @test isapprox(c11, Y_t; atol = 1e-12)
             @test isapprox(c22, Y_t; atol = 1e-12)
-            b_sh = PNM.get_equivalent_b(wc)
-            @test b_sh.from == 0.0
-            @test b_sh.to == 0.0
-            cadm = PNM.winding_admittance(wc)
+            cadm = PNM.branch_admittance(wc)
             @test cadm.g_fr == 0.0 && cadm.b_fr == 0.0
             @test cadm.g_to == 0.0 && cadm.b_to == 0.0
         end
     end
+end
+
+@testset "arc_equivalent_branch resolves every arc in the reduction maps" begin
+    # A reduced system exercises the direct, parallel and series arms in one pass: every arc
+    # on the matrix's arc axis must resolve, and the resolved parameters must agree with the
+    # map entry the arc actually came from.
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    ybus = PNM.Ybus(
+        sys;
+        network_reductions = PNM.NetworkReduction[
+            PNM.RadialReduction(),
+            PNM.DegreeTwoReduction(),
+        ],
+    )
+    nr = PNM.get_network_reduction_data(ybus)
+    arc_ax = PNM.get_arc_axis(nr)
+    @test !isempty(arc_ax)
+
+    direct_map = PNM.get_direct_branch_map(nr)
+    series_map = PNM.get_series_branch_map(nr)
+    @test !isempty(series_map)  # the fixture must actually produce series arcs
+
+    n_direct = 0
+    n_reduced = 0
+    for arc in arc_ax
+        eb = PNM.arc_equivalent_branch(nr, arc)
+        # Total: every arc on the axis resolves to a finite series impedance.
+        @test isfinite(PNM.get_equivalent_r(eb))
+        @test isfinite(PNM.get_equivalent_x(eb))
+        if haskey(direct_map, arc)
+            n_direct += 1
+            # A direct arc resolves to exactly the branch's own equivalent_branch.
+            expected = PNM.equivalent_branch(direct_map[arc])
+            @test PNM.get_equivalent_r(eb) == PNM.get_equivalent_r(expected)
+            @test PNM.get_equivalent_x(eb) == PNM.get_equivalent_x(expected)
+            @test PNM.get_equivalent_tap(eb) == PNM.get_equivalent_tap(expected)
+        else
+            n_reduced += 1
+        end
+    end
+    @test n_direct > 0
+    @test n_reduced > 0
+
+    @test_throws ErrorException PNM.arc_equivalent_branch(nr, (-1, -2))
+end
+
+@testset "equivalent_branch is the impedance view of branch_admittance" begin
+    # `branch_admittance` is derived from `equivalent_branch` by inverting r + im*x, so the
+    # two must agree exactly for lines and for transformer circuits of both arities.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    line = first(PSY.get_components(PSY.Line, sys))
+    eb = PNM.equivalent_branch(line)
+    adm = PNM.branch_admittance(line)
+    ys = inv(complex(PNM.get_equivalent_r(eb), PNM.get_equivalent_x(eb)))
+    @test adm.g == real(ys)
+    @test adm.b == imag(ys)
+    # The line's real conductance now flows through, rather than being zeroed.
+    g_psy = PSY.get_g(line, PSY.SU)
+    @test PNM.get_equivalent_g_from(eb) == g_psy.from
+    @test PNM.get_equivalent_g_to(eb) == g_psy.to
 end

@@ -124,7 +124,12 @@ end
     # dispatch are preserved); sparsification is reserved for VirtualPTDF.
     p_auto = PTDF(A, BA; tol = AutoTolerance(; data_precision = 1e-2))
     @test PNM.get_tol(p_auto)[] == eps()
-    @test get_ptdf_data(p_auto) == get_ptdf_data(p_eps)
+    # The AppleAccelerate LU backend is not bit-reproducible run-to-run (threaded
+    # libSparse solve; observed ~1 ULP diffs under CPU contention), so an exact
+    # `==` between two independent dense builds is invalid. A real sparsification
+    # regression (AutoTolerance no longer a no-op) would drop entries at the
+    # `data_precision = 1e-2` scale, many orders above this tolerance.
+    @test isapprox(get_ptdf_data(p_auto), get_ptdf_data(p_eps); atol = 1e-9, rtol = 1e-9)
     # Dense storage is preserved -> matches the DC_PTDF_Matrix alias (the data
     # field is a Matrix{Float64}, so downstream dispatch is unaffected).
     @test p_auto isa PNM.DC_PTDF_Matrix

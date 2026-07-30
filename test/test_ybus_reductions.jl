@@ -319,6 +319,37 @@ end
     @test 8 ∈ PNM.get_bus_axis(ybus)
 end
 
+@testset "min_x_eps substitutes for a zero-impedance transformer" begin
+    # ZeroImpedanceBranchReduction excludes transformer arcs, so nothing downstream rescues a
+    # transformer with r == x == 0: before `min_x_eps` reached the circuit methods, its
+    # admittance came out NaN and Ybus assembly died on the `isfinite` guard.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    t = get_component(TwoWindingTransformer, sys, "Trans4")
+    set_r!(t, 0.0 * PSY.SU)
+    set_x!(t, 0.0 * PSY.SU)
+
+    min_x_eps = 1e-3
+    eb = PNM.equivalent_branch(t; min_x_eps = min_x_eps)
+    @test PNM.get_equivalent_r(eb) ≈ 0.0 atol = 1e-12
+    @test PNM.get_equivalent_x(eb) ≈ min_x_eps atol = 1e-12
+
+    adm = PNM.branch_admittance(t; min_x_eps = min_x_eps)
+    @test isfinite(adm.g)
+    @test isfinite(adm.b)
+    @test adm.b ≈ -1.0 / min_x_eps atol = 1e-6
+
+    # The whole matrix builds off the ZIR-configured substitute rather than erroring.
+    ybus = Ybus(
+        sys;
+        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+            minimum_retained_impedance = min_x_eps,
+        ),
+    )
+    @test all(isfinite, ybus.data.nzval)
+    @test 7 ∈ PNM.get_bus_axis(ybus)
+    @test 8 ∈ PNM.get_bus_axis(ybus)
+end
+
 @testset "ZeroImpedanceBranchReduction: degenerate 3WT merge promotes windings to a parallel group" begin
     # A NON-winding zero-impedance branch between two REAL terminal buses of the same
     # three-winding transformer gets ZIR-merged. Both winding arcs then remap to the same
@@ -848,6 +879,204 @@ function _mk_bus_system(n::Int)
     return sys, buses
 end
 
+# Detached components suffice for map-filing tests: `add_to_branch_maps!` only reads arc bus
+# numbers, never impedances (which require an attached system).
+function _mk_detached_pst_fixture()
+    b1 = ACBus(;
+        number = 1, name = "b1", available = true, bustype = ACBusTypes.REF,
+        angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
+        base_voltage = 230.0,
+    )
+    b2 = ACBus(;
+        number = 2, name = "b2", available = true, bustype = ACBusTypes.PV,
+        angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
+        base_voltage = 230.0,
+    )
+    function _mk_fixture_line(name)
+        return Line(;
+            name = name, available = true, active_power_flow = 0.0,
+            reactive_power_flow = 0.0, arc = Arc(; from = b1, to = b2),
+            r = 0.0, x = 0.1, b = (from = 0.0, to = 0.0), rating = 1.0,
+            angle_limits = (min = -1.5, max = 1.5),
+        )
+    end
+    function _mk_fixture_pst(name, α)
+        return PSY.TwoWindingTransformer(;
+            name = name,
+            circuit = PSY.TransformerCircuit(;
+                arc = Arc(; from = b1, to = b2), tap = 1.0, α = α,
+                available = true, active_power_flow = 0.0, reactive_power_flow = 0.0,
+                rating = 1.0, base_power = 100.0, base_voltage_primary = 230.0,
+                r = 0.0, x = 0.2,
+            ),
+            magnetizing_shunt = Complex(0.0, 0.0),
+        )
+    end
+    return (
+        _mk_fixture_line("L1"),
+        _mk_fixture_line("L2"),
+        _mk_fixture_pst("PST1", 0.15),
+        _mk_fixture_pst("PST2", 0.10),
+    )
+end
+
+# Every branch filed on the arc must be reachable in exactly one reverse map, and the arc must
+# live in exactly one forward map.
+function _assert_arc_maps_complete(nr, branches)
+    arc_tuple = (1, 2)
+    direct = PNM.get_direct_branch_map(nr)
+    parallel = PNM.get_parallel_branch_map(nr)
+    if length(branches) == 1
+        @test haskey(direct, arc_tuple)
+        @test !haskey(parallel, arc_tuple)
+        @test PNM.get_reverse_direct_branch_map(nr)[branches[1]] == arc_tuple
+    else
+        @test !haskey(direct, arc_tuple)
+        @test haskey(parallel, arc_tuple)
+        @test length(parallel[arc_tuple]) == length(branches)
+        for br in branches
+            @test PNM.get_reverse_parallel_branch_map(nr)[br] == arc_tuple
+        end
+    end
+end
+
+@testset "issue 305: add_to_branch_maps! never drops a co-arc branch" begin
+    (line, line2, pst1, pst2) = _mk_detached_pst_fixture()
+    orderings = [
+        [line, pst1],          # regular first, shifter second (issue's table)
+        [pst1, line],          # shifter first
+        [pst1, pst2],          # PST ∥ PST (m-bossart's question)
+        [line, pst1, pst2],    # Line+PST+PST (orennia-juan's question)
+        [pst1, pst2, line],    # shifters first, regular last
+        [line, line2, pst1],   # shifter joins an existing homogeneous group
+    ]
+    for branches in orderings
+        nr = PNM.NetworkReductionData()
+        for br in branches
+            PNM.add_to_branch_maps!(nr, PSY.get_arc(br), br)
+        end
+        _assert_arc_maps_complete(nr, branches)
+    end
+end
+
+# Attached 3-bus system with L1 ∥ PST on (1, 2) and L2 on (2, 3). Attached (not detached, as
+# in `_mk_detached_pst_fixture`) because impedance reads need `base_value`, which only
+# `add_component!` populates.
+function _mk_line_pst_parallel_system(; pst_r = 0.0, pst_x = 0.2)
+    sys, buses = _mk_bus_system(3)
+    function _mk_sys_line(name, f, t)
+        arc = Arc(; from = buses[f], to = buses[t])
+        add_component!(sys, arc)
+        add_component!(
+            sys,
+            Line(;
+                name = name, available = true, active_power_flow = 0.0,
+                reactive_power_flow = 0.0, arc = arc, r = 0.0, x = 0.1,
+                b = (from = 0.0, to = 0.0), rating = 1.0,
+                angle_limits = (min = -1.5, max = 1.5),
+            ),
+        )
+        return arc
+    end
+    pst_arc = _mk_sys_line("L1", 1, 2)
+    _mk_sys_line("L2", 2, 3)
+    # PST shares L1's Arc — a second `Arc(; from = buses[1], to = buses[2])` collides on the
+    # auto-derived component name ("b1 -> b2"), same reasoning as `_mk_zi_parallel_sys` above.
+    add_component!(
+        sys,
+        PSY.TwoWindingTransformer(;
+            name = "PST",
+            circuit = PSY.TransformerCircuit(;
+                arc = pst_arc, tap = 1.0, α = 0.15, available = true,
+                active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
+                base_power = 100.0, base_voltage_primary = 230.0,
+                r = pst_r, x = pst_x,
+            ),
+            magnetizing_shunt = Complex(0.0, 0.0),
+        ),
+    )
+    return sys
+end
+
+@testset "issue 305: Line ∥ PST — Ybus, NRD completeness, BA susceptance" begin
+    sys = _mk_line_pst_parallel_system()
+    ybus = Ybus(sys)
+    nr = ybus.network_reduction_data
+
+    # NRD completeness: both branches on (1, 2) are in the parallel maps.
+    parallel = PNM.get_parallel_branch_map(nr)
+    @test haskey(parallel, (1, 2))
+    @test length(parallel[(1, 2)]) == 2
+    @test !haskey(PNM.get_direct_branch_map(nr), (1, 2))
+    reverse_parallel = PNM.get_reverse_parallel_branch_map(nr)
+    for br in parallel[(1, 2)]
+        @test reverse_parallel[br] == (1, 2)
+    end
+
+    # Group ybus entries match the accumulated Ybus (independent code path), including
+    # the phase-shift asymmetry. Bus 1 touches only the group, so its diagonal and both
+    # off-diagonals compare directly. Bus 2 also carries L2 (arc (2, 3)), so its diagonal
+    # in the accumulated Ybus is the group's contribution plus L2's own — isolate L2's
+    # share via the single-branch overload before comparing.
+    bl = ybus.lookup[1]
+    ip = bl[1]
+    iq = bl[2]
+    aware = PNM.ybus_branch_entries(parallel[(1, 2)], nr)
+    @test !isapprox(aware[2], aware[3])
+    @test aware[1] ≈ ybus.data[ip, ip]
+    @test aware[2] ≈ ybus.data[ip, iq]
+    @test aware[3] ≈ ybus.data[iq, ip]
+    l2 = PNM.get_direct_branch_map(nr)[(2, 3)]
+    l2_self = PNM.ybus_branch_entries(l2)[1]
+    @test aware[4] + l2_self ≈ ybus.data[iq, iq]
+
+    # BA takes the asymmetric-arc fallback: b = sum of member susceptances (α-independent).
+    # BA_Matrix stores the transpose of the docstring's row/column description — bus is the
+    # first axis/index and arc is the second (`get_bus_axis` = axes[1], `get_arc_axis` =
+    # axes[2]) — so the (from-bus, arc) entry is `ba.data[bus_ix, arc_ix]`.
+    ba = BA_Matrix(ybus)
+    b_expected = sum(
+        PNM.get_series_susceptance(br, PSY.SU) for br in parallel[(1, 2)]
+    )
+    arc_ix = findfirst(==((1, 2)), ba.axes[2])
+    @test ba.data[bl[1], arc_ix] ≈ b_expected
+end
+
+@testset "issue 305: group-level _is_phase_shifting" begin
+    (line, line2, pst1, pst2) = _mk_detached_pst_fixture()
+    @test PNM._is_phase_shifting(PNM.MixedBranchesParallel([line, pst1]))
+    @test !PNM._is_phase_shifting(PNM.BranchesParallel([line, line2]))
+    @test PNM._is_phase_shifting(
+        PNM.BranchesParallel(PSY.TwoWindingTransformer[pst1, pst2]),
+    )
+end
+
+@testset "issue 305: equivalent branch for shifted parallel groups" begin
+    # Lossless members: |y12| == |y21|, the single-π equivalent is exact.
+    sys = _mk_line_pst_parallel_system()
+    ybus = Ybus(sys)
+    nr = ybus.network_reduction_data
+    eq = PNM.arc_equivalent_branch(nr, (1, 2))
+    @test eq isa PNM.EquivalentBranch
+    # The extracted shift is intermediate between the members' angles (0 and 0.15).
+    @test 0.0 < abs(PNM.get_equivalent_shift(eq)) < 0.15
+
+    # Lossy members: no single-π equivalent exists; the error must name the group.
+    # pst_r = 0.05 clears the atol = 1e-6 real-part tolerance in
+    # `_get_equivalent_physical_branch_parameters`; smaller r can be absorbed by it.
+    sys_lossy = _mk_line_pst_parallel_system(; pst_r = 0.05)
+    ybus_lossy = Ybus(sys_lossy)
+    nr_lossy = ybus_lossy.network_reduction_data
+    err = try
+        PNM.arc_equivalent_branch(nr_lossy, (1, 2))
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("Offending group", err.msg)
+end
+
 # Add a `Line` named `name` on `arc` with series impedance `(r, x)` and no charging.
 function _add_test_line!(sys, name, arc, r, x)
     add_component!(
@@ -1004,4 +1233,73 @@ end
     # Bus 4 therefore stays in the single island; the susceptance matrix stays nonsingular.
     @test length(yb.subnetwork_axes) == 1
     @test all(isfinite, ABA_Matrix(yb; factorize = false).data.nzval)
+end
+
+@testset "parallel multiplier resolves members by identity" begin
+    # `get_series_susceptance` needs an attached system (device-base -> system-base unit
+    # conversion reads `base_value`, populated only by `add_component!`); detached fixture
+    # components error here, unlike the map-filing tests above that never read impedances.
+    sys, buses = _mk_bus_system(2)
+    arc = Arc(; from = buses[1], to = buses[2])
+    add_component!(sys, arc)
+    line = Line(;
+        name = "L1", available = true, active_power_flow = 0.0,
+        reactive_power_flow = 0.0, arc = arc, r = 0.0, x = 0.1,
+        b = (from = 0.0, to = 0.0), rating = 1.0,
+        angle_limits = (min = -1.5, max = 1.5),
+    )
+    add_component!(sys, line)
+    pst1 = PSY.TwoWindingTransformer(;
+        name = "PST1",
+        circuit = PSY.TransformerCircuit(;
+            arc = arc, tap = 1.0, α = 0.0,
+            available = true, active_power_flow = 0.0, reactive_power_flow = 0.0,
+            rating = 1.0, base_power = 100.0, base_voltage_primary = 230.0,
+            r = 0.0, x = 0.2,
+        ),
+        magnetizing_shunt = Complex(0.0, 0.0),
+    )
+    add_component!(sys, pst1)
+
+    # line: x=0.1 -> b=10; pst1: tap=1.0, x=0.2 -> b=5
+    group = PNM.MixedBranchesParallel([line, pst1])
+    @test PNM.compute_parallel_multiplier(group, line) ≈ 10.0 / 15.0
+    @test PNM.compute_parallel_multiplier(group, pst1) ≈ 5.0 / 15.0
+
+    # Name collision across concrete types: was silently double-counted, now loud.
+    pst_same_name = PSY.TwoWindingTransformer(;
+        name = PSY.get_name(line),
+        circuit = PSY.TransformerCircuit(;
+            arc = arc, tap = 1.0, α = 0.0,
+            available = true, active_power_flow = 0.0, reactive_power_flow = 0.0,
+            rating = 1.0, base_power = 100.0, base_voltage_primary = 230.0,
+            r = 0.0, x = 0.2,
+        ),
+        magnetizing_shunt = Complex(0.0, 0.0),
+    )
+    add_component!(sys, pst_same_name)
+    collided = PNM.MixedBranchesParallel([line, pst_same_name])
+    err = try
+        PNM.compute_parallel_multiplier(collided, PSY.get_name(line))
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("matches 2", err.msg)
+
+    # Unambiguous name still resolves (delegates to the identity method).
+    @test PNM.compute_parallel_multiplier(group, PSY.get_name(line)) ≈ 10.0 / 15.0
+
+    # Non-member is a loud error. Never dereferenced for susceptance, so the detached
+    # fixture (no system attachment) is fine here.
+    (_, line2, _, _) = _mk_detached_pst_fixture()
+    err2 = try
+        PNM.compute_parallel_multiplier(group, line2)
+        nothing
+    catch e
+        e
+    end
+    @test err2 isa ErrorException
+    @test occursin("not a member", err2.msg)
 end
