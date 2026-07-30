@@ -285,9 +285,6 @@ function add_to_branch_maps!(
     parallel_branch_map = get_parallel_branch_map(nr)
     reverse_parallel_branch_map = get_reverse_parallel_branch_map(nr)
     arc_tuple = get_arc_tuple(arc, nr)
-    # Phase-shifting members are legitimate group members (the ZIR merge path already
-    # produces them): Ybus and per-member flow evaluation are exact; the single-π
-    # equivalent constraint is enforced in `_get_equivalent_physical_branch_parameters`.
     if haskey(parallel_branch_map, arc_tuple)
         _push_parallel_branch!(parallel_branch_map, arc_tuple, br)
         reverse_parallel_branch_map[br] = arc_tuple
@@ -319,9 +316,8 @@ Each circuit is filed through the same merge-aware path as any other `PSY.ACTran
 already-registered branch (a `Line`, another winding, or an existing parallel group) is
 merged into a parallel group rather than silently overwriting the earlier entry.
 
-A unique star bus does not make that collision unreachable: arc keys resolve through
-`get_arc_tuple`, which remaps both endpoints, so two windings land on the same key as soon as
-a reduction merges two of this transformer's terminal buses.
+Arc keys resolve through `get_arc_tuple`, which remaps both endpoints, so two winding
+circuits could land on the same key if a reduction merges the transformer's terminal buses.
 
 # Arguments
 - `nr::NetworkReductionData`: Network reduction data to modify

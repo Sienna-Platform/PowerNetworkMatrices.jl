@@ -471,9 +471,12 @@ function get_retained_branches_names(network_reduction_data::NetworkReductionDat
     return [
         PSY.get_name(branch) for
         branch in keys(network_reduction_data.reverse_direct_branch_map) if
-        !_is_transformer_circuit(branch)
+        !_is_three_winding_circuit(branch)
     ]
 end
+
+_is_three_winding_circuit(::PSY.ACTransmission) = false
+_is_three_winding_circuit(::ThreeWindingTransformerCircuit) = true
 
 """
    get_ac_transmission_types(network_reduction_data::NetworkReductionData)
@@ -490,10 +493,6 @@ Gets the concrete types of all AC transmission branches included in an instance 
 # reports its own concrete type.
 _ac_transmission_type(x::PSY.ACTransmission) = typeof(x)
 _ac_transmission_type(w::ThreeWindingTransformerCircuit) = get_transformer_type(w)
-
-_is_transformer_circuit(::PSY.ACTransmission) = false
-_is_transformer_circuit(::ThreeWindingTransformerCircuit) = true
-
 function get_ac_transmission_types(network_reduction_data::NetworkReductionData)
     direct_types = Set{DataType}(
         _ac_transmission_type.(keys(network_reduction_data.reverse_direct_branch_map)),
@@ -577,9 +576,6 @@ function Base.show(io::IO, ::MIME{Symbol("text/plain")}, nrd::NetworkReductionDa
     )
     println(
         "\tNumber of series arcs (number of branches): $(length(nrd.series_branch_map)) ($(length(nrd.reverse_series_branch_map)))",
-    )
-    println(
-        "\tNumber of 3WT winding arcs:$(count(_is_transformer_circuit, values(nrd.direct_branch_map)))",
     )
     println("\tNumber of removed buses: $(length(nrd.removed_buses))")
     println("\tNumber of removed arcs: $(length(nrd.removed_arcs))")

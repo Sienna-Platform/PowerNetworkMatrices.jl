@@ -97,7 +97,7 @@ get_arc_tuple(arc::PSY.Arc) =
 function _get_retained_shunts(
     ::Type{T},
     sys::PSY.System,
-    reverse_bus_search_map,
+    reverse_bus_search_map::Dict{Int, Int},
 ) where {T <: PSY.StaticInjection}
     collection = Vector{T}()
     for sa in PSY.get_components(PSY.get_available, T, sys)
@@ -108,10 +108,10 @@ function _get_retained_shunts(
     return collection
 end
 
-get_switched_admittances(sys::PSY.System, reverse_bus_search_map) =
+get_switched_admittances(sys::PSY.System, reverse_bus_search_map::Dict{Int, Int}) =
     _get_retained_shunts(PSY.SwitchedAdmittance, sys, reverse_bus_search_map)
 
-get_fixed_admittances(sys::PSY.System, reverse_bus_search_map) =
+get_fixed_admittances(sys::PSY.System, reverse_bus_search_map::Dict{Int, Int}) =
     _get_retained_shunts(PSY.FixedAdmittance, sys, reverse_bus_search_map)
 
 function _add_branch_to_lookup!(
