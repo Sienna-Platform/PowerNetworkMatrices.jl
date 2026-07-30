@@ -39,7 +39,10 @@ cache and skips the recomputation.
         one element equal to the arc susceptance. For parallel branches, contains
         one entry per branch in the parallel group.
 - `dist_slack::Vector{Float64}`:
-        Distributed slack bus weights.
+        Distributed slack bus weights, aligned with the bus axis.
+- `dist_slack_normalized::Vector{Float64}`:
+        `dist_slack / sum(dist_slack)`, validated and precomputed at
+        construction; empty when no distributed slack is used.
 - `axes::Ax`:
         Tuple of (arc_axis, bus_axis).
 - `lookup::L`:
@@ -91,6 +94,7 @@ struct VirtualMODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}, K} <:
     arc_susceptances::Vector{Float64}
     branch_susceptances_by_arc::Vector{Vector{Float64}}
     dist_slack::Vector{Float64}
+    dist_slack_normalized::Vector{Float64}
     axes::Ax
     lookup::L
     valid_ix::Vector{Int}
@@ -198,7 +202,7 @@ function _apply_woodbury_correction(
     monitored_idx::Int,
     wf::WoodburyFactors,
 )::Vector{Float64}
-    return with_solver(
+    row = with_solver(
         mat.K,
         mat.work_ba_col,
         mat.temp_data,
@@ -216,6 +220,20 @@ function _apply_woodbury_correction(
             wf,
         )
     end
+    return _apply_dist_slack!(row, mat, wf)
+end
+
+# The weights are validated and normalized at construction, so only the
+# islanding guard runs per row.
+function _apply_dist_slack!(
+    row::Vector{Float64},
+    mat::VirtualMODF,
+    wf::WoodburyFactors,
+)::Vector{Float64}
+    isempty(mat.dist_slack_normalized) && return row
+    _check_islanding_dist_slack(wf)
+    row .-= LinearAlgebra.dot(row, mat.dist_slack_normalized)
+    return row
 end
 
 """
@@ -250,6 +268,26 @@ Base.setindex!(::VirtualMODF, _, ::CartesianIndex) =
 
 # --- Constructor ---
 
+# Validate and normalize the distributed-slack weights against the reduced
+# network. Same rules `_compute_ptdf_row` enforces for VirtualPTDF, applied
+# once at construction.
+function _normalize_dist_slack(
+    dist_slack::Vector{Float64},
+    ref_bus_positions::Vector{Int},
+    n_buses::Int,
+)::Vector{Float64}
+    isempty(dist_slack) && return Float64[]
+    if length(ref_bus_positions) != 1
+        error(
+            "Distributed slack is not supported for systems with multiple reference buses.",
+        )
+    end
+    if length(dist_slack) != n_buses
+        error("Distributed bus specification doesn't match the number of buses.")
+    end
+    return dist_slack / sum(dist_slack)
+end
+
 """
     VirtualMODF(sys::PSY.System; kwargs...) -> VirtualMODF
 
@@ -268,7 +306,9 @@ auto-applied during `Ybus` construction.
 - `sys::PSY.System`: Power system to build from
 
 # Keyword Arguments
-- `dist_slack::Vector{Float64}`: Distributed slack weights (default: empty)
+- `dist_slack::Vector{Float64}`: Distributed slack weights aligned with the
+        (reduced) bus axis; must match its length and requires a single
+        reference bus (default: empty)
 - `linear_solver::String = _default_linear_solver()`: Linear solver for the
         ABA factorization. Options: "KLU", "AppleAccelerate". Defaults to
         "AppleAccelerate" on macOS and "KLU" elsewhere.
@@ -328,6 +368,8 @@ function VirtualMODF(
 
     arc_ax = get_arc_axis(A)
     bus_ax = get_bus_axis(A)
+    dist_slack_normalized =
+        _normalize_dist_slack(dist_slack, ref_bus_positions, length(bus_ax))
     axes = (arc_ax, bus_ax)
     arc_ax_ref = make_ax_ref(arc_ax)
     bus_ax_ref = make_ax_ref(bus_ax)
@@ -364,6 +406,7 @@ function VirtualMODF(
         arc_susceptances,
         branch_susceptances_by_arc,
         dist_slack,
+        dist_slack_normalized,
         axes,
         look_up,
         valid_ix,

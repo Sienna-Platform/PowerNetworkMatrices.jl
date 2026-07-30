@@ -217,3 +217,39 @@ end
     # Building PTDF tests handling of subnetwork_axes when an entire subnetwork is eliminated during reduction:
     @test isa(PTDF(ybus_with_isolated), PTDF)
 end
+
+@testset "Ward reduction honors user irreducible_buses" begin
+    sys = PSB.build_system(PSB.PSIDTestSystems, "psid_test_ieee_9bus")
+    study_buses = [1, 2, 5, 4, 7]
+    protected_bus = 9
+    @test protected_bus ∉ study_buses
+    ybus = Ybus(
+        sys;
+        irreducible_buses = Set([protected_bus]),
+        network_reductions = NetworkReduction[WardReduction(study_buses)],
+    )
+    nrd = get_network_reduction_data(ybus)
+    # The protected bus survives the reduction...
+    @test protected_bus ∈ keys(get_bus_reduction_map(nrd))
+    @test protected_bus ∈ PNM.get_bus_axis(ybus)
+    # ...while unprotected external buses are still eliminated.
+    other_external = setdiff(
+        [get_number(x) for x in get_components(ACBus, sys)],
+        vcat(study_buses, protected_bus),
+    )
+    for b in other_external
+        @test b ∉ keys(get_bus_reduction_map(nrd))
+    end
+    # The recorded reduction reflects the applied (augmented) study set.
+    applied = get_reductions(nrd).ward_reduction
+    @test protected_bus ∈ PNM.get_study_buses(applied)
+    # Protecting a bus is equivalent to listing it in study_buses directly.
+    ybus_direct = Ybus(
+        sys;
+        network_reductions = NetworkReduction[
+            WardReduction(sort!(vcat(study_buses, protected_bus))),
+        ],
+    )
+    @test PNM.get_bus_axis(ybus) == PNM.get_bus_axis(ybus_direct)
+    @test ybus.data ≈ ybus_direct.data
+end

@@ -2654,7 +2654,13 @@ function get_reduction(
     ::PSY.System,
     reduction::WardReduction,
 )
-    study_buses = get_study_buses(reduction)
+    # Ward retains buses only through `study_buses`, so the user's protected
+    # set must be folded in here; the other reductions read it from the
+    # container directly.
+    user_irreducible =
+        get_user_irreducible_buses(get_reductions(get_network_reduction_data(ybus)))
+    applied_reduction = _augment_ward(reduction, user_irreducible)
+    study_buses = get_study_buses(applied_reduction)
     ref_bus_key = _validate_study_buses(ybus, study_buses)
     subnetwork_bus_axis = ybus.subnetwork_axes[ref_bus_key][1]
     bus_lookup = get_bus_lookup(ybus)
@@ -2690,9 +2696,10 @@ function get_reduction(
     if Set(subnetwork_bus_axis) == Set(study_buses)
         @error "The study buses comprise an entire island; ward reduction will not modify this island and other islands will be eliminated"
         return NetworkReductionData(;
+            irreducible_buses = Set{Int}(user_irreducible),
             removed_arcs = removed_arcs,
             removed_buses = removed_buses,
-            reductions = ReductionContainer(; ward_reduction = reduction),
+            reductions = ReductionContainer(; ward_reduction = applied_reduction),
         )
     end
 
@@ -2718,6 +2725,7 @@ function get_reduction(
         end
     end
     return NetworkReductionData(;
+        irreducible_buses = Set{Int}(user_irreducible),
         bus_reduction_map = bus_reduction_map,
         reverse_bus_search_map = reverse_bus_search_map,
         removed_arcs = removed_arcs,
@@ -2726,6 +2734,6 @@ function get_reduction(
         added_admittance_map = added_admittance_map,
         removed_arc_to_surviving_bus = removed_arc_to_surviving_bus,
         boundary_bus_to_removed_arcs = boundary_bus_to_removed_arcs,
-        reductions = ReductionContainer(; ward_reduction = reduction),
+        reductions = ReductionContainer(; ward_reduction = applied_reduction),
     )
 end

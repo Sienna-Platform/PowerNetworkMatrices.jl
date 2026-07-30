@@ -303,6 +303,41 @@ function _apply_woodbury_correction_impl(
     return copy(temp_data)
 end
 
+# --- Distributed-slack adjustment ---------------------------------------------
+# A post-modification row must use the same slack convention as the matrix's
+# base rows: subtract the weighted row average, exactly as `_compute_ptdf_row`
+# does. The kernel above returns single-slack rows; the outer dispatchers apply
+# the adjustment (and its validation) here.
+
+function _check_islanding_dist_slack(wf::WoodburyFactors)
+    if wf.is_islanding
+        error(
+            "Distributed slack is not supported for modifications that island " *
+            "the network.",
+        )
+    end
+    return
+end
+
+function _apply_dist_slack!(
+    row::Vector{Float64},
+    mat::VirtualPTDF,
+    wf::WoodburyFactors,
+)::Vector{Float64}
+    isempty(mat.dist_slack) && return row
+    if length(get_ref_bus_position(mat)) != 1
+        error(
+            "Distributed slack is not supported for systems with multiple reference buses.",
+        )
+    end
+    if length(mat.dist_slack) != length(row)
+        error("Distributed bus specification doesn't match the number of buses.")
+    end
+    _check_islanding_dist_slack(wf)
+    row .-= LinearAlgebra.dot(row, mat.dist_slack_normalized)
+    return row
+end
+
 # Outer dispatchers: VirtualPTDF and VirtualMODF both acquire a solver and
 # matched per-worker scratch via `with_solver` / `with_worker`. The
 # VirtualMODF methods are defined in virtual_modf_calculations.jl alongside
@@ -328,7 +363,7 @@ function _apply_woodbury_correction(
     monitored_idx::Int,
     wf::WoodburyFactors,
 )::Vector{Float64}
-    return with_solver(
+    row = with_solver(
         mat.K, mat.work_ba_col, mat.temp_data, mat.solver_lock,
     ) do K_solver, work_ba_col, temp_data
         _apply_woodbury_correction_impl(
@@ -337,4 +372,5 @@ function _apply_woodbury_correction(
             monitored_idx, wf,
         )
     end
+    return _apply_dist_slack!(row, mat, wf)
 end

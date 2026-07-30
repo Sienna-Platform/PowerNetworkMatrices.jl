@@ -172,17 +172,20 @@ end
     # exact; a Float64 tol still sparsifies columns at any size.
     sys = PSB.build_system(PSB.MatpowerTestSystems, "matpower_ACTIVSg2000_sys")
 
-    v_exact = VirtualPTDF(sys; tol = eps())
+    # The rows are compared bitwise across separately built matrices, which
+    # requires a deterministic solve; KLU is single-threaded and reproducible,
+    # while the AppleAccelerate backend is not bitwise-stable across calls.
+    v_exact = VirtualPTDF(sys; tol = eps(), linear_solver = "KLU")
     arc = first(PNM.get_arc_axis(v_exact))
     nnz_dense = count(!iszero, v_exact[arc, :])
 
-    v_auto = VirtualPTDF(sys)                           # default, below gate
+    v_auto = VirtualPTDF(sys; linear_solver = "KLU")    # default tol, below gate
     @test v_auto.tol isa PNM.AbsoluteCutoff
     @test PNM.get_tol(v_auto) == eps()
     @test v_auto[arc, :] == v_exact[arc, :]             # exact, no entries dropped
 
     # Explicit Float64 -> absolute cutoff -> genuinely sparse, faithful column.
-    v_num = VirtualPTDF(sys; tol = 1e-2)
+    v_num = VirtualPTDF(sys; tol = 1e-2, linear_solver = "KLU")
     @test v_num.tol isa PNM.AbsoluteCutoff
     sparse_row = v_num[arc, :]
     @test count(!iszero, sparse_row) < nnz_dense

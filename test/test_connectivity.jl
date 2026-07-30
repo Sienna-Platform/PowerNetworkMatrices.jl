@@ -86,19 +86,22 @@ end
 end
 
 @testset "Small island corner cases" begin
+    # Entries are compared bitwise across separately built matrices, which
+    # requires a deterministic solve; KLU is single-threaded and reproducible,
+    # while the AppleAccelerate backend is not bitwise-stable across calls.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     ybus_1 = Ybus(sys)
-    ptdf_1 = PTDF(sys)
-    lodf_1 = LODF(sys)
-    vptdf_1 = VirtualPTDF(sys)
-    vlodf_1 = VirtualLODF(sys)
+    ptdf_1 = PTDF(sys; linear_solver = "KLU")
+    lodf_1 = LODF(sys; linear_solver = "KLU")
+    vptdf_1 = VirtualPTDF(sys; linear_solver = "KLU")
+    vlodf_1 = VirtualLODF(sys; linear_solver = "KLU")
 
     sys = build_hvdc_with_single_bus_island()
     ybus_2 = Ybus(sys)
-    ptdf_2 = PTDF(sys)
-    lodf_2 = LODF(sys)
-    vptdf_2 = VirtualPTDF(sys)
-    vlodf_2 = VirtualLODF(sys)
+    ptdf_2 = PTDF(sys; linear_solver = "KLU")
+    lodf_2 = LODF(sys; linear_solver = "KLU")
+    vptdf_2 = VirtualPTDF(sys; linear_solver = "KLU")
+    vlodf_2 = VirtualLODF(sys; linear_solver = "KLU")
 
     sys = build_hvdc_with_small_island()
     ybus_3 = Ybus(
@@ -108,21 +111,25 @@ end
     )
     ptdf_3 = PTDF(
         sys;
+        linear_solver = "KLU",
         network_reductions = NetworkReduction[RadialReduction()],
         irreducible_buses = Set(collect(1:14)),
     )
     lodf_3 = LODF(
         sys;
+        linear_solver = "KLU",
         network_reductions = NetworkReduction[RadialReduction()],
         irreducible_buses = Set(collect(1:14)),
     )
     vptdf_3 = VirtualPTDF(
         sys;
+        linear_solver = "KLU",
         network_reductions = NetworkReduction[RadialReduction()],
         irreducible_buses = Set(collect(1:14)),
     )
     vlodf_3 = VirtualLODF(
         sys;
+        linear_solver = "KLU",
         network_reductions = NetworkReduction[RadialReduction()],
         irreducible_buses = Set(collect(1:14)),
     )
