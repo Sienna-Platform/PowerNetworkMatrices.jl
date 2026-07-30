@@ -60,8 +60,7 @@ get_axes(M::LODF) = M.axes
 get_lookup(M::LODF) = M.lookup
 get_ref_bus(M::LODF) = sort!(collect(keys(M.subnetwork_axes)))
 # Arc-indexed: no get_bus_lookup(M::LODF) exists, so this throws MethodError on any call.
-# Pre-existing; kept off the generic method pending a decision on whether a bus-indexed ref
-# position means anything for LODF.
+# Pre-existing; kept here so LODF does not silently inherit the bus-indexed generic method.
 get_ref_bus_position(M::LODF) = [get_bus_lookup(M)[x] for x in keys(M.subnetwork_axes)]
 get_network_reduction_data(M::LODF) = M.network_reduction_data
 get_arc_lookup(M::LODF) = M.lookup[1]

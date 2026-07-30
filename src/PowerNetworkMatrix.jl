@@ -352,25 +352,8 @@ get_lookup(mat::PowerNetworkMatrix) = mat.lookup
 # reduction's reverse map to the surviving bus it now shares a position with.
 function get_ref_bus_position(M::PowerNetworkMatrix)
     bus_lookup = get_bus_lookup(M)
-    reverse_bus_search_map = get_reverse_bus_search_map(get_network_reduction_data(M))
-    return [
-        _resolve_ref_bus_position(bus_lookup, reverse_bus_search_map, x)
-        for x in keys(M.subnetwork_axes)
-    ]
-end
-
-function _resolve_ref_bus_position(
-    bus_lookup::Dict{Int, Int},
-    reverse_bus_search_map::Dict{Int, Int},
-    bus_number::Int,
-)
-    haskey(bus_lookup, bus_number) && return bus_lookup[bus_number]
-    surviving_bus = get(reverse_bus_search_map, bus_number, bus_number)
-    haskey(bus_lookup, surviving_bus) && return bus_lookup[surviving_bus]
-    error(
-        "Reference bus $bus_number is not present in the bus lookup, and its " *
-        "reduction-mapped surviving bus $surviving_bus is not present either.",
-    )
+    nr = get_network_reduction_data(M)
+    return [get_bus_index(x, bus_lookup, nr) for x in keys(M.subnetwork_axes)]
 end
 
 function get_branch_multiplier(A::T, branch_name::String) where {T <: PowerNetworkMatrix}

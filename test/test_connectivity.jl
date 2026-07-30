@@ -272,45 +272,15 @@ function _mk_star_bus(number, name, bustype, angle)
     )
 end
 
-function _mk_star_jumper!(sys, name, from, to)
+function _mk_star_line!(sys, name, from, to, x)
     arc = Arc(; from = from, to = to)
     add_component!(sys, arc)
-    add_component!(
-        sys,
-        Line(;
-            name = name,
-            available = true,
-            active_power_flow = 0.0,
-            reactive_power_flow = 0.0,
-            arc = arc,
-            r = 0.0,
-            x = 1e-4,   # susceptance 1e4 >= default ZIBR threshold
-            b = (from = 0.0, to = 0.0),
-            rating = 1.0,
-            angle_limits = (min = -1.5, max = 1.5),
-        ),
-    )
+    return _add_test_line!(sys, name, arc, 0.0, x)
 end
 
-function _mk_star_normal_line!(sys, name, from, to)
-    arc = Arc(; from = from, to = to)
-    add_component!(sys, arc)
-    add_component!(
-        sys,
-        Line(;
-            name = name,
-            available = true,
-            active_power_flow = 0.0,
-            reactive_power_flow = 0.0,
-            arc = arc,
-            r = 0.0,
-            x = 0.1,
-            b = (from = 0.0, to = 0.0),
-            rating = 1.0,
-            angle_limits = (min = -1.5, max = 1.5),
-        ),
-    )
-end
+# x = 1e-4 gives susceptance 1e4, at or above the default ZIBR merge threshold.
+_mk_star_jumper!(sys, name, from, to) = _mk_star_line!(sys, name, from, to, 1e-4)
+_mk_star_normal_line!(sys, name, from, to) = _mk_star_line!(sys, name, from, to, 0.1)
 
 # A star -- hub bus 10 (REF) with leaves 11-15 joined to it by zero-impedance jumpers, plus
 # two ordinary-line buses (20, 21) -- where leaf 12 has the smallest swing angle and is
