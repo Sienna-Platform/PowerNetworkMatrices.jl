@@ -81,6 +81,7 @@ import LinearAlgebra: BLAS.gemm
 import LinearAlgebra: ldiv!, mul!, I, dot
 import LinearAlgebra: LAPACK.getrf!, LAPACK.getrs!
 import Preferences
+import Statistics: median
 
 include("KLUWrapper/KLUWrapper.jl")
 import .KLUWrapper:

@@ -606,6 +606,7 @@ function _partition_members_by_impedance_angle(bp::AbstractBranchesParallel)
             push!(buckets, PSY.ACTransmission[br])
         else
             push!(buckets[ix], br)
+            angles[ix] = median(angles[ix])
         end
     end
     return buckets

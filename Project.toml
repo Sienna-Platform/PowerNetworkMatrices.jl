@@ -12,17 +12,18 @@ LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
 Preferences = "21216c6a-2e73-6563-6e65-726566657250"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 SuiteSparse_jll = "bea87d4a-7f5b-5778-9afe-8cc45184846c"
 
 [weakdeps]
 Pardiso = "46dd5b70-b6fb-5a00-ae2d-e8fea33afaf2"
 
+[sources]
+InfrastructureSystems = {rev = "IS4", url = "https://github.com/NREL-Sienna/InfrastructureSystems.jl"}
+PowerSystems = {rev = "psy6", url = "https://github.com/NREL-Sienna/PowerSystems.jl"}
+
 [extensions]
 MKLPardisoExt = "Pardiso"
-
-[sources]
-InfrastructureSystems = {url = "https://github.com/NREL-Sienna/InfrastructureSystems.jl", rev = "IS4"}
-PowerSystems = {url = "https://github.com/NREL-Sienna/PowerSystems.jl", rev = "psy6"}
 
 [compat]
 DataStructures = "^0.19"
@@ -34,5 +35,6 @@ Pardiso = "1"
 PowerSystems = "5"
 Preferences = "^1.5"
 SparseArrays = "1"
+Statistics = "1.11.1"
 SuiteSparse_jll = "5, 6, 7"
 julia = "^1.10"
