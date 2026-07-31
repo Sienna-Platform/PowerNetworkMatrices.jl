@@ -348,6 +348,15 @@ end
 """
 get_lookup(mat::PowerNetworkMatrix) = mat.lookup
 
+# A subnetwork's representative can itself be merged away by a later reduction (e.g.
+# ZeroImpedanceBranchReduction folding a swing into another bus); resolve it through the
+# reduction's reverse map to the surviving bus it now shares a position with.
+function get_ref_bus_position(M::PowerNetworkMatrix)
+    bus_lookup = get_bus_lookup(M)
+    nr = get_network_reduction_data(M)
+    return [get_bus_index(x, bus_lookup, nr) for x in keys(M.subnetwork_axes)]
+end
+
 """
     get_branch_multiplier(A::PowerNetworkMatrix, branch_name::String) -> (Float64, Tuple{Int, Int})
 

@@ -73,8 +73,16 @@ get_bus_lookup(c::VirtualFactorCore) = c.lookup[2]
 get_arc_axis(c::VirtualFactorCore) = c.axes[1]
 get_bus_axis(c::VirtualFactorCore) = c.axes[2]
 get_ref_bus(c::VirtualFactorCore) = sort!(collect(keys(c.subnetwork_axes)))
-get_ref_bus_position(c::VirtualFactorCore) =
-    [get_bus_lookup(c)[x] for x in keys(c.subnetwork_axes)]
+# A subnetwork's representative can itself be merged away by a later reduction (e.g.
+# ZeroImpedanceBranchReduction folding a swing into another bus); resolve it through the
+# reduction's reverse map to the surviving bus it now shares a position with. Mirrors the
+# generic get_ref_bus_position(::PowerNetworkMatrix); the core is not a PowerNetworkMatrix,
+# so it needs its own method for the wrappers (VirtualPTDF/VirtualMODF) to delegate to.
+function get_ref_bus_position(c::VirtualFactorCore)
+    bus_lookup = get_bus_lookup(c)
+    nr = get_network_reduction_data(c)
+    return [get_bus_index(x, bus_lookup, nr) for x in keys(c.subnetwork_axes)]
+end
 get_network_reduction_data(c::VirtualFactorCore) = c.network_reduction_data
 get_system_uuid(c::VirtualFactorCore) = c.system_uuid
 # Resolved cutoff object (used for per-row sparsification); `get_tol` returns its

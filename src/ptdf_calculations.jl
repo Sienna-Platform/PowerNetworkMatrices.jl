@@ -60,7 +60,6 @@ end
 get_axes(M::PTDF) = M.axes
 get_lookup(M::PTDF) = M.lookup
 get_ref_bus(M::PTDF) = sort!(collect(keys(M.subnetwork_axes)))
-get_ref_bus_position(M::PTDF) = [get_bus_lookup(M)[x] for x in keys(M.subnetwork_axes)]
 get_network_reduction_data(M::PTDF) = M.network_reduction_data
 get_bus_axis(M::PTDF) = M.axes[1]
 get_bus_lookup(M::PTDF) = M.lookup[1]
