@@ -1,6 +1,6 @@
 # PowerNetworkMatrices.jl (PNM) — psy6 branch
 
-The linear-algebra layer of the psy6 stack: Ybus, Incidence/Adjacency, BA/ABA, PTDF, LODF, lazy Virtual{PTDF,LODF,MODF}, contingency machinery (`ContingencySpec`, Woodbury updates), and **network reductions, which PNM owns exclusively**. Purely computational — the data model is PSY's. Layer 2; consumed by PowerFlows and PowerOperationsModels. Platform conventions: `.claude/Sienna.md`; workspace architecture: `/home/jdlara/Sienna_work/psy6/CLAUDE.md`.
+The linear-algebra layer of the psy6 stack: Ybus, Incidence/Adjacency, BA/ABA, PTDF, LODF, lazy Virtual{PTDF,LODF,MODF}, contingency machinery (`ContingencySpec`, Woodbury updates), and **network reductions, which PNM owns exclusively**. Purely computational — the data model is PSY's. Layer 2; consumed by PowerFlows and PowerOperationsModels. Platform conventions: the `sienna-psy6` skill; workspace architecture: the psy6 workspace root `CLAUDE.md`.
 
 ## The ownership contract (defining psy6 fact)
 
