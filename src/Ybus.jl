@@ -63,31 +63,6 @@ end
 get_axes(M::Ybus) = M.axes
 get_lookup(M::Ybus) = M.lookup
 get_ref_bus(M::Ybus) = sort!(collect(keys(M.subnetwork_axes)))
-# A subnetwork's representative can itself be merged away by a later reduction (e.g.
-# ZeroImpedanceBranchReduction folding a swing into another bus); resolve it through the
-# reduction's reverse map to the surviving bus it now shares a position with.
-function get_ref_bus_position(M::Ybus)
-    bus_lookup = get_bus_lookup(M)
-    reverse_bus_search_map = get_reverse_bus_search_map(get_network_reduction_data(M))
-    return [
-        _resolve_ref_bus_position(bus_lookup, reverse_bus_search_map, x)
-        for x in keys(M.subnetwork_axes)
-    ]
-end
-
-function _resolve_ref_bus_position(
-    bus_lookup::Dict{Int, Int},
-    reverse_bus_search_map::Dict{Int, Int},
-    bus_number::Int,
-)
-    haskey(bus_lookup, bus_number) && return bus_lookup[bus_number]
-    surviving_bus = get(reverse_bus_search_map, bus_number, bus_number)
-    haskey(bus_lookup, surviving_bus) && return bus_lookup[surviving_bus]
-    error(
-        "Reference bus $bus_number is not present in the Ybus bus lookup, and its " *
-        "reduction-mapped surviving bus $surviving_bus is not present either.",
-    )
-end
 
 """Get the [`NetworkReduction`](@ref) data applied to this matrix."""
 get_network_reduction_data(M::Ybus) = M.network_reduction_data
@@ -2071,13 +2046,27 @@ function _make_subnetwork_axes(
             push!(subnetwork_key_removed, k)
         end
     end
+    reverse_bus_search_map = get_reverse_bus_search_map(get_network_reduction_data(ybus))
     for k in subnetwork_key_removed
-        axis_1, axis_2 = pop!(subnetwork_axes, k)
-        new_ref_bus = pop!(axis_1)
+        axis_1, axis_2 = subnetwork_axes[k]
+        surviving_buses = setdiff(axis_1, bus_numbers_to_remove)
+        # An island losing every bus is dropped by the empty-subnetwork sweep below; re-keying
+        # it would only swap one dead key for another.
+        isempty(surviving_buses) && continue
+        # The bus the old representative was folded into inherits the role, so the reference
+        # bus stays electrically the same bus. Only a removal that merges nothing (no reverse
+        # map entry) falls back to an order-independent pick.
+        merge_target = get(reverse_bus_search_map, k, k)
+        if merge_target in surviving_buses
+            new_ref_bus = merge_target
+        else
+            new_ref_bus = minimum(surviving_buses)
+        end
+        delete!(subnetwork_axes, k)
         subnetwork_axes[new_ref_bus] = (axis_1, axis_2)
         # If a reference bus key is reduced, change the arc subnetwork axis key as well:
         arc_subnetwork_axis[new_ref_bus] = pop!(arc_subnetwork_axis, k)
-        @warn "Original reference bus $k removed during reduction; assigning arbitrary reference bus to be $new_ref_bus."
+        @warn "Original reference bus $k removed during reduction; reassigning the subnetwork reference bus to $new_ref_bus."
     end
     empty_subnetwork_keys = Set{Int}()
     for (k, values) in subnetwork_axes

@@ -103,6 +103,8 @@ end
 get_axes(M::VirtualLODF) = M.axes
 get_lookup(M::VirtualLODF) = M.lookup
 get_ref_bus(M::VirtualLODF) = sort!(collect(keys(M.subnetwork_axes)))
+# Arc-indexed: no get_bus_lookup(M::VirtualLODF) exists, so this throws MethodError on any
+# call. Pre-existing; see the LODF note in lodf_calculations.jl.
 get_ref_bus_position(M::VirtualLODF) =
     [get_bus_lookup(M)[x] for x in keys(M.subnetwork_axes)]
 get_network_reduction_data(M::VirtualLODF) = M.network_reduction_data

@@ -59,7 +59,12 @@ function _is_zero_impedance_arc(
     # Transformer-bearing arcs are excluded from zero-impedance bus merging.
     _any_transformer(parallel_br) && return false
     return any(
-        _is_zero_impedance_branch(br, susceptance_threshold, min_x_eps, resistance_tolerance)
+        _is_zero_impedance_branch(
+            br,
+            susceptance_threshold,
+            min_x_eps,
+            resistance_tolerance,
+        )
         for br in parallel_br
     )
 end

@@ -34,7 +34,6 @@ end
 get_axes(M::BA_Matrix) = M.axes
 get_lookup(M::BA_Matrix) = M.lookup
 get_ref_bus(M::BA_Matrix) = sort!(collect(keys(M.subnetwork_axes)))
-get_ref_bus_position(M::BA_Matrix) = [get_bus_lookup(M)[x] for x in keys(M.subnetwork_axes)]
 get_network_reduction_data(M::BA_Matrix) = M.network_reduction_data
 get_bus_axis(M::BA_Matrix) = M.axes[1]
 get_bus_lookup(M::BA_Matrix) = M.lookup[1]

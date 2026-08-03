@@ -100,8 +100,6 @@ end
 get_axes(M::VirtualPTDF) = M.axes
 get_lookup(M::VirtualPTDF) = M.lookup
 get_ref_bus(M::VirtualPTDF) = sort!(collect(keys(M.subnetwork_axes)))
-get_ref_bus_position(M::VirtualPTDF) =
-    [get_bus_lookup(M)[x] for x in keys(M.subnetwork_axes)]
 get_network_reduction_data(M::VirtualPTDF) = M.network_reduction_data
 get_bus_lookup(M::VirtualPTDF) = M.lookup[2]
 get_arc_lookup(M::VirtualPTDF) = M.lookup[1]
