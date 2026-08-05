@@ -1235,6 +1235,70 @@ end
     @test all(isfinite, ABA_Matrix(yb; factorize = false).data.nzval)
 end
 
+@testset "ZIBR merge preserves arc-admittance columns (merge-and-slice oracle)" begin
+    # A ZIBR merge must fold each removed bus's arc-admittance column into its survivor's
+    # column before the bus-removal slice, or the to/from-side entries of arcs terminating
+    # at the removed bus are silently dropped. Pin the merged values against an unreduced
+    # build of the same system: bus 3 merges into bus 2, so the relabeled arc (2, 4) must
+    # carry exactly the raw (3, 4) entries with the bus-3 column moved onto bus 2.
+    function _mk_arc_adm_sys()
+        sys, buses = _mk_bus_system(4)
+        function arc!(f, t)
+            a = Arc(; from = buses[f], to = buses[t])
+            add_component!(sys, a)
+            return a
+        end
+        _add_test_line!(sys, "L12", arc!(1, 2), 0.01, 0.1)   # untouched by the merge
+        _add_test_line!(sys, "L23", arc!(2, 3), 0.0, 5e-5)   # |y| = 2e4 ≥ 1e4 -> merge 3 into 2
+        _add_test_line!(sys, "L34", arc!(3, 4), 0.02, 0.2)   # from-side terminates at removed bus 3
+        return sys
+    end
+
+    y_red = Ybus(_mk_arc_adm_sys(); make_arc_admittance_matrices = true)
+    @test get(y_red.network_reduction_data.reverse_bus_search_map, 3, nothing) == 2
+    y_raw = Ybus(
+        _mk_arc_adm_sys();
+        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+            susceptance_threshold = Inf,
+        ),
+        make_arc_admittance_matrices = true,
+    )
+
+    rtol = sqrt(eps(real(YBUS_ELTYPE)))
+    for (m_red, m_raw) in (
+        (y_red.arc_admittance_from_to, y_raw.arc_admittance_from_to),
+        (y_red.arc_admittance_to_from, y_raw.arc_admittance_to_from),
+    )
+        a_red, b_red = PNM.get_arc_lookup(m_red), PNM.get_bus_lookup(m_red)
+        a_raw, b_raw = PNM.get_arc_lookup(m_raw), PNM.get_bus_lookup(m_raw)
+        # The removed bus and the ZI arc are gone from the reduced matrix.
+        @test !haskey(b_red, 3)
+        @test !haskey(a_red, (2, 3))
+        # Arc (3, 4) is relabeled to (2, 4); its bus-3 column folded onto bus 2.
+        @test isapprox(
+            m_red.data[a_red[(2, 4)], b_red[2]],
+            m_raw.data[a_raw[(3, 4)], b_raw[3]];
+            rtol = rtol,
+        )
+        @test isapprox(
+            m_red.data[a_red[(2, 4)], b_red[4]],
+            m_raw.data[a_raw[(3, 4)], b_raw[4]];
+            rtol = rtol,
+        )
+        # The arc not touching the removed bus is unchanged.
+        @test isapprox(
+            m_red.data[a_red[(1, 2)], b_red[1]],
+            m_raw.data[a_raw[(1, 2)], b_raw[1]];
+            rtol = rtol,
+        )
+        @test isapprox(
+            m_red.data[a_red[(1, 2)], b_red[2]],
+            m_raw.data[a_raw[(1, 2)], b_raw[2]];
+            rtol = rtol,
+        )
+    end
+end
+
 @testset "parallel multiplier resolves members by identity" begin
     # `get_series_susceptance` needs an attached system (device-base -> system-base unit
     # conversion reads `base_value`, populated only by `add_component!`); detached fixture
