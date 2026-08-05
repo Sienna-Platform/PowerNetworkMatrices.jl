@@ -34,9 +34,10 @@ export YBUS_ELTYPE
 export get_sum_of_max_rating
 export get_single_element_contingency_rating
 export get_impedance_averaged_rating
+export equivalent_branch
+export arc_equivalent_branch
 export branch_admittance
 export reduced_arc_admittance
-export winding_admittance
 export three_winding_arcs
 export branch_flow_limits
 

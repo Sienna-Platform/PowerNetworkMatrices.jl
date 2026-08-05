@@ -63,31 +63,6 @@ end
 get_axes(M::Ybus) = M.axes
 get_lookup(M::Ybus) = M.lookup
 get_ref_bus(M::Ybus) = sort!(collect(keys(M.subnetwork_axes)))
-# A subnetwork's representative can itself be merged away by a later reduction (e.g.
-# ZeroImpedanceBranchReduction folding a swing into another bus); resolve it through the
-# reduction's reverse map to the surviving bus it now shares a position with.
-function get_ref_bus_position(M::Ybus)
-    bus_lookup = get_bus_lookup(M)
-    reverse_bus_search_map = get_reverse_bus_search_map(get_network_reduction_data(M))
-    return [
-        _resolve_ref_bus_position(bus_lookup, reverse_bus_search_map, x)
-        for x in keys(M.subnetwork_axes)
-    ]
-end
-
-function _resolve_ref_bus_position(
-    bus_lookup::Dict{Int, Int},
-    reverse_bus_search_map::Dict{Int, Int},
-    bus_number::Int,
-)
-    haskey(bus_lookup, bus_number) && return bus_lookup[bus_number]
-    surviving_bus = get(reverse_bus_search_map, bus_number, bus_number)
-    haskey(bus_lookup, surviving_bus) && return bus_lookup[surviving_bus]
-    error(
-        "Reference bus $bus_number is not present in the Ybus bus lookup, and its " *
-        "reduction-mapped surviving bus $surviving_bus is not present either.",
-    )
-end
 
 """Get the [`NetworkReduction`](@ref) data applied to this matrix."""
 get_network_reduction_data(M::Ybus) = M.network_reduction_data
@@ -231,7 +206,8 @@ function _push_parallel_branch_dispatch!(
     parallel_branch_map[arc_tuple] = MixedBranchesParallel(
         PSY.ACTransmission[existing.branches..., br],
         existing.arc_key,
-        nothing,
+        EMPTY_TWO_PORT,
+        false,
     )
     return
 end
@@ -264,9 +240,14 @@ reverse lookup dictionaries for efficient access.
 - `br::PSY.ACTransmission`: AC transmission branch to add
 
 # Implementation Details
-- If arc already has a direct branch, converts to parallel mapping
-- If arc already has parallel branches, adds to existing set
-- Otherwise creates new direct mapping
+- If arc already has a parallel group, pushes `br` into it (`_push_parallel_branch!`);
+  a type mismatch against the group promotes it to `MixedBranchesParallel` and emits a `@warn`
+- If arc already has a direct branch, promotes both branches into a new group
+  (`_make_parallel_branch_pair`): homogeneous `BranchesParallel{T}` when types match,
+  `MixedBranchesParallel` with a `@warn` otherwise
+- Otherwise creates a new direct mapping
+- Phase-shifting members are grouped like any other branch — never dropped or forced direct
+  (issue #305)
 - Maintains reverse lookup consistency
 """
 function add_to_branch_maps!(
@@ -279,12 +260,10 @@ function add_to_branch_maps!(
     parallel_branch_map = get_parallel_branch_map(nr)
     reverse_parallel_branch_map = get_reverse_parallel_branch_map(nr)
     arc_tuple = get_arc_tuple(arc, nr)
-    if haskey(parallel_branch_map, arc_tuple) && !_skip_parallel_reduction(br)
+    if haskey(parallel_branch_map, arc_tuple)
         _push_parallel_branch!(parallel_branch_map, arc_tuple, br)
         reverse_parallel_branch_map[br] = arc_tuple
-    elseif haskey(direct_branch_map, arc_tuple) &&
-           !_skip_parallel_reduction(direct_branch_map[arc_tuple]) &&
-           !_skip_parallel_reduction(br)
+    elseif haskey(direct_branch_map, arc_tuple)
         corresponding_branch = direct_branch_map[arc_tuple]
         delete!(direct_branch_map, arc_tuple)
         delete!(reverse_direct_branch_map, corresponding_branch)
@@ -300,48 +279,37 @@ function add_to_branch_maps!(
 end
 
 """
-    add_to_branch_maps!(
-        nr::NetworkReductionData,
-        primary_star_arc::PSY.Arc,
-        secondary_star_arc::PSY.Arc,
-        tertiary_star_arc::PSY.Arc,
-        br::PSY.ThreeWindingTransformer
-    )
+    add_to_branch_maps!(nr::NetworkReductionData, br::PSY.ThreeWindingTransformer)
 
-Add a three-winding transformer to the transformer mapping in NetworkReductionData.
+Add a three-winding transformer to the branch maps in NetworkReductionData.
 
-Three-winding transformers are modeled using a star (wye) configuration with three arcs
-connecting to a virtual star bus. Each available winding is mapped separately.
+Three-winding transformers are modeled using a star (wye) configuration with one arc per
+circuit connecting to a virtual star bus.
+
+Each circuit is filed through the same merge-aware path as any other `PSY.ACTransmission`
+(the 3-arg `add_to_branch_maps!`), so a winding whose star-point arc coincides with an
+already-registered branch (a `Line`, another winding, or an existing parallel group) is
+merged into a parallel group rather than silently overwriting the earlier entry.
+
+Arc keys resolve through `get_arc_tuple`, which remaps both endpoints, so two winding
+circuits could land on the same key if a reduction merges the transformer's terminal buses.
 
 # Arguments
 - `nr::NetworkReductionData`: Network reduction data to modify
-- `primary_star_arc::PSY.Arc`: Arc for primary winding
-- `secondary_star_arc::PSY.Arc`: Arc for secondary winding
-- `tertiary_star_arc::PSY.Arc`: Arc for tertiary winding
 - `br::PSY.ThreeWindingTransformer`: Three-winding transformer to add
 
 # Implementation Details
-- Only adds arcs for available windings (per-winding `PSY.get_available`)
-- Each available winding is a one-to-one arc, stored in the direct branch maps
-- Each winding is numbered (1=primary, 2=secondary, 3=tertiary)
+- Only adds arcs for available circuits (per-circuit `PSY.get_available`)
+- Circuits are numbered in `PSY.get_circuits` order (1=primary, 2=secondary, 3=tertiary)
 """
 function add_to_branch_maps!(
     nr::NetworkReductionData,
-    primary_star_arc::PSY.Arc,
-    secondary_star_arc::PSY.Arc,
-    tertiary_star_arc::PSY.Arc,
     br::PSY.ThreeWindingTransformer,
 )
-    direct_branch_map = get_direct_branch_map(nr)
-    reverse_direct_branch_map = get_reverse_direct_branch_map(nr)
-    windings = PSY.get_circuits(br)
-    star_arcs = (primary_star_arc, secondary_star_arc, tertiary_star_arc)
-    for i in 1:3
-        if PSY.get_available(windings[i])
-            arc_tuple = get_arc_tuple(star_arcs[i], nr)
-            winding = ThreeWindingTransformerCircuit(br, i)
-            direct_branch_map[arc_tuple] = winding
-            reverse_direct_branch_map[winding] = arc_tuple
+    for (i, circuit) in enumerate(PSY.get_circuits(br))
+        if PSY.get_available(circuit)
+            winding = ThreeWindingTransformerCircuit(br, circuit, i)
+            add_to_branch_maps!(nr, PSY.get_arc(circuit), winding)
         end
     end
     return
@@ -438,32 +406,23 @@ function add_branch_entries_to_indexing_maps!(
     return
 end
 
-_get_shunt(br::PSY.ACTransmission, node::Symbol) =
-    PSY.get_g(br, PSY.SU)[node] + 1im * PSY.get_b(br, PSY.SU)[node]
-_get_shunt(::PSY.DiscreteControlledACBranch, ::Symbol) = zero(YBUS_ELTYPE)
-
-"""Ybus entries for a `Line` or `DiscreteControlledACBranch`. `min_x_eps` substitutes
-for `x` when `r == x == 0`; sister methods accept and ignore it for uniform dispatch."""
+"""Ybus 2x2 for any single branch — line, Ward equivalent, or transformer circuit of either
+arity. The π-model comes from [`branch_admittance`](@ref), the single source of truth;
+`min_x_eps` substitutes for `x` when `r == x == 0`. Aggregates (parallel groups, series
+chains) have their own methods below: for those Ybus is the primitive and the π-model is
+derived from it, not the reverse."""
 function ybus_branch_entries(
     br::PSY.ACTransmission;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
-    r = PSY.get_r(br, PSY.SU)
-    x = PSY.get_x(br, PSY.SU)
-    if r == 0.0 && x == 0.0
-        @warn "Branch $(PSY.get_name(br)) has r=0.0 and x=0.0; substituting x=$(min_x_eps) to avoid division by zero. This branch will be reduced by ZeroImpedanceBranchReduction unless its endpoints are irreducible."
-        x = min_x_eps
-    end
-    Y_l = (1 / (r + x * 1im))
-    Y11 = Y_l + _get_shunt(br, :from)
-    if !isfinite(Y11) || !isfinite(Y_l)
+    adm = branch_admittance(br; min_x_eps = min_x_eps)
+    Y11, Y12, Y21, Y22 = _pi_to_ybus(adm)
+    if !isfinite(Y11) || !isfinite(complex(adm.g, adm.b))
         error(
-            "Data in $(PSY.get_name(br)) is incorrect. r = $(PSY.get_r(br, PSY.SU)), x = $(PSY.get_x(br, PSY.SU))",
+            "Data in $(get_name(br)) gives a non-finite Ybus entry. " *
+            "g = $(adm.g), b = $(adm.b), tap = $(adm.tap), shift = $(adm.shift)",
         )
     end
-    Y12 = -Y_l
-    Y21 = Y12
-    Y22 = Y_l + _get_shunt(br, :to)
     return (Y11, Y12, Y21, Y22)
 end
 
@@ -478,51 +437,14 @@ function ybus_branch_entries(
 end
 
 function ybus_branch_entries(
-    br::PSY.GenericArcImpedance;
-    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
-)
-    # GenericArcImpedance is a detached ward equivalent whose r/x are already the
-    # system-base values; device base (DU) reads them back as identity (system base
-    # would need the system base power, which a detached component cannot resolve).
-    Y_l = (1 / (PSY.get_r(br, PSY.DU) + PSY.get_x(br, PSY.DU) * 1im))
-    Y11 = Y_l
-    if !isfinite(Y11) || !isfinite(Y_l)
-        error(
-            "Data in $(PSY.get_name(br)) is incorrect. r = $(PSY.get_r(br, PSY.DU)), x = $(PSY.get_x(br, PSY.DU))",
-        )
-    end
-    Y12 = -Y_l
-    Y21 = Y12
-    Y22 = Y_l
-    return (Y11, Y12, Y21, Y22)
-end
-
-function ybus_branch_entries(
     parallel_br::AbstractBranchesParallel,
     nr::NetworkReductionData;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
-    # A bus merge can fold an anti-parallel branch into the group; swap its 2x2 so the
-    # equivalent is correct in the key's frame for asymmetric branches (transformers).
-    reference = get_arc_tuple(parallel_br, nr)
-    # Accumulate in ComplexF64 (the per-branch entry type): keeps the sum type-stable and
-    # full-precision; callers narrow to YBUS_ELTYPE when storing.
-    Y11 = Y12 = Y21 = Y22 = zero(ComplexF64)
-    for br in parallel_br
-        (y11, y12, y21, y22) = ybus_branch_entries(br)
-        if get_arc_tuple(br, nr) != reference
-            Y11 += y22
-            Y12 += y21
-            Y21 += y12
-            Y22 += y11
-        else
-            Y11 += y11
-            Y12 += y12
-            Y21 += y21
-            Y22 += y22
-        end
-    end
-    return (Y11, Y12, Y21, Y22)
+    # Pass the group itself, not `collect(parallel_br)`: `collect` yields a `Vector{Any}`
+    # (only `BranchesSeries` defines `eltype`), which both allocates per call on the Ybus
+    # assembly path and forces the loop's calls dynamic.
+    return _subset_two_port(parallel_br, get_arc_tuple(parallel_br, nr), nr)
 end
 
 function ybus_branch_entries(
@@ -535,87 +457,13 @@ function ybus_branch_entries(
     return ybus_reduced[1, 1], ybus_reduced[1, 2], ybus_reduced[2, 1], ybus_reduced[2, 2]
 end
 
-# Add a two-winding transformer's magnetizing shunt to the self-admittance entries per its
-# `PSY.TwoWindingTransformerShuntLocation`: PRIMARY on the from-bus diagonal (Y11), SECONDARY
-# on the to-bus diagonal (Y22), SPLIT the full value on both.
-function _place_magnetizing_shunt(Y11, Y22, y_shunt, location)
-    if location == PSY.TwoWindingTransformerShuntLocation.SECONDARY
-        return (Y11, Y22 + y_shunt)
-    elseif location == PSY.TwoWindingTransformerShuntLocation.SPLIT
-        return (Y11 + y_shunt, Y22 + y_shunt)
-    else
-        return (Y11 + y_shunt, Y22)
+# ZIBR's substitute reactance for r=x=0 branches; falls back when no spec is on the NRD.
+function _minimum_retained_impedance(nr::NetworkReductionData)
+    zir = get_zero_impedance_reduction(get_reductions(nr))
+    if isnothing(zir)
+        return ZERO_IMPEDANCE_X_EPSILON
     end
-end
-
-# Add a three-winding transformer's magnetizing shunt to one circuit's self-admittance
-# entries. The shunt lives on the parent transformer and lands on circuit 1 only, per its
-# `PSY.ThreeWindingTransformerShuntLocation`: PRIMARY on the terminal-bus diagonal (Y11),
-# STAR on the star-node diagonal (Y22). Circuits 2 and 3 receive no shunt.
-function _place_three_winding_shunt(Y11, Y22, y_shunt, location, winding_number::Int)
-    winding_number == 1 || return (Y11, Y22)
-    if location == PSY.ThreeWindingTransformerShuntLocation.STAR
-        return (Y11, Y22 + y_shunt)
-    else
-        return (Y11 + y_shunt, Y22)
-    end
-end
-
-"""Ybus entries for a `TwoWindingTransformer` (tap and phase shift read from its single
-[`PSY.TransformerCircuit`](@ref); tap defaults to 1 and shift to 0). The magnetizing shunt is
-transformer-level and placed per its [`PSY.TwoWindingTransformerShuntLocation`](@ref)."""
-function ybus_branch_entries(
-    br::PSY.TwoWindingTransformer;
-    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
-)
-    circuit = PSY.get_circuit(br)
-    Y_t = 1 / (PSY.get_r(br, PSY.SU) + PSY.get_x(br, PSY.SU) * 1im)
-    tap = PSY.get_tap(circuit) * exp(PSY.get_α(circuit) * 1im)
-    c_tap = PSY.get_tap(circuit) * exp(-1 * PSY.get_α(circuit) * 1im)
-    y_shunt = PSY.get_magnetizing_shunt(br, PSY.SU)
-    Y11 = Y_t / abs2(tap)
-    if !isfinite(Y11) || !isfinite(Y_t) || !isfinite(y_shunt)
-        error("Data in $(summary(br)) gives a non-finite Ybus entry; check input data.")
-    end
-    Y12 = -Y_t / c_tap
-    Y21 = -Y_t / tap
-    Y22 = Y_t
-    Y11, Y22 = _place_magnetizing_shunt(Y11, Y22, y_shunt, PSY.get_shunt_location(br))
-    return (Y11, Y12, Y21, Y22)
-end
-
-"""Ybus branch entries for one star-leg arc of a `ThreeWindingTransformer`. The star-leg
-impedance, tap, and phase shift are read from the circuit. The parent transformer's
-magnetizing shunt is placed per its [`PSY.ThreeWindingTransformerShuntLocation`](@ref) and
-lands on circuit 1 only."""
-function ybus_branch_entries(
-    tp::ThreeWindingTransformerCircuit;
-    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
-)
-    br = get_transformer(tp)
-    circuit = tp.circuit
-    Y_t = 1 / (get_equivalent_r(tp) + get_equivalent_x(tp) * 1im)
-    tap_ratio = PSY.get_tap(circuit)
-    α = PSY.get_α(circuit)
-    tap = tap_ratio * exp(α * 1im)
-    c_tap = tap_ratio * exp(-1 * α * 1im)
-    y_shunt = PSY.get_magnetizing_shunt(br, PSY.SU)
-    Y11 = Y_t / abs2(tap)
-    if !isfinite(Y11) || !isfinite(Y_t) || !isfinite(y_shunt)
-        error("Data in $(PSY.get_name(br)) is incorrect.
-              r = $(get_equivalent_r(tp)), x = $(get_equivalent_x(tp)), tap = $(tap_ratio)")
-    end
-    Y12 = (-Y_t / c_tap)
-    Y21 = (-Y_t / tap)
-    Y22 = Y_t
-    Y11, Y22 = _place_three_winding_shunt(
-        Y11,
-        Y22,
-        y_shunt,
-        PSY.get_shunt_location(br),
-        get_winding_number(tp),
-    )
-    return (Y11, Y12, Y21, Y22)
+    return get_minimum_retained_impedance(zir)
 end
 
 """Handles ybus entries for most 2-node AC branches. The types handled here are:
@@ -634,11 +482,10 @@ function _ybus!(
     nr::NetworkReductionData,
 )
     add_branch_entries_to_indexing_maps!(num_bus, branch_ix, nr, fb, tb, br)
-    # ZIBR's substitute reactance for r=x=0 branches; fall back if no spec on the NRD.
-    zir = get_zero_impedance_reduction(get_reductions(nr))
-    min_x_eps =
-        isnothing(zir) ? ZERO_IMPEDANCE_X_EPSILON : get_minimum_retained_impedance(zir)
-    add_branch_entries_to_ybus!(y11, y12, y21, y22, branch_ix, br; min_x_eps = min_x_eps)
+    add_branch_entries_to_ybus!(
+        y11, y12, y21, y22, branch_ix, br;
+        min_x_eps = _minimum_retained_impedance(nr),
+    )
     return
 end
 
@@ -655,16 +502,18 @@ function _ybus!(
     ix::Int,
     nr::NetworkReductionData,
 )
-    windings = PSY.get_circuits(br)
-    star_arcs = PSY.get_arc.(windings)
-    add_to_branch_maps!(nr, star_arcs[1], star_arcs[2], star_arcs[3], br)
+    add_to_branch_maps!(nr, br)
+    min_x_eps = _minimum_retained_impedance(nr)
     n_entries = 0
-    for i in 1:3
-        PSY.get_available(windings[i]) || continue
-        term_ix, star_ix = get_bus_indices(star_arcs[i], num_bus, nr)
+    for (i, circuit) in enumerate(PSY.get_circuits(br))
+        PSY.get_available(circuit) || continue
+        term_ix, star_ix = get_bus_indices(PSY.get_arc(circuit), num_bus, nr)
         fb[offset_ix + ix + n_entries] = term_ix
         tb[offset_ix + ix + n_entries] = star_ix
-        (Y11, Y12, Y21, Y22) = ybus_branch_entries(ThreeWindingTransformerCircuit(br, i))
+        (Y11, Y12, Y21, Y22) = ybus_branch_entries(
+            ThreeWindingTransformerCircuit(br, circuit, i);
+            min_x_eps = min_x_eps,
+        )
         y11[offset_ix + ix + n_entries] = Y11
         y12[offset_ix + ix + n_entries] = Y12
         y21[offset_ix + ix + n_entries] = Y21
@@ -1289,7 +1138,7 @@ function _resolve_arc_admittance(
     arc_remove_ixs = indexin(removed_arcs, get_arc_axis(new_y_ft))
     arc_keep_ixs = setdiff(collect(1:length(get_arc_axis(new_y_ft))), arc_remove_ixs)
     # Remap arc endpoint labels to surviving bus numbers. Column data was already merged
-    # in _merge_arc_admittance_bus_columns! before this call; only the axis labels need
+    # in _merge_arc_admittance_bus_columns before this call; only the axis labels need
     # updating so downstream reductions can match arcs by their new bus numbers.
     if !isempty(merged_bus_pairs)
         for k in eachindex(arc_ax)
@@ -1360,31 +1209,73 @@ function _resolve_arc_admittance(
     return existing_ft, existing_tf
 end
 
-# Transfer arc admittance contributions from the removed bus column to the surviving bus
-# column before the removed bus column is sliced out. Without this, to-bus admittance
-# entries for arcs that terminate at the removed bus are silently dropped.
-function _merge_arc_admittance_bus_columns!(
+# Add every removed bus's column into its surviving bus's column on one arc×bus admittance
+# matrix, in a single O(nnz) relabel-and-sum pass. Each stored entry is emitted at its own
+# column and, when that column is a removed bus, also at its survivor's column; `sparse` sums
+# the collisions. Removed columns keep their own entries, since the bus-removal slice later
+# drops them.
+function _merge_arc_admittance_columns(
+    M::SparseArrays.SparseMatrixCSC{T, Int},
+    bus_lookup::Dict{Int, Int},
+    merged_bus_pairs::Dict{Int, Int},
+) where {T}
+    ncols = size(M, 2)
+    col_survivor = collect(1:ncols)
+    for (removed_bus, surviving_bus) in merged_bus_pairs
+        col_survivor[bus_lookup[removed_bus]] = bus_lookup[surviving_bus]
+    end
+    rows = SparseArrays.rowvals(M)
+    vals = SparseArrays.nonzeros(M)
+    cap = 2 * length(vals)
+    I = Vector{Int}(undef, cap)
+    J = Vector{Int}(undef, cap)
+    V = Vector{T}(undef, cap)
+    n = 0
+    for col in 1:ncols
+        s = col_survivor[col]
+        for k in SparseArrays.nzrange(M, col)
+            r = rows[k]
+            v = vals[k]
+            n += 1
+            I[n] = r
+            J[n] = col
+            V[n] = v
+            if s != col
+                n += 1
+                I[n] = r
+                J[n] = s
+                V[n] = v
+            end
+        end
+    end
+    return SparseArrays.sparse(
+        resize!(I, n), resize!(J, n), resize!(V, n), size(M, 1), ncols)
+end
+
+# Merge the removed-bus columns into their survivors on both arc admittance matrices, returning
+# new matrices. This transfer keeps the to-bus admittance entries for arcs terminating at a
+# removed bus, which the later bus-removal slice would otherwise drop.
+function _merge_arc_admittance_bus_columns(
     yft::ArcAdmittanceMatrix,
     ytf::ArcAdmittanceMatrix,
     bus_lookup::Dict{Int, Int},
     merged_bus_pairs::Dict{Int, Int},
 )
-    for (removed_bus, surviving_bus) in merged_bus_pairs
-        i = bus_lookup[surviving_bus]
-        j = bus_lookup[removed_bus]
-        yft.data[:, i] += yft.data[:, j]
-        ytf.data[:, i] += ytf.data[:, j]
-    end
-    return
+    new_yft = ArcAdmittanceMatrix(
+        _merge_arc_admittance_columns(yft.data, bus_lookup, merged_bus_pairs),
+        yft.axes, yft.lookup, yft.network_reduction_data, yft.direction)
+    new_ytf = ArcAdmittanceMatrix(
+        _merge_arc_admittance_columns(ytf.data, bus_lookup, merged_bus_pairs),
+        ytf.axes, ytf.lookup, ytf.network_reduction_data, ytf.direction)
+    return new_yft, new_ytf
 end
 
-_merge_arc_admittance_bus_columns!(
+_merge_arc_admittance_bus_columns(
     ::Nothing,
     ::Nothing,
     ::Dict{Int, Int},
     ::Dict{Int, Int},
-) =
-    nothing
+) = (nothing, nothing)
 
 function _accumulate_csc_row_into!(M::SparseArrays.SparseMatrixCSC, i::Int, j::Int)
     rows = SparseArrays.rowvals(M)
@@ -1563,14 +1454,15 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     nr = get_network_reduction_data(ybus)
 
     # A pure-merge reduction (only ZIBR today) folds removed buses into survivors purely by
-    # index relabeling, so the merge and the bus-removal slice are fused into one O(nnz)
-    # rebuild below instead of in-place CSC structural inserts. Arc-admittance columns are
-    # still merged here (column adds on the arc×bus matrix, not the hot square-matrix path).
+    # index relabeling, so its merge and bus-removal slice are fused into one O(nnz) rebuild
+    # below; any other reduction merges the square Ybus in place via _merge_ybus_buses!. In
+    # either case the arc-admittance bus columns are merged in _merge_arc_admittance_bus_columns.
     fast_merge = _is_pure_merge_reduction(nr_new)
+    yft_merged, ytf_merged = ybus.arc_admittance_from_to, ybus.arc_admittance_to_from
     if !isempty(nr_new.merged_bus_pairs)
         fast_merge ||
             _merge_ybus_buses!(data, adjacency_data, bus_lookup, nr_new.merged_bus_pairs)
-        _merge_arc_admittance_bus_columns!(
+        yft_merged, ytf_merged = _merge_arc_admittance_bus_columns(
             ybus.arc_admittance_from_to,
             ybus.arc_admittance_to_from,
             bus_lookup,
@@ -1582,8 +1474,8 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     new_y_ft, new_y_tf = _add_series_branches_to_ybus!(
         ybus.data,
         get_bus_lookup(ybus),
-        ybus.arc_admittance_from_to,
-        ybus.arc_admittance_to_from,
+        yft_merged,
+        ytf_merged,
         nr_new.series_branch_map,
         nr,
     )
@@ -1752,6 +1644,10 @@ function _remap_merged_bus_in_branch_maps!(
         push!(parallel_to_insert, new_arc => val)
     end
     for (new_arc, val) in parallel_to_insert
+        # A re-keyed group keeps its `arc_key`, but `get_arc_tuple(bp, nr)` resolves that through
+        # the bus map this remap just changed — so any cached two-port is now in a stale frame.
+        # Membership changes below invalidate via `add_branch!`; this covers the move-only paths.
+        invalidate_equivalent_ybus!(val)
         reverse_new_arc = (new_arc[2], new_arc[1])
         if haskey(nr.parallel_branch_map, new_arc)
             @debug "Bus merge collision on parallel arc $new_arc: merging incoming group ($(length(val)) branch(es)) into existing group."
@@ -1910,13 +1806,27 @@ function _make_subnetwork_axes(
             push!(subnetwork_key_removed, k)
         end
     end
+    reverse_bus_search_map = get_reverse_bus_search_map(get_network_reduction_data(ybus))
     for k in subnetwork_key_removed
-        axis_1, axis_2 = pop!(subnetwork_axes, k)
-        new_ref_bus = pop!(axis_1)
+        axis_1, axis_2 = subnetwork_axes[k]
+        surviving_buses = setdiff(axis_1, bus_numbers_to_remove)
+        # An island losing every bus is dropped by the empty-subnetwork sweep below; re-keying
+        # it would only swap one dead key for another.
+        isempty(surviving_buses) && continue
+        # The bus the old representative was folded into inherits the role, so the reference
+        # bus stays electrically the same bus. Only a removal that merges nothing (no reverse
+        # map entry) falls back to an order-independent pick.
+        merge_target = get(reverse_bus_search_map, k, k)
+        if merge_target in surviving_buses
+            new_ref_bus = merge_target
+        else
+            new_ref_bus = minimum(surviving_buses)
+        end
+        delete!(subnetwork_axes, k)
         subnetwork_axes[new_ref_bus] = (axis_1, axis_2)
         # If a reference bus key is reduced, change the arc subnetwork axis key as well:
         arc_subnetwork_axis[new_ref_bus] = pop!(arc_subnetwork_axis, k)
-        @warn "Original reference bus $k removed during reduction; assigning arbitrary reference bus to be $new_ref_bus."
+        @warn "Original reference bus $k removed during reduction; reassigning the subnetwork reference bus to $new_ref_bus."
     end
     empty_subnetwork_keys = Set{Int}()
     for (k, values) in subnetwork_axes

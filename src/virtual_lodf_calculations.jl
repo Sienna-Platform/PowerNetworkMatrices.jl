@@ -95,6 +95,8 @@ get_cache_lock(M::VirtualLODF) = getfield(M, :cache_lock)
 get_axes(M::VirtualLODF) = getfield(M, :axes)
 get_lookup(M::VirtualLODF) = getfield(M, :lookup)
 get_ref_bus(M::VirtualLODF) = sort!(collect(keys(get_subnetwork_axes(M))))
+# Arc-indexed wrapper: no get_bus_lookup(M::VirtualLODF) exists, so this throws MethodError
+# on any call. Pre-existing; see the LODF note in lodf_calculations.jl.
 get_ref_bus_position(M::VirtualLODF) =
     [get_bus_lookup(M)[x] for x in keys(get_subnetwork_axes(M))]
 get_network_reduction_data(M::VirtualLODF) = get_network_reduction_data(get_core(M))

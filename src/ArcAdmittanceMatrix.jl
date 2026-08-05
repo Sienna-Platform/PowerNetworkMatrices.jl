@@ -27,9 +27,9 @@ end
 # functions to get stored data
 get_axes(M::ArcAdmittanceMatrix) = M.axes
 get_lookup(M::ArcAdmittanceMatrix) = M.lookup
+# ArcAdmittanceMatrix has no `subnetwork_axes` field, so this (and the generic
+# get_ref_bus_position it now falls back to) throws FieldError on any call. Pre-existing.
 get_ref_bus(M::ArcAdmittanceMatrix) = sort!(collect(keys(M.subnetwork_axes)))
-get_ref_bus_position(M::ArcAdmittanceMatrix) =
-    [get_bus_lookup(M)[x] for x in keys(M.subnetwork_axes)]
 get_network_reduction_data(M::ArcAdmittanceMatrix) = M.network_reduction_data
 get_arc_axis(M::ArcAdmittanceMatrix) = M.axes[1]
 get_arc_lookup(M::ArcAdmittanceMatrix) = M.lookup[1]

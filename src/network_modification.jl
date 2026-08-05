@@ -26,24 +26,31 @@ function _scaled_pi_model(
 end
 
 """
-    _compute_parallel_partial_ybus_delta(bp, delta_b) -> NTuple{4, YBUS_ELTYPE}
+    _member_outage_ybus_delta(bp, nr, component) -> NTuple{4, YBUS_ELTYPE}
 
-Compute the Pi-model Ybus delta for a partial outage on a parallel branch group.
-Finds the circuit whose susceptance matches `delta_b` and returns its negated Pi-model entries.
+π-model Ybus delta for tripping `component`, a specific member of the parallel group `bp`,
+resolved by object identity. Anti-parallel members are swapped into the group's key frame,
+mirroring `ybus_branch_entries(bp, nr)`.
 """
-function _compute_parallel_partial_ybus_delta(
+function _member_outage_ybus_delta(
     bp::AbstractBranchesParallel,
-    delta_b::Float64,
+    nr::NetworkReductionData,
+    component::PSY.ACTransmission,
 )::NTuple{4, YBUS_ELTYPE}
-    for br in bp.branches
-        if _is_full_outage(delta_b, get_series_susceptance(br, PSY.SU))
-            return _negated_pi_model(ybus_branch_entries(br))
-        end
+    # `===` relies on `ThreeWindingTransformerCircuit` being an immutable wrapper over the
+    # parent's stored circuit, so reconstructed wrappers stay egal; if that changes,
+    # membership must key on `{parent, winding_number}` instead.
+    if !any(br === component for br in bp.branches)
+        error(
+            "Component $(get_name(component)) is not a member of the parallel group " *
+            "$(get_name(bp)); cannot compute its outage delta.",
+        )
     end
-    error(
-        "Could not resolve partial parallel outage to individual circuit Pi-models. " *
-        "No circuit in parallel group matches delta_b=$(delta_b).",
-    )
+    entries = ybus_branch_entries(component)
+    if get_arc_tuple(component, nr) != get_arc_tuple(bp, nr)
+        entries = (entries[4], entries[3], entries[2], entries[1])
+    end
+    return _negated_pi_model(entries)
 end
 
 # Direct arc: full outage negates the Pi-model; otherwise scale it by `delta_b / b_arc`.
@@ -71,7 +78,9 @@ function _direct_arc_ybus_delta(
     return _negated_pi_model(ybus_branch_entries(tr))
 end
 
-# Parallel group: full outage negates the equivalent; a partial outage drops one circuit.
+# Parallel group: full outage negates the equivalent; a partial outage needs the tripped
+# member's identity (see `_member_outage_ybus_delta`) — value-matching susceptances picks
+# the wrong member when two members share a susceptance.
 function _parallel_arc_ybus_delta(
     bp::AbstractBranchesParallel,
     nr::NetworkReductionData,
@@ -80,7 +89,12 @@ function _parallel_arc_ybus_delta(
     if _is_full_outage(delta_b, get_series_susceptance(bp, PSY.SU))
         return _negated_pi_model(ybus_branch_entries(bp, nr))
     end
-    return _compute_parallel_partial_ybus_delta(bp, delta_b)
+    error(
+        "Partial outage on parallel group $(get_name(bp)) requires the tripped " *
+        "component's identity; construct the modification from the branch component " *
+        "instead of the arc tuple. Δb=$(delta_b), group b=" *
+        "$(get_series_susceptance(bp, PSY.SU)).",
+    )
 end
 
 # Series-reduced arc: only full outage of the equivalent chain is supported.
@@ -126,6 +140,29 @@ function _compute_arc_ybus_delta(
         "Arc $(arc_tuple) not found in any network reduction map. " *
         "Cannot compute Ybus Pi-model delta.",
     )
+end
+
+"""
+    _compute_arc_ybus_delta(nr, arc_tuple, delta_b, component) -> NTuple{4, YBUS_ELTYPE}
+
+Component-aware variant: on a parallel-map arc the tripped member is resolved by object
+identity instead of susceptance value. Direct and series arcs delegate to the arc-tuple
+handlers (the direct-map entry *is* the component; series arcs carry aggregate deltas).
+"""
+function _compute_arc_ybus_delta(
+    nr::NetworkReductionData,
+    arc_tuple::Tuple{Int, Int},
+    delta_b::Float64,
+    component::PSY.ACTransmission,
+)::NTuple{4, YBUS_ELTYPE}
+    if haskey(nr.parallel_branch_map, arc_tuple)
+        return _member_outage_ybus_delta(
+            nr.parallel_branch_map[arc_tuple],
+            nr,
+            component,
+        )
+    end
+    return _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
 end
 
 """
@@ -295,10 +332,9 @@ function NetworkModification(mat::PowerNetworkMatrix, sys::PSY.System, outage::P
     arc_ax = get_arc_axis(mat)
     for component in all_components
         _is_three_winding_transformer(component) || continue
-        # Only the star-bus number is needed here — read it straight off winding 1's arc
-        # instead of constructing a full `ThreeWindingTransformerCircuit` (which also derives
-        # and floors the star-leg impedance, unused on this path).
-        star_num = PSY.get_number(PSY.get_to(PSY.get_arc(PSY.get_circuits(component)[1])))
+        # Every circuit's arc ends at the star bus, so read it off the first one.
+        star_num =
+            PSY.get_number(PSY.get_to(PSY.get_arc(first(PSY.get_circuits(component)))))
         t3w_mods = [m for m in direct_mods if arc_ax[m.arc_index][2] == star_num]
         is_island = is_island || _3wt_real_bus_islanding(mat, t3w_mods)
     end
@@ -338,14 +374,15 @@ function _classify_outage_component!(
     if tag === :direct
         arc_idx = arc_lookup[arc_tuple]
         b_arc = arc_susceptances[arc_idx]
-        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc)
+        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc, component)
         push!(direct_mods, ArcModification(arc_idx, -b_arc, dy11, dy12, dy21, dy22))
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
         # `get_series_susceptance` divides a two-winding transformer's susceptance by
         # its winding tap and has a `ThreeWindingTransformerCircuit` method.
         b_circuit = get_series_susceptance(component, PSY.SU)
-        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_circuit)
+        dy11, dy12, dy21, dy22 =
+            _compute_arc_ybus_delta(nr, arc_tuple, -b_circuit, component)
         push!(parallel_mods, ArcModification(arc_idx, -b_circuit, dy11, dy12, dy21, dy22))
     elseif tag === :series
         arc_idx = arc_lookup[arc_tuple]
@@ -443,8 +480,8 @@ function _classify_outage_component!(
     if !PSY.get_available(component)
         return
     end
-    for winding_num in 1:3
-        winding = ThreeWindingTransformerCircuit(component, winding_num)
+    for (winding_num, circuit) in enumerate(PSY.get_circuits(component))
+        winding = ThreeWindingTransformerCircuit(component, circuit, winding_num)
         if !get_equivalent_available(winding)
             continue
         end
@@ -496,8 +533,8 @@ function _classify_branch_modification(
         return ArcModification[]
     end
     mods = ArcModification[]
-    for winding_num in 1:3
-        winding = ThreeWindingTransformerCircuit(branch, winding_num)
+    for (winding_num, circuit) in enumerate(PSY.get_circuits(branch))
+        winding = ThreeWindingTransformerCircuit(branch, circuit, winding_num)
         if !get_equivalent_available(winding)
             continue
         end
@@ -521,14 +558,15 @@ function _classify_branch_modification(
     if tag === :direct
         arc_idx = arc_lookup[arc_tuple]
         b_arc = arc_susceptances[arc_idx]
-        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc)
+        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc, branch)
         return [ArcModification(arc_idx, -b_arc, dy11, dy12, dy21, dy22)]
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
         # `get_series_susceptance` is tap-aware for two-winding transformers and
         # dispatches the winding wrapper — see the note in `_classify_outage_component!`.
         b_circuit = get_series_susceptance(branch, PSY.SU)
-        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_circuit)
+        dy11, dy12, dy21, dy22 =
+            _compute_arc_ybus_delta(nr, arc_tuple, -b_circuit, branch)
         return [ArcModification(arc_idx, -b_circuit, dy11, dy12, dy21, dy22)]
     elseif tag === :series
         arc_idx = arc_lookup[arc_tuple]

@@ -58,6 +58,20 @@
     emergency_rating_eq = PNM.get_equivalent_emergency_rating(bp)
     @test emergency_rating_eq ≈ 250.0 atol = 1e-6
 
+    # `get_equivalent_rating` is the unexported in-PNM fallback and sums its members: every
+    # circuit on the arc carries flow at once. It is not what consumers get by default — a
+    # series chain applies the N-1 value to an embedded parallel block
+    # (`_series_member_rating`), and POM selects the aggregate per `DeviceModel`, also
+    # defaulting to N-1.
+    @test PNM.get_equivalent_rating(bp) ≈ 250.0 atol = 1e-6
+    @test PNM.get_single_element_contingency_rating(bp) ≈ 100.0 atol = 1e-6
+
+    # Regression: `branch_flow_limits` used to reach a `get_equivalent_rating` with no
+    # parallel-group method and raise a MethodError.
+    fl_bp = PNM.branch_flow_limits(bp)
+    @test fl_bp.from_to ≈ 250.0 atol = 1e-6
+    @test fl_bp.to_from ≈ 250.0 atol = 1e-6
+
     bs = PNM.BranchesSeries()
     PNM.add_branch!(bs, line1, :FromTo)
     PNM.add_branch!(bs, line2, :FromTo)
@@ -365,7 +379,6 @@ end
             base_power = 100.0,
             base_voltage_primary = 1.0,
             base_voltage_secondary = 1.0,
-            winding_group_number = WindingGroupNumber.GROUP_11,
             r = 0.122,  # resistance
             x = 0.1,   # reactance
         ),
@@ -383,7 +396,6 @@ end
             base_power = 100.0,
             base_voltage_primary = 1.0,
             base_voltage_secondary = 1.0,
-            winding_group_number = WindingGroupNumber.GROUP_11,
             r = 0.3,  # resistance
             x = 0.13,   # reactance
         ),

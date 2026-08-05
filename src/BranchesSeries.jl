@@ -1,9 +1,10 @@
-mutable struct BranchesSeries <: PSY.ACTransmission
+mutable struct BranchesSeries <: AbstractReductionAggregate
     branches::Dict{DataType, Vector{<:PSY.ACTransmission}}
     needs_insertion_order::Bool
     insertion_order::Vector{Tuple{DataType, Int}}
     segment_orientations::Vector{Symbol}
-    equivalent_ybus::Union{Matrix{YBUS_ELTYPE}, Nothing}
+    equivalent_ybus::CACHED_TWO_PORT
+    equivalent_ybus_populated::Bool
 end
 
 BranchesSeries() = BranchesSeries(
@@ -11,7 +12,8 @@ BranchesSeries() = BranchesSeries(
     false,
     Vector{Tuple{DataType, Int}}(),
     Vector{Symbol}(),
-    nothing,
+    EMPTY_TWO_PORT,
+    false,
 )
 
 function add_branch!(
@@ -19,6 +21,8 @@ function add_branch!(
     branch::T,
     orientation,
 ) where {T <: PSY.ACTransmission}
+    # Clear the cached two-port up front so every early return below is covered.
+    invalidate_equivalent_ybus!(bs)
     push!(bs.segment_orientations, orientation)
     if isempty(bs.branches)
         # add the branch just once and return
@@ -104,6 +108,25 @@ Base.length(bs::BranchesSeries) =
 
 Base.eltype(::Type{BranchesSeries}) = PSY.ACTransmission
 
+# Chain segments can themselves be parallel groups, so this recurses through
+# `_is_phase_shifting(::AbstractBranchesParallel)` (BranchesParallel.jl).
+function _is_phase_shifting(bs::BranchesSeries)
+    return any(_is_phase_shifting, bs)
+end
+
+# `BranchesSeries` has no `name` field, so the generic `PSY.ACTransmission` fallback
+# (`get_name(device::T) where {T <: PSY.ACTransmission}`, NetworkReductionData.jl) errors on
+# it. Unqualified `get_name` on each segment recurses through nested parallel/series segments
+# the same way `_is_phase_shifting` does.
+function get_name(bs::BranchesSeries)
+    names = [get_name(br) for br in bs]
+    base_string = _longest_starting_substring(names...)
+    if isempty(base_string)
+        base_string = join(names, "_") * "_"
+    end
+    return base_string *= "series_chain"
+end
+
 function get_series_susceptance(
     series_chain::BranchesSeries,
     units::IS.AbstractUnitSystem,
@@ -122,17 +145,12 @@ Series chains can be composed of PSY.ACTransmission branches and parallel groups
 For series circuits, the rating is limited by the weakest link: Rating_total = min(Rating1, Rating2, ..., Ratingn).
 Parallel members contribute their N-1 single-element-contingency rating.
 
-Members with no known rating (transformer windings carry `rating::Union{Nothing, Float64}`)
+Members with no known rating (transformer circuits carry `rating::Union{Nothing, Float64}`)
 do not bind the minimum and are skipped; returns `nothing` only when no member has a known
 rating.
 """
 function get_equivalent_rating(bs::BranchesSeries)
-    # A series member's rating may be `nothing` (an unrated `ThreeWindingTransformerCircuit`,
-    # or a parallel block whose members are all unrated); a member with no known limit does
-    # not bind the weakest-link minimum, so skip it. Propagate `nothing` only when no member
-    # has a known rating. See `get_sum_of_max_rating` (BranchesParallel.jl) for the policy.
-    ratings = filter(!isnothing, [_series_member_rating(branch) for branch in bs])
-    return isempty(ratings) ? nothing : minimum(ratings)
+    return _aggregate_known_ratings(minimum, _series_member_rating, bs)
 end
 
 _series_member_rating(branch::PSY.ACTransmission) = get_equivalent_rating(branch)
@@ -176,10 +194,7 @@ Members with no known rating do not bind the minimum and are skipped; returns `n
 when no member has a known rating (see [`get_equivalent_rating`](@ref)).
 """
 function get_equivalent_emergency_rating(bs::BranchesSeries)
-    # Minimum emergency rating for series branches (weakest link); skip members with no known
-    # rating (see `get_equivalent_rating(::BranchesSeries)` for the `nothing` policy).
-    ratings = filter(!isnothing, [get_equivalent_emergency_rating(branch) for branch in bs])
-    return isempty(ratings) ? nothing : minimum(ratings)
+    return _aggregate_known_ratings(minimum, get_equivalent_emergency_rating, bs)
 end
 
 """
@@ -222,30 +237,6 @@ function get_equivalent_emergency_rating(branch::PSY.GenericArcImpedance)
     return PSY.get_max_flow(branch, PSY.DU)
 end
 
-"""
-    get_equivalent_available(bs::BranchesSeries)
-
-Get the availability status for series branches.
-All branches in series must be available for the series circuit to be available.
-"""
-function get_equivalent_available(bs::BranchesSeries)
-    # All branches must be available
-    return all(PSY.get_available(branch) for branch in bs)
-end
-
-PSY.get_available(bs::BranchesSeries) = get_equivalent_available(bs)
-
-"""
-    get_equivalent_α(bs::BranchesSeries)
-
-Get the phase angle shift for series branches.
-Returns the sum of phase angle shifts across all series branches.
-Returns 0.0 if branches don't support phase angle shift (e.g., lines).
-"""
-function get_equivalent_α(bs::BranchesSeries)
-    # Need to check how to develop this one
-end
-
 function add_to_map(series_circuit::BranchesSeries, filters::Dict)
     if isempty(filters)
         return true
@@ -281,5 +272,3 @@ end
 function Base.show(io::IO, x::MIME{Symbol("text/plain")}, y::BranchesSeries)
     show(io, x, y.branches)
 end
-
-is_a_reduction(::BranchesSeries) = true

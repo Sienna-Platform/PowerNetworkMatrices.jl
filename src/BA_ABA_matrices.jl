@@ -34,7 +34,6 @@ end
 get_axes(M::BA_Matrix) = M.axes
 get_lookup(M::BA_Matrix) = M.lookup
 get_ref_bus(M::BA_Matrix) = sort!(collect(keys(M.subnetwork_axes)))
-get_ref_bus_position(M::BA_Matrix) = [get_bus_lookup(M)[x] for x in keys(M.subnetwork_axes)]
 get_network_reduction_data(M::BA_Matrix) = M.network_reduction_data
 get_bus_axis(M::BA_Matrix) = M.axes[1]
 get_bus_lookup(M::BA_Matrix) = M.lookup[1]
@@ -95,7 +94,7 @@ Construct a BA_Matrix from a Ybus matrix.
 """
 # Phase-independent DC series susceptance for a phase-shifting-transformer arc, read from its
 # branch component(s) so the phase angle is ignored (`get_series_susceptance` is `1/(a x)`; the
-# shift is applied separately as an injection by the power-flow solver). A phase shifter is
+# shift is applied separately as an injection; see `arc_dc_shift_injection`). A phase shifter is
 # always a direct or parallel branch, so this finds it; returns `NaN` otherwise. Three-winding
 # circuits need no separate lookup: `add_to_branch_maps!` files each available circuit into
 # `direct_branch_map` as a `ThreeWindingTransformerCircuit`.
