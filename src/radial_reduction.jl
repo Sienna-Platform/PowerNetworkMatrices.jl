@@ -34,6 +34,22 @@ function _build_row_to_cols(A::SparseArrays.SparseMatrixCSC{Int8, Int}, buscount
     return row_to_cols
 end
 
+"""
+Follow `parent_of` from an eliminated bus column to the surviving column that absorbs it,
+compressing the traversed chain in place so later lookups along it are O(1).
+"""
+function _surviving_root!(parent_of::Vector{Int}, removed::BitVector, j::Int)
+    root = parent_of[j]
+    while removed[root]
+        root = parent_of[root]
+    end
+    cur = j
+    while removed[cur]
+        parent_of[cur], cur = root, parent_of[cur]
+    end
+    return root
+end
+
 function _make_reverse_bus_search_map(bus_reduction_map::Dict{Int, Set{Int}}, n_buses::Int)
     map = Dict{Int, Int}()
     sizehint!(map, n_buses)
@@ -70,17 +86,19 @@ with only one connection that do not affect the electrical behavior of the core 
 - `radial_arcs::Set{Tuple{Int, Int}}`:
         Set of branch endpoint pairs representing radial branches that can be eliminated
 - `final_arc_map::Dict{Tuple{Int, Int}, Int}`:
-        Dictionary mapping each final arc to the surviving bus number it connects to
-        (the arc whose admittance must be subtracted from the surviving bus's diagonal)
+        Dictionary mapping each removed arc that still touches a surviving bus to that bus
+        number (the arc whose admittance must be subtracted from the surviving bus's
+        diagonal). Arcs whose endpoints are both eliminated are absent.
 
 # Algorithm Overview
 1. **Adjacency Pre-computation**: Builds adjacency lists from the incidence matrix to avoid
    expensive sparse row access operations on the CSC matrix
 2. **Leaf Detection**: Identifies buses with exactly one connection (radial buses)
 3. **Reference Protection**: Preserves reference buses from elimination regardless of connectivity
-4. **Iterative Chain Walking**: Uses a queue-based approach to trace from radial buses toward
-   the core network, walking through chains of degree-2 buses
-5. **Cascading Reduction**: Eliminates buses that become radial after initial reductions
+4. **Cascading Reduction**: Peels leaves from a queue, decrementing each parent's degree as
+   its neighbors are eliminated and enqueuing any parent that becomes a leaf in turn. The
+   surviving buses are the graph's 2-core, together with the exempt buses and one bus per
+   fully radial island.
 
 # Network Topology Preservation
 - **Electrical Equivalence**: Ensures reduced network maintains same electrical behavior
@@ -132,31 +150,31 @@ function calculate_radial_arcs(
         push!(adj[c2], (c1, row))
     end
 
-    # Compute original degree of each bus (used for chain-walking decisions).
-    orig_degree = Vector{Int}(undef, buscount)
+    # Degree counting only buses not yet eliminated, so a bus that becomes a leaf part-way
+    # through the peel is eliminated on the same pass.
+    live_degree = Vector{Int}(undef, buscount)
     for j in 1:buscount
-        orig_degree[j] = length(adj[j])
+        live_degree[j] = length(adj[j])
     end
 
-    # Initialize queue with all original leaf buses (degree 1, not exempt).
     queue = Vector{Int}()
     for j in 1:buscount
-        if orig_degree[j] == 1 && j ∉ ref_bus_positions
+        if live_degree[j] == 1 && j ∉ ref_bus_positions
             push!(queue, j)
         end
     end
 
-    # Track which bus columns have been removed during reduction.
+    # `parent_of` records the neighbor that absorbed each removed bus. That neighbor can be
+    # eliminated later, so chains resolve to surviving buses only after the peel.
     removed = falses(buscount)
+    parent_of = zeros(Int, buscount)
 
-    # Iterative radial chain peeling: process leaves and walk up through degree-2 chains.
     while !isempty(queue)
         j = popfirst!(queue)
         if removed[j]
             continue
         end
 
-        # Find the non-removed parent (neighbor) of j.
         parent = 0
         row_ix = 0
         for (neighbor, rix) in adj[j]
@@ -168,35 +186,41 @@ function calculate_radial_arcs(
         end
 
         if iszero(parent)
+            # Last bus standing in a fully radial component; it survives to represent it.
+            @warn "Bus $(reverse_bus_map[j]) has no surviving neighbor, indicating a fully radial island."
             continue
         end
 
-        # Mark j as removed and record the radial arc.
         removed[j] = true
-        j_bus_number = reverse_bus_map[j]
-        arc = reverse_arc_map[row_ix]
-        push!(radial_arcs, arc)
+        parent_of[j] = parent
+        push!(radial_arcs, reverse_arc_map[row_ix])
 
-        # Update reduction maps: merge j's reduction set into parent's.
-        reduction_set = pop!(bus_reduction_map_index, j_bus_number)
-        push!(reduction_set, j_bus_number)
-        parent_bus_number = reverse_bus_map[parent]
-        union!(bus_reduction_map_index[parent_bus_number], reduction_set)
-
-        if parent ∈ ref_bus_positions
-            # Parent is a reference/exempt bus — chain terminates here.
-            final_arc_map[arc] = parent_bus_number
-        elseif orig_degree[parent] > 2
-            # Parent has >2 original connections — it survives.
-            final_arc_map[arc] = parent_bus_number
-        elseif orig_degree[parent] == 2
-            # Parent is an original degree-2 chain node — continue walking.
+        # Removing j may leave the parent radial in turn.
+        live_degree[parent] -= 1
+        if live_degree[parent] == 1 && parent ∉ ref_bus_positions
             push!(queue, parent)
-        else
-            # This check captures cases of a full radial network which can happen in
-            # systems with small islands that represent larger interconnected areas.
-            @warn "Bus $j_bus_number Parent $parent_bus_number is a leaf node, indicating there is an island."
-            final_arc_map[arc] = parent_bus_number
+        end
+    end
+
+    # Attribute every eliminated bus to the surviving bus at the end of its parent chain.
+    # Resolving the chains in one pass keeps the cost near-linear in the bus count.
+    for j in 1:buscount
+        removed[j] && delete!(bus_reduction_map_index, reverse_bus_map[j])
+    end
+    for j in 1:buscount
+        removed[j] || continue
+        root = _surviving_root!(parent_of, removed, j)
+        push!(bus_reduction_map_index[reverse_bus_map[root]], reverse_bus_map[j])
+    end
+
+    # A removed arc needs a diagonal correction only on an endpoint that survives; an arc
+    # that loses both endpoints leaves no trace in the reduced Ybus.
+    for arc in radial_arcs
+        c1, c2 = row_to_cols[arc_map[arc]]
+        if removed[c1] && !removed[c2]
+            final_arc_map[arc] = reverse_bus_map[c2]
+        elseif removed[c2] && !removed[c1]
+            final_arc_map[arc] = reverse_bus_map[c1]
         end
     end
 
