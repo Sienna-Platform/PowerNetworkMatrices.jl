@@ -1470,13 +1470,13 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
         )
     end
     bus_numbers_to_remove = _apply_bus_reductions!(nr, nr_new)
-    # Add additional entries to the ybus corresponding to the equivalent series arcs
+    # Add additional entries to the ybus corresponding to the equivalent composite arcs
     new_y_ft, new_y_tf = _add_series_branches_to_ybus!(
         ybus.data,
         get_bus_lookup(ybus),
         yft_merged,
         ytf_merged,
-        nr_new.series_branch_map,
+        _composite_entries(nr_new),
         nr,
     )
     _modify_removed_arc_connections!(
@@ -1491,7 +1491,7 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
         _remap_merged_bus_in_branch_maps!(nr, nr_new.merged_bus_pairs)
     end
     _apply_added_components!(nr, nr_new, data, bus_lookup)
-    _apply_series_branch_maps!(nr, nr_new)
+    _apply_composite_branch_maps!(nr, nr_new)
     add_reduction!(nr.reductions, nr_new.reductions)
     union!(nr.irreducible_buses, nr_new.irreducible_buses)
 
@@ -1750,14 +1750,27 @@ function _apply_added_components!(
     return
 end
 
-function _apply_series_branch_maps!(nr::NetworkReductionData, nr_new::NetworkReductionData)
+function _apply_composite_branch_maps!(
+    nr::NetworkReductionData,
+    nr_new::NetworkReductionData,
+)
     if isempty(nr.series_branch_map)
         nr.series_branch_map = nr_new.series_branch_map
         nr.reverse_series_branch_map = nr_new.reverse_series_branch_map
-    elseif !isempty(nr_new.series_branch_map) && !isempty(nr.series_branch_map)
+    elseif !isempty(nr_new.series_branch_map)
         error(
             "Cannot compose series branch maps; should not apply multiple reductions that generate series branch maps",
         )
+    end
+    # Grouped chains are genuine parallel groups on a new arc. The composite arc cannot already
+    # be present: an existing arc between the endpoints makes them adjacent, which
+    # `_is_valid_chain` rejects.
+    for (arc, group) in nr_new.parallel_branch_map
+        if haskey(nr.parallel_branch_map, arc) || haskey(nr.direct_branch_map, arc)
+            error("Composite arc $arc from a degree-two grouping already exists.")
+        end
+        nr.parallel_branch_map[arc] = group
+        _register_composite_members!(nr.reverse_parallel_branch_map, arc, group)
     end
     return
 end
@@ -1878,27 +1891,31 @@ function _get_entry(arc::Tuple{Int, Int}, nrd::NetworkReductionData)
     end
 end
 
+const COMPOSITE_ENTRIES = Vector{Tuple{Tuple{Int, Int}, AbstractReductionAggregate}}
+
+# One iterable over every composite arc a degree-two reduction produced, whether it holds a
+# single chain or a parallel group of chains.
+function _composite_entries(nr_new::NetworkReductionData)
+    entries = COMPOSITE_ENTRIES()
+    for (arc, entry) in nr_new.series_branch_map
+        push!(entries, (arc, entry))
+    end
+    for (arc, entry) in nr_new.parallel_branch_map
+        push!(entries, (arc, entry))
+    end
+    return entries
+end
+
 function _add_series_branches_to_ybus!(
     data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int64},
     bus_lookup::Dict{Int, Int},
     yft::Nothing,
     ytf::Nothing,
-    series_branch_map::Dict{Tuple{Int, Int}, BranchesSeries},
-    nrd,
+    composite_entries::COMPOSITE_ENTRIES,
+    nrd::NetworkReductionData,
 )
-    for (equivalent_arc, series_map_entry) in series_branch_map
-        ordered_bus_numbers, segment_orientations =
-            _get_chain_data(equivalent_arc, series_map_entry, nrd)
-        ordered_bus_indices = [bus_lookup[x] for x in ordered_bus_numbers]
-        equivalent_arc_indices = (ordered_bus_indices[1], ordered_bus_indices[end])
-        ybus_isolated_d2_chain = _build_chain_ybus(series_map_entry, nrd)
-        ybus_boundary_isolated_d2_chain = _reduce_internal_nodes(ybus_isolated_d2_chain)
-        _apply_d2_chain_ybus!(
-            data,
-            ybus_isolated_d2_chain,
-            ybus_boundary_isolated_d2_chain,
-            equivalent_arc_indices,
-        )
+    for (equivalent_arc, entry) in composite_entries
+        _stamp_composite_arc!(data, bus_lookup, equivalent_arc, entry, nrd)
     end
     return yft, ytf
 end
@@ -1908,7 +1925,7 @@ function _add_series_branches_to_ybus!(
     bus_lookup::Dict{Int, Int},
     yft::ArcAdmittanceMatrix,
     ytf::ArcAdmittanceMatrix,
-    series_branch_map::Dict{Tuple{Int, Int}, BranchesSeries},
+    composite_entries::COMPOSITE_ENTRIES,
     nrd::NetworkReductionData,
 )
     arc_lookup = get_arc_lookup(yft)
@@ -1917,33 +1934,17 @@ function _add_series_branches_to_ybus!(
     I_ytf, J_ytf, V_ytf = SparseArrays.findnz(ytf.data)
     row_ix = size(yft)[1] + 1
     n_buses = size(yft)[2]
-    for (equivalent_arc, series_map_entry) in series_branch_map
-        ordered_bus_numbers, segment_orientations =
-            _get_chain_data(equivalent_arc, series_map_entry, nrd)
-        ordered_bus_indices = [bus_lookup[x] for x in ordered_bus_numbers]
-        equivalent_arc_indices = (ordered_bus_indices[1], ordered_bus_indices[end])
-        ybus_isolated_d2_chain = _build_chain_ybus(series_map_entry, nrd)
-        ybus_boundary_isolated_d2_chain = _reduce_internal_nodes(ybus_isolated_d2_chain)
-        _apply_d2_chain_ybus!(
-            data,
-            ybus_isolated_d2_chain,
-            ybus_boundary_isolated_d2_chain,
-            equivalent_arc_indices,
-        )
+    for (equivalent_arc, entry) in composite_entries
+        equivalent, equivalent_arc_indices =
+            _stamp_composite_arc!(data, bus_lookup, equivalent_arc, entry, nrd)
 
         push!(arc_axis, equivalent_arc)
-        push!(I_yft, row_ix)
-        push!(I_yft, row_ix)
-        push!(J_yft, equivalent_arc_indices[1])
-        push!(J_yft, equivalent_arc_indices[2])
-        push!(V_yft, ybus_boundary_isolated_d2_chain[1, 1])
-        push!(V_yft, ybus_boundary_isolated_d2_chain[1, 2])
-        push!(I_ytf, row_ix)
-        push!(I_ytf, row_ix)
-        push!(J_ytf, equivalent_arc_indices[2])
-        push!(J_ytf, equivalent_arc_indices[1])
-        push!(V_ytf, ybus_boundary_isolated_d2_chain[2, 2])
-        push!(V_ytf, ybus_boundary_isolated_d2_chain[2, 1])
+        push!(I_yft, row_ix, row_ix)
+        push!(J_yft, equivalent_arc_indices[1], equivalent_arc_indices[2])
+        push!(V_yft, equivalent[1], equivalent[2])
+        push!(I_ytf, row_ix, row_ix)
+        push!(J_ytf, equivalent_arc_indices[2], equivalent_arc_indices[1])
+        push!(V_ytf, equivalent[4], equivalent[3])
         row_ix += 1
     end
     yft_data = SparseArrays.sparse(I_yft, J_yft, V_yft, row_ix - 1, n_buses)
@@ -1966,23 +1967,66 @@ function _add_series_branches_to_ybus!(
     return arc_admittance_from_to, arc_admittance_to_from
 end
 
-function _apply_d2_chain_ybus!(
+# Entries the composite arc's members already contributed to the unreduced Ybus, in the
+# composite arc's frame. A chain's endpoints are not directly connected before reduction, so a
+# chain contributes only diagonals; a plain branch on the arc also contributes off-diagonals.
+function _composite_raw_two_port(entry::BranchesSeries, nr::NetworkReductionData)
+    chain = _build_chain_ybus(entry, nr)
+    return (chain[1, 1], zero(YBUS_ELTYPE), zero(YBUS_ELTYPE), chain[end, end])
+end
+
+function _composite_raw_two_port(entry::AbstractBranchesParallel, nr::NetworkReductionData)
+    reference = get_arc_tuple(entry, nr)
+    r11 = r12 = r21 = r22 = zero(YBUS_ELTYPE)
+    for member in entry
+        (m11, m12, m21, m22) = _composite_raw_two_port(member, nr)
+        if get_arc_tuple(member, nr) != reference
+            r11 += m22
+            r12 += m21
+            r21 += m12
+            r22 += m11
+        else
+            r11 += m11
+            r12 += m12
+            r21 += m21
+            r22 += m22
+        end
+    end
+    return (r11, r12, r21, r22)
+end
+
+# Install the composite arc's equivalent two-port and back out what its members already
+# contributed. Every entry accumulates, so several composite arcs on one bus pair compose
+# rather than overwrite.
+function _apply_composite_arc_ybus!(
     ybus_full::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int64},
-    ybus_chain::Matrix{YBUS_ELTYPE},
-    ybus_chain_reduced::Matrix{YBUS_ELTYPE},
+    equivalent::NTuple{4, YBUS_ELTYPE},
+    raw::NTuple{4, YBUS_ELTYPE},
     equivalent_arc_indices::Tuple{Int, Int},
 )
-    equivalent_from_index, equivalent_to_index = equivalent_arc_indices
-    from_bus_entry_difference = ybus_chain_reduced[1, 1] - ybus_chain[1, 1]
-    from_to_bus_entry = ybus_chain_reduced[1, 2]
-    to_from_bus_entry = ybus_chain_reduced[2, 1]
-    to_bus_entry_difference = ybus_chain_reduced[end, end] - ybus_chain[end, end]
-
-    ybus_full[equivalent_from_index, equivalent_from_index] += from_bus_entry_difference
-    ybus_full[equivalent_from_index, equivalent_to_index] = from_to_bus_entry
-    ybus_full[equivalent_to_index, equivalent_from_index] = to_from_bus_entry
-    ybus_full[equivalent_to_index, equivalent_to_index] += to_bus_entry_difference
+    i, j = equivalent_arc_indices
+    ybus_full[i, i] += equivalent[1] - raw[1]
+    ybus_full[i, j] += equivalent[2] - raw[2]
+    ybus_full[j, i] += equivalent[3] - raw[3]
+    ybus_full[j, j] += equivalent[4] - raw[4]
     return
+end
+
+# Stamp one composite arc's equivalent two-port into the bus Ybus and return it, so the caller
+# can also record it as an arc-admittance row.
+function _stamp_composite_arc!(
+    data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int64},
+    bus_lookup::Dict{Int, Int},
+    equivalent_arc::Tuple{Int, Int},
+    entry::AbstractReductionAggregate,
+    nr::NetworkReductionData,
+)
+    equivalent_arc_indices =
+        (bus_lookup[equivalent_arc[1]], bus_lookup[equivalent_arc[2]])
+    equivalent = YBUS_ELTYPE.(ybus_branch_entries(entry, nr))
+    raw = _composite_raw_two_port(entry, nr)
+    _apply_composite_arc_ybus!(data, equivalent, raw, equivalent_arc_indices)
+    return equivalent, equivalent_arc_indices
 end
 
 function _build_chain_ybus(series_chain::BranchesSeries, nr::NetworkReductionData)
@@ -2157,30 +2201,6 @@ function add_segment_to_ybus!(
         error("Invalid segment orientation $(segment_orientation)")
     end
     return
-end
-
-function _get_chain_data(
-    equivalent_arc::Tuple{Int, Int},
-    series_map_entry::BranchesSeries,
-    nrd::NetworkReductionData,
-)
-    equivalent_arc[1] == equivalent_arc[2] && @warn("trying to reduce a loop")
-    ordered_bus_numbers = [equivalent_arc[1]]
-    segment_orientation = Vector{Symbol}()
-    for segment in series_map_entry
-        arc_tuple = get_arc_tuple(segment, nrd)
-        if arc_tuple[1] in ordered_bus_numbers
-            push!(ordered_bus_numbers, arc_tuple[2])
-            push!(segment_orientation, :FromTo)
-        elseif arc_tuple[2] in ordered_bus_numbers
-            push!(ordered_bus_numbers, arc_tuple[1])
-            push!(segment_orientation, :ToFrom)
-        else
-            error("Found disconnected series chain")
-        end
-    end
-    @assert ordered_bus_numbers[end] == equivalent_arc[2]
-    return ordered_bus_numbers, segment_orientation
 end
 
 function _reduce_internal_nodes(Y::Matrix{YBUS_ELTYPE})

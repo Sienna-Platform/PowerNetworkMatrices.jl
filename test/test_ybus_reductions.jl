@@ -1367,3 +1367,25 @@ end
     @test err2 isa ErrorException
     @test occursin("not a member", err2.msg)
 end
+
+@testset "Ybus with grouped degree-two chains matches the unreduced network" begin
+    sys = build_two_parallel_degree_two_chains()
+    y_full = Ybus(sys)
+    y_red = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = get_network_reduction_data(y_red)
+
+    # Only the four core buses survive.
+    @test Set(PNM.get_bus_axis(y_red)) == Set([1, 2, 3, 4])
+
+    # Kron-reduce the full Ybus onto the surviving buses and compare. This is the
+    # definition of an exact series reduction, and it catches both the dropped-chain and
+    # the overwritten-off-diagonal failure modes.
+    keep = [PNM.get_bus_lookup(y_full)[b] for b in PNM.get_bus_axis(y_red)]
+    drop = setdiff(1:size(y_full.data, 1), keep)
+    Ykk = Matrix(y_full.data[keep, keep])
+    Ykd = Matrix(y_full.data[keep, drop])
+    Ydk = Matrix(y_full.data[drop, keep])
+    Ydd = Matrix(y_full.data[drop, drop])
+    expected = Ykk - Ykd * (Ydd \ Ydk)
+    @test isapprox(Matrix(y_red.data), expected; rtol = 1e-4)
+end
