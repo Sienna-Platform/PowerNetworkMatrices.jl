@@ -1755,6 +1755,18 @@ function _apply_composite_branch_maps!(
     nr_new::NetworkReductionData,
 )
     if isempty(nr.series_branch_map)
+        # A lone chain is only filed in the series map when its endpoints carry no other arc;
+        # anything else is produced as a group and absorbed below. Checking here keeps a single
+        # bus pair from ending up with a key in two forward maps, which `get_arc_axis` would
+        # collapse to one arc and `_get_entry` would answer with only the direct branch.
+        for arc in keys(nr_new.series_branch_map)
+            existing_arc =
+                _existing_arc_key(nr.direct_branch_map, nr.parallel_branch_map, arc)
+            isnothing(existing_arc) || error(
+                "Composite arc $arc from a degree-two reduction collides with the existing \
+arc $existing_arc and should have been produced as a parallel group.",
+            )
+        end
         nr.series_branch_map = nr_new.series_branch_map
         nr.reverse_series_branch_map = nr_new.reverse_series_branch_map
     elseif !isempty(nr_new.series_branch_map)
@@ -1762,17 +1774,64 @@ function _apply_composite_branch_maps!(
             "Cannot compose series branch maps; should not apply multiple reductions that generate series branch maps",
         )
     end
-    # Grouped chains are genuine parallel groups on a new arc. The composite arc cannot already
-    # be present: an existing arc between the endpoints makes them adjacent, which
-    # `_is_valid_chain` rejects.
     for (arc, group) in nr_new.parallel_branch_map
-        if haskey(nr.parallel_branch_map, arc) || haskey(nr.direct_branch_map, arc)
-            error("Composite arc $arc from a degree-two grouping already exists.")
-        end
-        nr.parallel_branch_map[arc] = group
-        _register_composite_members!(nr.reverse_parallel_branch_map, arc, group)
+        _absorb_composite_group!(nr, arc, group)
     end
     return
+end
+
+# File a degree-two composite arc's members in `parallel_branch_map`. The endpoints can already
+# carry an arc — a chain running parallel to a direct branch or to an existing group — in which
+# case the members join that arc under its established key, in either orientation, so the bus
+# pair keeps one forward-map entry and one arc-admittance row.
+function _absorb_composite_group!(
+    nr::NetworkReductionData,
+    arc::Tuple{Int, Int},
+    group::AbstractBranchesParallel,
+)
+    existing_arc = _existing_arc_key(nr.direct_branch_map, nr.parallel_branch_map, arc)
+    if isnothing(existing_arc)
+        nr.parallel_branch_map[arc] = group
+        _register_composite_members!(nr.reverse_parallel_branch_map, arc, group)
+        return
+    end
+    members = PSY.ACTransmission[]
+    if haskey(nr.parallel_branch_map, existing_arc)
+        for member in pop!(nr.parallel_branch_map, existing_arc)
+            push!(members, member)
+        end
+    else
+        existing = pop!(nr.direct_branch_map, existing_arc)
+        delete!(nr.reverse_direct_branch_map, existing)
+        push!(members, existing)
+    end
+    for member in group
+        push!(members, member)
+    end
+    merged = _composite_parallel_group(members, existing_arc)
+    nr.parallel_branch_map[existing_arc] = merged
+    _register_composite_members!(nr.reverse_parallel_branch_map, existing_arc, merged)
+    return
+end
+
+# A group holding a chain alongside physical branches is the intended outcome of a degree-two
+# reduction, so promotion to `MixedBranchesParallel` is silent here where
+# `_make_parallel_branch_pair` reports suspect input data. `arc_key` is set from the arc rather
+# than derived from a member, because the members can disagree on orientation.
+function _composite_parallel_group(
+    members::Vector{PSY.ACTransmission},
+    arc::Tuple{Int, Int},
+)
+    T = typeof(first(members))
+    if all(m -> typeof(m) === T, members)
+        return BranchesParallel{T}(
+            Vector{T}(members),
+            arc,
+            EMPTY_TWO_PORT,
+            false,
+        )
+    end
+    return MixedBranchesParallel(members, arc, EMPTY_TWO_PORT, false)
 end
 
 """
@@ -1937,15 +1996,35 @@ function _add_series_branches_to_ybus!(
     for (equivalent_arc, entry) in composite_entries
         equivalent, equivalent_arc_indices =
             _stamp_composite_arc!(data, bus_lookup, equivalent_arc, entry, nrd)
-
-        push!(arc_axis, equivalent_arc)
-        push!(I_yft, row_ix, row_ix)
-        push!(J_yft, equivalent_arc_indices[1], equivalent_arc_indices[2])
-        push!(V_yft, equivalent[1], equivalent[2])
-        push!(I_ytf, row_ix, row_ix)
-        push!(J_ytf, equivalent_arc_indices[2], equivalent_arc_indices[1])
-        push!(V_ytf, equivalent[4], equivalent[3])
-        row_ix += 1
+        i, j = equivalent_arc_indices
+        existing_row, reversed = _existing_arc_row(arc_lookup, equivalent_arc)
+        if iszero(existing_row)
+            target_row = row_ix
+            row_ix += 1
+            push!(arc_axis, equivalent_arc)
+        else
+            # The bus pair already has a row. Accumulating into it keeps one row per arc, which
+            # is what the arc axis this loop feeds into can represent, and what the merged
+            # parallel group the composite arc joins reports as its equivalent.
+            target_row = existing_row
+        end
+        # A row keyed the other way round holds the transpose of the composite's frame, which
+        # swaps the roles of the from-to and to-from rows.
+        if reversed
+            from_ix, to_ix = j, i
+            from_to = (equivalent[4], equivalent[3])
+            to_from = (equivalent[1], equivalent[2])
+        else
+            from_ix, to_ix = i, j
+            from_to = (equivalent[1], equivalent[2])
+            to_from = (equivalent[4], equivalent[3])
+        end
+        push!(I_yft, target_row, target_row)
+        push!(J_yft, from_ix, to_ix)
+        push!(V_yft, from_to[1], from_to[2])
+        push!(I_ytf, target_row, target_row)
+        push!(J_ytf, to_ix, from_ix)
+        push!(V_ytf, to_from[1], to_from[2])
     end
     yft_data = SparseArrays.sparse(I_yft, J_yft, V_yft, row_ix - 1, n_buses)
     ytf_data = SparseArrays.sparse(I_ytf, J_ytf, V_ytf, row_ix - 1, n_buses)
@@ -1967,9 +2046,30 @@ function _add_series_branches_to_ybus!(
     return arc_admittance_from_to, arc_admittance_to_from
 end
 
+# The arc-admittance row already holding this bus pair, as `(row, reversed)`, where `row` is
+# zero when the pair has no row yet and `reversed` says the row is keyed in the opposite
+# orientation. Anti-parallel arcs are separate rows, so both orientations have to be probed.
+function _existing_arc_row(
+    arc_lookup::Dict{Tuple{Int, Int}, Int},
+    equivalent_arc::Tuple{Int, Int},
+)
+    if haskey(arc_lookup, equivalent_arc)
+        return arc_lookup[equivalent_arc], false
+    end
+    reverse_arc = (equivalent_arc[2], equivalent_arc[1])
+    if haskey(arc_lookup, reverse_arc)
+        return arc_lookup[reverse_arc], true
+    end
+    return 0, false
+end
+
 # Entries the composite arc's members already contributed to the unreduced Ybus, in the
 # composite arc's frame. A chain's endpoints are not directly connected before reduction, so a
 # chain contributes only diagonals; a plain branch on the arc also contributes off-diagonals.
+function _composite_raw_two_port(entry::PSY.ACTransmission, nr::NetworkReductionData)
+    return YBUS_ELTYPE.(ybus_branch_entries(entry, nr))
+end
+
 function _composite_raw_two_port(entry::BranchesSeries, nr::NetworkReductionData)
     chain = _build_chain_ybus(entry, nr)
     return (chain[1, 1], zero(YBUS_ELTYPE), zero(YBUS_ELTYPE), chain[end, end])

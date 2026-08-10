@@ -272,6 +272,161 @@ end
     @test all(Set([c[1], c[end]]) == Set([1, 2]) for c in chains)
 end
 
+@testset "find_degree2_chains keeps a chain whose endpoints already share an arc" begin
+    # Buses 1 and 2 are held above degree two by a triangle core on 7 and 8. One interior path
+    # runs 1 - 3 - 4 - 2 and a plain arc spans (1, 2), so the chain is electrically parallel to
+    # that arc and must still be returned whole.
+    edges = [(1, 3), (3, 4), (4, 2), (1, 2),
+        (1, 7), (1, 8), (2, 7), (2, 8), (7, 8)]
+    A = _adjacency_from_edges(edges, 8)
+    chains = PNM.find_degree2_chains(A, Set{Int}())
+    @test length(chains) == 1
+    @test Set(only(chains)) == Set([1, 3, 4, 2])
+end
+
+@testset "find_degree2_chains truncates a circular chain by one node" begin
+    # A four-bus ring with only bus 1 held irreducible: the traversal starts and ends on bus 1,
+    # which is the one shape that is still not a chain. The longest valid subchain drops the
+    # repeated endpoint, leaving bus 4 as the second terminal.
+    A = _adjacency_from_edges([(1, 2), (2, 3), (3, 4), (4, 1)], 4)
+    chains = PNM.find_degree2_chains(A, Set{Int}([1]))
+    @test length(chains) == 1
+    @test only(chains) == [1, 2, 3, 4]
+end
+
+@testset "DegreeTwoReduction: a chain groups with a pre-existing direct arc" begin
+    sys = build_chain_parallel_to_direct_line()
+    ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = get_network_reduction_data(ybus)
+
+    # Both chain interiors are eliminated even though buses 1 and 3 already carry a line.
+    @test Set(PNM.get_bus_axis(ybus)) == Set([1, 2, 3, 4])
+    for b in (10, 11)
+        @test b in PNM.get_removed_buses(nrd)
+    end
+
+    # The bus pair keeps exactly one forward-map entry: a group holding the line and the chain.
+    @test Set(keys(PNM.get_parallel_branch_map(nrd))) == Set([(1, 3)])
+    @test !haskey(PNM.get_series_branch_map(nrd), (1, 3))
+    @test !haskey(PNM.get_series_branch_map(nrd), (3, 1))
+    @test !haskey(PNM.get_direct_branch_map(nrd), (1, 3))
+    group = PNM.get_parallel_branch_map(nrd)[(1, 3)]
+    @test group isa PNM.MixedBranchesParallel
+    @test count(m -> m isa PNM.BranchesSeries, group) == 1
+    @test count(m -> m isa Line, group) == 1
+    @test PNM.get_arc_tuple(group, nrd) == (1, 3)
+
+    # The line and every chain segment resolve to the composite arc through the parallel map,
+    # and each physical branch is registered in exactly one reverse map.
+    reverse_series_map = PNM.get_reverse_series_branch_map(nrd)
+    reverse_direct_map = PNM.get_reverse_direct_branch_map(nrd)
+    for name in ["L_1_3", "L_1_10", "L_10_11", "L_11_3"]
+        br = get_component(Line, sys, name)
+        tag, arc = PNM._resolve_branch_arc(nrd, br)
+        @test tag == :parallel
+        @test arc == (1, 3)
+        @test !haskey(reverse_series_map, br)
+        @test !haskey(reverse_direct_map, br)
+    end
+end
+
+@testset "DegreeTwoReduction: a chain groups with a reversed pre-existing arc" begin
+    sys = build_reversed_chain_parallel_to_direct_line()
+    ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = get_network_reduction_data(ybus)
+
+    @test Set(PNM.get_bus_axis(ybus)) == Set([1, 2, 3, 4])
+
+    # The line's established key wins, so the group is filed under (3, 1) even though the chain
+    # was discovered running 1 -> 3, and the chain member is then in the transposed frame.
+    @test Set(keys(PNM.get_parallel_branch_map(nrd))) == Set([(3, 1)])
+    group = PNM.get_parallel_branch_map(nrd)[(3, 1)]
+    @test PNM.get_arc_tuple(group, nrd) == (3, 1)
+    chain = only(m for m in group if m isa PNM.BranchesSeries)
+    @test PNM.get_arc_tuple(chain, nrd) == (1, 3)
+
+    # The chain's own two-port is asymmetric, so a missing transpose would change the group's.
+    c11, c12, c21, c22 = PNM.ybus_branch_entries(chain, nrd)
+    @test abs(c11 - c22) > 1e-3
+    line = get_component(Line, sys, "L_3_1")
+    l11, l12, l21, l22 = PNM.ybus_branch_entries(line, nrd)
+    g11, g12, g21, g22 = PNM.ybus_branch_entries(group, nrd)
+    @test isapprox(g11, l11 + c22; rtol = 1e-6)
+    @test isapprox(g12, l12 + c21; rtol = 1e-6)
+    @test isapprox(g21, l21 + c12; rtol = 1e-6)
+    @test isapprox(g22, l22 + c11; rtol = 1e-6)
+end
+
+@testset "DegreeTwoReduction: sibling chains join an existing parallel group" begin
+    # Two parallel lines on (1, 3) make the pair a parallel group before any reduction runs, and
+    # the two sibling chains between the same buses form a group of their own. The two groups
+    # must end up as one entry holding all four members.
+    sys = build_two_parallel_degree_two_chains()
+    arc = Arc(
+        get_component(ACBus, sys, "Bus 1"),
+        get_component(ACBus, sys, "Bus 3"),
+    )
+    PSY.add_component!(sys, arc)
+    for (name, x) in (("L_1_3_a", 0.30), ("L_1_3_b", 0.35))
+        PSY.add_component!(
+            sys,
+            Line(name, true, 0.0, 0.0, arc, 0.0, x, (from = 0.0, to = 0.0), 2.0,
+                (-1.6, 1.6)),
+        )
+    end
+    y_full = Ybus(sys)
+    y_red = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = get_network_reduction_data(y_red)
+
+    @test Set(PNM.get_bus_axis(y_red)) == Set([1, 2, 3, 4])
+    @test Set(keys(PNM.get_parallel_branch_map(nrd))) == Set([(1, 3)])
+    @test isempty(PNM.get_series_branch_map(nrd))
+    group = PNM.get_parallel_branch_map(nrd)[(1, 3)]
+    @test group isa PNM.MixedBranchesParallel
+    @test count(m -> m isa Line, group) == 2
+    @test count(m -> m isa PNM.BranchesSeries, group) == 2
+
+    keep = [PNM.get_bus_lookup(y_full)[b] for b in PNM.get_bus_axis(y_red)]
+    drop = setdiff(1:size(y_full.data, 1), keep)
+    Ykk = Matrix(y_full.data[keep, keep])
+    Ykd = Matrix(y_full.data[keep, drop])
+    Ydk = Matrix(y_full.data[drop, keep])
+    Ydd = Matrix(y_full.data[drop, drop])
+    expected = Ykk - Ykd * (Ydd \ Ydk)
+    reduced = Matrix(y_red.data)
+    for i in axes(reduced, 1), j in axes(reduced, 2)
+        @test isapprox(reduced[i, j], expected[i, j]; rtol = 1e-4, atol = 1e-4)
+    end
+end
+
+@testset "composite raw two-port backs out a direct branch's off-diagonals" begin
+    sys = build_chain_parallel_to_direct_line()
+    ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = get_network_reduction_data(ybus)
+    group = PNM.get_parallel_branch_map(nrd)[(1, 3)]
+    line = only(m for m in group if m isa Line)
+    chain = only(m for m in group if m isa PNM.BranchesSeries)
+
+    # A physical branch's raw contribution is its whole two-port: it really is connected across
+    # the composite arc in the unreduced Ybus.
+    line_raw = PNM._composite_raw_two_port(line, nrd)
+    @test all(
+        isapprox(line_raw[i], PNM.ybus_branch_entries(line, nrd)[i]; rtol = 1e-6) for
+        i in 1:4
+    )
+
+    # A chain contributes only diagonals, so the group's raw off-diagonals are the line's alone.
+    # Anything else would double-count the line when the composite arc is stamped.
+    chain_raw = PNM._composite_raw_two_port(chain, nrd)
+    @test iszero(chain_raw[2])
+    @test iszero(chain_raw[3])
+    group_raw = PNM._composite_raw_two_port(group, nrd)
+    @test isapprox(group_raw[2], line_raw[2]; rtol = 1e-6)
+    @test isapprox(group_raw[3], line_raw[3]; rtol = 1e-6)
+    @test isapprox(group_raw[1], line_raw[1] + chain_raw[1]; rtol = 1e-6)
+    @test isapprox(group_raw[4], line_raw[4] + chain_raw[4]; rtol = 1e-6)
+end
+
 @testset "DegreeTwoReduction: sibling chains on one arc become a parallel group" begin
     # A meshed core (buses 1-4) with two independent two-bus chains between buses 1 and 3.
     sys = build_two_parallel_degree_two_chains()

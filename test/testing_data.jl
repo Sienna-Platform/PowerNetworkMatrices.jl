@@ -644,15 +644,17 @@ function build_hvdc_with_small_island()
 end
 
 """
-Build an eight-bus system on buses 1-4 (core) and 10, 11, 20, 21 (chain interiors) from an edge
-list of `(from, to, r, x, b_from, b_to)` tuples. A generator sits on bus 1 and a load on bus 3,
-so those two are the only injector-pinned buses and every chain interior is a reduction
-candidate. Shared by the sibling-chain fixtures below, which differ only in their edge lists.
+Build a system on the buses named by an edge list of `(from, to, r, x, b_from, b_to)` tuples,
+with buses 1-4 forming the meshed core and higher numbers the chain interiors. A generator sits
+on bus 1 and a load on bus 3, so those two are the only injector-pinned buses and every chain
+interior is a reduction candidate. Shared by the chain fixtures below, which differ only in
+their edge lists.
 """
 function _build_degree_two_chain_system(edges)
     sys = PSY.System(100.0)
     buses = Dict{Int, ACBus}()
-    for n in (1, 2, 3, 4, 10, 11, 20, 21)
+    bus_numbers = sort!(unique!(reduce(vcat, [[e[1], e[2]] for e in edges])))
+    for n in bus_numbers
         b = ACBus(;
             number = n,
             name = "Bus $n",
@@ -743,6 +745,50 @@ function build_reversed_asymmetric_degree_two_chains()
         # Chain B: 3 -> 1, lossy, strongly asymmetric charging.
         (3, 20, 0.020, 0.20, 0.30, 0.05), (20, 21, 0.030, 0.21, 0.25, 0.02),
         (21, 1, 0.015, 0.22, 0.20, 0.01),
+    ]
+    return _build_degree_two_chain_system(edges)
+end
+
+"""
+Meshed core on buses 1-4 (a ring plus a 2-4 tie) with a single degree-two chain between buses 1
+and 3 (interiors 10-11) and a plain line spanning the same pair. Buses 1 and 3 keep degree four
+so they are chain terminals, and only 10 and 11 are degree two. The chain and the line are
+electrically in parallel, so the reduction must fold the chain into a group on the line's arc.
+
+Every branch is lossless with no charging, so the reduction is exactly a Schur complement onto
+the core.
+"""
+function build_chain_parallel_to_direct_line()
+    edges = [
+        (1, 2, 0.0, 0.05, 0.0, 0.0), (2, 3, 0.0, 0.06, 0.0, 0.0),   # ring core
+        (3, 4, 0.0, 0.07, 0.0, 0.0), (4, 1, 0.0, 0.08, 0.0, 0.0),
+        (2, 4, 0.0, 0.09, 0.0, 0.0),                                # core tie
+        (1, 10, 0.0, 0.10, 0.0, 0.0), (10, 11, 0.0, 0.11, 0.0, 0.0),  # the chain
+        (11, 3, 0.0, 0.12, 0.0, 0.0),
+        (1, 3, 0.0, 0.30, 0.0, 0.0),                                # line on the same pair
+    ]
+    return _build_degree_two_chain_system(edges)
+end
+
+"""
+Same topology as `build_chain_parallel_to_direct_line`, with two changes that exercise the
+orientation-swap arm of the composite-arc arithmetic.
+
+  - The plain line on the pair is written `3 -> 1` while the chain runs `1 -> 3`, so the chain's
+    composite arc and the line's established arc key are opposite. The group's arc frame is
+    therefore the reverse of the chain's, which is the only condition under which the chain's
+    two-port and its arc-admittance row are transposed.
+  - Every chain branch is lossy and carries asymmetric charging, so the chain's equivalent
+    two-port has `Y11 != Y22` and a transposed 2x2 is numerically distinguishable.
+"""
+function build_reversed_chain_parallel_to_direct_line()
+    edges = [
+        (1, 2, 0.0, 0.05, 0.0, 0.0), (2, 3, 0.0, 0.06, 0.0, 0.0),   # ring core
+        (3, 4, 0.0, 0.07, 0.0, 0.0), (4, 1, 0.0, 0.08, 0.0, 0.0),
+        (2, 4, 0.0, 0.09, 0.0, 0.0),                                # core tie
+        (1, 10, 0.010, 0.10, 0.02, 0.03), (10, 11, 0.012, 0.11, 0.03, 0.01),
+        (11, 3, 0.008, 0.12, 0.04, 0.02),                           # the chain
+        (3, 1, 0.015, 0.30, 0.05, 0.01),                            # line keyed 3 -> 1
     ]
     return _build_degree_two_chain_system(edges)
 end

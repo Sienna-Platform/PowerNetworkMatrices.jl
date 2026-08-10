@@ -58,11 +58,15 @@ function get_degree2_reduction(
     for siblings in values(by_endpoints)
         # The seed chain's orientation is the group's arc frame, matching BranchesParallel.
         first_chain = first(siblings)
-        if length(siblings) == 1
-            series_branch_map[get_arc_tuple(first_chain)] = first_chain
+        composite_arc = get_arc_tuple(first_chain)
+        existing_arc =
+            _existing_arc_key(direct_branch_map, parallel_branch_map, composite_arc)
+        # A composite arc whose endpoints already carry an arc is absorbed into that arc's
+        # parallel group, so a lone chain there is produced as a group as well.
+        if length(siblings) == 1 && isnothing(existing_arc)
+            series_branch_map[composite_arc] = first_chain
         else
-            parallel_additions[get_arc_tuple(first_chain)] =
-                BranchesParallel(siblings)
+            parallel_additions[composite_arc] = BranchesParallel(siblings)
         end
     end
 
@@ -130,6 +134,22 @@ function _make_reverse_series_branch_map(
         _register_composite_members!(reverse_map, composite_arc, entry)
     end
     return reverse_map
+end
+
+# The key an arc between the same bus pair is already stored under, in either orientation and
+# in either of the two physical-branch maps, or `nothing` when the pair carries no arc.
+# Anti-parallel branches are separate keys, so both orientations have to be probed.
+function _existing_arc_key(
+    direct_branch_map::Dict{Tuple{Int, Int}, PSY.ACTransmission},
+    parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel},
+    arc::Tuple{Int, Int},
+)
+    for candidate in (arc, (arc[2], arc[1]))
+        if haskey(direct_branch_map, candidate) || haskey(parallel_branch_map, candidate)
+            return candidate
+        end
+    end
+    return nothing
 end
 
 function _get_branch_map_entry(
@@ -387,7 +407,7 @@ function _find_longest_valid_chain(
     if _is_valid_chain(adj_matrix, chain_path)
         return chain_path
     end
-    @info "Nodes $(chain_path[1]) and $(chain_path[end]) already have a parallel path or is circular, searching for valid subchains."
+    @info "Node $(chain_path[1]) is both endpoints of the traversal, making the chain circular; searching for valid subchains."
     # Enumerate subchain index ranges (i, j) in descending length order and return the
     # first whose endpoints form a valid chain. Avoids the prior O(n^2) materialization
     # and sort of every contiguous subchain.
@@ -395,9 +415,7 @@ function _find_longest_valid_chain(
     for len in n:-1:3
         for i in 1:(n - len + 1)
             j = i + len - 1
-            endpoint_i = chain_path[i]
-            endpoint_j = chain_path[j]
-            if endpoint_i != endpoint_j && adj_matrix[endpoint_i, endpoint_j] == 0
+            if chain_path[i] != chain_path[j]
                 subchain = chain_path[i:j]
                 @info "found a valid subchain $subchain"
                 return subchain
@@ -408,10 +426,8 @@ function _find_longest_valid_chain(
     return Vector{Int}()
 end
 
-function _is_valid_chain(adj_matrix::SparseArrays.SparseMatrixCSC, chain_path::Vector{Int})
-    if adj_matrix[chain_path[1], chain_path[end]] == 0 && chain_path[1] != chain_path[end]
-        return true
-    else
-        return false
-    end
+# A chain only needs distinct endpoints. An arc already spanning them is not disqualifying: the
+# chain joins that arc's parallel group.
+function _is_valid_chain(::SparseArrays.SparseMatrixCSC, chain_path::Vector{Int})
+    return chain_path[1] != chain_path[end]
 end

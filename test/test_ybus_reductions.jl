@@ -1391,6 +1391,68 @@ end
     @test isapprox(Matrix(y_red.data), expected; rtol = 1e-4)
 end
 
+@testset "Ybus with a chain grouped onto an existing arc matches the unreduced network" begin
+    sys = build_chain_parallel_to_direct_line()
+    y_full = Ybus(sys)
+    y_red = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = get_network_reduction_data(y_red)
+
+    @test Set(PNM.get_bus_axis(y_red)) == Set([1, 2, 3, 4])
+
+    # (1, 3) is the only arc between buses 1 and 3, so the reduced off-diagonal there is exactly
+    # the group's Y12. This is what fails if the line's own contribution is counted twice.
+    group = PNM.get_parallel_branch_map(nrd)[(1, 3)]
+    _, Y12, Y21, _ = PNM.ybus_branch_entries(group, nrd)
+    lookup = PNM.get_bus_lookup(y_red)
+    @test isapprox(y_red.data[lookup[1], lookup[3]], Y12; rtol = 1e-6)
+    @test isapprox(y_red.data[lookup[3], lookup[1]], Y21; rtol = 1e-6)
+
+    keep = [PNM.get_bus_lookup(y_full)[b] for b in PNM.get_bus_axis(y_red)]
+    drop = setdiff(1:size(y_full.data, 1), keep)
+    Ykk = Matrix(y_full.data[keep, keep])
+    Ykd = Matrix(y_full.data[keep, drop])
+    Ydk = Matrix(y_full.data[drop, keep])
+    Ydd = Matrix(y_full.data[drop, drop])
+    expected = Ykk - Ykd * (Ydd \ Ydk)
+    reduced = Matrix(y_red.data)
+    for i in axes(reduced, 1), j in axes(reduced, 2)
+        @test isapprox(reduced[i, j], expected[i, j]; rtol = 1e-4, atol = 1e-4)
+    end
+end
+
+@testset "Arc admittance keeps one row for a chain grouped onto an existing arc" begin
+    for (sys, arc) in (
+        (build_chain_parallel_to_direct_line(), (1, 3)),
+        (build_reversed_chain_parallel_to_direct_line(), (3, 1)),
+    )
+        y_red = Ybus(
+            sys;
+            network_reductions = NetworkReduction[DegreeTwoReduction()],
+            make_arc_admittance_matrices = true,
+        )
+        nrd = get_network_reduction_data(y_red)
+        yft = y_red.arc_admittance_from_to
+        ytf = y_red.arc_admittance_to_from
+
+        # One row per surviving bus pair, keyed the way the branch maps key it.
+        arc_axis = PNM.get_arc_axis(yft)
+        @test count(==(arc), arc_axis) == 1
+        @test (arc[2], arc[1]) ∉ arc_axis
+        @test Set(arc_axis) == Set(PNM.get_arc_axis(nrd))
+
+        # That row carries the whole group, chain included, in the arc's own frame.
+        group = PNM.get_parallel_branch_map(nrd)[arc]
+        Y11, Y12, Y21, Y22 = PNM.ybus_branch_entries(group, nrd)
+        row = PNM.get_arc_lookup(yft)[arc]
+        from_ix = PNM.get_bus_lookup(yft)[arc[1]]
+        to_ix = PNM.get_bus_lookup(yft)[arc[2]]
+        @test isapprox(yft.data[row, from_ix], Y11; rtol = 1e-6)
+        @test isapprox(yft.data[row, to_ix], Y12; rtol = 1e-6)
+        @test isapprox(ytf.data[row, to_ix], Y22; rtol = 1e-6)
+        @test isapprox(ytf.data[row, from_ix], Y21; rtol = 1e-6)
+    end
+end
+
 @testset "Ybus with reversed-orientation grouped chains matches the unreduced network" begin
     sys = build_reversed_asymmetric_degree_two_chains()
     y_full = Ybus(sys)
