@@ -644,14 +644,12 @@ function build_hvdc_with_small_island()
 end
 
 """
-Meshed core on buses 1-4 (a ring plus a 2-4 tie, so every core bus has degree three or more)
-plus two independent degree-two chains between buses 1 and 3 (interiors 10-11 and 20-21).
-Buses 1 and 3 keep degree four so they are chain terminals, and the two chains form the
-sibling pair that must collapse into one parallel group. Only the chain interiors are
-degree two, so they are the only buses a `DegreeTwoReduction` eliminates. No injectors on
-the interior buses, so nothing pins them irreducible.
+Build an eight-bus system on buses 1-4 (core) and 10, 11, 20, 21 (chain interiors) from an edge
+list of `(from, to, r, x, b_from, b_to)` tuples. A generator sits on bus 1 and a load on bus 3,
+so those two are the only injector-pinned buses and every chain interior is a reduction
+candidate. Shared by the sibling-chain fixtures below, which differ only in their edge lists.
 """
-function build_two_parallel_degree_two_chains()
+function _build_degree_two_chain_system(edges)
     sys = PSY.System(100.0)
     buses = Dict{Int, ACBus}()
     for n in (1, 2, 3, 4, 10, 11, 20, 21)
@@ -668,23 +666,15 @@ function build_two_parallel_degree_two_chains()
         PSY.add_component!(sys, b)
         buses[n] = b
     end
-    # (from, to, x) — distinct reactances so the two chains are not degenerate.
-    edges = [
-        (1, 2, 0.05), (2, 3, 0.06), (3, 4, 0.07), (4, 1, 0.08),   # ring core
-        (2, 4, 0.09),                                             # core tie
-        (1, 10, 0.10), (10, 11, 0.11), (11, 3, 0.12),             # chain A
-        (1, 20, 0.20), (20, 21, 0.21), (21, 3, 0.22),             # chain B
-    ]
-    for (f, t, x) in edges
+    for (f, t, r, x, b_from, b_to) in edges
         arc = Arc(buses[f], buses[t])
         PSY.add_component!(sys, arc)
         PSY.add_component!(
             sys,
-            Line("L_$(f)_$(t)", true, 0.0, 0.0, arc, 0.0, x,
-                (from = 0.0, to = 0.0), 2.0, (-1.6, 1.6)),
+            Line("L_$(f)_$(t)", true, 0.0, 0.0, arc, r, x,
+                (from = b_from, to = b_to), 2.0, (-1.6, 1.6)),
         )
     end
-    # One generator and one load on core buses so no interior bus is injector-pinned.
     PSY.add_component!(
         sys,
         ThermalStandard(; name = "G1", available = true, status = true, bus = buses[1],
@@ -703,4 +693,56 @@ function build_two_parallel_degree_two_chains()
             max_reactive_power = 0.0),
     )
     return sys
+end
+
+"""
+Meshed core on buses 1-4 (a ring plus a 2-4 tie, so every core bus has degree three or more)
+plus two independent degree-two chains between buses 1 and 3 (interiors 10-11 and 20-21).
+Buses 1 and 3 keep degree four so they are chain terminals, and the two chains form the
+sibling pair that must collapse into one parallel group. Only the chain interiors are
+degree two, so they are the only buses a `DegreeTwoReduction` eliminates. No injectors on
+the interior buses, so nothing pins them irreducible.
+
+Both chains are written from bus 1 towards bus 3, and every branch is lossless with no
+charging, so the reduction is exactly a Schur complement onto the core.
+"""
+function build_two_parallel_degree_two_chains()
+    # (from, to, r, x, b_from, b_to) — distinct reactances so the chains are not degenerate.
+    edges = [
+        (1, 2, 0.0, 0.05, 0.0, 0.0), (2, 3, 0.0, 0.06, 0.0, 0.0),   # ring core
+        (3, 4, 0.0, 0.07, 0.0, 0.0), (4, 1, 0.0, 0.08, 0.0, 0.0),
+        (2, 4, 0.0, 0.09, 0.0, 0.0),                                # core tie
+        (1, 10, 0.0, 0.10, 0.0, 0.0), (10, 11, 0.0, 0.11, 0.0, 0.0),  # chain A
+        (11, 3, 0.0, 0.12, 0.0, 0.0),
+        (1, 20, 0.0, 0.20, 0.0, 0.0), (20, 21, 0.0, 0.21, 0.0, 0.0),  # chain B
+        (21, 3, 0.0, 0.22, 0.0, 0.0),
+    ]
+    return _build_degree_two_chain_system(edges)
+end
+
+"""
+Same topology as `build_two_parallel_degree_two_chains`, with two changes that exercise
+the orientation-swap arm of the grouped composite-arc arithmetic.
+
+  - Chain B is written from bus 3 towards bus 1 (`3-20-21-1`), and its interior numbering makes
+    the traversal terminate at bus 1, so the discovered chain's `arc_key` is `(3, 1)` while its
+    sibling's is `(1, 3)`. The group's arc frame is therefore the opposite of one member's, which
+    is the only condition under which a member's two-port is transposed.
+  - Every chain branch is lossy and carries asymmetric charging, so each chain's equivalent
+    two-port has `Y11 != Y22`. A transposed 2x2 is then numerically distinguishable, which a
+    lossless shunt-free chain (whose equivalent is a plain series admittance) never is.
+"""
+function build_reversed_asymmetric_degree_two_chains()
+    edges = [
+        (1, 2, 0.0, 0.05, 0.0, 0.0), (2, 3, 0.0, 0.06, 0.0, 0.0),   # ring core
+        (3, 4, 0.0, 0.07, 0.0, 0.0), (4, 1, 0.0, 0.08, 0.0, 0.0),
+        (2, 4, 0.0, 0.09, 0.0, 0.0),                                # core tie
+        # Chain A: 1 -> 3, lossy, mildly asymmetric charging.
+        (1, 10, 0.010, 0.10, 0.02, 0.03), (10, 11, 0.012, 0.11, 0.03, 0.01),
+        (11, 3, 0.008, 0.12, 0.04, 0.02),
+        # Chain B: 3 -> 1, lossy, strongly asymmetric charging.
+        (3, 20, 0.020, 0.20, 0.30, 0.05), (20, 21, 0.030, 0.21, 0.25, 0.02),
+        (21, 1, 0.015, 0.22, 0.20, 0.01),
+    ]
+    return _build_degree_two_chain_system(edges)
 end

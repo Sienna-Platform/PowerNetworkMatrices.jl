@@ -250,8 +250,9 @@ function _adjacency_from_edges(edges, n)
 end
 
 @testset "find_degree2_chains returns every sibling chain on one endpoint pair" begin
-    # Buses 1 and 2 are held above degree two by a small core on 7 and 8, so they are chain
-    # terminals. Three interior paths connect them; all three are valid chains.
+    # Buses 1 and 2 are held above degree two by a triangle core on 7 and 8, so they are chain
+    # terminals while 7 and 8 are degree three. Two interior paths connect them, one through
+    # 3-4 and one through 5-6, and both are valid chains on the endpoint pair (1, 2).
     edges = [(1, 3), (3, 4), (4, 2), (1, 5), (5, 6), (6, 2),
         (1, 7), (1, 8), (2, 7), (2, 8), (7, 8)]
     A = _adjacency_from_edges(edges, 8)

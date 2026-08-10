@@ -1377,9 +1377,10 @@ end
     # Only the four core buses survive.
     @test Set(PNM.get_bus_axis(y_red)) == Set([1, 2, 3, 4])
 
-    # Kron-reduce the full Ybus onto the surviving buses and compare. This is the
-    # definition of an exact series reduction, and it catches both the dropped-chain and
-    # the overwritten-off-diagonal failure modes.
+    # The reduced Ybus equals the exact Schur complement of the full Ybus onto the surviving
+    # buses. That is the definition of an exact elimination of the chain interiors, so it pins
+    # both the presence of every grouped chain's admittance and the value of every entry the
+    # composite arc contributes.
     keep = [PNM.get_bus_lookup(y_full)[b] for b in PNM.get_bus_axis(y_red)]
     drop = setdiff(1:size(y_full.data, 1), keep)
     Ykk = Matrix(y_full.data[keep, keep])
@@ -1388,4 +1389,39 @@ end
     Ydd = Matrix(y_full.data[drop, drop])
     expected = Ykk - Ykd * (Ydd \ Ydk)
     @test isapprox(Matrix(y_red.data), expected; rtol = 1e-4)
+end
+
+@testset "Ybus with reversed-orientation grouped chains matches the unreduced network" begin
+    sys = build_reversed_asymmetric_degree_two_chains()
+    y_full = Ybus(sys)
+    y_red = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = get_network_reduction_data(y_red)
+
+    @test Set(PNM.get_bus_axis(y_red)) == Set([1, 2, 3, 4])
+
+    # The group's arc frame is the reverse of one member's, so the composite-arc arithmetic
+    # transposes that member's two-port. These two guards keep the fixture able to detect a
+    # wrong transpose: one member must be keyed the other way, and each member's two-port must
+    # be asymmetric enough that swapping its 2x2 changes the result.
+    group = PNM.get_parallel_branch_map(nrd)[(1, 3)]
+    @test length(group) == 2
+    @test Set(PNM.get_arc_tuple(m, nrd) for m in group) == Set([(1, 3), (3, 1)])
+    Y11, _, _, Y22 = PNM.ybus_branch_entries(group, nrd)
+    @test abs(Y11 - Y22) > 0.1
+
+    # Same Schur-complement oracle as the symmetric fixture.
+    keep = [PNM.get_bus_lookup(y_full)[b] for b in PNM.get_bus_axis(y_red)]
+    drop = setdiff(1:size(y_full.data, 1), keep)
+    Ykk = Matrix(y_full.data[keep, keep])
+    Ykd = Matrix(y_full.data[keep, drop])
+    Ydk = Matrix(y_full.data[drop, keep])
+    Ydd = Matrix(y_full.data[drop, drop])
+    expected = Ykk - Ykd * (Ydd \ Ydk)
+    # Entrywise rather than a whole-matrix `isapprox`, which spreads the tolerance over the
+    # Frobenius norm and at rtol = 1e-4 would admit ~1e-2 concentrated in a single entry — the
+    # same order as the transpose asymmetry above. `rtol` is the ComplexF32 storage allowance.
+    reduced = Matrix(y_red.data)
+    for i in axes(reduced, 1), j in axes(reduced, 2)
+        @test isapprox(reduced[i, j], expected[i, j]; rtol = 1e-4, atol = 1e-4)
+    end
 end
