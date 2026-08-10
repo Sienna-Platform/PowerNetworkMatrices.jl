@@ -297,3 +297,118 @@ end
     @test !haskey(PNM.get_series_branch_map(nrd), (1, 3))
     @test !haskey(PNM.get_series_branch_map(nrd), (3, 1))
 end
+
+@testset "grouped chain members resolve to their composite arc" begin
+    sys = build_two_parallel_degree_two_chains()
+    ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = get_network_reduction_data(ybus)
+
+    # Every line that was folded into either chain must resolve to the composite arc, by
+    # physical component identity, not by the aggregate wrapper.
+    for name in ["L_1_10", "L_10_11", "L_11_3", "L_1_20", "L_20_21", "L_21_3"]
+        br = get_component(Line, sys, name)
+        tag, arc = PNM._resolve_branch_arc(nrd, br)
+        @test tag == :parallel
+        @test Set(arc) == Set([1, 3])
+    end
+end
+
+"""
+Meshed core on buses 1-4 with TWO independent grouped degree-two composite arcs: one on
+(1, 3) (interiors 10-11 and 20-21) and one on (2, 4) (interiors 40-41 and 42-43). Neither
+composite arc's endpoints host an injector, so a `WardReduction` naming only [1, 2, 3] as
+study buses drops bus 4 and, with it, the whole (2, 4) composite arc — while (1, 3) survives
+untouched in `parallel_branch_map`.
+
+This is the system used to exercise `_remake_reverse_parallel_branch_map!`: removing the
+(2, 4) composite arc forces the reverse-map rebuild, and since that rebuild recomputes the
+map from every surviving entry in `parallel_branch_map`, the (1, 3) composite arc's
+recursive registration goes through the rebuild too even though it was never itself removed.
+"""
+function _build_two_composite_arcs_system()
+    edges = [
+        (1, 2, 0.0, 0.05, 0.0, 0.0), (2, 3, 0.0, 0.06, 0.0, 0.0),
+        (3, 4, 0.0, 0.07, 0.0, 0.0), (4, 1, 0.0, 0.08, 0.0, 0.0),
+        (1, 10, 0.0, 0.10, 0.0, 0.0), (10, 11, 0.0, 0.11, 0.0, 0.0),
+        (11, 3, 0.0, 0.12, 0.0, 0.0),
+        (1, 20, 0.0, 0.20, 0.0, 0.0), (20, 21, 0.0, 0.21, 0.0, 0.0),
+        (21, 3, 0.0, 0.22, 0.0, 0.0),
+        (2, 40, 0.0, 0.30, 0.0, 0.0), (40, 41, 0.0, 0.31, 0.0, 0.0),
+        (41, 4, 0.0, 0.32, 0.0, 0.0),
+        (2, 42, 0.0, 0.40, 0.0, 0.0), (42, 43, 0.0, 0.41, 0.0, 0.0),
+        (43, 4, 0.0, 0.42, 0.0, 0.0),
+    ]
+    sys = PSY.System(100.0)
+    buses = Dict{Int, ACBus}()
+    for n in (1, 2, 3, 4, 10, 11, 20, 21, 40, 41, 42, 43)
+        b = ACBus(;
+            number = n,
+            name = "Bus $n",
+            available = true,
+            bustype = n == 1 ? ACBusTypes.REF : ACBusTypes.PQ,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        PSY.add_component!(sys, b)
+        buses[n] = b
+    end
+    for (f, t, r, x, b_from, b_to) in edges
+        arc = Arc(buses[f], buses[t])
+        PSY.add_component!(sys, arc)
+        PSY.add_component!(
+            sys,
+            Line("L_$(f)_$(t)", true, 0.0, 0.0, arc, r, x,
+                (from = b_from, to = b_to), 2.0, (-1.6, 1.6)),
+        )
+    end
+    PSY.add_component!(
+        sys,
+        ThermalStandard(; name = "G1", available = true, status = true, bus = buses[1],
+            active_power = 1.0, reactive_power = 0.0, rating = 2.0,
+            prime_mover_type =
+            PSY.PrimeMovers.OT, fuel = PSY.ThermalFuels.OTHER,
+            active_power_limits = (min = 0.0, max = 2.0),
+            reactive_power_limits = nothing, ramp_limits = nothing,
+            time_limits = nothing, base_power = 100.0,
+            operation_cost = ThermalGenerationCost(nothing)),
+    )
+    PSY.add_component!(
+        sys,
+        PowerLoad(; name = "D3", available = true, bus = buses[3], active_power = 1.0,
+            reactive_power = 0.0, base_power = 100.0, max_active_power = 1.0,
+            max_reactive_power = 0.0),
+    )
+    return sys
+end
+
+@testset "grouped chain members survive a later rebuild of the reverse parallel map" begin
+    sys = _build_two_composite_arcs_system()
+    ybus = Ybus(
+        sys;
+        network_reductions = NetworkReduction[
+            DegreeTwoReduction(),
+            WardReduction([1, 2, 3]),
+        ],
+    )
+    nrd = get_network_reduction_data(ybus)
+
+    # The (2, 4) composite arc was dropped by the Ward reduction; only (1, 3) remains.
+    parallel_map = PNM.get_parallel_branch_map(nrd)
+    @test Set(keys(parallel_map)) == Set([(1, 3)])
+
+    # Every line folded into the surviving (1, 3) composite arc must still resolve to it by
+    # physical component identity -- not by the `BranchesSeries` wrapper the buggy rebuild
+    # used to leave behind as the map key.
+    reverse_series_map = PNM.get_reverse_series_branch_map(nrd)
+    for name in ["L_1_10", "L_10_11", "L_11_3", "L_1_20", "L_20_21", "L_21_3"]
+        br = get_component(Line, sys, name)
+        tag, arc = PNM._resolve_branch_arc(nrd, br)
+        @test tag == :parallel
+        @test Set(arc) == Set([1, 3])
+        # A branch must be registered in exactly one reverse map, or `_resolve_branch_arc`'s
+        # probe order would silently mask a duplicate registration.
+        @test !haskey(reverse_series_map, br)
+    end
+end

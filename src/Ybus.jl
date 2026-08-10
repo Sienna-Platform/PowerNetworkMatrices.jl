@@ -2225,20 +2225,16 @@ function _remake_reverse_direct_branch_map!(nr::NetworkReductionData)
 end
 function _remake_reverse_parallel_branch_map!(nr::NetworkReductionData)
     reverse_parallel_branch_map = Dict{PSY.ACTransmission, Tuple{Int, Int}}()
-    for (k, v) in nr.parallel_branch_map
-        for x in v
-            reverse_parallel_branch_map[x] = k
-        end
+    for (arc, entry) in nr.parallel_branch_map
+        _register_composite_members!(reverse_parallel_branch_map, arc, entry)
     end
     nr.reverse_parallel_branch_map = reverse_parallel_branch_map
     return
 end
 function _remake_reverse_series_branch_map!(nr::NetworkReductionData)
     reverse_series_branch_map = Dict{PSY.ACTransmission, Tuple{Int, Int}}()
-    for (k, v) in nr.series_branch_map
-        for x in v
-            reverse_series_branch_map[x] = k
-        end
+    for (arc, entry) in nr.series_branch_map
+        _register_composite_members!(reverse_series_branch_map, arc, entry)
     end
     nr.reverse_series_branch_map = reverse_series_branch_map
     return
