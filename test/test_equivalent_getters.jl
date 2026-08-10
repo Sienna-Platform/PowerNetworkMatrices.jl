@@ -438,12 +438,18 @@ end
 @testset "grouped chains rate as the sum of each chain's weakest link" begin
     sys = build_two_parallel_degree_two_chains()
     # Distinct per-link ratings so minimum, maximum, and the cross-chain sum cannot
-    # be confused with each other: chain A carries 3.0/8.0/5.0 (min 3.0, max 8.0),
-    # chain B carries 4.0/9.0/6.0 (min 4.0, max 9.0), and the group must report
+    # be confused with each other: chain A carries 8.0/3.0/5.0 (min 3.0, max 8.0),
+    # chain B carries 9.0/4.0/6.0 (min 4.0, max 9.0), and the group must report
     # 3.0 + 4.0 = 7.0, a value that matches none of the individual link or
     # per-chain numbers above.
-    chain_a_ratings = Dict("L_1_10" => 3.0, "L_10_11" => 8.0, "L_11_3" => 5.0)
-    chain_b_ratings = Dict("L_1_20" => 4.0, "L_20_21" => 9.0, "L_21_3" => 6.0)
+    #
+    # Each chain's minimum sits in the middle segment, not the first or last, so the
+    # assertion holds regardless of which direction chain discovery traverses the
+    # chain: under either direction the middle segment is still neither the first
+    # nor the last one visited, so an aggregate that (wrongly) returned the first-
+    # or last-visited segment's rating, instead of the true minimum, would be caught.
+    chain_a_ratings = Dict("L_1_10" => 8.0, "L_10_11" => 3.0, "L_11_3" => 5.0)
+    chain_b_ratings = Dict("L_1_20" => 9.0, "L_20_21" => 4.0, "L_21_3" => 6.0)
     for (name, rating) in merge(chain_a_ratings, chain_b_ratings)
         PSY.set_rating!(PSY.get_component(PSY.Line, sys, name), rating * PSY.DU)
     end
@@ -463,8 +469,6 @@ end
         # would return 8.0/9.0 or 16.0/19.0 instead, none of which equal 3.0/4.0.
         @test PNM.get_equivalent_rating(chain) ==
               minimum(PNM.get_equivalent_rating(seg) for seg in chain)
-        @test PNM.get_equivalent_rating(chain) !=
-              maximum(PNM.get_equivalent_rating(seg) for seg in chain)
     end
     # The group sums its two chains' weakest-link ratings: 3.0 + 4.0 = 7.0, a value
     # distinct from every link rating and from both chains' individual minima/maxima.
