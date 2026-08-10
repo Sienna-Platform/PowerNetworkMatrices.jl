@@ -398,9 +398,9 @@ end
     parallel_map = PNM.get_parallel_branch_map(nrd)
     @test Set(keys(parallel_map)) == Set([(1, 3)])
 
-    # Every line folded into the surviving (1, 3) composite arc must still resolve to it by
-    # physical component identity -- not by the `BranchesSeries` wrapper the buggy rebuild
-    # used to leave behind as the map key.
+    # Every line folded into the surviving (1, 3) composite arc resolves to it by physical
+    # component identity: the reverse map is keyed by each physical `Line`, not by the
+    # `BranchesSeries` chain wrapping it.
     reverse_series_map = PNM.get_reverse_series_branch_map(nrd)
     for name in ["L_1_10", "L_10_11", "L_11_3", "L_1_20", "L_20_21", "L_21_3"]
         br = get_component(Line, sys, name)
