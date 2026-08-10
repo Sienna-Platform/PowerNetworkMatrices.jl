@@ -392,7 +392,7 @@ function find_degree2_chains(
         end
         chain_path =
             _get_complete_chain(adj_matrix, node, reduced_indices, irreducible_mask)
-        valid_chain_path = _find_longest_valid_chain(adj_matrix, chain_path)
+        valid_chain_path = _find_longest_valid_chain(chain_path)
         if !isempty(valid_chain_path)
             push!(chains, valid_chain_path)
         end
@@ -400,11 +400,8 @@ function find_degree2_chains(
     return chains
 end
 
-function _find_longest_valid_chain(
-    adj_matrix::SparseArrays.SparseMatrixCSC,
-    chain_path::Vector{Int},
-)
-    if _is_valid_chain(adj_matrix, chain_path)
+function _find_longest_valid_chain(chain_path::Vector{Int})
+    if _is_valid_chain(chain_path)
         return chain_path
     end
     @info "Node $(chain_path[1]) is both endpoints of the traversal, making the chain circular; searching for valid subchains."
@@ -429,6 +426,6 @@ end
 
 # A chain only needs distinct endpoints. An arc already spanning them is not disqualifying: the
 # chain joins that arc's parallel group.
-function _is_valid_chain(::SparseArrays.SparseMatrixCSC, chain_path::Vector{Int})
+function _is_valid_chain(chain_path::Vector{Int})
     return chain_path[1] != chain_path[end]
 end
