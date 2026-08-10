@@ -209,3 +209,29 @@ end
         @test isapprox(yg[i], ComplexF64(ya[i]) + ComplexF64(yb[i]); rtol = 1e-10)
     end
 end
+
+@testset "parallel group reports a nested chain's phase shift" begin
+    sys = build_system(PSITestSystems, "c_sys14"; add_forecasts = false)
+    nrd = PNM.NetworkReductionData()
+    lines = collect(get_components(Line, sys))
+    pst = first(get_components(PSY.TwoWindingTransformer, sys))
+    PSY.set_α!(PSY.get_circuit(pst), 0.15)
+
+    # One chain carries the shifter, the other is purely lossless line segments.
+    shifted = PNM.BranchesSeries((1, 4))
+    PNM.add_branch!(shifted, pst, :FromTo)
+    PNM.add_branch!(shifted, lines[1], :FromTo)
+    plain = PNM.BranchesSeries((1, 4))
+    PNM.add_branch!(plain, lines[2], :FromTo)
+    PNM.add_branch!(plain, lines[3], :FromTo)
+
+    # The chain's own accumulated shift is the reference value.
+    chain_alpha = PNM.get_series_phase_shift(shifted, nrd)
+    @test chain_alpha != 0.0
+
+    group = PNM.BranchesParallel(PNM.BranchesSeries[shifted, plain])
+    b_shifted = PNM.get_series_susceptance(shifted, PSY.SU)
+    b_plain = PNM.get_series_susceptance(plain, PSY.SU)
+    expected = b_shifted * chain_alpha / (b_shifted + b_plain)
+    @test isapprox(PNM.get_series_phase_shift(group, nrd), expected; rtol = 1e-10)
+end

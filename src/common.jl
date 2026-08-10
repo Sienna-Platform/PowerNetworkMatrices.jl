@@ -400,12 +400,14 @@ end
 
 # α of one parallel-group member expressed in the group's arc frame: anti-parallel members
 # (post-ZIR merge) enter with a negated angle, mirroring ybus_branch_entries(bp, nr).
+# `_segment_phase_shift` is required rather than the one-arg getter: an aggregate member would
+# match the blanket `get_series_phase_shift(::PSY.ACTransmission) = 0.0` and report no shift.
 function _oriented_member_phase_shift(
     br::PSY.ACTransmission,
     bp::AbstractBranchesParallel,
     nr::NetworkReductionData,
 )
-    α = get_series_phase_shift(br)
+    α = _segment_phase_shift(br, nr)
     if get_arc_tuple(br, nr) != get_arc_tuple(bp, nr)
         return -α
     end
