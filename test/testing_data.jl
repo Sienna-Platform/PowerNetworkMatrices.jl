@@ -646,11 +646,12 @@ end
 """
 Build a system on the buses named by an edge list of `(from, to, r, x, b_from, b_to)` tuples,
 with buses 1-4 forming the meshed core and higher numbers the chain interiors. A generator sits
-on bus 1 and a load on bus 3, so those two are the only injector-pinned buses and every chain
-interior is a reduction candidate. Shared by the chain fixtures below, which differ only in
-their edge lists.
+on bus 1 and a load on `load_bus`, so those are the only injector-pinned buses and every other
+bus is a reduction candidate. Pointing `load_bus` at bus 1 leaves exactly one pinned bus, which
+is what a traversal needs in order to start and end on the same node. Shared by the chain
+fixtures below, which differ only in their edge lists.
 """
-function _build_degree_two_chain_system(edges)
+function _build_degree_two_chain_system(edges; load_bus::Int = 3)
     sys = PSY.System(100.0)
     buses = Dict{Int, ACBus}()
     bus_numbers = sort!(unique!(reduce(vcat, [[e[1], e[2]] for e in edges])))
@@ -690,7 +691,8 @@ function _build_degree_two_chain_system(edges)
     )
     PSY.add_component!(
         sys,
-        PowerLoad(; name = "D3", available = true, bus = buses[3], active_power = 1.0,
+        PowerLoad(; name = "D3", available = true, bus = buses[load_bus],
+            active_power = 1.0,
             reactive_power = 0.0, base_power = 100.0, max_active_power = 1.0,
             max_reactive_power = 0.0),
     )
@@ -791,4 +793,22 @@ function build_reversed_chain_parallel_to_direct_line()
         (3, 1, 0.015, 0.30, 0.05, 0.01),                            # line keyed 3 -> 1
     ]
     return _build_degree_two_chain_system(edges)
+end
+
+"""
+A four-bus ring whose only injector-pinned bus is bus 1, so the degree-two traversal starts and
+ends there and the discovered path is circular. The longest valid subchain drops the repeated
+endpoint, giving a chain `1-2-3-4` whose endpoints are spanned by the ring's own `4 -> 1` line.
+The composite arc is therefore keyed opposite to that line, which is the reversed-key absorb
+reached from a circular traversal rather than from a hand-placed parallel line.
+
+Lossy with asymmetric charging so the chain's two-port is asymmetric and a wrong transpose shows
+up numerically. Buses 2 and 3 are eliminated; 1 and 4 survive.
+"""
+function build_circular_degree_two_ring()
+    edges = [
+        (1, 2, 0.010, 0.05, 0.02, 0.03), (2, 3, 0.012, 0.06, 0.03, 0.01),
+        (3, 4, 0.008, 0.07, 0.04, 0.02), (4, 1, 0.015, 0.08, 0.05, 0.01),
+    ]
+    return _build_degree_two_chain_system(edges; load_bus = 1)
 end

@@ -1391,22 +1391,11 @@ end
     @test isapprox(Matrix(y_red.data), expected; rtol = 1e-4)
 end
 
-@testset "Ybus with a chain grouped onto an existing arc matches the unreduced network" begin
-    sys = build_chain_parallel_to_direct_line()
-    y_full = Ybus(sys)
-    y_red = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
-    nrd = get_network_reduction_data(y_red)
-
-    @test Set(PNM.get_bus_axis(y_red)) == Set([1, 2, 3, 4])
-
-    # (1, 3) is the only arc between buses 1 and 3, so the reduced off-diagonal there is exactly
-    # the group's Y12. This is what fails if the line's own contribution is counted twice.
-    group = PNM.get_parallel_branch_map(nrd)[(1, 3)]
-    _, Y12, Y21, _ = PNM.ybus_branch_entries(group, nrd)
-    lookup = PNM.get_bus_lookup(y_red)
-    @test isapprox(y_red.data[lookup[1], lookup[3]], Y12; rtol = 1e-6)
-    @test isapprox(y_red.data[lookup[3], lookup[1]], Y21; rtol = 1e-6)
-
+# Entrywise Schur complement of the full Ybus onto the surviving buses. Entrywise rather than a
+# whole-matrix `isapprox`, which spreads the tolerance over the Frobenius norm and at
+# rtol = 1e-4 admits ~1e-2 concentrated in a single entry. `rtol`/`atol` are the ComplexF32
+# storage allowance.
+function _test_kron_oracle(y_full, y_red)
     keep = [PNM.get_bus_lookup(y_full)[b] for b in PNM.get_bus_axis(y_red)]
     drop = setdiff(1:size(y_full.data, 1), keep)
     Ykk = Matrix(y_full.data[keep, keep])
@@ -1415,8 +1404,36 @@ end
     Ydd = Matrix(y_full.data[drop, drop])
     expected = Ykk - Ykd * (Ydd \ Ydk)
     reduced = Matrix(y_red.data)
-    for i in axes(reduced, 1), j in axes(reduced, 2)
-        @test isapprox(reduced[i, j], expected[i, j]; rtol = 1e-4, atol = 1e-4)
+    n_bad = count(
+        i -> !isapprox(reduced[i], expected[i]; rtol = 1e-4, atol = 1e-4),
+        CartesianIndices(reduced),
+    )
+    @test n_bad == 0
+    return
+end
+
+@testset "Ybus with a chain grouped onto an existing arc matches the unreduced network" begin
+    for (sys, arc, surviving) in (
+        (build_chain_parallel_to_direct_line(), (1, 3), Set([1, 2, 3, 4])),
+        (build_reversed_chain_parallel_to_direct_line(), (3, 1), Set([1, 2, 3, 4])),
+        (build_circular_degree_two_ring(), (4, 1), Set([1, 4])),
+    )
+        y_full = Ybus(sys)
+        y_red = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+        nrd = get_network_reduction_data(y_red)
+
+        @test Set(PNM.get_bus_axis(y_red)) == surviving
+
+        # The absorbing arc is the only one between its two buses, so the reduced off-diagonals
+        # there are exactly the group's Y12 and Y21. This is what fails if the pre-existing
+        # branch's own contribution is counted twice or the chain's is dropped.
+        group = PNM.get_parallel_branch_map(nrd)[arc]
+        _, Y12, Y21, _ = PNM.ybus_branch_entries(group, nrd)
+        lookup = PNM.get_bus_lookup(y_red)
+        @test isapprox(y_red.data[lookup[arc[1]], lookup[arc[2]]], Y12; rtol = 1e-6)
+        @test isapprox(y_red.data[lookup[arc[2]], lookup[arc[1]]], Y21; rtol = 1e-6)
+
+        _test_kron_oracle(y_full, y_red)
     end
 end
 
@@ -1424,6 +1441,7 @@ end
     for (sys, arc) in (
         (build_chain_parallel_to_direct_line(), (1, 3)),
         (build_reversed_chain_parallel_to_direct_line(), (3, 1)),
+        (build_circular_degree_two_ring(), (4, 1)),
     )
         y_red = Ybus(
             sys;
@@ -1451,6 +1469,78 @@ end
         @test isapprox(ytf.data[row, to_ix], Y22; rtol = 1e-6)
         @test isapprox(ytf.data[row, from_ix], Y21; rtol = 1e-6)
     end
+end
+
+@testset "WECC 240: a chain absorbs into an existing arc" begin
+    # Bus 2902 (MOHAVE, 500 kV) hosts no injector and is degree two, tapped between LUGO (2401)
+    # and ELDORADO (2901), which already carry a line between them. It is the only place in the
+    # suite's realistic fixtures where a chain absorbs into a pre-existing arc, so this is the
+    # realistic-data coverage for that path.
+    sys = PSB.build_system(PSYTestSystems, "psse_240_parsing_sys"; runchecks = false)
+    y_full = Ybus(sys)
+    y_red = Ybus(
+        sys;
+        network_reductions = NetworkReduction[DegreeTwoReduction()],
+        make_arc_admittance_matrices = true,
+    )
+    nrd = get_network_reduction_data(y_red)
+    arc = (2401, 2901)
+
+    # Guard the fixture: bus 2902 must be present and reducible in the unreduced system, and the
+    # absorbing arc must exist, or this testset silently stops covering the path.
+    @test 2902 in PNM.get_bus_axis(y_full)
+    @test arc in PNM.get_arc_axis(get_network_reduction_data(y_full))
+
+    @test 2902 ∉ PNM.get_bus_axis(y_red)
+    @test 2902 in PNM.get_removed_buses(nrd)
+    @test !haskey(PNM.get_direct_branch_map(nrd), arc)
+    group = PNM.get_parallel_branch_map(nrd)[arc]
+    @test group isa PNM.MixedBranchesParallel
+    @test PNM.get_arc_tuple(group, nrd) == arc
+    @test count(m -> m isa Line, group) == 1
+    chain = only(m for m in group if m isa PNM.BranchesSeries)
+    @test Set(PNM.get_name(m) for m in chain) ==
+          Set(["LUGO        -2401-MOHAVE      -2902-i_1",
+        "ELDORADO    -2901-MOHAVE      -2902-i_1"])
+
+    # Both MOHAVE lines and the pre-existing LUGO-ELDORADO line resolve to the absorbing arc
+    # through the parallel map, each registered in exactly one reverse map.
+    for name in [
+        "LUGO        -2401-ELDORADO    -2901-i_1",
+        "LUGO        -2401-MOHAVE      -2902-i_1",
+        "ELDORADO    -2901-MOHAVE      -2902-i_1",
+    ]
+        br = get_component(Line, sys, name)
+        tag, resolved = PNM._resolve_branch_arc(nrd, br)
+        @test tag == :parallel
+        @test resolved == arc
+        @test !haskey(PNM.get_reverse_series_branch_map(nrd), br)
+        @test !haskey(PNM.get_reverse_direct_branch_map(nrd), br)
+    end
+
+    # The absorbing arc keeps exactly one arc-admittance row, carrying line plus chain.
+    yft = y_red.arc_admittance_from_to
+    ytf = y_red.arc_admittance_to_from
+    arc_axis = PNM.get_arc_axis(yft)
+    @test length(arc_axis) == length(unique(arc_axis))
+    @test Set(arc_axis) == Set(PNM.get_arc_axis(nrd))
+    @test (arc[2], arc[1]) ∉ arc_axis
+    Y11, Y12, Y21, Y22 = PNM.ybus_branch_entries(group, nrd)
+    row = PNM.get_arc_lookup(yft)[arc]
+    from_ix = PNM.get_bus_lookup(yft)[arc[1]]
+    to_ix = PNM.get_bus_lookup(yft)[arc[2]]
+    @test isapprox(yft.data[row, from_ix], Y11; rtol = 1e-6)
+    @test isapprox(yft.data[row, to_ix], Y12; rtol = 1e-6)
+    @test isapprox(ytf.data[row, to_ix], Y22; rtol = 1e-6)
+    @test isapprox(ytf.data[row, from_ix], Y21; rtol = 1e-6)
+
+    # The reduced off-diagonals on the absorbing arc are exactly the group's, and the whole
+    # reduced matrix is the exact Schur complement — losses and charging on the eliminated
+    # branches are part of the eliminated block, so the elimination stays exact.
+    lookup = PNM.get_bus_lookup(y_red)
+    @test isapprox(y_red.data[lookup[2401], lookup[2901]], Y12; rtol = 1e-6)
+    @test isapprox(y_red.data[lookup[2901], lookup[2401]], Y21; rtol = 1e-6)
+    _test_kron_oracle(y_full, y_red)
 end
 
 @testset "Ybus with reversed-orientation grouped chains matches the unreduced network" begin

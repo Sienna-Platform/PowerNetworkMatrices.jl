@@ -1808,30 +1808,16 @@ function _absorb_composite_group!(
     for member in group
         push!(members, member)
     end
-    merged = _composite_parallel_group(members, existing_arc)
+    # The merged set always mixes a chain with at least one physical branch, so
+    # `MixedBranchesParallel` is the container, and it is built here rather than through
+    # `_make_parallel_branch_pair` / `_push_parallel_branch!` because their mixed-type arms emit
+    # a `@warn` about suspect input data, which a chain sharing an arc with a branch is not.
+    # `arc_key` comes from the arc rather than from a member, because the members can disagree on
+    # orientation.
+    merged = MixedBranchesParallel(members, existing_arc, EMPTY_TWO_PORT, false)
     nr.parallel_branch_map[existing_arc] = merged
     _register_composite_members!(nr.reverse_parallel_branch_map, existing_arc, merged)
     return
-end
-
-# A group holding a chain alongside physical branches is the intended outcome of a degree-two
-# reduction, so promotion to `MixedBranchesParallel` is silent here where
-# `_make_parallel_branch_pair` reports suspect input data. `arc_key` is set from the arc rather
-# than derived from a member, because the members can disagree on orientation.
-function _composite_parallel_group(
-    members::Vector{PSY.ACTransmission},
-    arc::Tuple{Int, Int},
-)
-    T = typeof(first(members))
-    if all(m -> typeof(m) === T, members)
-        return BranchesParallel{T}(
-            Vector{T}(members),
-            arc,
-            EMPTY_TWO_PORT,
-            false,
-        )
-    end
-    return MixedBranchesParallel(members, arc, EMPTY_TWO_PORT, false)
 end
 
 """
@@ -1962,6 +1948,20 @@ function _composite_entries(nr_new::NetworkReductionData)
     for (arc, entry) in nr_new.parallel_branch_map
         push!(entries, (arc, entry))
     end
+    # At most one composite arc per unordered bus pair: `get_degree2_reduction` groups sibling
+    # chains by `minmax` of their endpoints. Both the arc-admittance row lookup and the
+    # branch-map absorb resolve their target from state that predates this reduction, so a
+    # second composite arc on the same pair would resolve to the same target and overwrite the
+    # first. Checked rather than assumed because it is invisible at both of those call sites.
+    seen = Set{Tuple{Int, Int}}()
+    for (arc, _) in entries
+        pair = minmax(arc[1], arc[2])
+        pair in seen &&
+            error(
+                "Degree-two reduction produced more than one composite arc on pair $pair.",
+            )
+        push!(seen, pair)
+    end
     return entries
 end
 
@@ -2064,8 +2064,16 @@ function _existing_arc_row(
 end
 
 # Entries the composite arc's members already contributed to the unreduced Ybus, in the
-# composite arc's frame. A chain's endpoints are not directly connected before reduction, so a
-# chain contributes only diagonals; a plain branch on the arc also contributes off-diagonals.
+# composite arc's frame. A chain's endpoints are not directly connected in the unreduced Ybus,
+# so a chain contributes only diagonals.
+#
+# The `PSY.ACTransmission` arm below completes the family over everything an
+# `AbstractBranchesParallel` can hold, but no caller reaches it: composite arcs are stamped from
+# `nr_new`, whose groups hold only chains, and a pre-existing branch joins the group afterwards
+# in `_absorb_composite_group!`. Stamping before absorbing is what lets the arc-admittance row
+# correction be a plain accumulation of the chain-only equivalent; a reordering that made this
+# arm live would have to rework that correction too, since the row would then receive the arc's
+# total on top of the branch it already holds.
 function _composite_raw_two_port(entry::PSY.ACTransmission, nr::NetworkReductionData)
     return YBUS_ELTYPE.(ybus_branch_entries(entry, nr))
 end

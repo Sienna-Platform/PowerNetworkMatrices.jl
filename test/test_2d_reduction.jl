@@ -399,7 +399,10 @@ end
     end
 end
 
-@testset "composite raw two-port backs out a direct branch's off-diagonals" begin
+@testset "composite raw two-port is complete over a mixed group's member types" begin
+    # `_composite_raw_two_port`'s `PSY.ACTransmission` arm is a completeness arm: the Ybus
+    # assembly path stamps composite arcs before any physical branch joins the group, so it
+    # reaches only the chain and group arms. This exercises all three directly.
     sys = build_chain_parallel_to_direct_line()
     ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
     nrd = get_network_reduction_data(ybus)
@@ -416,7 +419,6 @@ end
     )
 
     # A chain contributes only diagonals, so the group's raw off-diagonals are the line's alone.
-    # Anything else would double-count the line when the composite arc is stamped.
     chain_raw = PNM._composite_raw_two_port(chain, nrd)
     @test iszero(chain_raw[2])
     @test iszero(chain_raw[3])

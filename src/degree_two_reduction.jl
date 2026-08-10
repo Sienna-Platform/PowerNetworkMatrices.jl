@@ -408,9 +408,10 @@ function _find_longest_valid_chain(
         return chain_path
     end
     @info "Node $(chain_path[1]) is both endpoints of the traversal, making the chain circular; searching for valid subchains."
-    # Enumerate subchain index ranges (i, j) in descending length order and return the
-    # first whose endpoints form a valid chain. Avoids the prior O(n^2) materialization
-    # and sort of every contiguous subchain.
+    # Enumerate subchain index ranges (i, j) in descending length order and return the first
+    # whose endpoints form a valid chain, working on indices so no subchain is materialized
+    # before the one that is returned. The `len >= 3` bound is what keeps a degenerate path whose
+    # only interior node repeats its endpoint from yielding a two-node "chain".
     n = length(chain_path)
     for len in n:-1:3
         for i in 1:(n - len + 1)
