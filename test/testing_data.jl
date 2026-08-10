@@ -642,3 +642,65 @@ function build_hvdc_with_small_island()
     add_component!(sys, hvdc1)
     return sys
 end
+
+"""
+Meshed core on buses 1-4 (a ring plus a 2-4 tie, so every core bus has degree three or more)
+plus two independent degree-two chains between buses 1 and 3 (interiors 10-11 and 20-21).
+Buses 1 and 3 keep degree four so they are chain terminals, and the two chains form the
+sibling pair that must collapse into one parallel group. Only the chain interiors are
+degree two, so they are the only buses a `DegreeTwoReduction` eliminates. No injectors on
+the interior buses, so nothing pins them irreducible.
+"""
+function build_two_parallel_degree_two_chains()
+    sys = PSY.System(100.0)
+    buses = Dict{Int, ACBus}()
+    for n in (1, 2, 3, 4, 10, 11, 20, 21)
+        b = ACBus(;
+            number = n,
+            name = "Bus $n",
+            available = true,
+            bustype = n == 1 ? ACBusTypes.REF : ACBusTypes.PQ,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        PSY.add_component!(sys, b)
+        buses[n] = b
+    end
+    # (from, to, x) — distinct reactances so the two chains are not degenerate.
+    edges = [
+        (1, 2, 0.05), (2, 3, 0.06), (3, 4, 0.07), (4, 1, 0.08),   # ring core
+        (2, 4, 0.09),                                             # core tie
+        (1, 10, 0.10), (10, 11, 0.11), (11, 3, 0.12),             # chain A
+        (1, 20, 0.20), (20, 21, 0.21), (21, 3, 0.22),             # chain B
+    ]
+    for (f, t, x) in edges
+        arc = Arc(buses[f], buses[t])
+        PSY.add_component!(sys, arc)
+        PSY.add_component!(
+            sys,
+            Line("L_$(f)_$(t)", true, 0.0, 0.0, arc, 0.0, x,
+                (from = 0.0, to = 0.0), 2.0, (-1.6, 1.6)),
+        )
+    end
+    # One generator and one load on core buses so no interior bus is injector-pinned.
+    PSY.add_component!(
+        sys,
+        ThermalStandard(; name = "G1", available = true, status = true, bus = buses[1],
+            active_power = 1.0, reactive_power = 0.0, rating = 2.0,
+            prime_mover_type =
+            PSY.PrimeMovers.OT, fuel = PSY.ThermalFuels.OTHER,
+            active_power_limits = (min = 0.0, max = 2.0),
+            reactive_power_limits = nothing, ramp_limits = nothing,
+            time_limits = nothing, base_power = 100.0,
+            operation_cost = ThermalGenerationCost(nothing)),
+    )
+    PSY.add_component!(
+        sys,
+        PowerLoad(; name = "D3", available = true, bus = buses[3], active_power = 1.0,
+            reactive_power = 0.0, base_power = 100.0, max_active_power = 1.0,
+            max_reactive_power = 0.0),
+    )
+    return sys
+end

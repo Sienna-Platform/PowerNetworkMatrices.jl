@@ -1,3 +1,5 @@
+import SparseArrays
+
 @testset "Large 2d Reduction Test" begin
     sys = build_system(
         MatpowerTestSystems,
@@ -234,4 +236,63 @@ end
     b_plain = PNM.get_series_susceptance(plain, PSY.SU)
     expected = b_shifted * chain_alpha / (b_shifted + b_plain)
     @test isapprox(PNM.get_series_phase_shift(group, nrd), expected; rtol = 1e-10)
+end
+
+# Symmetric value-based adjacency from an undirected edge list.
+function _adjacency_from_edges(edges, n)
+    I = Int[]
+    J = Int[]
+    for (a, b) in edges
+        push!(I, a, b)
+        push!(J, b, a)
+    end
+    return SparseArrays.sparse(I, J, ones(Int8, length(I)), n, n)
+end
+
+@testset "find_degree2_chains returns every sibling chain on one endpoint pair" begin
+    # Buses 1 and 2 are held above degree two by a small core on 7 and 8, so they are chain
+    # terminals. Three interior paths connect them; all three are valid chains.
+    edges = [(1, 3), (3, 4), (4, 2), (1, 5), (5, 6), (6, 2),
+        (1, 7), (1, 8), (2, 7), (2, 8), (7, 8)]
+    A = _adjacency_from_edges(edges, 8)
+    chains = PNM.find_degree2_chains(A, Set{Int}())
+    @test length(chains) == 2
+    @test Set(Set(c) for c in chains) == Set([Set([1, 3, 4, 2]), Set([1, 5, 6, 2])])
+end
+
+@testset "find_degree2_chains returns opposite-traversal siblings separately" begin
+    # Same topology, but the second chain's interior numbering makes it traverse 2 -> 1.
+    edges = [(1, 3), (3, 4), (4, 2), (2, 5), (5, 6), (6, 1),
+        (1, 7), (1, 8), (2, 7), (2, 8), (7, 8)]
+    A = _adjacency_from_edges(edges, 8)
+    chains = PNM.find_degree2_chains(A, Set{Int}())
+    @test length(chains) == 2
+    # Endpoint pair is the same unordered set regardless of traversal direction.
+    @test all(Set([c[1], c[end]]) == Set([1, 2]) for c in chains)
+end
+
+@testset "DegreeTwoReduction: sibling chains on one arc become a parallel group" begin
+    # A meshed core (buses 1-4) with two independent two-bus chains between buses 1 and 3.
+    sys = build_two_parallel_degree_two_chains()
+    ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = get_network_reduction_data(ybus)
+
+    # Every interior bus of both chains is eliminated; neither chain is left behind.
+    for b in (10, 11, 20, 21)
+        @test b in PNM.get_removed_buses(nrd)
+        @test b ∉ keys(PNM.get_bus_lookup(ybus))
+    end
+
+    # The composite arc carries a parallel group of two chains, not a bare chain.
+    group_arcs = [
+        k for (k, v) in PNM.get_parallel_branch_map(nrd)
+        if all(m isa PNM.BranchesSeries for m in v)
+    ]
+    @test length(group_arcs) == 1
+    group = PNM.get_parallel_branch_map(nrd)[only(group_arcs)]
+    @test length(group) == 2
+    @test Set(only(group_arcs)) == Set([1, 3])
+    # No composite arc is left in the series map for that pair, in either orientation.
+    @test !haskey(PNM.get_series_branch_map(nrd), (1, 3))
+    @test !haskey(PNM.get_series_branch_map(nrd), (3, 1))
 end

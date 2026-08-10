@@ -28,70 +28,108 @@ function get_degree2_reduction(
     parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel},
 )
     reverse_bus_lookup = Dict(v => k for (k, v) in bus_lookup)
-    arc_maps = find_degree2_chains(data, exempt_bus_positions)
+    chains = find_degree2_chains(data, exempt_bus_positions)
     series_branch_map = Dict{Tuple{Int, Int}, BranchesSeries}()
+    parallel_additions = Dict{Tuple{Int, Int}, AbstractBranchesParallel}()
 
     removed_buses = Set{Int}()
     removed_arcs = Set{Tuple{Int, Int}}()
-    for (composite_arc_ix, segment_ix) in arc_maps
+    # Chains sharing an endpoint pair are electrically in parallel. Group them by the unordered
+    # pair so traversal direction cannot split a sibling pair across two arcs.
+    by_endpoints = Dict{Tuple{Int, Int}, Vector{BranchesSeries}}()
+    for segment_ix in chains
         composite_arc = (
-            reverse_bus_lookup[composite_arc_ix[1]],
-            reverse_bus_lookup[composite_arc_ix[2]],
+            reverse_bus_lookup[segment_ix[1]],
+            reverse_bus_lookup[segment_ix[end]],
         )
-        segment_numbers = [reverse_bus_lookup[x] for x in segment_ix]
-        @assert composite_arc[1] == segment_numbers[1]
-        @assert composite_arc[2] == segment_numbers[end]
-        segments = BranchesSeries(composite_arc)
-        for ix in 1:(length(segment_numbers) - 1)
-            segment_arc = (segment_numbers[ix], segment_numbers[ix + 1])
-            segment_arc, entry, orientation =
-                _get_branch_map_entry(direct_branch_map, parallel_branch_map, segment_arc)
-            add_branch!(segments, entry, orientation)
-            push!(removed_arcs, segment_arc)
-            ix != 1 && push!(removed_buses, segment_numbers[ix])
-        end
-        series_branch_map[composite_arc] = segments
+        segments = _build_chain_segments!(
+            removed_arcs,
+            removed_buses,
+            composite_arc,
+            segment_ix,
+            reverse_bus_lookup,
+            direct_branch_map,
+            parallel_branch_map,
+        )
+        key = minmax(composite_arc[1], composite_arc[2])
+        push!(get!(by_endpoints, key, Vector{BranchesSeries}()), segments)
     end
+
+    for siblings in values(by_endpoints)
+        # The seed chain's orientation is the group's arc frame, matching BranchesParallel.
+        first_chain = first(siblings)
+        if length(siblings) == 1
+            series_branch_map[get_arc_tuple(first_chain)] = first_chain
+        else
+            parallel_additions[get_arc_tuple(first_chain)] =
+                BranchesParallel(siblings)
+        end
+    end
+
     reverse_series_branch_map = _make_reverse_series_branch_map(series_branch_map)
-    return series_branch_map, reverse_series_branch_map, removed_buses, removed_arcs
+    return series_branch_map,
+    parallel_additions,
+    reverse_series_branch_map,
+    removed_buses,
+    removed_arcs
 end
 
-function _add_to_reverse_series_branch_map!(
-    reverse_series_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}},
+# Assemble one chain's `BranchesSeries` and record the arcs and interior buses it consumes.
+function _build_chain_segments!(
+    removed_arcs::Set{Tuple{Int, Int}},
+    removed_buses::Set{Int},
     composite_arc::Tuple{Int, Int},
-    segment::AbstractBranchesParallel,
+    segment_ix::Vector{Int},
+    reverse_bus_lookup::Dict{Int, Int},
+    direct_branch_map::Dict{Tuple{Int, Int}, PSY.ACTransmission},
+    parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel},
 )
-    for branch in segment.branches
-        reverse_series_branch_map[branch] = composite_arc
+    segment_numbers = [reverse_bus_lookup[x] for x in segment_ix]
+    @assert composite_arc[1] == segment_numbers[1]
+    @assert composite_arc[2] == segment_numbers[end]
+    segments = BranchesSeries(composite_arc)
+    for ix in 1:(length(segment_numbers) - 1)
+        segment_arc = (segment_numbers[ix], segment_numbers[ix + 1])
+        segment_arc, entry, orientation =
+            _get_branch_map_entry(direct_branch_map, parallel_branch_map, segment_arc)
+        add_branch!(segments, entry, orientation)
+        push!(removed_arcs, segment_arc)
+        ix != 1 && push!(removed_buses, segment_numbers[ix])
+    end
+    return segments
+end
+
+# A composite arc's members can nest: a chain segment can be a parallel group, and a grouped
+# arc's members are chains. Recursion registers the physical branches at the leaves, which is
+# what `_resolve_branch_arc` answers with.
+function _register_composite_members!(
+    reverse_map::Dict{PSY.ACTransmission, Tuple{Int, Int}},
+    composite_arc::Tuple{Int, Int},
+    segment::AbstractReductionAggregate,
+)
+    for member in segment
+        _register_composite_members!(reverse_map, composite_arc, member)
     end
     return
 end
 
-function _add_to_reverse_series_branch_map!(
-    reverse_series_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}},
+function _register_composite_members!(
+    reverse_map::Dict{PSY.ACTransmission, Tuple{Int, Int}},
     composite_arc::Tuple{Int, Int},
     segment::PSY.ACTransmission,
 )
-    reverse_series_branch_map[segment] = composite_arc
+    reverse_map[segment] = composite_arc
     return
 end
 
 function _make_reverse_series_branch_map(
     series_branch_map::Dict{Tuple{Int, Int}, BranchesSeries},
 )
-    reverse_series_branch_map = Dict{PSY.ACTransmission, Tuple{Int, Int}}()
-    for (composite_arc, vector_segments) in series_branch_map
-        for segment_collection in values(vector_segments.branches)
-            for segment in segment_collection
-                _add_to_reverse_series_branch_map!(
-                    reverse_series_branch_map,
-                    composite_arc,
-                    segment,
-                )
-            end
-        end
+    reverse_map = Dict{PSY.ACTransmission, Tuple{Int, Int}}()
+    for (composite_arc, entry) in series_branch_map
+        _register_composite_members!(reverse_map, composite_arc, entry)
     end
-    return reverse_series_branch_map
+    return reverse_map
 end
 
 function _get_branch_map_entry(
