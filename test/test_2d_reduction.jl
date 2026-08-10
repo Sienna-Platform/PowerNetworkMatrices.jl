@@ -181,3 +181,31 @@ end
     nrd = PNM.NetworkReductionData(; reverse_bus_search_map = Dict(11 => 4))
     @test PNM.get_arc_tuple(bs, nrd) == (7, 4)
 end
+
+@testset "parallel group of series chains yields the summed two-port" begin
+    # Two three-segment chains between Bus 1 and Bus 4 of c_sys14, built by hand so the
+    # aggregate can be exercised without depending on the reduction that will create it.
+    sys = build_system(PSITestSystems, "c_sys14"; add_forecasts = false)
+    nrd = PNM.NetworkReductionData()
+    lines = collect(get_components(Line, sys))
+    chain_a = PNM.BranchesSeries((1, 4))
+    PNM.add_branch!(chain_a, lines[1], :FromTo)
+    PNM.add_branch!(chain_a, lines[2], :FromTo)
+    chain_b = PNM.BranchesSeries((1, 4))
+    PNM.add_branch!(chain_b, lines[3], :FromTo)
+    PNM.add_branch!(chain_b, lines[4], :FromTo)
+
+    group = PNM.BranchesParallel(PNM.BranchesSeries[chain_a, chain_b])
+    @test PNM.get_arc_tuple(group, nrd) == (1, 4)
+
+    ya = PNM.ybus_branch_entries(chain_a, nrd)
+    yb = PNM.ybus_branch_entries(chain_b, nrd)
+    yg = PNM.ybus_branch_entries(group, nrd)
+    # Parallel members in the same arc frame add entry-wise. A single chain's two-port comes
+    # back as ComplexF32 (Ybus storage precision), while the group accumulates in ComplexF64;
+    # promote before summing so the comparison isn't dominated by a second, avoidable F32
+    # rounding of the addition itself.
+    for i in 1:4
+        @test isapprox(yg[i], ComplexF64(ya[i]) + ComplexF64(yb[i]); rtol = 1e-10)
+    end
+end

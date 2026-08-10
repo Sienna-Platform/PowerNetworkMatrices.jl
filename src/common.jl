@@ -619,8 +619,9 @@ end
 
 # Accumulated two-port of an arbitrary member subset, expressed in `reference`'s frame. A bus
 # merge can fold an anti-parallel branch into a group, so a member keyed the other way has its
-# 2x2 swapped. This is the single orientation-handling loop; `ybus_branch_entries(bp, nr)`
-# delegates here so the convention lives in exactly one place.
+# 2x2 swapped. Members are resolved with `nr` because an aggregate member (a series chain)
+# needs it to build its own two-port. This is the single orientation-handling loop;
+# `ybus_branch_entries(bp, nr)` delegates here so the convention lives in exactly one place.
 function _subset_two_port(
     members,
     reference::Tuple{Int, Int},
@@ -628,7 +629,7 @@ function _subset_two_port(
 )
     Y11 = Y12 = Y21 = Y22 = zero(ComplexF64)
     for br in members
-        (y11, y12, y21, y22) = ybus_branch_entries(br)
+        (y11, y12, y21, y22) = ybus_branch_entries(br, nr)
         if get_arc_tuple(br, nr) != reference
             Y11 += y22
             Y12 += y21
