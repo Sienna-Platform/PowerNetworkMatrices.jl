@@ -41,7 +41,7 @@ function get_degree2_reduction(
         segment_numbers = [reverse_bus_lookup[x] for x in segment_ix]
         @assert composite_arc[1] == segment_numbers[1]
         @assert composite_arc[2] == segment_numbers[end]
-        segments = BranchesSeries()
+        segments = BranchesSeries(composite_arc)
         for ix in 1:(length(segment_numbers) - 1)
             segment_arc = (segment_numbers[ix], segment_numbers[ix + 1])
             segment_arc, entry, orientation =

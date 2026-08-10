@@ -72,7 +72,7 @@
     @test fl_bp.from_to ≈ 250.0 atol = 1e-6
     @test fl_bp.to_from ≈ 250.0 atol = 1e-6
 
-    bs = PNM.BranchesSeries()
+    bs = PNM.BranchesSeries((PSY.get_number(bus1), PSY.get_number(bus2)))
     PNM.add_branch!(bs, line1, :FromTo)
     PNM.add_branch!(bs, line2, :FromTo)
     # Series weakest-link rule: min(100, 150) = 100.0
@@ -84,7 +84,7 @@
 
     # Series chain containing a parallel block: the block contributes its N-1
     # single-element-contingency rating (100.0), so min(100, 150) = 100.0.
-    bs = PNM.BranchesSeries()
+    bs = PNM.BranchesSeries((PSY.get_number(bus1), PSY.get_number(bus2)))
     PNM.add_branch!(bs, bp, :FromTo)
     PNM.add_branch!(bs, line2, :FromTo)
     rating_eq = PNM.get_equivalent_rating(bs)

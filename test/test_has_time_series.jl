@@ -18,7 +18,7 @@ end
     trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
 
     bp = PNM.BranchesParallel([line1, line2])
-    bs = PNM.BranchesSeries()
+    bs = PNM.BranchesSeries(PNM.get_arc_tuple(line1))
     PNM.add_branch!(bs, line1, :FromTo)
     PNM.add_branch!(bs, line2, :FromTo)
     tww1 = PNM.ThreeWindingTransformerCircuit(trf, 1)
@@ -49,7 +49,7 @@ end
     trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
 
     bp = PNM.BranchesParallel([line1, line2])
-    bs = PNM.BranchesSeries()
+    bs = PNM.BranchesSeries(PNM.get_arc_tuple(line1))
     PNM.add_branch!(bs, line1, :FromTo)
     PNM.add_branch!(bs, line2, :FromTo)
     tww1 = PNM.ThreeWindingTransformerCircuit(trf, 1)

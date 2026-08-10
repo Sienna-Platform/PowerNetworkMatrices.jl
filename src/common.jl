@@ -73,7 +73,7 @@ end
 
 # Canonical orientation is the stored `arc_key` (set at construction), remapped through `nr`;
 # anti-parallel members may exist post-merge, so do not rely on member order.
-function get_arc_tuple(br::AbstractBranchesParallel, nr::NetworkReductionData)
+function get_arc_tuple(br::AbstractReductionAggregate, nr::NetworkReductionData)
     reverse_bus_search_map = get_reverse_bus_search_map(nr)
     return (
         get(reverse_bus_search_map, br.arc_key[1], br.arc_key[1]),
@@ -81,7 +81,7 @@ function get_arc_tuple(br::AbstractBranchesParallel, nr::NetworkReductionData)
     )
 end
 
-function get_arc_tuple(br::AbstractBranchesParallel)
+function get_arc_tuple(br::AbstractReductionAggregate)
     return br.arc_key
 end
 

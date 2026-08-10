@@ -173,3 +173,11 @@ end
     end
     @test n_compared > 0
 end
+
+@testset "BranchesSeries carries an arc identity" begin
+    bs = PNM.BranchesSeries((7, 11))
+    @test PNM.get_arc_tuple(bs) == (7, 11)
+    # Remapped through a reduction the same way a parallel group's arc_key is.
+    nrd = PNM.NetworkReductionData(; reverse_bus_search_map = Dict(11 => 4))
+    @test PNM.get_arc_tuple(bs, nrd) == (7, 4)
+end
