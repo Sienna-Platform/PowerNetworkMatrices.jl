@@ -310,7 +310,9 @@ end
 Find all chains of degree-2 nodes in a graph represented by a CSC adjacency matrix.
 A chain is a sequence of connected degree-2 nodes.
 
-Returns a dictionary mapping each starting node to its chain of node indices.
+Returns a vector of chains, each a vector of node indices whose first and last entries are the
+chain's terminal (non-degree-2 or irreducible) nodes. Several chains may share an endpoint pair;
+grouping them onto one arc is the caller's job.
 """
 function find_degree2_chains(
     adj_matrix::SparseArrays.SparseMatrixCSC,
@@ -324,7 +326,7 @@ function find_degree2_chains(
         irreducible_mask[i] = true
     end
     reduced_indices = falses(node_count)
-    arc_map = Dict{Tuple{Int, Int}, Vector{Int}}()
+    chains = Vector{Vector{Int}}()
     degree2_nodes = _get_degree2_nodes(adj_matrix, irreducible_mask)
     for node in degree2_nodes
         if reduced_indices[node]
@@ -334,10 +336,10 @@ function find_degree2_chains(
             _get_complete_chain(adj_matrix, node, reduced_indices, irreducible_mask)
         valid_chain_path = _find_longest_valid_chain(adj_matrix, chain_path)
         if !isempty(valid_chain_path)
-            arc_map[valid_chain_path[1], valid_chain_path[end]] = valid_chain_path
+            push!(chains, valid_chain_path)
         end
     end
-    return arc_map
+    return chains
 end
 
 function _find_longest_valid_chain(
