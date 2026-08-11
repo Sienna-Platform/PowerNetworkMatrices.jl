@@ -1551,7 +1551,10 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
         ybus,
         bus_numbers_to_remove,
         nr_new.removed_arcs,
-        Set(keys(nr_new.added_arc_impedance_map)),
+        union(
+            Set(keys(nr_new.added_arc_impedance_map)),
+            Set(arc for (arc, _) in composite_entries),
+        ),
     )
 
     arc_admittance_from_to, arc_admittance_to_from = _resolve_arc_admittance(

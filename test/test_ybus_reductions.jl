@@ -1597,3 +1597,17 @@ end
         @test adj_deg == ybus_deg
     end
 end
+
+@testset "arc subnetwork axis carries composite arcs" begin
+    sys = build_composite_arc_adjacency_system()
+    y = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = PNM.get_network_reduction_data(y)
+    @test (1, 3) in keys(PNM.get_parallel_branch_map(nrd))
+
+    # Every arc in the reduction's arc axis must appear in exactly one subnetwork's arc list.
+    all_subnetwork_arcs =
+        reduce(union!, values(y.arc_subnetwork_axis); init = Set{Tuple{Int, Int}}())
+    for arc in PNM.get_arc_axis(nrd)
+        @test arc in all_subnetwork_arcs
+    end
+end
