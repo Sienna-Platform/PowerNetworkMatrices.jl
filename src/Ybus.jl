@@ -1377,6 +1377,25 @@ function _repair_merged_adjacency!(
     return
 end
 
+# A composite arc is stamped into the complex Ybus but has no adjacency entry of its own, so its
+# endpoints' adjacency is re-derived from `data` after the bus slice. `_repair_merged_adjacency!`
+# writes only where the entry is zero, so calling it for both endpoints cannot conflict on
+# orientation and is idempotent.
+function _repair_composite_arc_adjacency!(
+    adjacency_data::SparseArrays.SparseMatrixCSC{Int8, Int},
+    data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int},
+    bus_lookup::Dict{Int, Int},
+    composite_arcs,
+)
+    for arc in composite_arcs
+        for bus in arc
+            haskey(bus_lookup, bus) || continue
+            _repair_merged_adjacency!(adjacency_data, data, bus_lookup[bus])
+        end
+    end
+    return
+end
+
 # A bus merge identifies the removed bus with its survivor: their rows/columns add and the
 # removed bus is dropped. The general path does this with in-place CSC structural inserts
 # (`_merge_ybus_buses!`) plus a later `data[bus_ix, bus_ix]` slice; on a large sparse matrix
@@ -1471,12 +1490,13 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     end
     bus_numbers_to_remove = _apply_bus_reductions!(nr, nr_new)
     # Add additional entries to the ybus corresponding to the equivalent composite arcs
+    composite_entries = _composite_entries(nr_new)
     new_y_ft, new_y_tf = _add_series_branches_to_ybus!(
         ybus.data,
         get_bus_lookup(ybus),
         yft_merged,
         ytf_merged,
-        _composite_entries(nr_new),
+        composite_entries,
         nr,
     )
     _modify_removed_arc_connections!(
@@ -1519,6 +1539,12 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     else
         adjacency_data = adjacency_data[bus_ix, bus_ix]
         data = data[bus_ix, bus_ix]
+        _repair_composite_arc_adjacency!(
+            adjacency_data,
+            data,
+            bus_lookup,
+            (arc for (arc, _) in composite_entries),
+        )
     end
 
     subnetwork_axes, arc_subnetwork_axis = _make_subnetwork_axes(

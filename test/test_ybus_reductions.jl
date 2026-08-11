@@ -1577,3 +1577,23 @@ end
         @test isapprox(reduced[i, j], expected[i, j]; rtol = 1e-4, atol = 1e-4)
     end
 end
+
+@testset "adjacency carries composite arcs created by a reduction" begin
+    sys = build_composite_arc_adjacency_system()
+    y = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    bus_lookup = PNM.get_bus_lookup(y)
+    bus_ax = PNM.get_bus_axis(y)
+    A = AdjacencyMatrix(y)
+
+    # Guard the precondition: the fixture must actually produce a composite arc.
+    @test (1, 3) in keys(PNM.get_parallel_branch_map(PNM.get_network_reduction_data(y)))
+    @test Set(bus_ax) == Set([1, 3, 5])
+
+    # Every surviving bus's adjacency degree must match its Ybus off-diagonal degree.
+    for b in bus_ax
+        col = bus_lookup[b]
+        ybus_deg = count(r -> r != col, findall(!iszero, Vector(y.data[:, col])))
+        adj_deg = length(SparseArrays.nzrange(A.data, A.lookup[1][b]))
+        @test adj_deg == ybus_deg
+    end
+end

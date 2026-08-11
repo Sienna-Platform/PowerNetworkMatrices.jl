@@ -812,3 +812,43 @@ function build_circular_degree_two_ring()
     ]
     return _build_degree_two_chain_system(edges; load_bus = 1)
 end
+
+"""
+Ring `1-2-3-4` plus a degree-two chain `1-10-11-3` plus a stub `1-5`, no injectors, bus 1 = REF.
+Buses 2, 4 and the 10-11 pair are each degree-two chains between buses 1 and 3, so sibling
+grouping collapses all three into one composite arc `(1,3)`. Buses 1, 3 and 5 survive; bus 5's
+edge is untouched, so it distinguishes a targeted adjacency defect from a blanket one.
+"""
+function build_composite_arc_adjacency_system()
+    sys = PSY.System(100.0)
+    buses = Dict{Int, ACBus}()
+    for n in (1, 2, 3, 4, 5, 10, 11)
+        b = ACBus(;
+            number = n,
+            name = "Bus $n",
+            available = true,
+            bustype = n == 1 ? ACBusTypes.REF : ACBusTypes.PQ,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        PSY.add_component!(sys, b)
+        buses[n] = b
+    end
+    edges = [
+        (1, 2, 0.05), (2, 3, 0.06), (3, 4, 0.07), (4, 1, 0.08),
+        (1, 10, 0.10), (10, 11, 0.11), (11, 3, 0.12),
+        (1, 5, 0.09),
+    ]
+    for (f, t, x) in edges
+        arc = Arc(buses[f], buses[t])
+        PSY.add_component!(sys, arc)
+        PSY.add_component!(
+            sys,
+            Line("L_$(f)_$(t)", true, 0.0, 0.0, arc, 0.0, x,
+                (from = 0.0, to = 0.0), 100.0, (-1.6, 1.6)),
+        )
+    end
+    return sys
+end
