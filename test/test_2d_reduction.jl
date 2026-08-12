@@ -294,6 +294,23 @@ end
     @test only(chains) == [1, 2, 3, 4]
 end
 
+@testset "chain discovery accounts for every node it marks" begin
+    # `build_circular_degree_two_ring` walks the same ring shape as the raw-adjacency test above,
+    # through the full `System`/`AdjacencyMatrix` pipeline rather than a hand-built matrix, so it
+    # is the one system-level fixture that reaches the truncation branch of
+    # `_find_longest_valid_chain`. Bus 1 hosts the ring's only injectors, so it is the sole
+    # irreducible bus and, as in the raw test, becomes both ends of the traversal.
+    sys = build_circular_degree_two_ring()
+    A = AdjacencyMatrix(sys)
+    exempt = Set(PNM.get_irreducible_indices(A, [1]))
+    chains = PNM.find_degree2_chains(PNM.get_data(A), exempt)
+    @test chains == [[1, 2, 3, 4]]
+    # The accounting check inside `find_degree2_chains` errors if any node it marks reduced is
+    # missing from the returned chains. This end-to-end build is the value of the test above: it
+    # exercises the check through the real `DegreeTwoReduction` entry point, not just the helper.
+    @test Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()]) isa Ybus
+end
+
 @testset "DegreeTwoReduction: a chain groups with a pre-existing direct arc" begin
     sys = build_chain_parallel_to_direct_line()
     ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])

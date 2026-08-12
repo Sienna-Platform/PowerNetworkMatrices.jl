@@ -443,6 +443,22 @@ function find_degree2_chains(
             push!(chains, valid_chain_path)
         end
     end
+    # A node marked as consumed must end up either eliminated as a chain interior or retained as a
+    # chain endpoint. Anything else is a node the pass claimed and then dropped, which no later
+    # chain can pick up because the mark persists.
+    accounted = falses(node_count)
+    for chain in chains
+        for node in chain
+            accounted[node] = true
+        end
+    end
+    for node in 1:node_count
+        reduced_indices[node] && !accounted[node] &&
+            error(
+                "Degree-two chain discovery marked bus index $node as consumed without placing it " *
+                "in a chain.",
+            )
+    end
     return chains
 end
 
