@@ -58,19 +58,21 @@ function validate_reduction_type(
     prior_reductions::ReductionContainer,
 )
     _reject_after_ward(prior_reductions)
-    has_radial_reduction(prior_reductions) &&
-        throw(IS.DataFormatError("Radial reduction is applied twice to the same system"))
-    has_degree_two_reduction(prior_reductions) &&
-        @warn "When applying both RadialReduction and DegreeTwoReduction, it is likely beneficial to apply RadialReduction first."
-    # IterativeTopologyReduction already applies RadialReduction internally, so a trailing
-    # standalone application would leave the container's slots ambiguous about which spec
-    # produced what and is a guaranteed no-op besides.
+    # Checked before the duplicate-application guard below: a productive IterativeTopologyReduction
+    # round legitimately stamps `radial_reduction`, so `has_radial_reduction` alone cannot tell a
+    # standalone re-application from that internal bookkeeping. IterativeTopologyReduction already
+    # applies RadialReduction internally, so a trailing standalone application would leave the
+    # container's slots ambiguous about which spec produced what and is a guaranteed no-op besides.
     has_iterative_topology_reduction(prior_reductions) && throw(
         IS.DataFormatError(
             "IterativeTopologyReduction applies RadialReduction internally; " *
             "do not combine it with a standalone application of RadialReduction.",
         ),
     )
+    has_radial_reduction(prior_reductions) &&
+        throw(IS.DataFormatError("Radial reduction is applied twice to the same system"))
+    has_degree_two_reduction(prior_reductions) &&
+        @warn "When applying both RadialReduction and DegreeTwoReduction, it is likely beneficial to apply RadialReduction first."
     return
 end
 
@@ -79,19 +81,22 @@ function validate_reduction_type(
     prior_reductions::ReductionContainer,
 )
     _reject_after_ward(prior_reductions)
-    has_degree_two_reduction(prior_reductions) &&
-        throw(
-            IS.DataFormatError("Degree two reduction is applied twice to the same system"),
-        )
-    # IterativeTopologyReduction already applies DegreeTwoReduction internally, so a trailing
-    # standalone application would leave the container's slots ambiguous about which spec
-    # produced what and is a guaranteed no-op besides.
+    # Checked before the duplicate-application guard below: a productive IterativeTopologyReduction
+    # round legitimately stamps `degree_two_reduction`, so `has_degree_two_reduction` alone cannot
+    # tell a standalone re-application from that internal bookkeeping. IterativeTopologyReduction
+    # already applies DegreeTwoReduction internally, so a trailing standalone application would
+    # leave the container's slots ambiguous about which spec produced what and is a guaranteed
+    # no-op besides.
     has_iterative_topology_reduction(prior_reductions) && throw(
         IS.DataFormatError(
             "IterativeTopologyReduction applies DegreeTwoReduction internally; " *
             "do not combine it with a standalone application of DegreeTwoReduction.",
         ),
     )
+    has_degree_two_reduction(prior_reductions) &&
+        throw(
+            IS.DataFormatError("Degree two reduction is applied twice to the same system"),
+        )
     return
 end
 

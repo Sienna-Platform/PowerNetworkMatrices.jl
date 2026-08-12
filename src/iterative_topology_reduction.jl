@@ -10,14 +10,22 @@ edges into one. Alternating to convergence is therefore strictly stronger than a
 
 Buses protected from reduction are unchanged from the primitives: the reference buses, any bus in
 `Ybus(sys; irreducible_buses=...)`, and the system-derived set each primitive computes for itself.
+The two primitives protect different things, though, and a bus surviving a round is not the same
+guarantee both ways: `RadialReduction` has no injector-awareness of its own (only reference buses
+and the caller's `irreducible_buses` are exempt from it), so an unpinned injector host that becomes
+a leaf is peeled like any other bus — its injection is remapped onto its single surviving parent
+via `reverse_bus_search_map`, not dropped, but it no longer has a distinct bus of its own. Only
+`DegreeTwoReduction`'s system-derived set keeps an injector host protected throughout the loop; a
+bus that needs to remain electrically distinct must also be passed to `irreducible_buses`.
 
 # Fields
 - `radial::RadialReduction = RadialReduction()`: the radial step's spec.
 - `degree_two::DegreeTwoReduction = DegreeTwoReduction()`: the degree-two step's spec. AC
   consumers must construct this with `reduce_reactive_power_injectors = false`.
-- `max_rounds::Int = 20`: safety bound. Convergence is monotone because each round eliminates at
-  least one bus or stops, so reaching this bound indicates a defect and raises an error rather
-  than looping.
+- `max_rounds::Int = 20`: bound on *productive* rounds (the terminal no-op round that confirms
+  convergence doesn't count against it). Convergence is monotone because each round eliminates at
+  least one bus or stops, so reaching this bound means either the topology needed more rounds than
+  allotted, `max_rounds` was set too low, or a primitive reduction has a defect.
 """
 @kwdef struct IterativeTopologyReduction <: NetworkReduction
     radial::RadialReduction = RadialReduction()

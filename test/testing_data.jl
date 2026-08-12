@@ -912,7 +912,9 @@ in addition to their loads: a load only protects a bus from `DegreeTwoReduction`
 set (`_system_derived_irreducible_buses`), and `RadialReduction` — per its docstring — protects
 only reference buses and the caller's explicit `irreducible_buses`, not injector hosts. Once bus 1
 collapses onto the direct 2-3 line, buses 2 and 3 are mutually each other's only neighbor and
-would otherwise be eliminated by `RadialReduction` as leaves.
+would otherwise be peeled by `RadialReduction` as leaves — which would merge whichever one is
+peeled, load and all, onto the other rather than dropping it, but would still erase it as a
+distinct bus.
 """
 function build_iterative_convergence_system()
     sys = PSY.System(100.0)

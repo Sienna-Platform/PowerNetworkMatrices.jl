@@ -34,6 +34,44 @@
         DegreeTwoReduction(),
         after_itr,
     )
+
+    # A productive IterativeTopologyReduction round legitimately stamps both its own slot and
+    # the primitive's, so a container coming out of a real run has both `radial_reduction` (or
+    # `degree_two_reduction`) and `iterative_topology_reduction` set on the same object. The
+    # tailored ITR message must still win over the generic duplicate-application one, which the
+    # primitive's own `has_radial_reduction`/`has_degree_two_reduction` check would otherwise
+    # reach first.
+    after_itr_and_radial = PNM.ReductionContainer(;
+        radial_reduction = RadialReduction(),
+        iterative_topology_reduction = r,
+    )
+    radial_err = try
+        PNM.validate_reduction_type(RadialReduction(), after_itr_and_radial)
+        nothing
+    catch e
+        e
+    end
+    @test radial_err isa PNM.IS.DataFormatError
+    @test occursin(
+        "IterativeTopologyReduction applies RadialReduction internally",
+        radial_err.msg,
+    )
+
+    after_itr_and_d2 = PNM.ReductionContainer(;
+        degree_two_reduction = DegreeTwoReduction(),
+        iterative_topology_reduction = r,
+    )
+    d2_err = try
+        PNM.validate_reduction_type(DegreeTwoReduction(), after_itr_and_d2)
+        nothing
+    catch e
+        e
+    end
+    @test d2_err isa PNM.IS.DataFormatError
+    @test occursin(
+        "IterativeTopologyReduction applies DegreeTwoReduction internally",
+        d2_err.msg,
+    )
 end
 
 @testset "IterativeTopologyReduction converges past a single pass" begin
@@ -43,7 +81,10 @@ end
     # buses and this caller-supplied set — see `build_iterative_convergence_system`'s docstring.
     pinned = Set([2, 3])
 
-    # Precondition: one fixed sequence leaves a degree-two bus behind.
+    # Precondition: one fixed sequence leaves a degree-two bus behind, and that bus must not be
+    # one of the two pinned buses — `leftover` alone includes buses 2 and 3 too (they sit at
+    # degree two as chain terminals), so excluding the pinned set is what actually pins this
+    # assertion to bus 1, the one this fixture exists to exercise.
     y_once = Ybus(sys; irreducible_buses = pinned,
         network_reductions = NetworkReduction[RadialReduction(), DegreeTwoReduction()])
     A_once = AdjacencyMatrix(y_once)
@@ -51,12 +92,15 @@ end
         b for b in PNM.get_bus_axis(y_once)
         if length(SparseArrays.nzrange(A_once.data, A_once.lookup[1][b])) == 2
     ]
-    @test !isempty(leftover)
+    non_pinned_leftover =
+        setdiff(leftover, PNM.get_irreducible_buses(PNM.get_network_reduction_data(y_once)))
+    @test !isempty(non_pinned_leftover)
 
-    # The iterative reduction eliminates it.
+    # The iterative reduction eliminates it, leaving exactly the two pinned buses.
     y_iter = Ybus(sys; irreducible_buses = pinned,
         network_reductions = NetworkReduction[IterativeTopologyReduction()])
     A_iter = AdjacencyMatrix(y_iter)
+    @test Set(PNM.get_bus_axis(y_iter)) == Set([2, 3])
     @test all(
         length(SparseArrays.nzrange(A_iter.data, A_iter.lookup[1][b])) > 2 ||
         b in PNM.get_irreducible_buses(PNM.get_network_reduction_data(y_iter))

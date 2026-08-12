@@ -1,28 +1,30 @@
 # The loop's entry point. Separated from the spec file so the struct can precede
 # `ReductionContainer` in the include order while this dispatch, which needs `Ybus`, follows it.
 
-# Applies one primitive without the duplicate-application guard, which is a user-input check that
-# the loop deliberately bypasses. Returns the same `ybus` object, unchanged, when the primitive
-# eliminates nothing, so identity comparison is a sound convergence test for the caller.
+# Applies one primitive, or returns `ybus` completely untouched (no `_apply_reduction` call at
+# all) when `nrd` eliminates no bus, so identity comparison is a sound convergence test for the
+# caller. The no-op check must happen on `nrd` *before* calling `_apply_reduction`, not on its
+# result afterward: `_apply_reduction` mutates the input ybus's shared `NetworkReductionData` in
+# place (it stamps the applied spec into `reductions`, unions into `irreducible_buses`, and
+# overwrites `boundary_bus_to_removed_arcs`) and returns a new `Ybus` that shares that same
+# mutated `nr`. Discarding a post-hoc "no progress" result would still leave those mutations
+# applied to state the caller keeps using on every subsequent round.
 #
-# `isempty(nrd)` alone is not that signal here: `RadialReduction`'s and `DegreeTwoReduction`'s
+# `isempty(nrd)` is not the right no-op test: `RadialReduction`'s and `DegreeTwoReduction`'s
 # `get_reduction` unconditionally stamp their own spec into `nrd.reductions` (so
 # `isempty(nrd.reductions)` is always `false`), and `RadialReduction` also always populates
 # `bus_reduction_map` with one entry per surviving bus even when none of them has anything
-# reduced onto it. Both make `isempty(nrd)` `false` on a genuine no-op round, unlike
-# `ZeroImpedanceBranchReduction`, whose `get_reduction` returns a bare default
-# `NetworkReductionData` when it finds nothing. The bus-count check below is what actually
-# distinguishes a productive round from a no-op one for the two primitives this loop alternates.
+# reduced onto it. `_apply_bus_reductions!` derives every bus it removes solely from
+# `nrd.reverse_bus_search_map`'s keys and `nrd.removed_buses`, so checking those two fields
+# directly is both necessary and sufficient for "this round eliminates no bus."
 function _apply_primitive_reduction(
     ybus::Ybus,
     sys::PSY.System,
     reduction::NetworkReduction,
 )
     nrd = get_reduction(ybus, sys, reduction)
-    isempty(nrd) && return ybus
-    reduced = _apply_reduction(ybus, nrd)
-    length(get_bus_axis(reduced)) == length(get_bus_axis(ybus)) && return ybus
-    return reduced
+    isempty(nrd.removed_buses) && isempty(nrd.reverse_bus_search_map) && return ybus
+    return _apply_reduction(ybus, nrd)
 end
 
 """
@@ -45,11 +47,15 @@ function build_reduced_ybus(
     rounds = 0
     while true
         rounds += 1
-        if rounds > get_max_rounds(reduction)
+        # `max_rounds` bounds *productive* rounds; the terminal no-op round that confirms
+        # convergence is not one of them, so the bound is on `rounds - 1`, not `rounds`.
+        if rounds - 1 > get_max_rounds(reduction)
             error(
                 "IterativeTopologyReduction did not converge within " *
-                "$(get_max_rounds(reduction)) rounds; each round eliminates at least one bus " *
-                "or ends the loop, so this indicates a defect in a primitive reduction.",
+                "$(get_max_rounds(reduction)) productive rounds; each round eliminates at " *
+                "least one bus or ends the loop, so this indicates either a topology deeper " *
+                "than `max_rounds`, a `max_rounds` set too low, or a defect in a primitive " *
+                "reduction.",
             )
         end
         before = ybus
