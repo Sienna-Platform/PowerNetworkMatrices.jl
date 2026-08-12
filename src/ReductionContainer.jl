@@ -28,8 +28,8 @@ function _reject_after_ward(prior_reductions::ReductionContainer)
 end
 
 # ZIBR is auto-applied by `Ybus(sys; ...)`; a user-supplied one would double-apply.
-_reject_zibr_in_user_reductions(::NetworkReduction) = nothing
-function _reject_zibr_in_user_reductions(::ZeroImpedanceBranchReduction)
+function _reject_zibr_in_user_reductions(r::NetworkReduction)
+    _is_zero_impedance_reduction(r) || return
     throw(
         IS.DataFormatError(
             "ZeroImpedanceBranchReduction is auto-applied during Ybus construction; " *

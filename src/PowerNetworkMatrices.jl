@@ -22,8 +22,10 @@ export VirtualMODF
 export VirtualPTDF
 export WardReduction
 export Ybus
+export ZeroImpedanceBranchReduction
 export apply_ybus_modification
 export compute_ybus_delta
+export split_zero_impedance_reduction
 export DC_ABA_Matrix_Factorized
 export DC_ABA_Matrix_Unfactorized
 export DC_PTDF_Matrix
