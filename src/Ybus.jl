@@ -1927,7 +1927,13 @@ function _make_subnetwork_axes(
         delete!(arc_subnetwork_axis, k)
     end
     for (k, values) in arc_subnetwork_axis
-        arc_subnetwork_axis[k] = union(setdiff(values, arcs_to_remove), arcs_to_add)
+        subnetwork_buses = Set(subnetwork_axes[k][1])
+        local_arcs_to_add =
+            Set(
+                arc for arc in arcs_to_add if
+                arc[1] in subnetwork_buses && arc[2] in subnetwork_buses
+            )
+        arc_subnetwork_axis[k] = union(setdiff(values, arcs_to_remove), local_arcs_to_add)
     end
     return subnetwork_axes, arc_subnetwork_axis
 end

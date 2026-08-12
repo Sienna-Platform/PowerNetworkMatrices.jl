@@ -1604,10 +1604,26 @@ end
     nrd = PNM.get_network_reduction_data(y)
     @test (1, 3) in keys(PNM.get_parallel_branch_map(nrd))
 
-    # Every arc in the reduction's arc axis must appear in exactly one subnetwork's arc list.
+    # Every arc in the reduction's arc axis must appear in at least one subnetwork's arc list.
     all_subnetwork_arcs =
         reduce(union!, values(y.arc_subnetwork_axis); init = Set{Tuple{Int, Int}}())
     for arc in PNM.get_arc_axis(nrd)
         @test arc in all_subnetwork_arcs
     end
+end
+
+@testset "arc subnetwork axis restricts composite arcs to their own island" begin
+    sys = build_multi_island_composite_arc_system()
+    y = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = PNM.get_network_reduction_data(y)
+    @test (1, 3) in keys(PNM.get_parallel_branch_map(nrd))
+
+    # Two independent reference buses must produce two distinct subnetwork keys; otherwise the
+    # fixture collapsed to one island and the test below would be vacuous.
+    @test length(y.arc_subnetwork_axis) == 2
+
+    reducing_island_arcs = y.arc_subnetwork_axis[1]
+    other_island_arcs = y.arc_subnetwork_axis[200]
+    @test (1, 3) in reducing_island_arcs
+    @test (1, 3) ∉ other_island_arcs
 end

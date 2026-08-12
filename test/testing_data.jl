@@ -852,3 +852,46 @@ function build_composite_arc_adjacency_system()
     end
     return sys
 end
+
+"""
+Same ring-plus-chain-plus-stub island as `build_composite_arc_adjacency_system` (buses
+`1,2,3,4,5,10,11`, bus 1 = REF, degree-two reduction collapses it to a composite arc `(1,3)`),
+plus a second, genuinely disconnected island (`200`-`201`, bus 200 = REF) with no shared bus and
+no degree-two chain of its own. Two reference buses give the two islands independent subnetwork
+keys, so a composite arc created in one island's reduction can be checked against both: it must
+appear in its own island's arc list and must not appear in the other island's.
+"""
+function build_multi_island_composite_arc_system()
+    sys = PSY.System(100.0)
+    buses = Dict{Int, ACBus}()
+    for n in (1, 2, 3, 4, 5, 10, 11, 200, 201)
+        b = ACBus(;
+            number = n,
+            name = "Bus $n",
+            available = true,
+            bustype = n in (1, 200) ? ACBusTypes.REF : ACBusTypes.PQ,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        PSY.add_component!(sys, b)
+        buses[n] = b
+    end
+    edges = [
+        (1, 2, 0.05), (2, 3, 0.06), (3, 4, 0.07), (4, 1, 0.08),
+        (1, 10, 0.10), (10, 11, 0.11), (11, 3, 0.12),
+        (1, 5, 0.09),
+        (200, 201, 0.15),
+    ]
+    for (f, t, x) in edges
+        arc = Arc(buses[f], buses[t])
+        PSY.add_component!(sys, arc)
+        PSY.add_component!(
+            sys,
+            Line("L_$(f)_$(t)", true, 0.0, 0.0, arc, 0.0, x,
+                (from = 0.0, to = 0.0), 100.0, (-1.6, 1.6)),
+        )
+    end
+    return sys
+end
