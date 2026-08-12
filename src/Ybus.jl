@@ -1790,8 +1790,12 @@ function _apply_composite_branch_maps!(
     # reduction's lone chains join whatever this loop has already accumulated, so the same
     # guard covers both the first reduction to populate the map and every one after it.
     for (arc, entry) in nr_new.series_branch_map
-        existing_arc =
-            _existing_arc_key(nr.direct_branch_map, nr.parallel_branch_map, arc)
+        existing_arc = _existing_arc_key(
+            nr.direct_branch_map,
+            nr.parallel_branch_map,
+            nr.series_branch_map,
+            arc,
+        )
         isnothing(existing_arc) || error(
             "Composite arc $arc from a degree-two reduction collides with the existing \
 arc $existing_arc and should have been produced as a parallel group.",
@@ -1805,19 +1809,62 @@ arc $existing_arc and should have been produced as a parallel group.",
     return
 end
 
+# A group whose members are all `BranchesSeries` groups by an earlier composite arc onto
+# another is a `BranchesParallel{BranchesSeries}`; a group formed by merging with a physical
+# branch, or any other mix of concrete types, is a `MixedBranchesParallel`.
+function _build_chain_merge_group(
+    members::Vector{PSY.ACTransmission},
+    arc_key::Tuple{Int, Int},
+)
+    member_types = unique(typeof.(members))
+    if length(member_types) == 1
+        T = only(member_types)
+        return BranchesParallel{T}(
+            T[m for m in members],
+            arc_key,
+            EMPTY_TWO_PORT,
+            false,
+        )
+    end
+    return MixedBranchesParallel(members, arc_key, EMPTY_TWO_PORT, false)
+end
+
 # File a degree-two composite arc's members in `parallel_branch_map`. The endpoints can already
-# carry an arc — a chain running parallel to a direct branch or to an existing group — in which
-# case the members join that arc under its established key, in either orientation, so the bus
-# pair keeps one forward-map entry and one arc-admittance row.
+# carry an arc — a chain running parallel to a direct branch, to an existing group, or to
+# another composite arc from an earlier degree-two pass — in which case the members join that
+# arc under its established key, in either orientation, so the bus pair keeps one forward-map
+# entry and one arc-admittance row.
 function _absorb_composite_group!(
     nr::NetworkReductionData,
     arc::Tuple{Int, Int},
     group::AbstractBranchesParallel,
 )
-    existing_arc = _existing_arc_key(nr.direct_branch_map, nr.parallel_branch_map, arc)
+    existing_arc = _existing_arc_key(
+        nr.direct_branch_map,
+        nr.parallel_branch_map,
+        nr.series_branch_map,
+        arc,
+    )
     if isnothing(existing_arc)
         nr.parallel_branch_map[arc] = group
         _register_composite_members!(nr.reverse_parallel_branch_map, arc, group)
+        return
+    end
+    # A chain landing on an earlier composite arc moves that arc from the series map into a
+    # group of chains, so it is handled separately from the physical-branch merges below: the
+    # popped entry is a `BranchesSeries`, not a single physical branch or an existing group, and
+    # it must leave `reverse_series_branch_map` rather than `reverse_direct_branch_map` or
+    # `reverse_parallel_branch_map`.
+    if haskey(nr.series_branch_map, existing_arc)
+        existing = pop!(nr.series_branch_map, existing_arc)
+        _unregister_composite_members!(nr.reverse_series_branch_map, existing)
+        chain_members = PSY.ACTransmission[existing]
+        for member in group
+            push!(chain_members, member)
+        end
+        merged = _build_chain_merge_group(chain_members, existing_arc)
+        nr.parallel_branch_map[existing_arc] = merged
+        _register_composite_members!(nr.reverse_parallel_branch_map, existing_arc, merged)
         return
     end
     members = PSY.ACTransmission[]

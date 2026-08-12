@@ -597,3 +597,79 @@ end
     @test PNM._resolve_branch_arc(nr, lines[1]) == (:series, (1, 3))
     @test PNM._resolve_branch_arc(nr, lines[4]) == (:series, (2, 4))
 end
+
+@testset "existing arc key sees a series composite arc" begin
+    sys = build_two_parallel_degree_two_chains()
+    lines = collect(get_components(Line, sys))
+    chain = PNM.BranchesSeries((1, 3))
+    PNM.add_branch!(chain, lines[1], :FromTo)
+    PNM.add_branch!(chain, lines[2], :FromTo)
+
+    direct = Dict{Tuple{Int, Int}, PSY.ACTransmission}()
+    parallel = Dict{Tuple{Int, Int}, PNM.AbstractBranchesParallel}()
+    series = Dict{Tuple{Int, Int}, PNM.BranchesSeries}((1, 3) => chain)
+
+    # Both orientations of an occupied pair must be reported, as for the other two maps.
+    @test PNM._existing_arc_key(direct, parallel, series, (1, 3)) == (1, 3)
+    @test PNM._existing_arc_key(direct, parallel, series, (3, 1)) == (1, 3)
+    @test isnothing(PNM._existing_arc_key(direct, parallel, series, (2, 4)))
+end
+
+@testset "branch map entry resolves a series composite arc as a segment" begin
+    sys = build_two_parallel_degree_two_chains()
+    lines = collect(get_components(Line, sys))
+    chain = PNM.BranchesSeries((1, 3))
+    PNM.add_branch!(chain, lines[1], :FromTo)
+    PNM.add_branch!(chain, lines[2], :FromTo)
+
+    direct = Dict{Tuple{Int, Int}, PSY.ACTransmission}()
+    parallel = Dict{Tuple{Int, Int}, PNM.AbstractBranchesParallel}()
+    series = Dict{Tuple{Int, Int}, PNM.BranchesSeries}((1, 3) => chain)
+
+    arc, entry, orientation = PNM._get_branch_map_entry(direct, parallel, series, (1, 3))
+    @test arc == (1, 3)
+    @test entry === chain
+    @test orientation == :FromTo
+
+    arc_r, entry_r, orientation_r =
+        PNM._get_branch_map_entry(direct, parallel, series, (3, 1))
+    @test arc_r == (1, 3)
+    @test entry_r === chain
+    @test orientation_r == :ToFrom
+end
+
+@testset "get_degree2_reduction routes a chain onto an existing series composite arc" begin
+    # Ring core (buses 1-4) plus a single chain 1-10-11-3. Buses 1 and 3 stay degree three or
+    # more, so they are chain terminals; only 10 and 11 are degree two.
+    edges = [
+        (1, 2, 0.0, 0.05, 0.0, 0.0), (2, 3, 0.0, 0.06, 0.0, 0.0),
+        (3, 4, 0.0, 0.07, 0.0, 0.0), (4, 1, 0.0, 0.08, 0.0, 0.0),
+        (2, 4, 0.0, 0.09, 0.0, 0.0),
+        (1, 10, 0.0, 0.10, 0.0, 0.0), (10, 11, 0.0, 0.11, 0.0, 0.0),
+        (11, 3, 0.0, 0.12, 0.0, 0.0),
+    ]
+    sys = _build_degree_two_chain_system(edges)
+    adj = AdjacencyMatrix(sys)
+    nrd = get_network_reduction_data(adj)
+
+    # Simulate the state a second degree-two pass sees after an earlier one already filed
+    # (1, 3) as a lone series chain, without routing through a second full `Ybus` build.
+    existing_series_branch_map =
+        Dict{Tuple{Int, Int}, PNM.BranchesSeries}((1, 3) => PNM.BranchesSeries((1, 3)))
+
+    series_branch_map, parallel_additions, _, removed_buses, _ =
+        PNM.get_degree2_reduction(
+            adj.data,
+            adj.lookup[2],
+            Set{Int}(),
+            PNM.get_direct_branch_map(nrd),
+            PNM.get_parallel_branch_map(nrd),
+            existing_series_branch_map,
+        )
+
+    @test removed_buses == Set([10, 11])
+    # The new chain collides with the pre-existing series composite arc, so it is routed into
+    # a parallel group rather than filed as a second series entry on the same pair.
+    @test haskey(parallel_additions, (1, 3)) || haskey(parallel_additions, (3, 1))
+    @test isempty(series_branch_map)
+end

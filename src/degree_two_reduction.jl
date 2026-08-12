@@ -26,6 +26,7 @@ function get_degree2_reduction(
     exempt_bus_positions::Set{Int},
     direct_branch_map::Dict{Tuple{Int, Int}, PSY.ACTransmission},
     parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel},
+    existing_series_branch_map::Dict{Tuple{Int, Int}, BranchesSeries},
 )
     reverse_bus_lookup = Dict(v => k for (k, v) in bus_lookup)
     chains = find_degree2_chains(data, exempt_bus_positions)
@@ -50,6 +51,7 @@ function get_degree2_reduction(
             reverse_bus_lookup,
             direct_branch_map,
             parallel_branch_map,
+            existing_series_branch_map,
         )
         key = minmax(composite_arc[1], composite_arc[2])
         push!(get!(by_endpoints, key, Vector{BranchesSeries}()), segments)
@@ -59,8 +61,12 @@ function get_degree2_reduction(
         # The seed chain's orientation is the group's arc frame, matching BranchesParallel.
         first_chain = first(siblings)
         composite_arc = get_arc_tuple(first_chain)
-        existing_arc =
-            _existing_arc_key(direct_branch_map, parallel_branch_map, composite_arc)
+        existing_arc = _existing_arc_key(
+            direct_branch_map,
+            parallel_branch_map,
+            existing_series_branch_map,
+            composite_arc,
+        )
         # A composite arc whose endpoints already carry an arc is absorbed into that arc's
         # parallel group, so a lone chain there is produced as a group as well.
         if length(siblings) == 1 && isnothing(existing_arc)
@@ -87,6 +93,7 @@ function _build_chain_segments!(
     reverse_bus_lookup::Dict{Int, Int},
     direct_branch_map::Dict{Tuple{Int, Int}, PSY.ACTransmission},
     parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel},
+    series_branch_map::Dict{Tuple{Int, Int}, BranchesSeries},
 )
     segment_numbers = [reverse_bus_lookup[x] for x in segment_ix]
     @assert composite_arc[1] == segment_numbers[1]
@@ -94,8 +101,12 @@ function _build_chain_segments!(
     segments = BranchesSeries(composite_arc)
     for ix in 1:(length(segment_numbers) - 1)
         segment_arc = (segment_numbers[ix], segment_numbers[ix + 1])
-        segment_arc, entry, orientation =
-            _get_branch_map_entry(direct_branch_map, parallel_branch_map, segment_arc)
+        segment_arc, entry, orientation = _get_branch_map_entry(
+            direct_branch_map,
+            parallel_branch_map,
+            series_branch_map,
+            segment_arc,
+        )
         add_branch!(segments, entry, orientation)
         push!(removed_arcs, segment_arc)
         ix != 1 && push!(removed_buses, segment_numbers[ix])
@@ -126,6 +137,28 @@ function _register_composite_members!(
     return
 end
 
+# Symmetric to `_register_composite_members!`: removes each physical branch a composite arc's
+# members resolve to from a reverse map, following the same nesting. Used when a composite
+# arc moves from one forward map to another, so its physical members must leave their old
+# reverse map before joining the new one.
+function _unregister_composite_members!(
+    reverse_map::Dict{PSY.ACTransmission, Tuple{Int, Int}},
+    segment::AbstractReductionAggregate,
+)
+    for member in segment
+        _unregister_composite_members!(reverse_map, member)
+    end
+    return
+end
+
+function _unregister_composite_members!(
+    reverse_map::Dict{PSY.ACTransmission, Tuple{Int, Int}},
+    segment::PSY.ACTransmission,
+)
+    delete!(reverse_map, segment)
+    return
+end
+
 function _make_reverse_series_branch_map(
     series_branch_map::Dict{Tuple{Int, Int}, BranchesSeries},
 )
@@ -137,15 +170,21 @@ function _make_reverse_series_branch_map(
 end
 
 # The key an arc between the same bus pair is already stored under, in either orientation and
-# in either of the two physical-branch maps, or `nothing` when the pair carries no arc.
-# Anti-parallel branches are separate keys, so both orientations have to be probed.
+# in any of the three physical-branch maps, or `nothing` when the pair carries no arc.
+# Anti-parallel branches are separate keys, so both orientations have to be probed. A direct
+# branch and a composite arc on the same key never coexist, but the probe order (direct,
+# parallel, series) still matters: it is what lets a direct branch win over a composite arc
+# whenever a caller depends on that priority.
 function _existing_arc_key(
     direct_branch_map::Dict{Tuple{Int, Int}, PSY.ACTransmission},
     parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel},
+    series_branch_map::Dict{Tuple{Int, Int}, BranchesSeries},
     arc::Tuple{Int, Int},
 )
     for candidate in (arc, (arc[2], arc[1]))
-        if haskey(direct_branch_map, candidate) || haskey(parallel_branch_map, candidate)
+        if haskey(direct_branch_map, candidate) ||
+           haskey(parallel_branch_map, candidate) ||
+           haskey(series_branch_map, candidate)
             return candidate
         end
     end
@@ -155,10 +194,13 @@ end
 function _get_branch_map_entry(
     direct_branch_map::Dict{Tuple{Int, Int}, PSY.ACTransmission},
     parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel},
+    series_branch_map::Dict{Tuple{Int, Int}, BranchesSeries},
     arc::Tuple{Int, Int},
 )
     reverse_arc = (arc[2], arc[1])
-    # `ThreeWindingTransformerCircuit`s are one-to-one arcs held in `direct_branch_map`.
+    # `ThreeWindingTransformerCircuit`s are one-to-one arcs held in `direct_branch_map`. A
+    # direct branch wins over a composite arc on the same key, so direct is probed first in
+    # both orientations, then parallel, then series.
     if haskey(direct_branch_map, arc)
         return arc, direct_branch_map[arc], :FromTo
     elseif haskey(direct_branch_map, reverse_arc)
@@ -167,6 +209,10 @@ function _get_branch_map_entry(
         return arc, parallel_branch_map[arc], :FromTo
     elseif haskey(parallel_branch_map, reverse_arc)
         return reverse_arc, parallel_branch_map[reverse_arc], :ToFrom
+    elseif haskey(series_branch_map, arc)
+        return arc, series_branch_map[arc], :FromTo
+    elseif haskey(series_branch_map, reverse_arc)
+        return reverse_arc, series_branch_map[reverse_arc], :ToFrom
     else
         error("Arc $arc not found in the existing network reduction mappings.")
     end

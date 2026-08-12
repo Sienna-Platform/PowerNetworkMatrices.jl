@@ -78,6 +78,7 @@ function get_reduction(A::AdjacencyMatrix, sys::PSY.System, reduction::DegreeTwo
             exempt_bus_positions,
             network_reduction_data.direct_branch_map,
             network_reduction_data.parallel_branch_map,
+            network_reduction_data.series_branch_map,
         )
     return NetworkReductionData(;
         irreducible_buses = working_set,
