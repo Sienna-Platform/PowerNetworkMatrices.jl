@@ -130,3 +130,41 @@ end
     final_irreducible = PNM.get_irreducible_buses(PNM.get_network_reduction_data(y_iter))
     @test issubset(system_derived, final_irreducible)
 end
+
+@testset "IterativeTopologyReduction is idempotent" begin
+    sys = build_iterative_convergence_system()
+    # Pin buses 2 and 3, as `build_iterative_convergence_system`'s docstring requires, so
+    # convergence lands on a genuine two-bus fixed point rather than collapsing the whole
+    # network onto the reference bus.
+    y1 = Ybus(sys; irreducible_buses = Set([2, 3]),
+        network_reductions = NetworkReduction[IterativeTopologyReduction()])
+    # A second application must find nothing: `_apply_primitive_reduction` returns the same
+    # object for an empty step, so a converged Ybus is a fixed point of both primitives. The
+    # user-supplied irreducible set lives on `y1`'s own `NetworkReductionData` and is read from
+    # there, so it does not need to be passed again here.
+    y2 = PNM._apply_primitive_reduction(y1, sys, RadialReduction())
+    @test y2 === y1
+    y3 = PNM._apply_primitive_reduction(y1, sys, DegreeTwoReduction())
+    @test y3 === y1
+end
+
+@testset "IterativeTopologyReduction matches the unreduced network" begin
+    # `build_iterative_convergence_system` needs its pinned buses repeated here: without them,
+    # `RadialReduction` — which exempts only reference buses and the caller's explicit
+    # `irreducible_buses`, never injector hosts — peels bus 3's load onto bus 2 once the hub
+    # (bus 1) collapses, eliminating an injection-hosting bus and violating the Kron oracle's
+    # injection-free precondition for every eliminated bus. The other two fixtures carry no
+    # injectors on any bus a `DegreeTwoReduction` chain interior can reach, so they need no
+    # pinning.
+    for (builder, irreducible_buses) in (
+        (build_iterative_convergence_system, Set([2, 3])),
+        (build_two_parallel_degree_two_chains, Set{Int}()),
+        (build_reversed_asymmetric_degree_two_chains, Set{Int}()),
+    )
+        sys = builder()
+        y_full = Ybus(sys)
+        y_red = Ybus(sys; irreducible_buses = irreducible_buses,
+            network_reductions = NetworkReduction[IterativeTopologyReduction()])
+        _test_kron_oracle(y_full, y_red)
+    end
+end
