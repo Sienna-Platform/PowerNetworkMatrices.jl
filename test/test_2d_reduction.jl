@@ -569,3 +569,31 @@ end
         @test !haskey(reverse_series_map, br)
     end
 end
+
+@testset "series branch maps from successive reductions merge" begin
+    sys = build_two_parallel_degree_two_chains()
+    lines = collect(get_components(Line, sys))
+
+    nr = PNM.NetworkReductionData()
+    chain_a = PNM.BranchesSeries((1, 3))
+    PNM.add_branch!(chain_a, lines[1], :FromTo)
+    PNM.add_branch!(chain_a, lines[2], :FromTo)
+    nr.series_branch_map[(1, 3)] = chain_a
+    nr.reverse_series_branch_map =
+        PNM._make_reverse_series_branch_map(nr.series_branch_map)
+
+    nr_new = PNM.NetworkReductionData()
+    chain_b = PNM.BranchesSeries((2, 4))
+    PNM.add_branch!(chain_b, lines[3], :FromTo)
+    PNM.add_branch!(chain_b, lines[4], :FromTo)
+    nr_new.series_branch_map[(2, 4)] = chain_b
+    nr_new.reverse_series_branch_map =
+        PNM._make_reverse_series_branch_map(nr_new.series_branch_map)
+
+    PNM._apply_composite_branch_maps!(nr, nr_new)
+
+    @test Set(keys(nr.series_branch_map)) == Set([(1, 3), (2, 4)])
+    # Every physical member of both chains resolves to its own composite arc.
+    @test PNM._resolve_branch_arc(nr, lines[1]) == (:series, (1, 3))
+    @test PNM._resolve_branch_arc(nr, lines[4]) == (:series, (2, 4))
+end

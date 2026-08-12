@@ -1783,25 +1783,21 @@ function _apply_composite_branch_maps!(
     nr::NetworkReductionData,
     nr_new::NetworkReductionData,
 )
-    if isempty(nr.series_branch_map)
-        # A lone chain is only filed in the series map when its endpoints carry no other arc;
-        # anything else is produced as a group and absorbed below. Checking here keeps a single
-        # bus pair from ending up with a key in two forward maps, which `get_arc_axis` would
-        # collapse to one arc and `_get_entry` would answer with only the direct branch.
-        for arc in keys(nr_new.series_branch_map)
-            existing_arc =
-                _existing_arc_key(nr.direct_branch_map, nr.parallel_branch_map, arc)
-            isnothing(existing_arc) || error(
-                "Composite arc $arc from a degree-two reduction collides with the existing \
+    # A lone chain is only filed in the series map when its endpoints carry no other arc;
+    # anything else is produced as a group and absorbed below. Checking here keeps a single
+    # bus pair from ending up with a key in two forward maps, which `get_arc_axis` would
+    # collapse to one arc and `_get_entry` would answer with only the direct branch. A later
+    # reduction's lone chains join whatever this loop has already accumulated, so the same
+    # guard covers both the first reduction to populate the map and every one after it.
+    for (arc, entry) in nr_new.series_branch_map
+        existing_arc =
+            _existing_arc_key(nr.direct_branch_map, nr.parallel_branch_map, arc)
+        isnothing(existing_arc) || error(
+            "Composite arc $arc from a degree-two reduction collides with the existing \
 arc $existing_arc and should have been produced as a parallel group.",
-            )
-        end
-        nr.series_branch_map = nr_new.series_branch_map
-        nr.reverse_series_branch_map = nr_new.reverse_series_branch_map
-    elseif !isempty(nr_new.series_branch_map)
-        error(
-            "Cannot compose series branch maps; should not apply multiple reductions that generate series branch maps",
         )
+        nr.series_branch_map[arc] = entry
+        _register_composite_members!(nr.reverse_series_branch_map, arc, entry)
     end
     for (arc, group) in nr_new.parallel_branch_map
         _absorb_composite_group!(nr, arc, group)
