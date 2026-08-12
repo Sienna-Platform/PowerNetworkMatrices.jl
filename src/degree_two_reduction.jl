@@ -171,10 +171,10 @@ end
 
 # The key an arc between the same bus pair is already stored under, in either orientation and
 # in any of the three physical-branch maps, or `nothing` when the pair carries no arc.
-# Anti-parallel branches are separate keys, so both orientations have to be probed. A direct
-# branch and a composite arc on the same key never coexist, but the probe order (direct,
-# parallel, series) still matters: it is what lets a direct branch win over a composite arc
-# whenever a caller depends on that priority.
+# Anti-parallel branches are separate keys, so both orientations have to be probed; each
+# candidate is checked against all three maps together, so the only ordering this function
+# exposes is forward before reverse. Which map answered is not observable here — a caller that
+# needs that distinction (map priority, not just orientation) uses `_get_branch_map_entry`.
 function _existing_arc_key(
     direct_branch_map::Dict{Tuple{Int, Int}, PSY.ACTransmission},
     parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel},

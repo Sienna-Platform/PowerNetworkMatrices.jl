@@ -673,3 +673,70 @@ end
     @test haskey(parallel_additions, (1, 3)) || haskey(parallel_additions, (3, 1))
     @test isempty(series_branch_map)
 end
+
+@testset "_absorb_composite_group! merges a chain onto an existing series composite arc" begin
+    # Homogeneous arm: a lone series chain already established on (1, 3) absorbs a second
+    # chain arriving in the opposite orientation, (3, 1), so the merge must both keep the
+    # established key and combine two `BranchesSeries` into a `BranchesParallel{BranchesSeries}`.
+    sys = build_two_parallel_degree_two_chains()
+    lines = collect(get_components(Line, sys))
+
+    nr = PNM.NetworkReductionData()
+    chain_a = PNM.BranchesSeries((1, 3))
+    PNM.add_branch!(chain_a, lines[1], :FromTo)
+    PNM.add_branch!(chain_a, lines[2], :FromTo)
+    nr.series_branch_map[(1, 3)] = chain_a
+    nr.reverse_series_branch_map =
+        PNM._make_reverse_series_branch_map(nr.series_branch_map)
+
+    nr_new = PNM.NetworkReductionData()
+    chain_b = PNM.BranchesSeries((3, 1))
+    PNM.add_branch!(chain_b, lines[3], :FromTo)
+    PNM.add_branch!(chain_b, lines[4], :FromTo)
+    nr_new.parallel_branch_map[(3, 1)] = PNM.BranchesParallel([chain_b])
+
+    PNM._apply_composite_branch_maps!(nr, nr_new)
+
+    @test isempty(nr.series_branch_map)
+    @test isempty(nr.reverse_series_branch_map)
+    @test Set(keys(nr.parallel_branch_map)) == Set([(1, 3)])
+    merged = nr.parallel_branch_map[(1, 3)]
+    @test merged isa PNM.BranchesParallel{PNM.BranchesSeries}
+    @test PNM.get_arc_tuple(merged, nr) == (1, 3)
+    for line in (lines[1], lines[2], lines[3], lines[4])
+        @test PNM._resolve_branch_arc(nr, line) == (:parallel, (1, 3))
+    end
+end
+
+@testset "_absorb_composite_group! merges physical branches onto an existing series composite arc" begin
+    # Mixed arm: a lone series chain already established on (1, 3) absorbs a group of plain
+    # physical branches discovered on the same pair by a later pass, so the merge must combine
+    # a `BranchesSeries` with `Line`s into a `MixedBranchesParallel`.
+    sys = build_two_parallel_degree_two_chains()
+    lines = collect(get_components(Line, sys))
+
+    nr = PNM.NetworkReductionData()
+    chain_a = PNM.BranchesSeries((1, 3))
+    PNM.add_branch!(chain_a, lines[1], :FromTo)
+    PNM.add_branch!(chain_a, lines[2], :FromTo)
+    nr.series_branch_map[(1, 3)] = chain_a
+    nr.reverse_series_branch_map =
+        PNM._make_reverse_series_branch_map(nr.series_branch_map)
+
+    nr_new = PNM.NetworkReductionData()
+    nr_new.parallel_branch_map[(1, 3)] = PNM.BranchesParallel([lines[3], lines[4]])
+
+    PNM._apply_composite_branch_maps!(nr, nr_new)
+
+    @test isempty(nr.series_branch_map)
+    @test isempty(nr.reverse_series_branch_map)
+    @test Set(keys(nr.parallel_branch_map)) == Set([(1, 3)])
+    merged = nr.parallel_branch_map[(1, 3)]
+    @test merged isa PNM.MixedBranchesParallel
+    @test PNM.get_arc_tuple(merged, nr) == (1, 3)
+    @test count(m -> m isa PNM.BranchesSeries, merged) == 1
+    @test count(m -> m isa Line, merged) == 2
+    for line in (lines[1], lines[2], lines[3], lines[4])
+        @test PNM._resolve_branch_arc(nr, line) == (:parallel, (1, 3))
+    end
+end

@@ -1809,9 +1809,10 @@ arc $existing_arc and should have been produced as a parallel group.",
     return
 end
 
-# A group whose members are all `BranchesSeries` groups by an earlier composite arc onto
-# another is a `BranchesParallel{BranchesSeries}`; a group formed by merging with a physical
-# branch, or any other mix of concrete types, is a `MixedBranchesParallel`.
+# Build the merged group for members landing on an existing composite arc. A merge of chains
+# only (every member a `BranchesSeries`) is homogeneous, so it is a `BranchesParallel{BranchesSeries}`;
+# a merge that also includes a physical branch, or any other mix of concrete types, is a
+# `MixedBranchesParallel`.
 function _build_chain_merge_group(
     members::Vector{PSY.ACTransmission},
     arc_key::Tuple{Int, Int},
@@ -1850,43 +1851,48 @@ function _absorb_composite_group!(
         _register_composite_members!(nr.reverse_parallel_branch_map, arc, group)
         return
     end
-    # A chain landing on an earlier composite arc moves that arc from the series map into a
-    # group of chains, so it is handled separately from the physical-branch merges below: the
-    # popped entry is a `BranchesSeries`, not a single physical branch or an existing group, and
-    # it must leave `reverse_series_branch_map` rather than `reverse_direct_branch_map` or
-    # `reverse_parallel_branch_map`.
-    if haskey(nr.series_branch_map, existing_arc)
-        existing = pop!(nr.series_branch_map, existing_arc)
-        _unregister_composite_members!(nr.reverse_series_branch_map, existing)
-        chain_members = PSY.ACTransmission[existing]
-        for member in group
-            push!(chain_members, member)
+    # Direct and parallel are probed, and popped from, before series — matching the priority
+    # `_existing_arc_key`/`_get_branch_map_entry` document — so a broken invariant that left a
+    # key live in two forward maps would surface here (both pops would fire) rather than have
+    # this function quietly prefer the series entry and leave a stale direct or parallel one.
+    if haskey(nr.direct_branch_map, existing_arc) ||
+       haskey(nr.parallel_branch_map, existing_arc)
+        members = PSY.ACTransmission[]
+        if haskey(nr.parallel_branch_map, existing_arc)
+            for member in pop!(nr.parallel_branch_map, existing_arc)
+                push!(members, member)
+            end
+        else
+            existing = pop!(nr.direct_branch_map, existing_arc)
+            delete!(nr.reverse_direct_branch_map, existing)
+            push!(members, existing)
         end
-        merged = _build_chain_merge_group(chain_members, existing_arc)
+        for member in group
+            push!(members, member)
+        end
+        # The merged set always mixes a chain with at least one physical branch, so
+        # `MixedBranchesParallel` is the container, and it is built here rather than through
+        # `_make_parallel_branch_pair` / `_push_parallel_branch!` because their mixed-type arms emit
+        # a `@warn` about suspect input data, which a chain sharing an arc with a branch is not.
+        # `arc_key` comes from the arc rather than from a member, because the members can disagree on
+        # orientation.
+        merged = MixedBranchesParallel(members, existing_arc, EMPTY_TWO_PORT, false)
         nr.parallel_branch_map[existing_arc] = merged
         _register_composite_members!(nr.reverse_parallel_branch_map, existing_arc, merged)
         return
     end
-    members = PSY.ACTransmission[]
-    if haskey(nr.parallel_branch_map, existing_arc)
-        for member in pop!(nr.parallel_branch_map, existing_arc)
-            push!(members, member)
-        end
-    else
-        existing = pop!(nr.direct_branch_map, existing_arc)
-        delete!(nr.reverse_direct_branch_map, existing)
-        push!(members, existing)
-    end
+    # A chain landing on an earlier composite arc moves that arc from the series map into a
+    # group of chains, so it is handled separately from the physical-branch merges above: the
+    # popped entry is a `BranchesSeries`, not a single physical branch or an existing group, and
+    # it must leave `reverse_series_branch_map` rather than `reverse_direct_branch_map` or
+    # `reverse_parallel_branch_map`.
+    existing = pop!(nr.series_branch_map, existing_arc)
+    _unregister_composite_members!(nr.reverse_series_branch_map, existing)
+    chain_members = PSY.ACTransmission[existing]
     for member in group
-        push!(members, member)
+        push!(chain_members, member)
     end
-    # The merged set always mixes a chain with at least one physical branch, so
-    # `MixedBranchesParallel` is the container, and it is built here rather than through
-    # `_make_parallel_branch_pair` / `_push_parallel_branch!` because their mixed-type arms emit
-    # a `@warn` about suspect input data, which a chain sharing an arc with a branch is not.
-    # `arc_key` comes from the arc rather than from a member, because the members can disagree on
-    # orientation.
-    merged = MixedBranchesParallel(members, existing_arc, EMPTY_TWO_PORT, false)
+    merged = _build_chain_merge_group(chain_members, existing_arc)
     nr.parallel_branch_map[existing_arc] = merged
     _register_composite_members!(nr.reverse_parallel_branch_map, existing_arc, merged)
     return
