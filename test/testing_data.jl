@@ -959,3 +959,56 @@ function build_iterative_convergence_system()
     end
     return sys
 end
+
+"""
+A star with a REF hub (bus 1) and two loaded leaves (buses 2 and 3), no degree-two chain
+anywhere. Both leaves are degree one from the start, so `RadialReduction` peels both in its very
+first round, leaving the hub alone; no bus is ever at degree two, so `DegreeTwoReduction` never
+removes anything, on any round.
+
+Exists to exercise `DegreeTwoReduction`'s `get_reduction` running, and computing a real
+`user ∪ system_derived` exempt set (`{2, 3}`, since both leaves carry loads), on a round that
+eliminates no bus — a case `build_iterative_convergence_system` never reaches, since its
+`DegreeTwoReduction` step fires productively in every round the loop takes. Without folding a
+no-op round's `irreducible_buses` into the accumulated `NetworkReductionData`,
+`get_irreducible_buses` after the full iterative reduction would be missing `{2, 3}` entirely,
+since `RadialReduction` never contributes anything beyond the caller's own `irreducible_buses`
+(empty here).
+"""
+function build_radial_only_tree_system()
+    sys = PSY.System(100.0)
+    buses = Dict{Int, ACBus}()
+    for n in (1, 2, 3)
+        b = ACBus(;
+            number = n,
+            name = "Bus $n",
+            available = true,
+            bustype = n == 1 ? ACBusTypes.REF : ACBusTypes.PQ,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        PSY.add_component!(sys, b)
+        buses[n] = b
+    end
+    edges = [(1, 2, 0.10), (1, 3, 0.15)]
+    for (f, t, x) in edges
+        arc = Arc(buses[f], buses[t])
+        PSY.add_component!(sys, arc)
+        PSY.add_component!(
+            sys,
+            Line("L_$(f)_$(t)", true, 0.0, 0.0, arc, 0.0, x,
+                (from = 0.0, to = 0.0), 100.0, (-1.6, 1.6)),
+        )
+    end
+    for n in (2, 3)
+        PSY.add_component!(
+            sys,
+            PowerLoad(; name = "D$n", available = true, bus = buses[n],
+                active_power = 0.5, reactive_power = 0.0, base_power = 100.0,
+                max_active_power = 0.5, max_reactive_power = 0.0),
+        )
+    end
+    return sys
+end

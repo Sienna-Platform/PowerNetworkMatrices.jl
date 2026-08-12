@@ -108,3 +108,25 @@ end
     )
     @test length(PNM.get_bus_axis(y_iter)) < length(PNM.get_bus_axis(y_once))
 end
+
+@testset "IterativeTopologyReduction accumulates irreducible_buses on a no-op round" begin
+    sys = build_radial_only_tree_system()
+
+    # Precondition: DegreeTwoReduction genuinely finds nothing to do, even after RadialReduction
+    # has already peeled every leaf. Without this, the test below would prove nothing.
+    y_radial_only = Ybus(sys; network_reductions = NetworkReduction[RadialReduction()])
+    nrd_d2 = PNM.get_reduction(y_radial_only, sys, DegreeTwoReduction())
+    @test isempty(nrd_d2.removed_buses)
+
+    # DegreeTwoReduction's own exempt set is the system-derived complement, computed independently
+    # of whether it ever fires productively.
+    system_derived = PNM._system_derived_irreducible_buses(sys, true)
+    @test !isempty(system_derived)
+
+    # The no-op DegreeTwoReduction round it takes every iteration must still fold its exempt set
+    # into the accumulated NetworkReductionData, even though `_apply_reduction` is never called
+    # for it on this fixture.
+    y_iter = Ybus(sys; network_reductions = NetworkReduction[IterativeTopologyReduction()])
+    final_irreducible = PNM.get_irreducible_buses(PNM.get_network_reduction_data(y_iter))
+    @test issubset(system_derived, final_irreducible)
+end

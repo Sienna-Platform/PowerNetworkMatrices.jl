@@ -17,13 +17,27 @@
 # reduced onto it. `_apply_bus_reductions!` derives every bus it removes solely from
 # `nrd.reverse_bus_search_map`'s keys and `nrd.removed_buses`, so checking those two fields
 # directly is both necessary and sufficient for "this round eliminates no bus."
+#
+# A no-op round still ran `get_reduction` and computed a real exempt set (`DegreeTwoReduction`'s
+# `nrd.irreducible_buses` is `user ∪ system_derived` regardless of whether anything was found to
+# reduce), so it must still be folded into the accumulated `NetworkReductionData` even though
+# `_apply_reduction` is skipped — otherwise a topology where `DegreeTwoReduction` never once
+# fires productively (a pure tree, radial-only peeling) would leave the final
+# `irreducible_buses` short of the system-derived complement, which every prior round applied
+# unconditionally via `_apply_reduction`'s own `union!`.
 function _apply_primitive_reduction(
     ybus::Ybus,
     sys::PSY.System,
     reduction::NetworkReduction,
 )
     nrd = get_reduction(ybus, sys, reduction)
-    isempty(nrd.removed_buses) && isempty(nrd.reverse_bus_search_map) && return ybus
+    if isempty(nrd.removed_buses) && isempty(nrd.reverse_bus_search_map)
+        union!(
+            get_irreducible_buses(get_network_reduction_data(ybus)),
+            nrd.irreducible_buses,
+        )
+        return ybus
+    end
     return _apply_reduction(ybus, nrd)
 end
 
