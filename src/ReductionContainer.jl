@@ -11,6 +11,7 @@ system-derived complement on top.
     radial_reduction::Union{Nothing, RadialReduction} = nothing
     degree_two_reduction::Union{Nothing, DegreeTwoReduction} = nothing
     ward_reduction::Union{Nothing, WardReduction} = nothing
+    iterative_topology_reduction::Union{Nothing, IterativeTopologyReduction} = nothing
 end
 
 get_user_irreducible_buses(rb::ReductionContainer) = rb.user_irreducible_buses
@@ -20,6 +21,8 @@ has_zero_impedance_reduction(rb::ReductionContainer) =
 has_radial_reduction(rb::ReductionContainer) = !isnothing(rb.radial_reduction)
 has_degree_two_reduction(rb::ReductionContainer) = !isnothing(rb.degree_two_reduction)
 has_ward_reduction(rb::ReductionContainer) = !isnothing(rb.ward_reduction)
+has_iterative_topology_reduction(rb::ReductionContainer) =
+    !isnothing(rb.iterative_topology_reduction)
 
 function _reject_after_ward(prior_reductions::ReductionContainer)
     has_ward_reduction(prior_reductions) &&
@@ -83,6 +86,30 @@ function validate_reduction_type(
     return
 end
 
+function validate_reduction_type(
+    ::IterativeTopologyReduction,
+    prior_reductions::ReductionContainer,
+)
+    _reject_after_ward(prior_reductions)
+    has_iterative_topology_reduction(prior_reductions) && throw(
+        IS.DataFormatError(
+            "Iterative topology reduction is applied twice to the same system",
+        ),
+    )
+    # It applies both primitives internally, so interleaving it with a standalone application of
+    # either leaves the container's slots ambiguous about which spec produced what.
+    (
+        has_radial_reduction(prior_reductions) ||
+        has_degree_two_reduction(prior_reductions)
+    ) && throw(
+        IS.DataFormatError(
+            "IterativeTopologyReduction applies RadialReduction and DegreeTwoReduction " *
+            "internally; do not combine it with a standalone application of either.",
+        ),
+    )
+    return
+end
+
 # `user_irreducible_buses` and `zero_impedance_reduction` are configuration, seeded once
 # at Ybus construction; per-reduction steps never update them.
 function add_reduction!(r1::ReductionContainer, r2::ReductionContainer)
@@ -94,6 +121,9 @@ function add_reduction!(r1::ReductionContainer, r2::ReductionContainer)
     end
     if has_ward_reduction(r2)
         r1.ward_reduction = r2.ward_reduction
+    end
+    if has_iterative_topology_reduction(r2)
+        r1.iterative_topology_reduction = r2.iterative_topology_reduction
     end
 end
 
@@ -118,6 +148,9 @@ function Base.isempty(rb::ReductionContainer)
     if !isnothing(rb.ward_reduction)
         return false
     end
+    if !isnothing(rb.iterative_topology_reduction)
+        return false
+    end
     return true
 end
 
@@ -127,5 +160,6 @@ function Base.empty!(rb::ReductionContainer)
     rb.radial_reduction = nothing
     rb.degree_two_reduction = nothing
     rb.ward_reduction = nothing
+    rb.iterative_topology_reduction = nothing
     return rb
 end

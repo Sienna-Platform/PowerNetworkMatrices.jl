@@ -12,6 +12,7 @@ export ContingencySpec
 export NetworkModification
 export DegreeTwoReduction
 export IncidenceMatrix
+export IterativeTopologyReduction
 export LODF
 export NetworkReduction
 export NetworkReductionData
@@ -127,6 +128,7 @@ include("NetworkReduction.jl")
 include("radial_reduction.jl")
 include("degree_two_reduction.jl")
 include("ward_reduction.jl")
+include("iterative_topology_reduction.jl")
 # ZIBR's spec marker must precede ReductionContainer (which dispatches
 # `validate_reduction_type` on it). Its `get_reduction(::Ybus, ...)` lives in
 # `apply_zero_impedance_reduction.jl`, included after `Ybus.jl` below.
