@@ -21,4 +21,17 @@
     # Rejected when a primitive it owns has already been applied, so the two cannot interleave.
     after_d2 = PNM.ReductionContainer(; degree_two_reduction = DegreeTwoReduction())
     @test_throws PNM.IS.DataFormatError PNM.validate_reduction_type(r, after_d2)
+
+    # Rejected in reverse order too: a standalone primitive after IterativeTopologyReduction
+    # is a guaranteed no-op (the fixed point already includes it) and would leave the
+    # container's slots ambiguous about which spec produced what.
+    after_itr = PNM.ReductionContainer(; iterative_topology_reduction = r)
+    @test_throws PNM.IS.DataFormatError PNM.validate_reduction_type(
+        RadialReduction(),
+        after_itr,
+    )
+    @test_throws PNM.IS.DataFormatError PNM.validate_reduction_type(
+        DegreeTwoReduction(),
+        after_itr,
+    )
 end

@@ -62,6 +62,15 @@ function validate_reduction_type(
         throw(IS.DataFormatError("Radial reduction is applied twice to the same system"))
     has_degree_two_reduction(prior_reductions) &&
         @warn "When applying both RadialReduction and DegreeTwoReduction, it is likely beneficial to apply RadialReduction first."
+    # IterativeTopologyReduction already applies RadialReduction internally, so a trailing
+    # standalone application would leave the container's slots ambiguous about which spec
+    # produced what and is a guaranteed no-op besides.
+    has_iterative_topology_reduction(prior_reductions) && throw(
+        IS.DataFormatError(
+            "IterativeTopologyReduction applies RadialReduction internally; " *
+            "do not combine it with a standalone application of RadialReduction.",
+        ),
+    )
     return
 end
 
@@ -74,6 +83,15 @@ function validate_reduction_type(
         throw(
             IS.DataFormatError("Degree two reduction is applied twice to the same system"),
         )
+    # IterativeTopologyReduction already applies DegreeTwoReduction internally, so a trailing
+    # standalone application would leave the container's slots ambiguous about which spec
+    # produced what and is a guaranteed no-op besides.
+    has_iterative_topology_reduction(prior_reductions) && throw(
+        IS.DataFormatError(
+            "IterativeTopologyReduction applies DegreeTwoReduction internally; " *
+            "do not combine it with a standalone application of DegreeTwoReduction.",
+        ),
+    )
     return
 end
 

@@ -9,6 +9,8 @@ Concrete implementations include:
 - [`RadialReduction`](@ref): Eliminates radial (dangling) buses and branches
 - [`DegreeTwoReduction`](@ref): Eliminates buses with exactly two connections
 - [`WardReduction`](@ref): Reduces external buses while preserving study bus behavior
+- [`IterativeTopologyReduction`](@ref): Applies `RadialReduction` and `DegreeTwoReduction`
+  in alternation until convergence
 """
 abstract type NetworkReduction end
 
