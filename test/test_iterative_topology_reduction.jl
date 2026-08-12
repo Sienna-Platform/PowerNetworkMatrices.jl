@@ -35,3 +35,32 @@
         after_itr,
     )
 end
+
+@testset "IterativeTopologyReduction converges past a single pass" begin
+    sys = build_iterative_convergence_system()
+    # Buses 2 and 3 must survive every round. Their loads pin them against
+    # `DegreeTwoReduction`'s system-derived set, but `RadialReduction` only exempts reference
+    # buses and this caller-supplied set — see `build_iterative_convergence_system`'s docstring.
+    pinned = Set([2, 3])
+
+    # Precondition: one fixed sequence leaves a degree-two bus behind.
+    y_once = Ybus(sys; irreducible_buses = pinned,
+        network_reductions = NetworkReduction[RadialReduction(), DegreeTwoReduction()])
+    A_once = AdjacencyMatrix(y_once)
+    leftover = [
+        b for b in PNM.get_bus_axis(y_once)
+        if length(SparseArrays.nzrange(A_once.data, A_once.lookup[1][b])) == 2
+    ]
+    @test !isempty(leftover)
+
+    # The iterative reduction eliminates it.
+    y_iter = Ybus(sys; irreducible_buses = pinned,
+        network_reductions = NetworkReduction[IterativeTopologyReduction()])
+    A_iter = AdjacencyMatrix(y_iter)
+    @test all(
+        length(SparseArrays.nzrange(A_iter.data, A_iter.lookup[1][b])) > 2 ||
+        b in PNM.get_irreducible_buses(PNM.get_network_reduction_data(y_iter))
+        for b in PNM.get_bus_axis(y_iter)
+    )
+    @test length(PNM.get_bus_axis(y_iter)) < length(PNM.get_bus_axis(y_once))
+end

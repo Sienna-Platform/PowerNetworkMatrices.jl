@@ -895,3 +895,65 @@ function build_multi_island_composite_arc_system()
     end
     return sys
 end
+
+"""
+Hub bus 1 joined to bus 2 by two parallel degree-two chains (via 10 and via 11) and to bus 3 by
+two more (via 20 and via 21), with a direct line 2-3. Bus 2 is the reference bus; buses 2 and 3
+carry loads.
+
+One `[RadialReduction(), DegreeTwoReduction()]` round groups each sibling pair into a single arc,
+which drops bus 1 from degree four to degree two — a bus that only a further round can eliminate.
+
+Bus 1, not bus 2 or 3, is the hub meant to be eliminated, so it must not be the reference bus:
+`DegreeTwoReduction` has no reference-bus protection of its own (only `RadialReduction` exempts
+`ref_bus_positions`), so a REF hub would be reduced away by degree-two absorption, leaving the
+network with no reference bus at all. Buses 2 and 3 need `Ybus(sys; irreducible_buses=(2, 3))`
+in addition to their loads: a load only protects a bus from `DegreeTwoReduction`'s system-derived
+set (`_system_derived_irreducible_buses`), and `RadialReduction` — per its docstring — protects
+only reference buses and the caller's explicit `irreducible_buses`, not injector hosts. Once bus 1
+collapses onto the direct 2-3 line, buses 2 and 3 are mutually each other's only neighbor and
+would otherwise be eliminated by `RadialReduction` as leaves.
+"""
+function build_iterative_convergence_system()
+    sys = PSY.System(100.0)
+    buses = Dict{Int, ACBus}()
+    for n in (1, 2, 3, 10, 11, 20, 21)
+        b = ACBus(;
+            number = n,
+            name = "Bus $n",
+            available = true,
+            bustype = n == 2 ? ACBusTypes.REF : ACBusTypes.PQ,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        PSY.add_component!(sys, b)
+        buses[n] = b
+    end
+    edges = [
+        (1, 10, 0.10), (10, 2, 0.11),
+        (1, 11, 0.12), (11, 2, 0.13),
+        (1, 20, 0.20), (20, 3, 0.21),
+        (1, 21, 0.22), (21, 3, 0.23),
+        (2, 3, 0.30),
+    ]
+    for (f, t, x) in edges
+        arc = Arc(buses[f], buses[t])
+        PSY.add_component!(sys, arc)
+        PSY.add_component!(
+            sys,
+            Line("L_$(f)_$(t)", true, 0.0, 0.0, arc, 0.0, x,
+                (from = 0.0, to = 0.0), 100.0, (-1.6, 1.6)),
+        )
+    end
+    for n in (2, 3)
+        PSY.add_component!(
+            sys,
+            PowerLoad(; name = "D$n", available = true, bus = buses[n],
+                active_power = 0.5, reactive_power = 0.0, base_power = 100.0,
+                max_active_power = 0.5, max_reactive_power = 0.0),
+        )
+    end
+    return sys
+end
