@@ -10,10 +10,13 @@ LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 Pardiso = "46dd5b70-b6fb-5a00-ae2d-e8fea33afaf2"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
+PowerCoreOpenAPIModels = "b7b40286-e793-417d-a9a0-b1583e4da1cb"
 PowerFlowFileParser = "bed98974-b02e-5e2f-9ee0-a103f5c450dd"
 PowerNetworkMatrices = "bed98974-b02a-5e2f-9fe0-a103f5c450dd"
+PowerOperationsOpenAPIModels = "a372b6d7-45a2-44c2-8199-6a724b72e8ff"
 PowerSystemCaseBuilder = "f00506e0-b84f-492a-93c2-c0a9afc4364e"
 PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
+PowerTableDataParser = "2b750c0e-0bff-11f1-9200-1befd75df6be"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 ReTest = "e0db7c4e-2690-44b9-bad6-7687da720f89"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
@@ -25,6 +28,13 @@ InfrastructureSystems = {rev = "IS4", url = "https://github.com/NREL-Sienna/Infr
 PowerFlowFileParser = {rev = "psy6", url = "https://github.com/NREL-Sienna/PowerFlowFileParser.jl"}
 PowerSystemCaseBuilder = {rev = "psy6", url = "https://github.com/NREL-Sienna/PowerSystemCaseBuilder.jl"}
 PowerSystems = {rev = "psy6", url = "https://github.com/NREL-Sienna/PowerSystems.jl"}
+# PSY's own [sources] pins for these are ignored once PSY is a dependency rather than the
+# root project; the test env needs its own pins so Pkg can resolve PSY's unregistered OpenAPI deps.
+PowerCoreOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "main", subdir = "PowerCoreOpenAPIModels.jl"}
+PowerOperationsOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "main", subdir = "PowerOperationsOpenAPIModels.jl"}
+# PSCB's own [sources] pin for this is ignored once PSCB is a dependency rather than the root
+# project; the test env needs its own pin so Pkg can resolve PSCB's unregistered parser dep.
+PowerTableDataParser = {url = "https://github.com/NLR-Sienna/PowerTableDataParser.jl.git", rev = "psy6"}
 
 [compat]
 julia = "^1.10"
