@@ -15,9 +15,9 @@
     # auto-applied ZeroImpedanceBranchReduction to compare the unreduced matrices.
     ybus_pnm = Ybus(
         sys;
-        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+        network_reductions = PNM.NetworkReduction[PNM.ZeroImpedanceBranchReduction(;
             susceptance_threshold = Inf,
-        ),
+        )],
     )
     @test nnz(ybus_pnm.data) ==
           length(filter(!iszero, matpower_vals_re .+ im .* matpower_vals_im))
@@ -41,9 +41,9 @@ end
     # auto-applied ZeroImpedanceBranchReduction to compare the unreduced matrices.
     ybus_pnm = Ybus(
         sys;
-        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+        network_reductions = PNM.NetworkReduction[PNM.ZeroImpedanceBranchReduction(;
             susceptance_threshold = Inf,
-        ),
+        )],
     )
     @test nnz(ybus_pnm.data) ==
           length(filter(!iszero, matpower_vals_re .+ im .* matpower_vals_im))
@@ -80,9 +80,9 @@ end
     # auto-applied ZeroImpedanceBranchReduction to compare the unreduced matrices.
     ybus_pnm = Ybus(
         sys;
-        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+        network_reductions = PNM.NetworkReduction[PNM.ZeroImpedanceBranchReduction(;
             susceptance_threshold = Inf,
-        ),
+        )],
     )
     @test nnz(ybus_pnm.data) ==
           length(filter(!iszero, matpower_vals_re .+ im .* matpower_vals_im))

@@ -136,9 +136,9 @@ end
     Ybus_pnm = Ybus(
         sys;
         include_constant_impedance_loads = true,
-        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+        network_reductions = PNM.NetworkReduction[PNM.ZeroImpedanceBranchReduction(;
             susceptance_threshold = Inf,
-        ),
+        )],
     )
     nr = Ybus_pnm.network_reduction_data
     ref_bus_numbers = [

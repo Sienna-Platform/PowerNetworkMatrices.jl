@@ -203,11 +203,10 @@ function VirtualMODF(
     irreducible_buses = Set{Int}(irreducible_buses)
     resolve_linear_solver(linear_solver)
 
-    # ZIBR is auto-applied during Ybus construction; reject it in user reductions since
-    # those are applied manually below.
-    for r in network_reductions
-        _reject_zibr_in_user_reductions(r)
-    end
+    # Split so the zero-impedance entry reaches `Ybus` (which applies it first) instead of
+    # the manual loop below, which would apply it a second time.
+    network_reductions, zero_impedance_reduction =
+        _split_zero_impedance_reduction(network_reductions)
 
     # Outage/monitored buses are auto-protected so contingency branches survive
     # reduction. Collect them from `sys` before building the base Ybus and fold
@@ -220,7 +219,12 @@ function VirtualMODF(
 
     # Build the base Ybus with the combined irreducible set (zero-impedance reduction
     # auto-applied here honors it); this is the starting point for further reductions.
-    Ymatrix = Ybus(sys; irreducible_buses = applied_irreducible, kwargs...)
+    Ymatrix = Ybus(
+        sys;
+        irreducible_buses = applied_irreducible,
+        network_reductions = NetworkReduction[zero_impedance_reduction],
+        kwargs...,
+    )
 
     # radial/degree-two read the container's irreducible set (already seeded above via
     # `Ybus`'s `irreducible_buses`), while Ward reads `study_buses` (augmented separately).

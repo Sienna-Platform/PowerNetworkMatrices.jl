@@ -761,14 +761,11 @@ function Ybus(
     make_arc_admittance_matrices::Bool = false,
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
     irreducible_buses = Set{Int}(),
-    zero_impedance_reduction::ZeroImpedanceBranchReduction = ZeroImpedanceBranchReduction(),
     include_constant_impedance_loads = true,
     subnetwork_algorithm = iterative_union_find,
 )
-    # ZIBR is auto-applied below; reject it in user reductions to avoid double-apply.
-    for r in network_reductions
-        _reject_zibr_in_user_reductions(r)
-    end
+    network_reductions, zero_impedance_reduction =
+        _split_zero_impedance_reduction(network_reductions)
     user_irreducible = Set{Int}(irreducible_buses)
     ref_bus_numbers = Set{Int}()
     # Stored angles of the swing (REF) buses, used to pick the smallest-angle swing as the
@@ -928,8 +925,8 @@ function Ybus(
         arc_admittance_to_from,
     )
     ybus = build_reduced_ybus(ybus, sys, zero_impedance_reduction)
-    for nr in network_reductions
-        ybus = build_reduced_ybus(ybus, sys, nr)
+    for reduction in network_reductions
+        ybus = build_reduced_ybus(ybus, sys, reduction)
     end
     return ybus
 end

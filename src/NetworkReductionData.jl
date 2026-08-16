@@ -407,37 +407,20 @@ Get the reduction container from NetworkReductionData.
 """
 get_reductions(rb::NetworkReductionData) = rb.reductions
 
-_push_applied_reduction!(::Vector{NetworkReduction}, ::Nothing) = nothing
-
-function _push_applied_reduction!(
-    applied::Vector{NetworkReduction},
-    reduction::NetworkReduction,
-)
-    push!(applied, reduction)
-    return
-end
-
 """
     get_applied_reductions(rb::NetworkReductionData)
 
 The reductions `rb` was built with, in the order `Ybus` must re-apply them to reproduce it:
-zero-impedance first, then radial, degree-two and Ward (Ward must be last).
-
-The zero-impedance entry is included so a non-default one round-trips. `Ybus` takes it
-through its own kwarg rather than in `network_reductions`, so split it back out with
-[`split_zero_impedance_reduction`](@ref) before rebuilding.
+zero-impedance first, then radial, degree-two and Ward (Ward must be last). Rebuild with
+`Ybus(sys; network_reductions = get_applied_reductions(rb))`.
 """
 function get_applied_reductions(rb::NetworkReductionData)
-    container = get_reductions(rb)
+    c = get_reductions(rb)
     applied = NetworkReduction[]
-    for reduction in (
-        container.zero_impedance_reduction,
-        container.radial_reduction,
-        container.degree_two_reduction,
-        container.ward_reduction,
-    )
-        _push_applied_reduction!(applied, reduction)
-    end
+    has_zero_impedance_reduction(c) && push!(applied, c.zero_impedance_reduction)
+    has_radial_reduction(c) && push!(applied, c.radial_reduction)
+    has_degree_two_reduction(c) && push!(applied, c.degree_two_reduction)
+    has_ward_reduction(c) && push!(applied, c.ward_reduction)
     return applied
 end
 

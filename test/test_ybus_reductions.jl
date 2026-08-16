@@ -341,9 +341,9 @@ end
     # The whole matrix builds off the ZIR-configured substitute rather than erroring.
     ybus = Ybus(
         sys;
-        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+        network_reductions = PNM.NetworkReduction[PNM.ZeroImpedanceBranchReduction(;
             minimum_retained_impedance = min_x_eps,
-        ),
+        )],
     )
     @test all(isfinite, ybus.data.nzval)
     @test 7 ∈ PNM.get_bus_axis(ybus)
@@ -476,9 +476,9 @@ end
 
     ybus_custom = Ybus(
         sys;
-        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+        network_reductions = PNM.NetworkReduction[PNM.ZeroImpedanceBranchReduction(;
             susceptance_threshold = 1e2,
-        ),
+        )],
     )
     @test 3 ∉ PNM.get_bus_axis(ybus_custom)
     @test get(ybus_custom.network_reduction_data.reverse_bus_search_map, 3, nothing) == 2
@@ -499,9 +499,9 @@ end
 
     ybus_custom = Ybus(
         sys;
-        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+        network_reductions = PNM.NetworkReduction[PNM.ZeroImpedanceBranchReduction(;
             minimum_retained_impedance = 1.0,
-        ),
+        )],
     )
     @test 3 ∈ PNM.get_bus_axis(ybus_custom)  # retained: substituted susceptance below threshold
     @test !haskey(ybus_custom.network_reduction_data.reverse_bus_search_map, 3)
@@ -1258,9 +1258,9 @@ end
     @test get(y_red.network_reduction_data.reverse_bus_search_map, 3, nothing) == 2
     y_raw = Ybus(
         _mk_arc_adm_sys();
-        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+        network_reductions = PNM.NetworkReduction[PNM.ZeroImpedanceBranchReduction(;
             susceptance_threshold = Inf,
-        ),
+        )],
         make_arc_admittance_matrices = true,
     )
 

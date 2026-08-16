@@ -27,20 +27,6 @@ function _reject_after_ward(prior_reductions::ReductionContainer)
     return
 end
 
-# ZIBR is auto-applied by `Ybus(sys; ...)`; a user-supplied one would double-apply.
-function _reject_zibr_in_user_reductions(r::NetworkReduction)
-    _is_zero_impedance_reduction(r) || return
-    throw(
-        IS.DataFormatError(
-            "ZeroImpedanceBranchReduction is auto-applied during Ybus construction; " *
-            "do not include it in `network_reductions`. To customize its detection " *
-            "threshold or substituted reactance, pass `zero_impedance_reduction = " *
-            "ZeroImpedanceBranchReduction(susceptance_threshold=..., " *
-            "minimum_retained_impedance=...)` to `Ybus(sys; ...)`.",
-        ),
-    )
-end
-
 # Dispatched on the new reduction's concrete type: reject duplicates and reductions after Ward.
 function validate_reduction_type(
     ::ZeroImpedanceBranchReduction,

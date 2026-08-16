@@ -2,10 +2,10 @@
     ZeroImpedanceBranchReduction <: NetworkReduction
 
 Merges buses connected by zero-impedance non-transformer branches. Always
-applied as the first step of `Ybus(sys; ...)` to avoid singular admittances.
-`Ybus` takes it through the `zero_impedance_reduction` kwarg and rejects one in
-`network_reductions`; downstream wrappers accept it in their reduction vectors
-and route it with [`split_zero_impedance_reduction`](@ref).
+applied as the first step of `Ybus(sys; ...)` to avoid singular admittances, with
+default parameters when none is given. Put one in `network_reductions` to override
+those parameters: it replaces that first step rather than adding one, so its position
+in the vector does not matter, and more than one errors.
 
 An arc is treated as zero-impedance when *any individual* non-transformer branch
 on it has resistance within `resistance_tolerance` (`abs(r) <= resistance_tolerance`)
@@ -39,13 +39,13 @@ _is_zero_impedance_reduction(::NetworkReduction) = false
 _is_zero_impedance_reduction(::ZeroImpedanceBranchReduction) = true
 
 """
-    split_zero_impedance_reduction(reductions::Vector{NetworkReduction})
+    _split_zero_impedance_reduction(reductions::Vector{NetworkReduction})
 
-Return `(others, zero_impedance)`: the reductions `Ybus` accepts in `network_reductions`, in
-their original order, and the single `ZeroImpedanceBranchReduction` it takes through its own
-kwarg — defaulted when none is supplied. Errors on more than one.
+Return `(others, zero_impedance)`: the reductions applied in sequence, in their original
+order, and the single `ZeroImpedanceBranchReduction` applied first — defaulted when the
+vector holds none. Errors on more than one.
 """
-function split_zero_impedance_reduction(reductions::Vector{NetworkReduction})
+function _split_zero_impedance_reduction(reductions::Vector{NetworkReduction})
     zero_impedance = ZeroImpedanceBranchReduction[
         r for r in reductions if _is_zero_impedance_reduction(r)
     ]
