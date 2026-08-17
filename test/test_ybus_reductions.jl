@@ -1627,3 +1627,70 @@ end
     @test (1, 3) in reducing_island_arcs
     @test (1, 3) ∉ other_island_arcs
 end
+
+# Every physical branch a composite arc resolves to, following the nesting. `keys` of the
+# production reverse-map builder is the same recursion the reduction itself uses.
+function _composite_leaf_branches(entry)
+    reverse_map = Dict{PSY.ACTransmission, Tuple{Int, Int}}()
+    PNM._register_composite_members!(reverse_map, (0, 0), entry)
+    return Set(keys(reverse_map))
+end
+
+@testset "DegreeTwoReduction folds both twins of an anti-parallel chain segment" begin
+    sys = build_antiparallel_chain_segment_system()
+    y_full = Ybus(sys)
+    y_red = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = PNM.get_network_reduction_data(y_red)
+
+    @test Set(PNM.get_bus_axis(y_red)) == Set([1, 2, 3, 4])
+
+    # No arc key may survive referencing an eliminated bus. The anti-parallel twin keyed `(3, 10)`
+    # is the one that does when a chain segment resolves to a single entry on its bus pair.
+    surviving = Set(PNM.get_bus_axis(y_red))
+    for map in (
+        PNM.get_direct_branch_map(nrd),
+        PNM.get_parallel_branch_map(nrd),
+        PNM.get_series_branch_map(nrd),
+    )
+        for arc in keys(map)
+            @test arc[1] in surviving
+            @test arc[2] in surviving
+        end
+    end
+    for arc in PNM.get_arc_axis(nrd)
+        @test arc[1] in surviving
+        @test arc[2] in surviving
+    end
+
+    # All three chain branches are folded into the composite arc: the single `1-10` segment and
+    # both twins of the `10-3` segment.
+    chain = PNM.get_series_branch_map(nrd)[(1, 3)]
+    @test _composite_leaf_branches(chain) ==
+          Set(PSY.get_component(Line, sys, n) for n in ("L_1_10", "L_10_3", "L_3_10"))
+
+    # Consumers that build off the arc axis must be able to resolve every arc's endpoints.
+    @test size(IncidenceMatrix(y_red).data, 1) == length(PNM.get_arc_axis(nrd))
+
+    _test_kron_oracle(y_full, y_red)
+end
+
+@testset "reduction validation rejects an arc key on an eliminated bus" begin
+    sys = build_antiparallel_chain_segment_system()
+    nr = get_network_reduction_data(AdjacencyMatrix(sys))
+
+    # The full bus set is consistent with every arc key, so the validation is silent.
+    @test isnothing(PNM._validate_surviving_arc_keys(nr, [1, 2, 3, 4, 10]))
+
+    # Dropping bus 10 without retiring the arcs on it is the corrupt state a reduction reaches
+    # when it eliminates a bus and leaves one of its arc keys live. Consumers that resolve arc
+    # endpoints — `IncidenceMatrix` first among them — fail with a bare `KeyError` several
+    # reductions downstream, so the reduction that produced it must raise instead.
+    err = try
+        PNM._validate_surviving_arc_keys(nr, [1, 2, 3, 4])
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("10", err.msg)
+end

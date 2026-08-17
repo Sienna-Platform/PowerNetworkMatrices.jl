@@ -101,14 +101,27 @@ function _build_chain_segments!(
     segments = BranchesSeries(composite_arc)
     for ix in 1:(length(segment_numbers) - 1)
         segment_arc = (segment_numbers[ix], segment_numbers[ix + 1])
-        segment_arc, entry, orientation = _get_branch_map_entry(
+        entries = _get_branch_map_entries(
             direct_branch_map,
             parallel_branch_map,
             series_branch_map,
             segment_arc,
         )
+        # The pair's principal key is the group frame, so a member keyed the other way is
+        # transposed by `_subset_two_port` when the group's two-port is assembled.
+        principal_arc, principal_entry, orientation = first(entries)
+        entry = if length(entries) == 1
+            principal_entry
+        else
+            _build_chain_merge_group(
+                PSY.ACTransmission[e[2] for e in entries],
+                principal_arc,
+            )
+        end
         add_branch!(segments, entry, orientation)
-        push!(removed_arcs, segment_arc)
+        for (key, _, _) in entries
+            push!(removed_arcs, key)
+        end
         ix != 1 && push!(removed_buses, segment_numbers[ix])
     end
     return segments
@@ -174,7 +187,7 @@ end
 # Anti-parallel branches are separate keys, so both orientations have to be probed; each
 # candidate is checked against all three maps together, so the only ordering this function
 # exposes is forward before reverse. Which map answered is not observable here — a caller that
-# needs that distinction (map priority, not just orientation) uses `_get_branch_map_entry`.
+# needs that distinction (map priority, not just orientation) uses `_get_branch_map_entries`.
 function _existing_arc_key(
     direct_branch_map::Dict{Tuple{Int, Int}, PSY.ACTransmission},
     parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel},
@@ -191,31 +204,33 @@ function _existing_arc_key(
     return nothing
 end
 
-function _get_branch_map_entry(
+# Every forward-map entry on `arc`'s unordered bus pair, as `(key, entry, orientation)` triples
+# where `orientation` relates the stored key to `arc`'s direction.
+#
+# A bus pair can carry more than one key: anti-parallel branches are keyed on the raw (from, to)
+# tuple, so `(a, b)` and `(b, a)` are distinct entries, while the adjacency matrix holds one entry
+# per pair. A caller that resolves a degree-two chain segment to "the" entry on its pair therefore
+# folds only one twin into the equivalent and leaves the other keyed on a bus the reduction is
+# about to eliminate.
+#
+# `ThreeWindingTransformerCircuit`s are one-to-one arcs held in `direct_branch_map`. Direct entries
+# come first, then parallel, then series, each in forward-then-reverse order, so the first triple is
+# the pair's principal entry and fixes the group frame when there are several.
+function _get_branch_map_entries(
     direct_branch_map::Dict{Tuple{Int, Int}, PSY.ACTransmission},
     parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel},
     series_branch_map::Dict{Tuple{Int, Int}, BranchesSeries},
     arc::Tuple{Int, Int},
 )
     reverse_arc = (arc[2], arc[1])
-    # `ThreeWindingTransformerCircuit`s are one-to-one arcs held in `direct_branch_map`. A
-    # direct branch wins over a composite arc on the same key, so direct is probed first in
-    # both orientations, then parallel, then series.
-    if haskey(direct_branch_map, arc)
-        return arc, direct_branch_map[arc], :FromTo
-    elseif haskey(direct_branch_map, reverse_arc)
-        return reverse_arc, direct_branch_map[reverse_arc], :ToFrom
-    elseif haskey(parallel_branch_map, arc)
-        return arc, parallel_branch_map[arc], :FromTo
-    elseif haskey(parallel_branch_map, reverse_arc)
-        return reverse_arc, parallel_branch_map[reverse_arc], :ToFrom
-    elseif haskey(series_branch_map, arc)
-        return arc, series_branch_map[arc], :FromTo
-    elseif haskey(series_branch_map, reverse_arc)
-        return reverse_arc, series_branch_map[reverse_arc], :ToFrom
-    else
-        error("Arc $arc not found in the existing network reduction mappings.")
+    entries = Tuple{Tuple{Int, Int}, PSY.ACTransmission, Symbol}[]
+    for map in (direct_branch_map, parallel_branch_map, series_branch_map)
+        haskey(map, arc) && push!(entries, (arc, map[arc], :FromTo))
+        haskey(map, reverse_arc) && push!(entries, (reverse_arc, map[reverse_arc], :ToFrom))
     end
+    isempty(entries) &&
+        error("Arc $arc not found in the existing network reduction mappings.")
+    return entries
 end
 
 """

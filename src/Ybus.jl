@@ -1465,6 +1465,26 @@ function _remap_and_reduce(
     )
 end
 
+# Every arc the reduction still exposes must have both endpoints on the surviving bus axis.
+#
+# An arc key left behind on an eliminated bus is not detectable at the point of use: the arc axis
+# and the branch maps stay internally consistent, so the reduction reports success and the failure
+# surfaces later, as a bare `KeyError` from whichever consumer first resolves arc endpoints against
+# the bus lookup — possibly several reductions downstream of the one that caused it. Raising here
+# names the reduction that produced the state.
+function _validate_surviving_arc_keys(nr::NetworkReductionData, bus_ax)
+    surviving = Set(bus_ax)
+    for arc in get_arc_axis(nr)
+        for bus in arc
+            bus in surviving || error(
+                "Network reduction left arc $arc referencing bus $bus, which is not on the \
+reduced bus axis. Every arc the reduction retains must resolve to surviving buses.",
+            )
+        end
+    end
+    return
+end
+
 function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     # These quantities are modified and used to construct the new Ybus
     data = get_data(ybus)
@@ -1573,6 +1593,7 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     if !isempty(nr_new.merged_bus_pairs)
         nr.merged_bus_pairs = nr_new.merged_bus_pairs
     end
+    _validate_surviving_arc_keys(nr, bus_ax)
     return Ybus(
         data,
         adjacency_data,
@@ -1852,7 +1873,7 @@ function _absorb_composite_group!(
         return
     end
     # Direct and parallel are probed, and popped from, before series — matching the priority
-    # `_existing_arc_key`/`_get_branch_map_entry` document — so a broken invariant that left a
+    # `_existing_arc_key`/`_get_branch_map_entries` document — so a broken invariant that left a
     # key live in two forward maps would surface here (both pops would fire) rather than have
     # this function quietly prefer the series entry and leave a stale direct or parallel one.
     if haskey(nr.direct_branch_map, existing_arc) ||
@@ -2362,8 +2383,12 @@ same Y-bus position, effectively combining their admittances.
 - [`add_segment_to_ybus!`](@ref): Single branch variant
 - [`DegreeTwoReduction`](@ref): Series chain elimination
 """
+# A chain reached as another chain's segment enters as its own two-port, which is both what a
+# composite arc contributes to Ybus and what `_composite_raw_two_port` backs out for it. Resolving
+# it through `nr` keeps those two agree; the one-argument form has no method for an aggregate and
+# would fall through to the single-branch path.
 function add_segment_to_ybus!(
-    segment::AbstractBranchesParallel,
+    segment::AbstractReductionAggregate,
     y11::Vector{YBUS_ELTYPE},
     y12::Vector{YBUS_ELTYPE},
     y21::Vector{YBUS_ELTYPE},
@@ -2374,8 +2399,8 @@ function add_segment_to_ybus!(
     segment_orientation::Symbol,
     nr::NetworkReductionData,
 )
-    # Use the group's orientation-correct equivalent block (via `nr`) rather than summing
-    # members with one shared orientation, which mis-handles an anti-parallel asymmetric member.
+    # For a parallel group this is the orientation-correct equivalent block rather than a sum of
+    # members under one shared orientation, which mis-handles an anti-parallel asymmetric member.
     (Y11, Y12, Y21, Y22) = ybus_branch_entries(segment, nr)
     push!(fb, ix)
     push!(tb, ix + 1)

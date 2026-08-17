@@ -643,16 +643,37 @@ end
     parallel = Dict{Tuple{Int, Int}, PNM.AbstractBranchesParallel}()
     series = Dict{Tuple{Int, Int}, PNM.BranchesSeries}((1, 3) => chain)
 
-    arc, entry, orientation = PNM._get_branch_map_entry(direct, parallel, series, (1, 3))
+    arc, entry, orientation =
+        only(PNM._get_branch_map_entries(direct, parallel, series, (1, 3)))
     @test arc == (1, 3)
     @test entry === chain
     @test orientation == :FromTo
 
     arc_r, entry_r, orientation_r =
-        PNM._get_branch_map_entry(direct, parallel, series, (3, 1))
+        only(PNM._get_branch_map_entries(direct, parallel, series, (3, 1)))
     @test arc_r == (1, 3)
     @test entry_r === chain
     @test orientation_r == :ToFrom
+end
+
+@testset "branch map entries report both keys of an anti-parallel pair" begin
+    sys = build_antiparallel_chain_segment_system()
+    forward = PSY.get_component(Line, sys, "L_10_3")
+    twin = PSY.get_component(Line, sys, "L_3_10")
+
+    direct = Dict{Tuple{Int, Int}, PSY.ACTransmission}(
+        (10, 3) => forward,
+        (3, 10) => twin,
+    )
+    parallel = Dict{Tuple{Int, Int}, PNM.AbstractBranchesParallel}()
+    series = Dict{Tuple{Int, Int}, PNM.BranchesSeries}()
+
+    # Probed from either direction the pair reports both keys, and the probe's own direction is
+    # what decides which one is principal — the group frame follows the chain's traversal.
+    @test PNM._get_branch_map_entries(direct, parallel, series, (10, 3)) ==
+          [((10, 3), forward, :FromTo), ((3, 10), twin, :ToFrom)]
+    @test PNM._get_branch_map_entries(direct, parallel, series, (3, 10)) ==
+          [((3, 10), twin, :FromTo), ((10, 3), forward, :ToFrom)]
 end
 
 @testset "get_degree2_reduction routes a chain onto an existing series composite arc" begin

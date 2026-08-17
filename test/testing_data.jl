@@ -1012,3 +1012,79 @@ function build_radial_only_tree_system()
     end
     return sys
 end
+
+"""
+Hub bus 1 joined to bus 2 by a single degree-two chain (via 10) and to bus 4 by two parallel
+degree-two chains (via 20 and via 21), with a direct line 2-4. Buses 2 and 4 carry loads.
+
+The first reduction round files the 1-2 chain as a lone entry in `series_branch_map`, because that
+bus pair carries no other arc, and groups the two 1-4 chains onto one arc. That leaves bus 1 at
+degree two, so a second round chains straight through the lone composite arc — reaching it in the
+reverse orientation, since the pass-2 segment is `(2, 1)` against a stored key of `(1, 2)`.
+"""
+function build_nested_chain_segment_system()
+    sys = PSY.System(100.0)
+    buses = Dict{Int, ACBus}()
+    for n in (1, 2, 4, 10, 20, 21)
+        b = ACBus(;
+            number = n,
+            name = "Bus $n",
+            available = true,
+            bustype = n == 2 ? ACBusTypes.REF : ACBusTypes.PQ,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.05),
+            base_voltage = 230.0,
+        )
+        PSY.add_component!(sys, b)
+        buses[n] = b
+    end
+    edges = [
+        (1, 10, 0.10), (10, 2, 0.11),
+        (1, 20, 0.20), (20, 4, 0.21),
+        (1, 21, 0.22), (21, 4, 0.23),
+        (2, 4, 0.30),
+    ]
+    for (f, t, x) in edges
+        arc = Arc(buses[f], buses[t])
+        PSY.add_component!(sys, arc)
+        PSY.add_component!(
+            sys,
+            Line("L_$(f)_$(t)", true, 0.0, 0.0, arc, 0.0, x,
+                (from = 0.0, to = 0.0), 100.0, (-1.6, 1.6)),
+        )
+    end
+    for n in (2, 4)
+        PSY.add_component!(
+            sys,
+            PowerLoad(; name = "D$n", available = true, bus = buses[n],
+                active_power = 0.5, reactive_power = 0.0, base_power = 100.0,
+                max_active_power = 0.5, max_reactive_power = 0.0),
+        )
+    end
+    return sys
+end
+
+"""
+Meshed core on buses 1-4 (a ring plus a 2-4 tie) plus a degree-two chain `1-10-3` whose second
+segment is an **anti-parallel pair**: one line is written `10 -> 3` and its twin `3 -> 10`.
+
+The pair is the point of the fixture. Both twins hold their own key in `direct_branch_map`, because
+arc keys are the raw (from, to) tuple, while the adjacency matrix holds one entry per bus *pair*.
+Bus 10 therefore reads degree two and is folded, and every probe that resolves a chain segment to
+"the" entry on its bus pair sees only one of the twins.
+
+The twins carry different impedances and asymmetric charging, so omitting either one is
+numerically unmistakable rather than a rounding difference.
+"""
+function build_antiparallel_chain_segment_system()
+    edges = [
+        (1, 2, 0.0, 0.05, 0.0, 0.0), (2, 3, 0.0, 0.06, 0.0, 0.0),   # ring core
+        (3, 4, 0.0, 0.07, 0.0, 0.0), (4, 1, 0.0, 0.08, 0.0, 0.0),
+        (2, 4, 0.0, 0.09, 0.0, 0.0),                                # core tie
+        (1, 10, 0.010, 0.10, 0.02, 0.03),                           # chain segment 1
+        (10, 3, 0.012, 0.11, 0.03, 0.01),                           # chain segment 2
+        (3, 10, 0.008, 0.17, 0.05, 0.02),                           # its anti-parallel twin
+    ]
+    return _build_degree_two_chain_system(edges)
+end

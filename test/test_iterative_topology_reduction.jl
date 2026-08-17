@@ -168,3 +168,44 @@ end
         _test_kron_oracle(y_full, y_red)
     end
 end
+
+@testset "IterativeTopologyReduction chains through a lone composite arc" begin
+    sys = build_nested_chain_segment_system()
+    irreducible = Set([2, 4])
+
+    # Precondition: one round must file the 1-2 chain as a LONE entry in `series_branch_map` and
+    # leave bus 1 at degree two. A grouped arc instead would exercise the parallel path, and a
+    # bus 1 above degree two would mean no second round chains through anything.
+    y_once = Ybus(
+        sys;
+        network_reductions = NetworkReduction[RadialReduction(), DegreeTwoReduction()],
+        irreducible_buses = irreducible,
+    )
+    nrd_once = PNM.get_network_reduction_data(y_once)
+    @test collect(keys(PNM.get_series_branch_map(nrd_once))) == [(1, 2)]
+    A_once = AdjacencyMatrix(y_once)
+    @test length(SparseArrays.nzrange(A_once.data, A_once.lookup[1][1])) == 2
+
+    y_iter = Ybus(
+        sys;
+        network_reductions = NetworkReduction[IterativeTopologyReduction()],
+        irreducible_buses = irreducible,
+    )
+    @test Set(PNM.get_bus_axis(y_iter)) == Set([2, 4])
+
+    # The second round reaches the lone composite arc as a segment, in the reverse orientation:
+    # its own key is (1, 2) while the pass-two segment is (2, 1). Assert the nesting is really
+    # present, so this testset cannot quietly stop covering it.
+    nrd_iter = PNM.get_network_reduction_data(y_iter)
+    group = PNM.get_parallel_branch_map(nrd_iter)[(2, 4)]
+    chains = [m for m in group if m isa PNM.BranchesSeries]
+    @test length(chains) == 1
+    outer = only(chains)
+    @test any(segment -> segment isa PNM.BranchesSeries, outer)
+    @test :ToFrom in outer.segment_orientations
+
+    # The numeric gate. A chain segment enters as its own two-port, which is what a composite arc
+    # contributes to Ybus and what is backed out for it; taking its constituent branches' raw
+    # admittances instead leaves an error of order the branch admittances themselves.
+    _test_kron_oracle(Ybus(sys), y_iter)
+end
