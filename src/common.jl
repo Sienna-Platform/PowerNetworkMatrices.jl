@@ -214,7 +214,8 @@ end
 
 """
 Validates that the user bus input is consistent with the ybus axes and the prior reductions.
-Is used to check `irreducible_buses` for `Radial` and `DegreeTwo` reductions and `study_buses` for `WardReduction`.
+Is used to check `irreducible_buses` for [`RadialReduction`](@ref) and
+[`DegreeTwoReduction`](@ref), and `study_buses` for [`WardReduction`](@ref).
 """
 function validate_buses(A::PowerNetworkMatrix, buses::Set{Int})
     reverse_bus_search_map = get_network_reduction_data(A).reverse_bus_search_map
@@ -259,8 +260,8 @@ reference bus positions.
         BA matrix.
 
 NOTE:
-- evaluates A with "calculate_A_matrix", or extract A.data (if A::IncidenceMatrix)
-- evaluates BA with "calculate_BA_matrix", or extract BA.data (if A::BA_Matrix)
+- evaluates A with `calculate_A_matrix`, or extracts `A.data` (if `A::IncidenceMatrix`)
+- evaluates BA with `calculate_BA_matrix`, or extracts `BA.data` (if `BA::BA_Matrix`)
 """
 function calculate_ABA_matrix(
     A::SparseArrays.SparseMatrixCSC{Int8, Int},
@@ -378,6 +379,16 @@ function populate_equivalent_ybus!(
     return
 end
 
+"""
+    get_equivalent_physical_branch_parameters(segment, nr::NetworkReductionData) -> EquivalentBranch
+
+Physical branch parameters equivalent to a reduced group of branches. Lazily builds the
+group's 2×2 equivalent Ybus block (via `populate_equivalent_ybus!`) if not already
+cached, then decomposes that block into an [`EquivalentBranch`](@ref) — series `r`/`x`,
+from/to shunt `g`/`b`, and the transformer `tap`/`shift` — so a series chain or set of
+parallel branches can be represented as a single Pi-model branch. `segment` is a
+[`BranchesSeries`](@ref) or [`AbstractBranchesParallel`](@ref) reduction group.
+"""
 function get_equivalent_physical_branch_parameters(
     segment::Union{AbstractBranchesParallel, BranchesSeries},
     nr::NetworkReductionData,
@@ -488,7 +499,7 @@ end
         -> Tuple{Symbol, Union{Tuple{Int, Int}, Nothing}}
 
 Classify a branch component by looking up which reverse map it belongs to in the
-`NetworkReductionData`. Returns `(tag, arc_tuple)` where `tag` is one of:
+[`NetworkReductionData`](@ref). Returns `(tag, arc_tuple)` where `tag` is one of:
 - `:direct`       -- branch is the sole branch on its arc
 - `:parallel`     -- branch is one of several parallel branches on its arc
 - `:series`       -- branch is part of a series chain on its arc
@@ -587,15 +598,18 @@ end
 Compute the change in equivalent arc susceptance when multiple components are
 simultaneously tripped from a series chain.
 
-For a series chain with segments of susceptance b₁, b₂, ..., bₙ, the equivalent
-susceptance is: b_eq = 1 / (1/b₁ + 1/b₂ + ... + 1/bₙ).
+For a series chain with segments of susceptance ``b_1, b_2, \\ldots, b_n``, the
+equivalent susceptance is
+```math
+b_\\mathrm{eq} = \\frac{1}{1/b_1 + 1/b_2 + \\cdots + 1/b_n}.
+```
 
 Segments can be individual branches or `BranchesParallel` groups. When a tripped
 component is inside a parallel group, only that branch's susceptance is removed
 from the group — the rest of the parallel group remains in the series chain.
 
-Returns Δb = b_new - b_old (always negative for outages).
-If all segments are fully tripped, returns -b_eq (full arc outage).
+Returns ``\\Delta b = b_\\mathrm{new} - b_\\mathrm{old}`` (always negative for outages).
+If all segments are fully tripped, returns ``-b_\\mathrm{eq}`` (full arc outage).
 """
 function _compute_series_outage_delta_b(
     series_chain::BranchesSeries,

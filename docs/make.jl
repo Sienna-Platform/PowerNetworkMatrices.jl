@@ -4,40 +4,42 @@ using Literate
 using DocumenterInterLinks
 
 links = InterLinks(
+    "Julia" => "https://docs.julialang.org/en/v1/objects.inv",
     "PowerSystems" => "https://sienna-platform.github.io/PowerSystems.jl/stable/",
     "PowerSystemCaseBuilder" => "https://sienna-platform.github.io/PowerSystemCaseBuilder.jl/stable/",
 )
 
 include(joinpath(@__DIR__, "make_tutorials.jl"))
-make_tutorials()
+make_literate_folder("tutorials")
+make_literate_folder("how_to_guides")
 
 pages = OrderedDict(
     "Welcome Page" => "index.md",
     "Tutorials" => Any[
-        "Getting Started" => "tutorials/getting_started.md",
-        "Incidence, BA and ABA matrices" => "tutorials/tutorial_Incidence_BA_ABA_matrices.md",
-        "PTDF matrix" => "tutorials/tutorial_PTDF_matrix.md",
-        "VirtualPTDF matrix" => "tutorials/tutorial_VirtualPTDF_matrix.md",
-        "LODF matrix" => "tutorials/tutorial_LODF_matrix.md",
-        "VirtualLODF matrix" => "tutorials/tutorial_VirtualLODF_matrix.md",
-        "Industry DFAX values" => "tutorials/tutorial_DFAX.md",
-        "Radial Reduction" => "tutorials/tutorial_RadialReduction.md",
-        "Degree Two Reduction" => "tutorials/tutorial_DegreeTwoReduction.md",
+        "Introduction" => "tutorials/generated_introduction.md",
+        "Analysis at Scale" => "tutorials/generated_analysis_at_scale.md",
     ],
     "How-To Guides" => Any[
-        "Compute Network Matrices" => "how_to_guides/compute_network_matrices.md",
-        "Choose a Linear Solver" => "how_to_guides/choose_linear_solver.md",
-    ],
-    "Explanation" => Any[
-        "Computational Considertaions" => "explanation/computational_considerations.md",
-        "DC Power Flow Approximation" => "explanation/dc_power_flow_approximation.md",
-        "Network Reduction Theory" => "explanation/network_reduction_theory.md",
-        "Flowgate Methodology" => "explanation/flowgate_methodology.md",
+        "Build Multiple Matrices" => "how_to_guides/generated_build_multiple_matrices.md",
+        "Choose a Linear Solver" => "how_to_guides/generated_choose_linear_solver.md",
+        "Reproduce Industry DFAX Values" => "how_to_guides/generated_reproduce_dfax_values.md",
+        "Define and Apply Contingencies" => "how_to_guides/generated_contingencies.md",
+        "Diagnose Network Connectivity" => "how_to_guides/generated_diagnose_connectivity.md",
     ],
     "Reference" => Any[
-        "Matrix Overview" => "reference/network_matrices_overview.md",
+        "Matrix Overview and Indexing" => "reference/network_matrices_overview.md",
+        "Matrix Types" => "reference/matrix_types.md",
         "Public API" => "reference/public.md",
         "Internals" => "reference/internals.md",
+    ],
+    "Explanation" => Any[
+        "DC Power Flow Approximation" => "explanation/dc_power_flow_approximation.md",
+        "Computational Considerations" => "explanation/computational_considerations.md",
+        "Network Reduction Theory" => "explanation/network_reduction_theory.md",
+        "Flowgate Methodology" => "explanation/flowgate_methodology.md",
+        "Concurrency and the KLU Lock" => "explanation/concurrency.md",
+        "Equivalent Representation of Reduced Branches" => "explanation/equivalent_branches.md",
+        "Slack Distribution and Reference-Bus Conventions" => "explanation/slack_conventions.md",
     ],
 )
 

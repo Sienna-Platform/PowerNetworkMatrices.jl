@@ -12,7 +12,7 @@ designed for the access patterns of `PowerNetworkMatrices`:
 
 This module is intentionally lighter than `KLU.jl`: it owns no Julia-side
 copies of the matrix values, exposes the symbolic/numeric split directly, and
-binds only the SuiteSparse_long (`klu_l_*`, `klu_zl_*`) entry points used by
+binds only the `SuiteSparse_long` (`klu_l_*`, `klu_zl_*`) entry points used by
 the package.
 """
 module KLUWrapper

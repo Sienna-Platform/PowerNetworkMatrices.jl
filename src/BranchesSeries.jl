@@ -1,3 +1,25 @@
+"""
+    BranchesSeries <: PSY.ACTransmission
+
+A chain of branches connected in series through eliminated degree-2 buses, as
+produced by [`DegreeTwoReduction`](@ref). Members are bucketed by concrete type; a
+member may itself be a parallel group, so a series chain can nest parallel blocks.
+Subtypes `PSY.ACTransmission` so the chain can stand in for a real branch. Not
+exported. `BranchesSeries()` builds an empty chain; `add_branch!(bs, branch, orientation)`
+appends a segment with its `:FromTo` / `:ToFrom` orientation.
+
+The equivalent series susceptance is the reciprocal of the sum of member reciprocal
+susceptances. The chain rating is set by its weakest link — the minimum member
+rating, where a nested parallel member contributes its N-1
+[`get_single_element_contingency_rating`](@ref).
+
+# Fields
+- `branches::Dict{DataType, Vector{<:PSY.ACTransmission}}`: members bucketed by concrete type.
+- `needs_insertion_order::Bool`: `true` when the chain mixes types and needs `insertion_order`.
+- `insertion_order::Vector{Tuple{DataType, Int}}`: physical ordering along the chain.
+- `segment_orientations::Vector{Symbol}`: per-segment `:FromTo` / `:ToFrom` orientation.
+- `equivalent_ybus`: cached 2×2 equivalent admittance block; `nothing` until populated.
+"""
 mutable struct BranchesSeries <: PSY.ACTransmission
     branches::Dict{DataType, Vector{<:PSY.ACTransmission}}
     needs_insertion_order::Bool

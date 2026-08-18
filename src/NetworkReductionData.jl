@@ -131,9 +131,15 @@ network reduction algorithms.
 - `all_branch_maps_by_type::BranchMapsByType`: Branch mappings organized by component type
 - `reductions::ReductionContainer`: Container tracking applied reduction algorithms
 - `name_to_arc_map::Dict{Type, DataStructures.SortedDict{String, Tuple{Tuple{Int, Int}, String}}}`: Lazily filled with the call to [`populate_branch_maps_by_type!`](@ref), maps string names to their corresponding arcs and the map where the arc can be found.
-- `component_to_reduction_name_map::Dict{Type, Dict{String, String}}`: Lazily filled with the call to [`populate_branch_maps_by_type!`](@ref), maps component names to the names of the reduction entries used in name_to_arc_map.
+- `component_to_reduction_name_map::Dict{Type, Dict{String, String}}`: Lazily filled with the call to [`populate_branch_maps_by_type!`](@ref), maps component names to the names of the reduction entries used in `name_to_arc_map`.
 - `filters_applied::Dict{Type, Function}`: Filters applied when populating branch maps by type
 - `direct_branch_name_map::Dict{String, Tuple{Int, Int}}`: Lazily filled, maps branch names to their corresponding arc tuples for direct branches
+
+Each field has a like-named `get_*` accessor (e.g. `get_irreducible_buses`,
+`get_removed_buses`); [`get_bus_reduction_map`](@ref) and [`get_reductions`](@ref) are
+exported, the rest are internal. To test whether a bus survived a reduction, use
+`bus in keys(get_bus_reduction_map(nrd))` — radial and degree-two survivors appear as
+keys, and Ward survivors are the `study_buses`.
 """
 @kwdef mutable struct NetworkReductionData
     irreducible_buses::Set{Int} = Set{Int}() # Buses that are not reduced in the network reduction
@@ -500,7 +506,7 @@ function Base.empty!(rb::NetworkReductionData)
 end
 
 """
-   get_retained_branches_names(network_reduction_data::NetworkReductionData)
+    get_retained_branches_names(network_reduction_data::NetworkReductionData)
 
 Gets the branch names that are retained after network reduction. This method only returns the
 branch names from non-three winding transformer branches that have a one-to-one correspondence with
@@ -521,7 +527,7 @@ function get_retained_branches_names(network_reduction_data::NetworkReductionDat
 end
 
 """
-   get_ac_transmission_types(network_reduction_data::NetworkReductionData)
+    get_ac_transmission_types(network_reduction_data::NetworkReductionData)
 
 Gets the concrete types of all AC transmission branches included in an instance of NetworkReductionData
 

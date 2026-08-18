@@ -245,7 +245,8 @@ a the ABA or Adjacency Matrix.
 - `bus_numbers::Vector{Int}`:
         vector containing the indices of the system's buses.
 - `subnetwork_algorithm::Function`:
-        algorithm for computing subnetworks. Valid options are iterative_union_find (default) and depth_first_search
+        algorithm for computing subnetworks. Valid options are [`iterative_union_find`](@ref)
+        (default) and [`depth_first_search`](@ref)
 """
 function find_subnetworks(
     M::SparseArrays.SparseMatrixCSC,

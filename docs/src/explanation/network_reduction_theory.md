@@ -1,34 +1,77 @@
 # Network Reduction Theory
 
-This document explains the theory and mathematics behind network reduction techniques in power systems.
+This page explains the theory and mathematics behind network reduction. Power
+systems can have thousands of buses and branches; reduction shrinks the network —
+making large studies tractable and matrices faster to build and invert — while
+preserving the power-flow relationships at the retained buses. Which
+characteristics survive depends on the strategy ([`RadialReduction`](@ref),
+[`DegreeTwoReduction`](@ref), [`WardReduction`](@ref)).
 
-## Why Network Reduction?
+## The graph and susceptance structure reduction operates on
 
-Power system networks can be very large, with thousands of buses and branches. Network reduction techniques simplify these networks while preserving essential characteristics for analysis.
+Network reduction is fundamentally a *graph* operation, and to understand why it
+is well-defined it helps to see the three matrices that encode the network's
+topology and electrical strength. These are the same building blocks the DC
+sensitivity matrices are assembled from, and what every reduction manipulates
+under the hood. (For constructors and accessors see the
+[matrix type reference](../reference/matrix_types.md); the discussion here is about
+*what they mean*.)
 
-### Benefits of Reduction:
+### The incidence matrix: pure topology
 
- 1. **Computational Efficiency**: Smaller matrices are faster to compute and invert
- 2. **Focus**: Reduces complexity to focus on areas of interest
- 3. **Scalability**: Makes large-scale studies tractable
- 4. **Clarity**: Simplifies visualization and understanding
+The [`IncidenceMatrix`](@ref) ``A`` is the oriented node–arc incidence matrix: one
+row per arc, one column per bus, with a ``+1`` at the arc's *from* bus, a ``-1`` at
+its *to* bus, and zeros elsewhere. It carries **topology only** — which bus
+connects to which, and with what orientation — and nothing electrical. The
+reference-bus column is dropped so the downstream susceptance matrix is
+non-singular. Reading ``A`` column by column recovers each bus's degree, which is
+exactly the quantity radial (degree 1) and degree-two reductions key off of.
 
-### Preservation Goals:
+### The BA matrix: topology weighted by electrical strength
 
-Network reduction aims to preserve:
+The [`BA_Matrix`](@ref) is the product ``B A``, where ``B`` is the diagonal matrix
+of branch susceptances (``b = 1/x`` under the DC approximation). Where ``A`` says
+*which* buses a branch connects, ``BA`` scales each connection by *how electrically
+strong* it is. Mapped onto bus angles it returns branch flows — the linear operator
+behind ``P_{ij} = (\theta_i - \theta_j)/x_{ij}``.
 
-  - Power flow relationships at retained buses
-  - Impedance relationships between key points
-  - Stability characteristics (when applicable)
-  - Essential topology features
+### The ABA matrix: the grounded graph Laplacian
 
-The type of reduction (e.g. `RadialReduction`, `DegreeTwoReduction`, `WardReduction`) determines the extent to which these characteristics are retained
+The [`ABA_Matrix`](@ref) is ``A^\top B A``, the reduced nodal susceptance matrix —
+a **weighted graph Laplacian**[^laplacian] with the reference bus grounded out. Solving
+``ABA\,\theta = P`` *is* the DC power flow, and inverting it produces the dense
+[`PTDF`](@ref)/[`LODF`](@ref) sensitivities. Because it is a Laplacian, eliminating
+a bus is a Kron elimination on this matrix — which is precisely why degree-two
+reduction (below) is exact rather than approximate.
 
-## Radial Branch Reduction
+### Why this makes reduction well-posed
 
-### What is a Radial Branch?
+Every reduction is defined on this susceptance graph and then propagates uniformly
+to the downstream matrices (see also
+[Computational considerations](computational_considerations.md), on why reductions
+are applied to the [`Ybus`](@ref) first). A radial bus is a degree-1 node; a
+degree-two bus a degree-2 node; Ward reduction[^ward] Kron-eliminates the external
+subgraph. Because all are operations on the incidence/susceptance structure, the
+same reduction map applies to [`PTDF`](@ref), [`LODF`](@ref), and their virtual
+variants without re-deriving anything per matrix.
 
-A radial branch is one that connects to a bus that has only one connection to the rest of the network. Think of it as a "dead-end" in the network.
+### A subtlety: the susceptance graph is not the admittance graph
+
+Connectivity and reduction do not always see the same network.
+[`find_subnetworks`](@ref) walks the **admittance** graph of the [`Ybus`](@ref),
+whereas `ABA` is built from the **susceptance** graph. These differ for branches
+with ``r > 0`` and ``x = 0``: such a branch has finite admittance but zero
+susceptance (``b = 1/x`` absent), so it appears in the [`Ybus`](@ref) graph but
+*not* in [`BA_Matrix`](@ref). A network that is one connected island electrically
+can therefore fragment into several components in the susceptance graph, leaving
+blocks with no reference bus and a **singular `ABA`**. This is why zero-impedance
+handling must resolve both endpoints of such a branch to a common node before
+building the susceptance matrix.
+
+## Radial branch reduction
+
+A radial branch connects to a bus with only one connection to the rest of the
+network — a "dead-end."
 
 ```
 Main Network --- Bus A --- Bus B (radial)
@@ -36,197 +79,103 @@ Main Network --- Bus A --- Bus B (radial)
                           Bus C (radial)
 ```
 
-In this example, buses B and C are radial - they each connect to only one other bus.
+For a radial bus ``k`` connected to bus ``j``, the DC relation
+``P_k \approx (\theta_j - \theta_k)/X_{jk}`` gives
 
-### Mathematical Basis
+```math
+\theta_k = \theta_j - P_k X_{jk}.
+```
 
-Radial buses can be reduced because power flow to/from them is uniquely determined by the connection bus. The reduction involves:
+The radial-bus angle is completely determined by its parent, so the bus can be
+eliminated by transferring its load to the parent. Power flows and angles at the
+core (non-radial) network are preserved exactly; only the eliminated locations lose
+their explicit representation. Radial reduction is therefore for studies that
+target the transmission backbone rather than distribution feeders.
 
- 1. **Identifying radial buses**: Buses with degree = 1
- 2. **Transferring loads**: Moving load/generation to the connection point
- 3. **Removing the branch**: Eliminating the radial connection
+## Degree-two (Kron) reduction
 
-### Why Radial Reduction Works
-
-For a radial bus $k$ connected to bus $j$:
-
-$$P_k = \frac{V_j V_k}{X_{jk}} \sin(\theta_j - \theta_k)$$
-
-Under DC approximation with $V_j \approx V_k \approx 1$:
-
-$$P_k \approx \frac{\theta_j - \theta_k}{X_{jk}}$$
-
-Since $P_k$ is determined by the load at bus $k$, the angle $\theta_k$ is uniquely determined:
-
-$$\theta_k = \theta_j - P_k X_{jk}$$
-
-The radial bus angle is completely determined by its parent bus, so it can be eliminated by transferring the load.
-
-### Implications of Radial Reduction
-
-**Preserved:**
-
-  - Power flow at non-radial buses
-  - Voltage angles at non-radial buses
-  - System topology at the core network
-
-**Changed:**
-
-  - Number of buses and branches (reduced)
-  - Detailed behavior at radial locations
-  - Local voltage profiles
-
-**When to Use:**
-
-  - Radial connections are not of interest for analysis
-  - Focusing on transmission backbone
-  - Computational efficiency is important
-
-**When to Avoid:**
-
-  - Studying distribution feeders (often radial)
-  - Detailed voltage analysis needed
-  - Radial buses have critical measurements
-
-## Degree Two Reduction (Kron Reduction)
-
-### What is a Degree Two Bus?
-
-A degree two bus connects exactly two other buses, acting as a "pass-through" point.
+A degree-two bus connects exactly two others, acting as a pass-through:
 
 ```
 Bus A --- Bus B (degree 2) --- Bus C
 ```
 
-Bus B has degree 2 - it connects A and C but has no other connections.
+Kron reduction[^kron] eliminates buses from the admittance matrix. Partitioning into
+retained (``r``) and eliminated (``e``) buses with no injection at the eliminated
+buses (``I_e = 0``):
 
-### Mathematical Basis: Kron Reduction
-
-Kron reduction is a systematic method to eliminate buses from the admittance matrix. Degree two reduction is a simple case of Kron reduction for eliminating degree two nodes.
-
-Given admittance matrix:
-
-$$\begin{bmatrix} I_r \\ I_e \end{bmatrix} = \begin{bmatrix} Y_{rr} & Y_{re} \\ Y_{er} & Y_{ee} \end{bmatrix} \begin{bmatrix} V_r \\ V_e \end{bmatrix}$$
-
-where subscript $r$ denotes retained buses and $e$ denotes eliminated buses.
-
-If $I_e = 0$ (no injection at eliminated buses):
-
-$$Y_{ee} V_e = -Y_{er} V_r$$
-$$V_e = -Y_{ee}^{-1} Y_{er} V_r$$
-
-Substituting back:
-
-$$I_r = (Y_{rr} - Y_{re} Y_{ee}^{-1} Y_{er}) V_r = Y_{reduced} V_r$$
-
-The reduced admittance matrix is:
-
-$$Y_{reduced} = Y_{rr} - Y_{re} Y_{ee}^{-1} Y_{er}$$
-
-### For a Single Degree Two Bus
-
-Consider bus $k$ connecting buses $i$ and $j$:
-
-```
-Bus i ----(y_ik)---- Bus k ----(y_kj)---- Bus j
+```math
+Y_{reduced} = Y_{rr} - Y_{re} Y_{ee}^{-1} Y_{er}.
 ```
 
-The equivalent admittance directly between $i$ and $j$ after eliminating $k$ is:
+For a single degree-two bus ``k`` between ``i`` and ``j`` (no shunt at ``k``) this
+collapses to the series-impedance combination
 
-$$y_{ij}^{new} = y_{ij}^{old} + \frac{y_{ik} \cdot y_{kj}}{y_{ik} + y_{kj} + y_{kk}}$$
+```math
+y_{ij}^{new} = y_{ij}^{old} + \frac{y_{ik}\,y_{kj}}{y_{ik} + y_{kj}}.
+```
 
-If there's no shunt at bus $k$ ($y_{kk} = 0$):
+Equivalently, a pass-through bus with ``P_k = 0`` has an angle that is the
+reactance-weighted average of its neighbors,
+``\theta_k = (X_{kj}\theta_i + X_{ik}\theta_j)/(X_{ik} + X_{kj})``, so replacing it
+with a direct equivalent branch preserves the flow relationship. Retained-bus flows
+and overall impedances are preserved; the eliminated bus and its explicit branches
+are replaced by one equivalent branch. Avoid it where the degree-two bus carries
+measurements, controls, or a significant shunt.
 
-$$y_{ij}^{new} = y_{ij}^{old} + \frac{y_{ik} \cdot y_{kj}}{y_{ik} + y_{kj}}$$
+## Ward reduction
 
-This is analogous to combining series impedances in circuit theory.
+Radial and degree-two reduction eliminate *individual* buses by their local degree.
+[`WardReduction`](@ref) instead removes a whole **external subsystem** at once,
+keeping only a chosen set of **study buses** and preserving how the external network
+responds as seen from them.
 
-### Physical Interpretation
+Partition the buses into three groups: the **study** buses to retain, the
+**external** buses to eliminate, and the **boundary** buses — study buses that a
+retained branch connects directly to the external area. Ward equivalencing is a Kron
+(Schur-complement) elimination of the external block of the [`Ybus`](@ref): with the
+admittance matrix partitioned into study/boundary (``s``) and external (``e``) parts,
 
-Eliminating a degree two bus:
+```math
+Y_{eq} = Y_{ss} - Y_{se}\,Y_{ee}^{-1}\,Y_{es}.
+```
 
-  - Combines the series impedances of the two connecting branches
-  - Creates an equivalent direct connection
-  - Preserves the overall impedance between endpoints
+The correction term ``-Y_{se}Y_{ee}^{-1}Y_{es}`` is fully dense over the boundary
+buses; it is realized as a set of **equivalent branches between boundary buses** plus
+**equivalent shunt admittances** at them, so the reduced network reproduces the
+driving-point and transfer behavior the study area would see from the original
+external network. Unlike degree-two reduction — which is exact for the DC flows it
+preserves — a Ward equivalent is exact only for the operating state its external
+injections encode; it is a boundary-matched approximation for other states, which is
+why the study area is chosen to contain everything of interest.
 
-### Why Degree Two Reduction Works
+Ward reduction needs a non-empty boundary: with no branch crossing between study and
+external areas there is nothing to match against, and the external buses cannot be
+folded onto the study set by impedance criteria (a degenerate case the implementation
+flags rather than guessing an equivalent).
 
-The key insight is that a degree two bus with no injection ($P_k = 0$) serves only to pass power through. Its voltage angle is determined by:
+## Combining reductions
 
-$$P_k = \frac{\theta_i - \theta_k}{X_{ik}} + \frac{\theta_j - \theta_k}{X_{kj}} = 0$$
+Reductions can be applied in sequence, and order matters — each pass can expose new
+candidates for the next. Apply [`RadialReduction`](@ref) before
+[`DegreeTwoReduction`](@ref): removing dead-ends often exposes new degree-two buses.
 
-Solving for $\theta_k$:
+Eliminating a bus with no injection is clean; a bus carrying load or generation has
+those devices mapped to a retained bus, and shunt admittances affect the equivalent
+admittance matrix. [`RadialReduction`](@ref) and [`DegreeTwoReduction`](@ref) accept
+buses to protect from elimination (e.g. injector hosts). Reduction cannot preserve
+detailed voltage profiles, local dynamics, or exact AC behavior at eliminated
+locations — keep the full network for state estimation, protection coordination, or
+local voltage studies.
 
-$$\theta_k = \frac{X_{kj} \theta_i + X_{ik} \theta_j}{X_{ik} + X_{kj}}$$
+## References
 
-The angle is a weighted average of its neighbors, so eliminating it and creating a direct equivalent connection preserves the flow relationship.
-
-### Implications of Degree Two Reduction
-
-**Preserved:**
-
-  - Power flows at retained buses
-  - Voltage angles at retained buses
-  - Overall impedance relationships
-  - Equivalence for power flow studies
-
-**Changed:**
-
-  - Number of buses (reduced)
-  - Detailed behavior at eliminated bus
-  - Branch topology (new equivalent branches created)
-
-**When to Use:**
-
-  - Pass-through buses are not of analytical interest
-  - Focusing on injection/load buses
-  - Simplifying large transmission systems
-  - Reducing computational burden
-
-**When to Avoid:**
-
-  - The degree two bus has measurements or controls
-  - Detailed branch flows needed at that location
-  - Bus has significant shunt elements
-  - Studying protection or relay settings
-
-## Combining Reductions
-
-Multiple reductions can be applied sequentially. In these cases, the order of the reduction matters as after each reduction, new candidate buses may appear. In general, it is recommended that radial reduction is applied before degree two reduction as applying radial reduction first may expose new degree two buses.
-
-## Practical Considerations
-
-### Load and Generation at Reduced Buses
-
-Eliminating buses without any connected injection components can be done cleanly. For eliminated buses that have load or generation attached, those devices must be mapped to retained buses. For buses with shunt admittances, this mapping process can affect the equivalent admittance matrix. `RadialReduction` and `DegreeTwoReduction` have options for specifying buses that should not be eliminated (e.g. due to the presence of connected injectors).
-
-### Validation
-
-Always verify reductions:
-
-  - Compare power flows before and after
-  - Check that key quantities are preserved
-  - Validate on a small test system first
-
-## Limitations
-
-### What Reduction Cannot Do:
-
-  - Preserve detailed voltage profiles everywhere
-  - Capture local dynamics at eliminated buses
-  - Represent phenomena requiring those buses (e.g., local stability)
-  - Maintain exact AC power flow at eliminated locations
-
-### When Full Network is Required:
-
-  - Detailed state estimation
-  - Protection coordination
-  - Local voltage studies
-  - Distributed generation integration at eliminated buses
-
-## Further Reading
-
-For practical application, see:
-
-  - [RadialReduction](@ref)
-  - [DegreeTwoReduction](@ref)
+[^laplacian]: The matrix ``A^\top B A`` is a weighted graph Laplacian; see
+    [https://en.wikipedia.org/wiki/Laplacian_matrix](https://en.wikipedia.org/wiki/Laplacian_matrix).
+[^kron]: For Kron reduction and its graph-theoretic interpretation see
+    F. Dörfler and F. Bullo, "Kron Reduction of Graphs With Applications to
+    Electrical Networks," *IEEE Transactions on Circuits and Systems I*, vol. 60,
+    no. 1, pp. 150–163, 2013. See also
+    [https://en.wikipedia.org/wiki/Kron_reduction](https://en.wikipedia.org/wiki/Kron_reduction).
+[^ward]: J. B. Ward, "Equivalent Circuits for Power-Flow Studies,"
+    *Transactions of the AIEE*, vol. 68, no. 1, pp. 373–382, 1949.

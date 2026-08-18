@@ -1,6 +1,170 @@
 # Public API Reference
 
+```@meta
+CurrentModule = PowerNetworkMatrices
+```
+
+## Matrix types
+
+Dense, virtual, and structural network matrices, plus the concrete type aliases.
+See [Matrix Overview](network_matrices_overview.md) for the taxonomy and indexing
+rules.
+
 ```@autodocs
 Modules = [PowerNetworkMatrices]
 Public = true
+Private = false
+Order = [:type, :constant, :function, :macro]
+Filter = t -> t in (
+    PTDF, LODF, VirtualPTDF, VirtualLODF, VirtualMODF,
+    Ybus, ArcAdmittanceMatrix, BA_Matrix, ABA_Matrix,
+    IncidenceMatrix, AdjacencyMatrix,
+    DC_PTDF_Matrix, DC_vPTDF_Matrix, DC_BA_Matrix,
+    DC_ABA_Matrix_Factorized, DC_ABA_Matrix_Unfactorized,
+    AC_Ybus_Matrix, YBUS_ELTYPE,
+)
+```
+
+## Network reductions
+
+Reduction specifications, the reduction-data container, and its accessors. See the
+[`NetworkReduction`](@ref) docstring for the `network_reductions` keyword and rules.
+
+```@autodocs
+Modules = [PowerNetworkMatrices]
+Public = true
+Private = false
+Order = [:type, :constant, :function, :macro]
+Filter = t -> t in (
+    NetworkReduction, RadialReduction, DegreeTwoReduction, WardReduction,
+    NetworkReductionData,
+    get_bus_reduction_map, get_network_reduction_data,
+    get_reductions, get_ward_reduction,
+)
+```
+
+## Aggregated-branch ratings
+
+Rating-aggregation strategies for equivalent branches produced by network
+reduction.
+
+```@autodocs
+Modules = [PowerNetworkMatrices]
+Public = true
+Private = false
+Order = [:type, :constant, :function, :macro]
+Filter = t -> t in (
+    get_sum_of_max_rating,
+    get_single_element_contingency_rating,
+    get_impedance_averaged_rating,
+)
+```
+
+## Contingencies & modifications
+
+Modification and contingency specification types, Ybus-delta application, and the
+Woodbury-based post-contingency PTDF update. See the
+[contingencies how-to](../how_to_guides/generated_contingencies.md) for the type model
+and worked examples.
+
+```@autodocs
+Modules = [PowerNetworkMatrices]
+Public = true
+Private = false
+Order = [:type, :constant, :function, :macro]
+Filter = t -> t in (
+    ArcModification, ShuntModification, NetworkModification, ContingencySpec,
+    apply_ybus_modification, compute_ybus_delta,
+    apply_woodbury_correction, compute_woodbury_factors,
+    get_post_modification_ptdf_row, get_registered_contingencies,
+)
+```
+
+## Solvers & tolerance
+
+Sparsification tolerance and factorization controls. See
+[How to Choose a Linear Solver](../how_to_guides/generated_choose_linear_solver.md) for
+the solver backends.
+
+```@autodocs
+Modules = [PowerNetworkMatrices]
+Public = true
+Private = false
+Order = [:type, :constant, :function, :macro]
+Filter = t -> t in (
+    AutoTolerance, discover_data_precision,
+    factorize, is_factorized,
+)
+```
+
+## Serialization
+
+HDF5 persistence for `PTDF` (only).
+
+```@autodocs
+Modules = [PowerNetworkMatrices]
+Public = true
+Private = false
+Order = [:type, :constant, :function, :macro]
+Filter = t -> t in (
+    to_hdf5, from_hdf5, get_system_uuid,
+)
+```
+
+## Data accessors
+
+Extract the underlying numeric data from computed matrices.
+
+```@autodocs
+Modules = [PowerNetworkMatrices]
+Public = true
+Private = false
+Order = [:type, :constant, :function, :macro]
+Filter = t -> t in (
+    get_ptdf_data, get_lodf_data, get_partial_lodf_row,
+)
+```
+
+## Cache management
+
+Control and reset the virtual-matrix row caches.
+
+```@autodocs
+Modules = [PowerNetworkMatrices]
+Public = true
+Private = false
+Order = [:type, :constant, :function, :macro]
+Filter = t -> t in (
+    clear_caches!, clear_all_caches!,
+)
+```
+
+## Connectivity
+
+Island detection and connectivity validation.
+
+```@autodocs
+Modules = [PowerNetworkMatrices]
+Public = true
+Private = false
+Order = [:type, :constant, :function, :macro]
+Filter = t -> t in (
+    find_subnetworks, validate_connectivity,
+    depth_first_search, iterative_union_find,
+)
+```
+
+## Internal (non-exported) symbols
+
+The symbols below are **not** exported and are **not** part of the supported API.
+They are documented only so the manual covers every docstring shipped in the main
+module; they may change without notice. Internal solver submodules
+(`KLUWrapper`, `AccelerateWrapper`) are documented on the
+[Internals](internals.md) page.
+
+```@autodocs
+Modules = [PowerNetworkMatrices]
+Public = false
+Private = true
+Order = [:type, :constant, :function, :macro]
 ```

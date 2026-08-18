@@ -2,9 +2,9 @@
 Structure containing the Line Outage Distribution Factor (LODF) matrix and related power system data.
 
 The LODF matrix contains sensitivity coefficients that quantify how the outage of one transmission
-line affects the power flows on all other lines in the system. Each element LODF[i,j] represents
-the change in flow on line i when line j is taken out of service, normalized by the pre-outage
-flow on line j.
+line affects the power flows on all other lines in the system. Each element ``\\mathrm{LODF}[i,j]``
+represents the change in flow on line ``i`` when line ``j`` is taken out of service, normalized by
+the pre-outage flow on line ``j``.
 
 # Fields
 - `data::M <: AbstractArray{Float64, 2}`:
@@ -22,8 +22,8 @@ flow on line j.
         Container for network reduction information applied during matrix construction
 
 # Mathematical Properties
-- **Matrix Form**: LODF[i,j] = ∂f_i/∂P_j where f_i is flow on line i, P_j is injection change due to line j outage
-- **Dimensions**: (n_branches × n_branches) for all transmission lines in the system
+- **Matrix Form**: ``\\mathrm{LODF}[i,j] = \\partial f_i / \\partial P_j`` where ``f_i`` is flow on line ``i`` and ``P_j`` is the injection change due to the outage of line ``j``
+- **Dimensions**: `(n_branches × n_branches)` for all transmission lines in the system
 - **Diagonal Elements**: Always -1 (100% flow reduction on the outaged line itself)
 - **Symmetry**: Generally non-symmetric matrix reflecting directional flow sensitivities
 - **Physical Meaning**: Values represent fraction of pre-outage flow that redistributes to other lines
@@ -205,7 +205,8 @@ end
     Computes the LODF matrix using the internal Apple Accelerate backend
     (`AccelerateWrapper`). Available only on macOS. Shape mirrors
     `_calculate_LODF_matrix_KLU(a, ptdf)` exactly: factor the diagonal "demand"
-    matrix `diag(1 - PTDF·A)` and solve in place against `a · ptdf`.
+    matrix ``\\mathrm{diag}(1 - A \\, \\mathrm{PTDF})`` and solve in place against
+    ``A \\, \\mathrm{PTDF}``.
 
     # Arguments
     - `a::SparseArrays.SparseMatrixCSC{Int8, Int}`: Incidence Matrix
@@ -223,8 +224,35 @@ end
     end
 end
 
+# Numeric/default tol: original PTDF-based route, unchanged behavior.
+function _lodf_from_system(
+    tol::Float64,
+    A::IncidenceMatrix,
+    BA::BA_Matrix,
+    Ymatrix::Ybus,
+    linear_solver::String,
+)
+    # Keep the intermediate PTDF dense (tol = eps()); the from-PTDF LODF needs an
+    # unsparsified PTDF for accuracy, and only the LODF itself is sparsified.
+    ptdf = PTDF(A, BA; linear_solver = linear_solver, tol = eps())
+    return LODF(A, ptdf; linear_solver = linear_solver, tol = tol)
+end
+
+# AutoTolerance: build a factorized ABA so conditioning is available, then use
+# the KLU-only ABA/BA constructor.
+function _lodf_from_system(
+    spec::AutoTolerance,
+    A::IncidenceMatrix,
+    BA::BA_Matrix,
+    Ymatrix::Ybus,
+    ::String,
+)
+    ABA = ABA_Matrix(Ymatrix; factorize = true)
+    return LODF(A, ABA, BA; tol = spec)
+end
+
 """
-    LODF(sys::PSY.System; linear_solver::String = _default_linear_solver(), tol::Float64 = eps(), network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
+    LODF(sys::PSY.System; linear_solver::String = _default_linear_solver(), tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE, network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
 
 Construct a Line Outage Distribution Factor (LODF) matrix from a PowerSystems.System by computing
 the sensitivity of line flows to single line outages. This is the primary constructor for LODF
@@ -235,9 +263,11 @@ analysis starting from system data.
 
 # Keyword Arguments
 - `linear_solver::String = _default_linear_solver()`:
-        Linear solver algorithm for matrix computations. Options: "KLU", "Dense", "MKLPardiso"
-- `tol::Float64 = eps()`:
-        Sparsification tolerance for dropping small matrix elements to reduce memory usage
+        Linear solver algorithm for matrix computations. Options: "KLU", "AppleAccelerateLU", "Dense", "MKLPardiso"
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
+        Sparsification tolerance for dropping small matrix elements to reduce memory usage.
+        A `Float64` applies a fixed absolute cutoff at any size; an [`AutoTolerance`](@ref)
+        (the default) applies a relative per-row cutoff on large virtual matrices only.
 - `network_reductions::Vector{NetworkReduction} = NetworkReduction[]`:
         Vector of network reduction algorithms to apply before matrix construction
 - `include_constant_impedance_loads::Bool=true`:
@@ -261,16 +291,18 @@ analysis starting from system data.
 6. **Sparsification**: Applies tolerance threshold to reduce matrix density
 
 # Linear Solver Options
-- **"KLU"**: Sparse LU factorization (default, recommended for most cases)
+- **"KLU"**: Sparse LU factorization (default off Apple hardware, recommended for most cases)
+- **"AppleAccelerateLU"**: Apple Accelerate sparse LU (default on macOS 15.5+ Apple hardware)
 - **"Dense"**: Dense matrix operations (faster for small systems)
 - **"MKLPardiso"**: Intel MKL Pardiso solver (requires MKL, best for very large systems)
 
 # Mathematical Foundation
-The LODF matrix is computed using the relationship:
+With ``H = A \\, \\mathrm{PTDF}``, the sensitivity of monitored line ``\\ell`` to the outage
+of line ``e`` is
+```math
+\\mathrm{LODF}[\\ell, e] = \\frac{H[\\ell, e]}{1 - H[e, e]}
 ```
-LODF = (A * PTDF) / (1 - diag(A * PTDF))
-```
-where A is the incidence matrix and PTDF is the power transfer distribution factor matrix.
+where ``A`` is the incidence matrix and ``\\mathrm{PTDF}`` is the power transfer distribution factor matrix.
 
 # Notes
 - Sparsification with `tol > eps()` can significantly reduce memory usage
@@ -279,33 +311,6 @@ where A is the incidence matrix and PTDF is the power transfer distribution fact
 - Diagonal elements are always -1.0 representing complete flow loss on outaged lines
 - For very large systems, consider using "MKLPardiso" solver with appropriate chunk size
 """
-# Numeric/default tol: original PTDF-based route, unchanged behavior.
-function _lodf_from_system(
-    tol::Float64,
-    A::IncidenceMatrix,
-    BA::BA_Matrix,
-    Ymatrix::Ybus,
-    linear_solver::String,
-)
-    # Keep the intermediate PTDF dense (tol = eps()); the from-PTDF LODF needs an
-    # unsparsified PTDF for accuracy, and only the LODF itself is sparsified.
-    ptdf = PTDF(A, BA; tol = eps())
-    return LODF(A, ptdf; linear_solver = linear_solver, tol = tol)
-end
-
-# AutoTolerance: build a factorized ABA so conditioning is available, then use
-# the KLU-only ABA/BA constructor.
-function _lodf_from_system(
-    spec::AutoTolerance,
-    A::IncidenceMatrix,
-    BA::BA_Matrix,
-    Ymatrix::Ybus,
-    ::String,
-)
-    ABA = ABA_Matrix(Ymatrix; factorize = true)
-    return LODF(A, ABA, BA; tol = spec)
-end
-
 function LODF(
     sys::PSY.System;
     linear_solver::String = _default_linear_solver(),
@@ -322,7 +327,7 @@ function LODF(
 end
 
 """
-    LODF(A::IncidenceMatrix, PTDFm::PTDF; linear_solver::String = _default_linear_solver(), tol::Float64 = eps())
+    LODF(A::IncidenceMatrix, PTDFm::PTDF; linear_solver::String = _default_linear_solver(), tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE)
 
 Construct a Line Outage Distribution Factor (LODF) matrix from existing incidence and PTDF matrices.
 This constructor is more efficient when the prerequisite matrices are already available.
@@ -333,22 +338,23 @@ This constructor is more efficient when the prerequisite matrices are already av
 
 # Keyword Arguments
 - `linear_solver::String = _default_linear_solver()`:
-        Linear solver algorithm for matrix computations. Options: "KLU", "Dense", "MKLPardiso"
-- `tol::Float64 = eps()`:
+        Linear solver algorithm for matrix computations. Options: "KLU", "AppleAccelerateLU", "Dense", "MKLPardiso"
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
         Sparsification tolerance for the LODF matrix (not applied to input PTDF)
 
 # Returns
 - `LODF`: The constructed LODF matrix structure with line outage sensitivity coefficients
 
 # Mathematical Computation
-The LODF matrix is computed using the formula:
-```
-LODF = (A * PTDF) / (1 - diag(A * PTDF))
+With ``H = A \\, \\mathrm{PTDF}``, the sensitivity of monitored line ``\\ell`` to the outage
+of line ``e`` is
+```math
+\\mathrm{LODF}[\\ell, e] = \\frac{H[\\ell, e]}{1 - H[e, e]}
 ```
 where:
-- A is the incidence matrix representing bus-branch connectivity
-- PTDF contains power transfer distribution factors
-- The denominator (1 - diagonal terms) accounts for the outaged line's own flow
+- ``A`` is the incidence matrix (the [`IncidenceMatrix`](@ref)) representing bus-branch connectivity
+- ``\\mathrm{PTDF}`` contains power transfer distribution factors
+- The denominator ``1 - H[e,e]`` accounts for the outaged line's own flow
 
 # Important Notes
 - **PTDF Sparsification**: The input PTDF matrix should be non-sparsified (constructed with default tolerance) to avoid accuracy issues
@@ -419,7 +425,7 @@ function LODF(
 end
 
 """
-    LODF(A::IncidenceMatrix, ABA::ABA_Matrix, BA::BA_Matrix; linear_solver::String = "KLU", tol::Float64 = eps())
+    LODF(A::IncidenceMatrix, ABA::ABA_Matrix, BA::BA_Matrix; linear_solver::String = "KLU", tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE)
 
 Construct a Line Outage Distribution Factor (LODF) matrix from incidence, ABA, and BA matrices.
 This constructor provides direct control over the underlying matrix computations and is most
@@ -427,29 +433,29 @@ efficient when the prerequisite matrices with factorization are already availabl
 
 # Arguments
 - `A::IncidenceMatrix`: The incidence matrix containing bus-branch connectivity information
-- `ABA::ABA_Matrix`: The bus susceptance matrix (A^T * B * A), preferably with KLU factorization
-- `BA::BA_Matrix`: The branch susceptance weighted incidence matrix (B * A)
+- `ABA::ABA_Matrix`: The bus susceptance matrix ``A^\\top B A``, preferably with KLU factorization
+- `BA::BA_Matrix`: The branch susceptance weighted incidence matrix ``B A``
 
 # Keyword Arguments
 - `linear_solver::String = "KLU"`:
         This constructor is intentionally KLU-only because `ABA.K` is always a
         KLU factorization. The keyword is kept for API consistency; passing any
         other value will error.
-- `tol::Float64 = eps()`:
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
         Sparsification tolerance for dropping small matrix elements
 
 # Returns
 - `LODF`: The constructed LODF matrix structure with line outage sensitivity coefficients
 
 # Mathematical Computation
-This method computes LODF using the factorized form:
-```
-LODF = (A * ABA^(-1) * BA) / (1 - diag(A * ABA^(-1) * BA))
+This method computes LODF using the factorized form ``H = A\\, \\mathrm{ABA}^{-1} \\mathrm{BA}``,
+```math
+\\mathrm{LODF}[\\ell, e] = \\frac{H[\\ell, e]}{1 - H[e, e]}
 ```
 where:
-- A is the incidence matrix
-- ABA^(-1) uses the factorized form from the ABA matrix (requires `ABA.K` to be factorized)
-- BA is the susceptance-weighted incidence matrix
+- ``A`` is the incidence matrix (the [`IncidenceMatrix`](@ref))
+- ``\\mathrm{ABA}^{-1}`` uses the factorized form from the [`ABA_Matrix`](@ref) (requires `ABA.K` to be factorized)
+- ``\\mathrm{BA}`` is the susceptance-weighted incidence matrix (the [`BA_Matrix`](@ref))
 
 # Requirements and Limitations
 - **Factorization Required**: The ABA matrix should be pre-factorized (contains KLU factorization) for efficiency

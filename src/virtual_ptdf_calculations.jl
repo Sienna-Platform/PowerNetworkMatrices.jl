@@ -128,10 +128,12 @@ struct with an empty cache.
 - `linear_solver::String = _default_linear_solver()`:
         Linear solver to use for factorization. Options: "KLU", "AppleAccelerateLU".
         Defaults to "AppleAccelerateLU" on macOS 15.5+ and "KLU" elsewhere.
-- `tol::Float64 = eps()`:
-        Tolerance related to sparsification and values to drop.
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
+        Tolerance related to sparsification and values to drop. A `Float64` applies a
+        fixed absolute cutoff; an [`AutoTolerance`](@ref) (the default) applies a
+        relative per-row cutoff so requested rows stay sparse on large systems.
 - `max_cache_size::Int`:
-        max cache size in MiB (initialized as MAX_CACHE_SIZE_MiB).
+        max cache size in MiB (initialized as `MAX_CACHE_SIZE_MiB`).
 - `persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}()`:
         arcs to be evaluated as soon as the VirtualPTDF is created (initialized as empty vector of tuples).
 - `network_reduction::NetworkReduction`:
@@ -206,10 +208,12 @@ The return is a VirtualPTDF struct with an empty cache.
 - `linear_solver::String = _default_linear_solver()`:
         Linear solver to use for factorization. Options: "KLU", "AppleAccelerateLU".
         Defaults to "AppleAccelerateLU" on macOS 15.5+ and "KLU" elsewhere.
-- `tol::Float64 = eps()`:
-        Tolerance related to sparsification and values to drop.
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
+        Tolerance related to sparsification and values to drop. A `Float64` applies a
+        fixed absolute cutoff; an [`AutoTolerance`](@ref) (the default) applies a
+        relative per-row cutoff so requested rows stay sparse on large systems.
 - `max_cache_size::Int`:
-        max cache size in MiB (initialized as MAX_CACHE_SIZE_MiB).
+        max cache size in MiB (initialized as `MAX_CACHE_SIZE_MiB`).
 - `persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}()`:
         arcs to be evaluated as soon as the VirtualPTDF is created (initialized as empty vector of tuples).
 """

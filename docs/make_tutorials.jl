@@ -216,9 +216,9 @@ end
 # Download links:
 # - **Deployed / CI**: absolute URLs under `_DOCS_BASE_URL` when `_downloads_use_absolute_urls()` is true.
 # - **Local**: bare filenames (siblings of `generated_*.md` in `docs/src/tutorials/`).
-function add_download_links(content, jl_file, ipynb_file)
+function add_download_links(content, jl_file, ipynb_file, subdir = "tutorials")
     script_link, notebook_link = if _downloads_use_absolute_urls()
-        ("$_DOCS_BASE_URL/tutorials/$(jl_file)", "$_DOCS_BASE_URL/tutorials/$(ipynb_file)")
+        ("$_DOCS_BASE_URL/$subdir/$(jl_file)", "$_DOCS_BASE_URL/$subdir/$(ipynb_file)")
     else
         (jl_file, ipynb_file)
     end
@@ -345,8 +345,8 @@ end
 # - If a markdown cell contains one or more image fragments, append exactly one
 #   "view online" fallback note at the end of that cell.
 # - If the note already exists in the cell, no change is applied.
-function add_image_links(nb::Dict, outputfile_base::AbstractString)
-    tutorial_url = "$_DOCS_BASE_URL/tutorials/$(outputfile_base)/"
+function add_image_links(nb::Dict, outputfile_base::AbstractString, subdir = "tutorials")
+    tutorial_url = "$_DOCS_BASE_URL/$subdir/$(outputfile_base)/"
     msg = "_If image is not available when viewing in a Jupyter notebook, view the tutorial online [here]($tutorial_url)._"
     cells = get(nb, "cells", [])
     for (idx, cell) in enumerate(cells)
@@ -409,29 +409,30 @@ end
 # Process tutorials with Literate
 #########################################################
 
-# Generate tutorial markdown + notebook artifacts from literate .jl sources.
+# Generate markdown + notebook artifacts from the literate .jl sources in
+# docs/src/<subdir> (e.g. "tutorials", "how_to_guides").
 #
 # Pipeline:
-# 1) discover tutorial .jl files (excluding helper files starting with "_")
+# 1) discover .jl files in the folder (excluding helper files starting with "_")
 # 2) generate Documenter-flavored markdown with injected download links
 # 3) generate notebook with admonition conversion, setup preface, and image note
-function make_tutorials()
-    tutorials_dir = abspath(joinpath(@__DIR__, "src", "tutorials"))
+function make_literate_folder(subdir::String = "tutorials")
+    src_dir = abspath(joinpath(@__DIR__, "src", subdir))
     # Exclude helper scripts that start with "_"
-    if isdir(tutorials_dir)
-        tutorial_files =
+    if isdir(src_dir)
+        source_files =
             filter(
                 x -> endswith(x, ".jl") && !startswith(x, "_"),
-                readdir(tutorials_dir),
+                readdir(src_dir),
             )
-        if !isempty(tutorial_files)
-            # Clean up old generated tutorial files
-            tutorial_outputdir = tutorials_dir
-            clean_old_generated_files(tutorial_outputdir)
+        if !isempty(source_files)
+            # Clean up old generated files
+            outputdir = src_dir
+            clean_old_generated_files(outputdir)
 
-            for file in tutorial_files
+            for file in source_files
                 @show file
-                infile_path = joinpath(tutorials_dir, file)
+                infile_path = joinpath(src_dir, file)
                 execute =
                     if occursin("EXECUTE = TRUE", uppercase(readline(infile_path)))
                         true
@@ -443,7 +444,7 @@ function make_tutorials()
 
                 # Generate markdown
                 Literate.markdown(infile_path,
-                    tutorial_outputdir;
+                    outputdir;
                     name = outputfile,
                     credit = false,
                     flavor = Literate.DocumenterFlavor(),
@@ -453,6 +454,7 @@ function make_tutorials()
                             insert_md(content),
                             file,
                             string(outputfile, ".ipynb"),
+                            subdir,
                         )
                     ),
                     execute = execute)
@@ -461,13 +463,17 @@ function make_tutorials()
                 # preprocess_admonitions_for_notebook converts Documenter admonitions to blockquotes
                 # so they render in Jupyter; markdown output keeps !!! style for Documenter.
                 Literate.notebook(infile_path,
-                    tutorial_outputdir;
+                    outputdir;
                     name = outputfile,
                     credit = false,
                     execute = false,
                     preprocess = preprocess_admonitions_for_notebook,
                     postprocess = nb ->
-                        add_image_links(add_pkg_status_to_notebook(nb), outputfile))
+                        add_image_links(
+                            add_pkg_status_to_notebook(nb),
+                            outputfile,
+                            subdir,
+                        ))
             end
         end
     end

@@ -1,7 +1,5 @@
-"""
-Public API for computing post-modification PTDF rows from a `VirtualPTDF`
-and a `NetworkModification`, using the Woodbury matrix identity.
-"""
+# Public API for computing post-modification PTDF rows from a VirtualPTDF and a
+# NetworkModification, using the Woodbury matrix identity.
 
 """
     compute_woodbury_factors(vptdf, mod) -> WoodburyFactors
@@ -61,10 +59,10 @@ end
 
 One-shot convenience function: compute the post-modification PTDF row
 for a monitored arc under a network modification. Internally calls
-`compute_woodbury_factors` then `apply_woodbury_correction`.
+[`compute_woodbury_factors`](@ref) then [`apply_woodbury_correction`](@ref).
 
 No caching — each call recomputes. Use the two-step API
-(`compute_woodbury_factors` + `apply_woodbury_correction`) when querying
+([`compute_woodbury_factors`](@ref) + [`apply_woodbury_correction`](@ref)) when querying
 multiple monitored arcs for the same modification.
 
 $(TYPEDSIGNATURES)

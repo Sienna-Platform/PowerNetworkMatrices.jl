@@ -2,15 +2,16 @@
 Structure containing the Power Transfer Distribution Factor (PTDF) matrix and related power system data.
 
 The PTDF matrix contains sensitivity coefficients that quantify how power injections at buses
-affect the power flows on transmission lines. Each element PTDF[i,j] represents the incremental
-change in flow on line i due to a unit power injection at bus j, under DC power flow assumptions.
+affect the power flows on transmission lines. Each element ``\\mathrm{PTDF}[i,j]`` represents the
+incremental change in flow on line ``i`` due to a unit power injection at bus ``j``, under DC power
+flow assumptions.
 
 # Fields
 - `data::M <: AbstractArray{Float64, 2}`:
         The PTDF matrix data stored in transposed form for computational efficiency.
         Element (i,j) represents the sensitivity of line j flow to bus i injection
 - `axes::Ax`:
-        Tuple containing (bus_numbers, branch_identifiers) for matrix dimensions
+        Tuple containing `(bus_numbers, branch_identifiers)` for matrix dimensions
 - `lookup::L <: NTuple{2, Dict}`:
         Tuple of dictionaries providing fast lookup from bus/branch identifiers to matrix indices
 - `subnetwork_axes::Dict{Int, Ax}`:
@@ -21,9 +22,9 @@ change in flow on line i due to a unit power injection at bus j, under DC power 
         Container for network reduction information applied during matrix construction
 
 # Mathematical Properties
-- **Matrix Form**: PTDF[i,j] = ∂f_i/∂P_j where f_i is flow on line i, P_j is injection at bus j
-- **Dimensions**: (n_buses × n_arcs) for all buses and impedance arcs
-- **Linear Superposition**: Total flow = Σ(PTDF[i,j] × P_j) for all injections P_j
+- **Matrix Form**: ``\\mathrm{PTDF}[i,j] = \\partial f_i / \\partial P_j`` where ``f_i`` is flow on line ``i`` and ``P_j`` is injection at bus ``j``
+- **Dimensions**: `(n_buses × n_arcs)` for all buses and impedance arcs
+- **Linear Superposition**: ``f_i = \\sum_j \\mathrm{PTDF}[i,j] \\, P_j`` over all injections ``P_j``
 - **Physical Meaning**: Values represent the fraction of bus injection that flows through each line
 - **Reference Bus**: Rows corresponding to reference buses are typically zero
 
@@ -284,7 +285,7 @@ end
 end
 
 """
-    PTDF(sys::PSY.System; dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(), linear_solver = _default_linear_solver(), tol::Float64 = eps(), network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
+    PTDF(sys::PSY.System; dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(), linear_solver = _default_linear_solver(), tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE, network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
 
 Construct a Power Transfer Distribution Factor (PTDF) matrix from a PowerSystems.System by computing
 the sensitivity of transmission line flows to bus power injections. This is the primary constructor
@@ -298,9 +299,11 @@ for PTDF analysis starting from system data.
         Dictionary mapping bus numbers to distributed slack weights for realistic slack modeling.
         Empty dictionary uses single slack bus (default behavior)
 - `linear_solver::String = _default_linear_solver()`:
-        Linear solver algorithm for matrix computations. Options: "KLU", "Dense", "MKLPardiso"
-- `tol::Float64 = eps()`:
-        Sparsification tolerance for dropping small matrix elements to reduce memory usage
+        Linear solver algorithm for matrix computations. Options: "KLU", "AppleAccelerateLU", "Dense", "MKLPardiso"
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
+        Sparsification tolerance for dropping small matrix elements to reduce memory usage.
+        A `Float64` applies a fixed absolute cutoff at any size; an [`AutoTolerance`](@ref)
+        (the default) applies a relative per-row cutoff on large virtual matrices only.
 - `network_reductions::Vector{NetworkReduction} = NetworkReduction[]`:
         Vector of network reduction algorithms to apply before matrix construction
 - `include_constant_impedance_loads::Bool=true`:
@@ -319,7 +322,7 @@ for PTDF analysis starting from system data.
 1. **Ybus Construction**: Creates system admittance matrix with specified reductions
 2. **Incidence Matrix**: Builds bus-branch connectivity matrix A
 3. **BA Matrix**: Computes branch susceptance weighted incidence matrix
-4. **PTDF Computation**: Calculates power transfer distribution factors using A^T × B^(-1) × A
+4. **PTDF Computation**: Calculates power transfer distribution factors by solving ``(A^\\top B A)\\, X = A^\\top B``
 5. **Distributed Slack**: Applies distributed slack correction if specified
 6. **Sparsification**: Removes small elements based on tolerance threshold
 
@@ -330,16 +333,19 @@ for PTDF analysis starting from system data.
 - **Physical Meaning**: Distributed slack better represents generator response to load changes
 
 # Linear Solver Options
-- **"KLU"**: Sparse LU factorization (default, recommended for most cases)
+- **"KLU"**: Sparse LU factorization (default off Apple hardware, recommended for most cases)
+- **"AppleAccelerateLU"**: Apple Accelerate sparse LU (default on macOS 15.5+ Apple hardware)
 - **"Dense"**: Dense matrix operations (faster for small systems, higher memory usage)
 - **"MKLPardiso"**: Intel MKL Pardiso solver (requires MKL library, best for very large systems)
 
 # Mathematical Foundation
-The PTDF matrix is computed as:
+The PTDF matrix is computed as
+```math
+\\mathrm{PTDF} = B A (A^\\top B A)^{-1}
 ```
-PTDF = (A^T × B × A)^(-1) × A^T × B
-```
-where A is the incidence matrix and B is the susceptance matrix.
+where ``A`` is the incidence matrix (the [`IncidenceMatrix`](@ref)) and ``B`` the branch
+susceptance matrix (see [`BA_Matrix`](@ref)). The `data` field holds the transpose
+``(A^\\top B A)^{-1} A^\\top B``; use [`get_ptdf_data`](@ref) for the orientation above.
 
 # Notes
 - Results are valid under DC power flow assumptions (linear approximation)
@@ -362,7 +368,7 @@ function PTDF(sys::PSY.System;
 end
 
 """
-    PTDF(ybus::Ybus; dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(), linear_solver = _default_linear_solver(), tol::Float64 = eps(), network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
+    PTDF(ybus::Ybus; dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(), linear_solver = _default_linear_solver(), tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE, network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
 
 Construct a Power Transfer Distribution Factor (PTDF) matrix from existing Ybus matrix.
 This constructor is more efficient when the prerequisite matrices are already available and provides
@@ -376,9 +382,11 @@ direct control over the underlying matrix computations.
         Dictionary mapping bus numbers to distributed slack weights for realistic slack modeling.
         Empty dictionary uses single slack bus (default behavior)
 - `linear_solver::String = _default_linear_solver()`:
-        Linear solver algorithm for matrix computations. Options: "KLU", "Dense", "MKLPardiso"
-- `tol::Float64 = eps()`:
-        Sparsification tolerance for dropping small matrix elements to reduce memory usage
+        Linear solver algorithm for matrix computations. Options: "KLU", "AppleAccelerateLU", "Dense", "MKLPardiso"
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
+        Sparsification tolerance for dropping small matrix elements to reduce memory usage.
+        A `Float64` applies a fixed absolute cutoff at any size; an [`AutoTolerance`](@ref)
+        (the default) applies a relative per-row cutoff on large virtual matrices only.
 
 # Returns
 - `PTDF`: The constructed PTDF matrix structure containing:
@@ -389,7 +397,7 @@ direct control over the underlying matrix computations.
 # Construction Process
 1. **Incidence Matrix**: Builds bus-branch connectivity matrix A (from Ybus matrix)
 2. **BA Matrix**: Computes branch susceptance weighted incidence matrix
-3. **PTDF Computation**: Calculates power transfer distribution factors using A^T × B^(-1) × A
+3. **PTDF Computation**: Calculates power transfer distribution factors by solving ``(A^\\top B A)\\, X = A^\\top B``
 4. **Distributed Slack**: Applies distributed slack correction if specified
 5. **Sparsification**: Removes small elements based on tolerance threshold
 
@@ -400,16 +408,19 @@ direct control over the underlying matrix computations.
 - **Physical Meaning**: Distributed slack better represents generator response to load changes
 
 # Linear Solver Options
-- **"KLU"**: Sparse LU factorization (default, recommended for most cases)
+- **"KLU"**: Sparse LU factorization (default off Apple hardware, recommended for most cases)
+- **"AppleAccelerateLU"**: Apple Accelerate sparse LU (default on macOS 15.5+ Apple hardware)
 - **"Dense"**: Dense matrix operations (faster for small systems, higher memory usage)
 - **"MKLPardiso"**: Intel MKL Pardiso solver (requires MKL library, best for very large systems)
 
 # Mathematical Foundation
-The PTDF matrix is computed as:
+The PTDF matrix is computed as
+```math
+\\mathrm{PTDF} = B A (A^\\top B A)^{-1}
 ```
-PTDF = (A^T × B × A)^(-1) × A^T × B
-```
-where A is the incidence matrix and B is the susceptance matrix.
+where ``A`` is the incidence matrix (the [`IncidenceMatrix`](@ref)) and ``B`` the branch
+susceptance matrix (see [`BA_Matrix`](@ref)). The `data` field holds the transpose
+``(A^\\top B A)^{-1} A^\\top B``; use [`get_ptdf_data`](@ref) for the orientation above.
 
 # Notes
 - Results are valid under DC power flow assumptions (linear approximation)
@@ -435,7 +446,7 @@ function PTDF(ybus::Ybus;
 end
 
 """
-    PTDF(A::IncidenceMatrix, BA::BA_Matrix; dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(), linear_solver = _default_linear_solver(), tol::Float64 = eps())
+    PTDF(A::IncidenceMatrix, BA::BA_Matrix; dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(), linear_solver = _default_linear_solver(), tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE)
 
 Construct a Power Transfer Distribution Factor (PTDF) matrix from existing incidence and BA matrices.
 This constructor is more efficient when the prerequisite matrices are already available and provides
@@ -450,22 +461,26 @@ direct control over the underlying matrix computations.
         Dictionary mapping bus numbers to distributed slack participation factors.
         Empty dictionary uses single slack bus (reference bus from matrices)
 - `linear_solver::String = _default_linear_solver()`:
-        Linear solver algorithm for matrix computations. Options: "KLU", "Dense", "MKLPardiso"
-- `tol::Float64 = eps()`:
-        Sparsification tolerance for dropping small matrix elements to reduce memory usage
+        Linear solver algorithm for matrix computations. Options: "KLU", "AppleAccelerateLU", "Dense", "MKLPardiso"
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
+        Sparsification tolerance for dropping small matrix elements to reduce memory usage.
+        A `Float64` applies a fixed absolute cutoff at any size; an [`AutoTolerance`](@ref)
+        (the default) applies a relative per-row cutoff on large virtual matrices only.
 
 # Returns
 - `PTDF`: The constructed PTDF matrix structure with injection-to-flow sensitivity coefficients
 
 # Mathematical Computation
-The PTDF matrix is computed using the relationship:
-```
-PTDF = (A^T × B × A)^(-1) × A^T × B
+The PTDF matrix is computed using the relationship
+```math
+\\mathrm{PTDF} = B A (A^\\top B A)^{-1}
 ```
 where:
-- A is the incidence matrix representing bus-branch connectivity
-- B is the diagonal susceptance matrix (embedded in BA matrix)
+- ``A`` is the incidence matrix representing bus-branch connectivity
+- ``B`` is the diagonal susceptance matrix (embedded in BA matrix)
 - The computation involves solving the ABA linear system for efficiency
+- The `data` field holds the transpose ``(A^\\top B A)^{-1} A^\\top B``; use
+  [`get_ptdf_data`](@ref) for the orientation above
 
 # Distributed Slack Handling
 - **Single Slack**: Uses reference bus identified from input matrices

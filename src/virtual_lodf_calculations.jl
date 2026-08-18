@@ -11,7 +11,7 @@ The VirtualLODF struct is indexed using branch names.
 
 # Thread-safety
 
-Concurrent `getindex` (and `get_partial_lodf_row`) is safe but serialized:
+Concurrent `getindex` (and [`get_partial_lodf_row`](@ref)) is safe but serialized:
 every libklu solve runs under `_LIBKLU_LOCK` (process-wide) and the per-cache
 `solver_lock`, and the row cache is guarded by `cache_lock`. Multi-threaded
 callers can issue requests concurrently; the libklu work runs one at a time.
@@ -28,7 +28,7 @@ callers can issue requests concurrently; the libklu work runs one at a time.
         Vector contiaining the element-wise reciprocal of the diagonal elements
         coming from multuiplying the PTDF matrix with th Incidence matrix
 - `PTDF_A_diag::Vector{Float64}`:
-        Raw diagonal elements of the PTDF·A product (H[e,e] values), before
+        Raw diagonal elements of the ``\\mathrm{PTDF} \\, A`` product (``H[e,e]`` values), before
         tolerance clamping. Used for partial susceptance change computations.
 - `arc_susceptances::Vector{Float64}`:
         Effective susceptance for each arc, extracted from the BA matrix.
@@ -121,9 +121,9 @@ end
 """
     _get_PTDF_A_diag(K, BA, A, ref_bus_positions) -> Vector{Float64}
 
-Compute `diag(PTDF · A)`. Each row of `A` has exactly two nonzeros (+1 at the
-from-bus, -1 at the to-bus), so the per-arc dot product reduces to two indexed
-reads into the solved PTDF row after a one-time transpose of `A`.
+Compute ``\\mathrm{diag}(\\mathrm{PTDF} \\, A)``. Each row of ``A`` has exactly two nonzeros
+(``+1`` at the from-bus, ``-1`` at the to-bus), so the per-arc dot product reduces to two
+indexed reads into the solved PTDF row after a one-time transpose of ``A``.
 """
 function _get_PTDF_A_diag(
     K,
@@ -503,21 +503,23 @@ Compute the partial LODF column for a susceptance change `delta_b` on arc `arc_i
 Concurrent callers serialize on `vlodf.solver_lock` and `_LIBKLU_LOCK`.
 
 Uses the Sherman-Morrison (matrix inversion lemma) formula derived from DC power flow
-sensitivity analysis. For a change Δb in the susceptance of arc e, the change in flow
-on monitoring arc ℓ per unit pre-change flow on arc e is:
-
-    partial_LODF[ℓ, e] = α · (b_ℓ / b_e) · H[ℓ,e] / (1 - α · H[e,e])
-
+sensitivity analysis. For a change ``\\Delta b`` in the susceptance of arc ``e``, the change in flow
+on monitoring arc ``\\ell`` per unit pre-change flow on arc ``e`` is
+```math
+\\mathrm{partialLODF}[\\ell, e] = \\alpha \\, \\frac{b_\\ell}{b_e} \\, \\frac{H[\\ell, e]}{1 - \\alpha \\, H[e, e]}
+```
 where:
-- α = -Δb / b_e   (positive for outage/decrease, negative for increase)
-- H[ℓ, e] = (A · (ABA)⁻¹ · BA)[ℓ, e] = b_e · C[e, ℓ]  (computed via KLU solve)
-- b_ℓ = susceptance of monitoring arc ℓ
-- H[e,e] = PTDF_A_diag[e]
+- ``\\alpha = -\\Delta b / b_e`` (positive for outage/decrease, negative for increase)
+- ``H[\\ell, e] = (A \\, (\\mathrm{ABA})^{-1} \\, \\mathrm{BA})[\\ell, e] = b_e \\, C[e, \\ell]`` (computed via KLU solve)
+- ``b_\\ell`` is the susceptance of monitoring arc ``\\ell``
+- ``H[e, e]`` is `PTDF_A_diag[e]`
 
-When `delta_b = -b_e` (full outage), α = 1 and this reduces to the standard LODF column:
-    LODF[ℓ, e] = b_ℓ · C[e, ℓ] / (1 - H[e,e])
+When `delta_b = -b_e` (full outage), ``\\alpha = 1`` and this reduces to the standard LODF column
+```math
+\\mathrm{LODF}[\\ell, e] = \\frac{b_\\ell \\, C[e, \\ell]}{1 - H[e, e]}.
+```
 When `delta_b = 0`, returns zeros (no change).
-The self-element (ℓ = e) is overridden to -1.0 for full outage per standard LODF convention.
+The self-element (``\\ell = e``) is overridden to -1.0 for full outage per standard LODF convention.
 """
 function _getindex_partial(
     vlodf::VirtualLODF,
