@@ -167,12 +167,12 @@ end
 
     for e in 1:n_arcs
         b_e = vptdf.arc_susceptances[e]
-        ctg_uuid = Base.UUID(UInt128(e + 10000))
+        ctg_id = e + 10000
         ctg = ContingencySpec(
-            ctg_uuid,
+            ctg_id,
             NetworkModification("test_$e", [ArcModification(e, -b_e)]),
         )
-        vmodf.contingency_cache[ctg_uuid] = ctg
+        vmodf.contingency_cache[ctg_id] = ctg
 
         mod = NetworkModification(ctg)
         wf = compute_woodbury_factors(vptdf, mod)

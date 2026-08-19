@@ -6,8 +6,8 @@
 function _arc_connecting_two_areas(arc::PSY.Arc)
     from_bus = PSY.get_from(arc)
     to_bus = PSY.get_to(arc)
-    area_from = IS.get_uuid(PSY.get_area(from_bus))
-    area_to = IS.get_uuid(PSY.get_area(to_bus))
+    area_from = IS.get_id(PSY.get_area(from_bus))
+    area_to = IS.get_id(PSY.get_area(to_bus))
     return area_from != area_to
 end
 

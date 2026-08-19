@@ -76,10 +76,10 @@ end
     @testset "M=1 single bridge arc" begin
         b = vmodf.arc_susceptances[e_bridge1]
         ctg = ContingencySpec(
-            Base.UUID(UInt128(50001)),
+            50001,
             NetworkModification("island_m1", [ArcModification(e_bridge1, -b)]),
         )
-        vmodf.contingency_cache[ctg.uuid] = ctg
+        vmodf.contingency_cache[ctg.id] = ctg
 
         row = PNM._compute_modf_entry(vmodf, monitored, ctg.modification)
         @test all(isfinite, row)
@@ -101,13 +101,13 @@ end
         b_br = vmodf.arc_susceptances[e_bridge1]
         b_ot = vmodf.arc_susceptances[e_other]
         ctg = ContingencySpec(
-            Base.UUID(UInt128(50002)),
+            50002,
             NetworkModification(
                 "island_m2",
                 [ArcModification(e_bridge1, -b_br), ArcModification(e_other, -b_ot)],
             ),
         )
-        vmodf.contingency_cache[ctg.uuid] = ctg
+        vmodf.contingency_cache[ctg.id] = ctg
 
         row = PNM._compute_modf_entry(vmodf, monitored, ctg.modification)
         @test !all(x -> abs(x) < 1e-10, row)
@@ -120,13 +120,13 @@ end
         b1 = vmodf.arc_susceptances[e_bridge1]
         b2 = vmodf.arc_susceptances[e_bridge2]
         ctg = ContingencySpec(
-            Base.UUID(UInt128(50003)),
+            50003,
             NetworkModification(
                 "island_2bridge",
                 [ArcModification(e_bridge1, -b1), ArcModification(e_bridge2, -b2)],
             ),
         )
-        vmodf.contingency_cache[ctg.uuid] = ctg
+        vmodf.contingency_cache[ctg.id] = ctg
 
         row = PNM._compute_modf_entry(vmodf, monitored, ctg.modification)
         @test all(isfinite, row)
@@ -144,7 +144,7 @@ end
         b2 = vmodf.arc_susceptances[e_bridge2]
         b3 = vmodf.arc_susceptances[e_other]
         ctg = ContingencySpec(
-            Base.UUID(UInt128(50004)),
+            50004,
             NetworkModification(
                 "island_m3",
                 [
@@ -154,7 +154,7 @@ end
                 ],
             ),
         )
-        vmodf.contingency_cache[ctg.uuid] = ctg
+        vmodf.contingency_cache[ctg.id] = ctg
 
         row = PNM._compute_modf_entry(vmodf, monitored, ctg.modification)
         @test !all(x -> abs(x) < 1e-10, row)
@@ -178,12 +178,12 @@ end
 
     for e in 1:n_arcs
         b_e = vmodf.arc_susceptances[e]
-        ctg_uuid = Base.UUID(UInt128(60000 + e))
+        ctg_id = 60000 + e
         ctg = ContingencySpec(
-            ctg_uuid,
+            ctg_id,
             NetworkModification("regression_$e", [ArcModification(e, -b_e)]),
         )
-        vmodf.contingency_cache[ctg_uuid] = ctg
+        vmodf.contingency_cache[ctg_id] = ctg
 
         for m in 1:n_arcs
             modf_row = PNM._compute_modf_entry(vmodf, m, ctg.modification)
