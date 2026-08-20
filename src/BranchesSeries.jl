@@ -3,15 +3,19 @@ mutable struct BranchesSeries <: AbstractReductionAggregate
     needs_insertion_order::Bool
     insertion_order::Vector{Tuple{DataType, Int}}
     segment_orientations::Vector{Symbol}
+    # The chain's endpoints in original bus numbers, remapped with `nr` on read. A chain can be
+    # a member of a parallel group, where orientation is resolved against the group's frame.
+    arc_key::Tuple{Int, Int}
     equivalent_ybus::CACHED_TWO_PORT
     equivalent_ybus_populated::Bool
 end
 
-BranchesSeries() = BranchesSeries(
+BranchesSeries(arc_key::Tuple{Int, Int}) = BranchesSeries(
     Dict{DataType, Vector{<:PSY.ACTransmission}}(),
     false,
     Vector{Tuple{DataType, Int}}(),
     Vector{Symbol}(),
+    arc_key,
     EMPTY_TWO_PORT,
     false,
 )

@@ -18,7 +18,9 @@ end
     trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
 
     bp = PNM.BranchesParallel([line1, line2])
-    bs = PNM.BranchesSeries()
+    # This fixture only exercises member iteration, so the arc key just needs to name the
+    # chain's span: from line1's origin to line2's terminus.
+    bs = PNM.BranchesSeries((PNM.get_arc_tuple(line1)[1], PNM.get_arc_tuple(line2)[2]))
     PNM.add_branch!(bs, line1, :FromTo)
     PNM.add_branch!(bs, line2, :FromTo)
     tww1 = PNM.ThreeWindingTransformerCircuit(trf, 1)
@@ -49,7 +51,9 @@ end
     trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
 
     bp = PNM.BranchesParallel([line1, line2])
-    bs = PNM.BranchesSeries()
+    # This fixture only exercises member iteration, so the arc key just needs to name the
+    # chain's span: from line1's origin to line2's terminus.
+    bs = PNM.BranchesSeries((PNM.get_arc_tuple(line1)[1], PNM.get_arc_tuple(line2)[2]))
     PNM.add_branch!(bs, line1, :FromTo)
     PNM.add_branch!(bs, line2, :FromTo)
     tww1 = PNM.ThreeWindingTransformerCircuit(trf, 1)

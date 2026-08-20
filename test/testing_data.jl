@@ -642,3 +642,217 @@ function build_hvdc_with_small_island()
     add_component!(sys, hvdc1)
     return sys
 end
+
+"""
+Build a system on the buses named by an edge list of `(from, to, r, x, b_from, b_to)` tuples,
+with buses 1-4 forming the meshed core and higher numbers the chain interiors. A generator sits
+on bus 1 and a load on `load_bus`, so those are the only injector-pinned buses and every other
+bus is a reduction candidate. Shared by the chain fixtures below, which differ only in their
+edge lists.
+"""
+function _build_degree_two_chain_system(edges; load_bus::Int = 3)
+    sys = PSY.System(100.0)
+    buses = Dict{Int, ACBus}()
+    bus_numbers = sort!(unique!(reduce(vcat, [[e[1], e[2]] for e in edges])))
+    for n in bus_numbers
+        b = ACBus(;
+            number = n,
+            name = "Bus $n",
+            available = true,
+            bustype = n == 1 ? ACBusTypes.REF : ACBusTypes.PQ,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        PSY.add_component!(sys, b)
+        buses[n] = b
+    end
+    for (f, t, r, x, b_from, b_to) in edges
+        arc = Arc(buses[f], buses[t])
+        PSY.add_component!(sys, arc)
+        PSY.add_component!(
+            sys,
+            Line("L_$(f)_$(t)", true, 0.0, 0.0, arc, r, x,
+                (from = b_from, to = b_to), 2.0, (-1.6, 1.6)),
+        )
+    end
+    PSY.add_component!(
+        sys,
+        ThermalStandard(; name = "G1", available = true, status = true, bus = buses[1],
+            active_power = 1.0, reactive_power = 0.0, rating = 2.0,
+            prime_mover_type =
+            PSY.PrimeMovers.OT, fuel = PSY.ThermalFuels.OTHER,
+            active_power_limits = (min = 0.0, max = 2.0),
+            reactive_power_limits = nothing, ramp_limits = nothing,
+            time_limits = nothing, base_power = 100.0,
+            operation_cost = ThermalGenerationCost(nothing)),
+    )
+    PSY.add_component!(
+        sys,
+        PowerLoad(; name = "D3", available = true, bus = buses[load_bus],
+            active_power = 1.0,
+            reactive_power = 0.0, base_power = 100.0, max_active_power = 1.0,
+            max_reactive_power = 0.0),
+    )
+    return sys
+end
+
+"""
+Meshed core on buses 1-4 (a ring plus a 2-4 tie, so every core bus has degree three or more)
+plus two independent degree-two chains between buses 1 and 3 (interiors 10-11 and 20-21).
+Buses 1 and 3 keep degree four so they are chain terminals, and the two chains form the
+sibling pair that must collapse into one parallel group. Only the chain interiors are
+degree two, so they are the only buses a `DegreeTwoReduction` eliminates. No injectors on
+the interior buses, so nothing pins them irreducible.
+
+Both chains are written from bus 1 towards bus 3, and every branch is lossless with no
+charging, so the reduction is exactly a Schur complement onto the core.
+"""
+function build_two_parallel_degree_two_chains()
+    # (from, to, r, x, b_from, b_to) — distinct reactances so the chains are not degenerate.
+    edges = [
+        (1, 2, 0.0, 0.05, 0.0, 0.0), (2, 3, 0.0, 0.06, 0.0, 0.0),   # ring core
+        (3, 4, 0.0, 0.07, 0.0, 0.0), (4, 1, 0.0, 0.08, 0.0, 0.0),
+        (2, 4, 0.0, 0.09, 0.0, 0.0),                                # core tie
+        (1, 10, 0.0, 0.10, 0.0, 0.0), (10, 11, 0.0, 0.11, 0.0, 0.0),  # chain A
+        (11, 3, 0.0, 0.12, 0.0, 0.0),
+        (1, 20, 0.0, 0.20, 0.0, 0.0), (20, 21, 0.0, 0.21, 0.0, 0.0),  # chain B
+        (21, 3, 0.0, 0.22, 0.0, 0.0),
+    ]
+    return _build_degree_two_chain_system(edges)
+end
+
+"""
+Same topology as `build_two_parallel_degree_two_chains`, with two changes that exercise
+the orientation-swap arm of the grouped composite-arc arithmetic.
+
+  - Chain B is written from bus 3 towards bus 1 (`3-20-21-1`), and its interior numbering makes
+    the traversal terminate at bus 1, so the discovered chain's `arc_key` is `(3, 1)` while its
+    sibling's is `(1, 3)`. The group's arc frame is therefore the opposite of one member's, which
+    is the only condition under which a member's two-port is transposed.
+  - Every chain branch is lossy and carries asymmetric charging, so each chain's equivalent
+    two-port has `Y11 != Y22`. A transposed 2x2 is then numerically distinguishable, which a
+    lossless shunt-free chain (whose equivalent is a plain series admittance) never is.
+"""
+function build_reversed_asymmetric_degree_two_chains()
+    edges = [
+        (1, 2, 0.0, 0.05, 0.0, 0.0), (2, 3, 0.0, 0.06, 0.0, 0.0),   # ring core
+        (3, 4, 0.0, 0.07, 0.0, 0.0), (4, 1, 0.0, 0.08, 0.0, 0.0),
+        (2, 4, 0.0, 0.09, 0.0, 0.0),                                # core tie
+        # Chain A: 1 -> 3, lossy, mildly asymmetric charging.
+        (1, 10, 0.010, 0.10, 0.02, 0.03), (10, 11, 0.012, 0.11, 0.03, 0.01),
+        (11, 3, 0.008, 0.12, 0.04, 0.02),
+        # Chain B: 3 -> 1, lossy, strongly asymmetric charging.
+        (3, 20, 0.020, 0.20, 0.30, 0.05), (20, 21, 0.030, 0.21, 0.25, 0.02),
+        (21, 1, 0.015, 0.22, 0.20, 0.01),
+    ]
+    return _build_degree_two_chain_system(edges)
+end
+
+"""
+Ring `1-2-3-4` plus a degree-two chain `1-10-11-3` plus a stub `1-5`, no injectors, bus 1 = REF.
+Buses 2, 4 and the 10-11 pair are each degree-two chains between buses 1 and 3, so sibling
+grouping collapses all three into one composite arc `(1,3)`. Buses 1, 3 and 5 survive; bus 5's
+edge is untouched, so it distinguishes a targeted adjacency defect from a blanket one.
+"""
+function build_composite_arc_adjacency_system()
+    sys = PSY.System(100.0)
+    buses = Dict{Int, ACBus}()
+    for n in (1, 2, 3, 4, 5, 10, 11)
+        b = ACBus(;
+            number = n,
+            name = "Bus $n",
+            available = true,
+            bustype = n == 1 ? ACBusTypes.REF : ACBusTypes.PQ,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        PSY.add_component!(sys, b)
+        buses[n] = b
+    end
+    edges = [
+        (1, 2, 0.05), (2, 3, 0.06), (3, 4, 0.07), (4, 1, 0.08),
+        (1, 10, 0.10), (10, 11, 0.11), (11, 3, 0.12),
+        (1, 5, 0.09),
+    ]
+    for (f, t, x) in edges
+        arc = Arc(buses[f], buses[t])
+        PSY.add_component!(sys, arc)
+        PSY.add_component!(
+            sys,
+            Line("L_$(f)_$(t)", true, 0.0, 0.0, arc, 0.0, x,
+                (from = 0.0, to = 0.0), 100.0, (-1.6, 1.6)),
+        )
+    end
+    return sys
+end
+
+"""
+Same ring-plus-chain-plus-stub island as `build_composite_arc_adjacency_system` (buses
+`1,2,3,4,5,10,11`, bus 1 = REF, degree-two reduction collapses it to a composite arc `(1,3)`),
+plus a second, genuinely disconnected island (`200`-`201`, bus 200 = REF) with no shared bus and
+no degree-two chain of its own. Two reference buses give the two islands independent subnetwork
+keys, so a composite arc created in one island's reduction can be checked against both: it must
+appear in its own island's arc list and must not appear in the other island's.
+"""
+function build_multi_island_composite_arc_system()
+    sys = PSY.System(100.0)
+    buses = Dict{Int, ACBus}()
+    for n in (1, 2, 3, 4, 5, 10, 11, 200, 201)
+        b = ACBus(;
+            number = n,
+            name = "Bus $n",
+            available = true,
+            bustype = n in (1, 200) ? ACBusTypes.REF : ACBusTypes.PQ,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        PSY.add_component!(sys, b)
+        buses[n] = b
+    end
+    edges = [
+        (1, 2, 0.05), (2, 3, 0.06), (3, 4, 0.07), (4, 1, 0.08),
+        (1, 10, 0.10), (10, 11, 0.11), (11, 3, 0.12),
+        (1, 5, 0.09),
+        (200, 201, 0.15),
+    ]
+    for (f, t, x) in edges
+        arc = Arc(buses[f], buses[t])
+        PSY.add_component!(sys, arc)
+        PSY.add_component!(
+            sys,
+            Line("L_$(f)_$(t)", true, 0.0, 0.0, arc, 0.0, x,
+                (from = 0.0, to = 0.0), 100.0, (-1.6, 1.6)),
+        )
+    end
+    return sys
+end
+
+"""
+Meshed core on buses 1-4 (a ring plus a 2-4 tie) plus a degree-two chain `1-10-3` whose second
+segment is an **anti-parallel pair**: one line is written `10 -> 3` and its twin `3 -> 10`.
+
+The pair is the point of the fixture. Both twins hold their own key in `direct_branch_map`, because
+arc keys are the raw (from, to) tuple, while the adjacency matrix holds one entry per bus *pair*.
+Bus 10 therefore reads degree two and is folded, and every probe that resolves a chain segment to
+"the" entry on its bus pair sees only one of the twins.
+
+The twins carry different impedances and asymmetric charging, so omitting either one is
+numerically unmistakable rather than a rounding difference.
+"""
+function build_antiparallel_chain_segment_system()
+    edges = [
+        (1, 2, 0.0, 0.05, 0.0, 0.0), (2, 3, 0.0, 0.06, 0.0, 0.0),   # ring core
+        (3, 4, 0.0, 0.07, 0.0, 0.0), (4, 1, 0.0, 0.08, 0.0, 0.0),
+        (2, 4, 0.0, 0.09, 0.0, 0.0),                                # core tie
+        (1, 10, 0.010, 0.10, 0.02, 0.03),                           # chain segment 1
+        (10, 3, 0.012, 0.11, 0.03, 0.01),                           # chain segment 2
+        (3, 10, 0.008, 0.17, 0.05, 0.02),                           # its anti-parallel twin
+    ]
+    return _build_degree_two_chain_system(edges)
+end

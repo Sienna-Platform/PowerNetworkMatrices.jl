@@ -73,7 +73,7 @@ end
 
 # Canonical orientation is the stored `arc_key` (set at construction), remapped through `nr`;
 # anti-parallel members may exist post-merge, so do not rely on member order.
-function get_arc_tuple(br::AbstractBranchesParallel, nr::NetworkReductionData)
+function get_arc_tuple(br::AbstractReductionAggregate, nr::NetworkReductionData)
     reverse_bus_search_map = get_reverse_bus_search_map(nr)
     return (
         get(reverse_bus_search_map, br.arc_key[1], br.arc_key[1]),
@@ -81,7 +81,7 @@ function get_arc_tuple(br::AbstractBranchesParallel, nr::NetworkReductionData)
     )
 end
 
-function get_arc_tuple(br::AbstractBranchesParallel)
+function get_arc_tuple(br::AbstractReductionAggregate)
     return br.arc_key
 end
 
@@ -400,12 +400,14 @@ end
 
 # α of one parallel-group member expressed in the group's arc frame: anti-parallel members
 # (post-ZIR merge) enter with a negated angle, mirroring ybus_branch_entries(bp, nr).
+# `_segment_phase_shift` is required rather than the one-arg getter: an aggregate member would
+# match the blanket `get_series_phase_shift(::PSY.ACTransmission) = 0.0` and report no shift.
 function _oriented_member_phase_shift(
     br::PSY.ACTransmission,
     bp::AbstractBranchesParallel,
     nr::NetworkReductionData,
 )
-    α = get_series_phase_shift(br)
+    α = _segment_phase_shift(br, nr)
     if get_arc_tuple(br, nr) != get_arc_tuple(bp, nr)
         return -α
     end
@@ -619,8 +621,9 @@ end
 
 # Accumulated two-port of an arbitrary member subset, expressed in `reference`'s frame. A bus
 # merge can fold an anti-parallel branch into a group, so a member keyed the other way has its
-# 2x2 swapped. This is the single orientation-handling loop; `ybus_branch_entries(bp, nr)`
-# delegates here so the convention lives in exactly one place.
+# 2x2 swapped. Members are resolved with `nr` because an aggregate member (a series chain)
+# needs it to build its own two-port. This is the single orientation-handling loop;
+# `ybus_branch_entries(bp, nr)` delegates here so the convention lives in exactly one place.
 function _subset_two_port(
     members,
     reference::Tuple{Int, Int},
@@ -628,7 +631,7 @@ function _subset_two_port(
 )
     Y11 = Y12 = Y21 = Y22 = zero(ComplexF64)
     for br in members
-        (y11, y12, y21, y22) = ybus_branch_entries(br)
+        (y11, y12, y21, y22) = ybus_branch_entries(br, nr)
         if get_arc_tuple(br, nr) != reference
             Y11 += y22
             Y12 += y21

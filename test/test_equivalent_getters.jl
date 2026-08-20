@@ -72,7 +72,7 @@
     @test fl_bp.from_to ≈ 250.0 atol = 1e-6
     @test fl_bp.to_from ≈ 250.0 atol = 1e-6
 
-    bs = PNM.BranchesSeries()
+    bs = PNM.BranchesSeries((PSY.get_number(bus1), PSY.get_number(bus2)))
     PNM.add_branch!(bs, line1, :FromTo)
     PNM.add_branch!(bs, line2, :FromTo)
     # Series weakest-link rule: min(100, 150) = 100.0
@@ -84,7 +84,7 @@
 
     # Series chain containing a parallel block: the block contributes its N-1
     # single-element-contingency rating (100.0), so min(100, 150) = 100.0.
-    bs = PNM.BranchesSeries()
+    bs = PNM.BranchesSeries((PSY.get_number(bus1), PSY.get_number(bus2)))
     PNM.add_branch!(bs, bp, :FromTo)
     PNM.add_branch!(bs, line2, :FromTo)
     rating_eq = PNM.get_equivalent_rating(bs)
@@ -434,6 +434,50 @@ end
     # Two transformers in series with different phase angle
     test_ybus_equivalence_branches_series([t1, t3])
 end
+
+@testset "grouped chains rate as the sum of each chain's weakest link" begin
+    sys = build_two_parallel_degree_two_chains()
+    # Distinct per-link ratings so minimum, maximum, and the cross-chain sum cannot
+    # be confused with each other: chain A carries 8.0/3.0/5.0 (min 3.0, max 8.0),
+    # chain B carries 9.0/4.0/6.0 (min 4.0, max 9.0), and the group must report
+    # 3.0 + 4.0 = 7.0, a value that matches none of the individual link or
+    # per-chain numbers above.
+    #
+    # Each chain's minimum sits in the middle segment, not the first or last, so the
+    # assertion holds regardless of which direction chain discovery traverses the
+    # chain: under either direction the middle segment is still neither the first
+    # nor the last one visited, so an aggregate that (wrongly) returned the first-
+    # or last-visited segment's rating, instead of the true minimum, would be caught.
+    chain_a_ratings = Dict("L_1_10" => 8.0, "L_10_11" => 3.0, "L_11_3" => 5.0)
+    chain_b_ratings = Dict("L_1_20" => 9.0, "L_20_21" => 4.0, "L_21_3" => 6.0)
+    for (name, rating) in merge(chain_a_ratings, chain_b_ratings)
+        PSY.set_rating!(PSY.get_component(PSY.Line, sys, name), rating * PSY.DU)
+    end
+
+    ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = get_network_reduction_data(ybus)
+    arc = only(
+        k for (k, v) in PNM.get_parallel_branch_map(nrd)
+        if all(m isa PNM.BranchesSeries for m in v)
+    )
+    group = PNM.get_parallel_branch_map(nrd)[arc]
+
+    per_chain = [PNM.get_equivalent_rating(chain) for chain in group]
+    @test sort(per_chain) == [3.0, 4.0]
+    for chain in group
+        # min of the links in that chain: a wrong aggregate (e.g. max or sum)
+        # would return 8.0/9.0 or 16.0/19.0 instead, none of which equal 3.0/4.0.
+        @test PNM.get_equivalent_rating(chain) ==
+              minimum(PNM.get_equivalent_rating(seg) for seg in chain)
+    end
+    # The group sums its two chains' weakest-link ratings: 3.0 + 4.0 = 7.0, a value
+    # distinct from every link rating and from both chains' individual minima/maxima.
+    @test PNM.get_equivalent_rating(group) == 7.0
+    @test PNM.get_equivalent_rating(group) == sum(per_chain)
+end
+
+# The mirror case — a parallel block nested inside a chain contributes its N-1 rating via
+# `_series_member_rating(::AbstractBranchesParallel)`, not covered by the testset above.
 
 @testset "Compute equivalent physical parameters for WECC 240 bus" begin
     sys = PSB.build_system(PSYTestSystems, "psse_240_parsing_sys"; runchecks = false)

@@ -120,8 +120,11 @@ function BA_Matrix(ybus::Ybus)
     for (ix_arc, arc) in enumerate(arc_ax)
         ix_from_bus = get_bus_index(arc[1], bus_lookup, nr)
         ix_to_bus = get_bus_index(arc[2], bus_lookup, nr)
-        # Series-reduced arcs take the chain's equivalent susceptance from components (lower DC
-        # error than the summed Ybus entry).
+        # A chain that stands alone in series_branch_map takes its equivalent susceptance from
+        # components, which has lower DC error than the summed Ybus entry. Sibling chains
+        # sharing an endpoint pair are grouped into parallel_branch_map instead, so
+        # is_arc_in_series_map is false for them and they fall through to the general
+        # Y_ft/Y_tf handling below, the same treatment any physical parallel group gets.
         if is_arc_in_series_map(nr_data, arc)
             b = get_series_susceptance(get_mapped_series_branch(nr_data, arc), PSY.SU)
         else

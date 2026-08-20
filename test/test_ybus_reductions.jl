@@ -1367,3 +1367,199 @@ end
     @test err2 isa ErrorException
     @test occursin("not a member", err2.msg)
 end
+
+@testset "Ybus with grouped degree-two chains matches the unreduced network" begin
+    sys = build_two_parallel_degree_two_chains()
+    y_full = Ybus(sys)
+    y_red = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = get_network_reduction_data(y_red)
+
+    # Only the four core buses survive.
+    @test Set(PNM.get_bus_axis(y_red)) == Set([1, 2, 3, 4])
+
+    # The reduced Ybus equals the exact Schur complement of the full Ybus onto the surviving
+    # buses. That is the definition of an exact elimination of the chain interiors, so it pins
+    # both the presence of every grouped chain's admittance and the value of every entry the
+    # composite arc contributes.
+    keep = [PNM.get_bus_lookup(y_full)[b] for b in PNM.get_bus_axis(y_red)]
+    drop = setdiff(1:size(y_full.data, 1), keep)
+    Ykk = Matrix(y_full.data[keep, keep])
+    Ykd = Matrix(y_full.data[keep, drop])
+    Ydk = Matrix(y_full.data[drop, keep])
+    Ydd = Matrix(y_full.data[drop, drop])
+    expected = Ykk - Ykd * (Ydd \ Ydk)
+    @test isapprox(Matrix(y_red.data), expected; rtol = 1e-4)
+end
+
+# Entrywise Schur complement of the full Ybus onto the surviving buses. Entrywise rather than a
+# whole-matrix `isapprox`, which spreads the tolerance over the Frobenius norm and at
+# rtol = 1e-4 admits ~1e-2 concentrated in a single entry. `rtol`/`atol` are the ComplexF32
+# storage allowance.
+function _test_kron_oracle(y_full, y_red)
+    keep = [PNM.get_bus_lookup(y_full)[b] for b in PNM.get_bus_axis(y_red)]
+    drop = setdiff(1:size(y_full.data, 1), keep)
+    Ykk = Matrix(y_full.data[keep, keep])
+    Ykd = Matrix(y_full.data[keep, drop])
+    Ydk = Matrix(y_full.data[drop, keep])
+    Ydd = Matrix(y_full.data[drop, drop])
+    expected = Ykk - Ykd * (Ydd \ Ydk)
+    reduced = Matrix(y_red.data)
+    n_bad = count(
+        i -> !isapprox(reduced[i], expected[i]; rtol = 1e-4, atol = 1e-4),
+        CartesianIndices(reduced),
+    )
+    @test n_bad == 0
+    return
+end
+
+@testset "Ybus with reversed-orientation grouped chains matches the unreduced network" begin
+    sys = build_reversed_asymmetric_degree_two_chains()
+    y_full = Ybus(sys)
+    y_red = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = get_network_reduction_data(y_red)
+
+    @test Set(PNM.get_bus_axis(y_red)) == Set([1, 2, 3, 4])
+
+    # The group's arc frame is the reverse of one member's, so the composite-arc arithmetic
+    # transposes that member's two-port. These two guards keep the fixture able to detect a
+    # wrong transpose: one member must be keyed the other way, and each member's two-port must
+    # be asymmetric enough that swapping its 2x2 changes the result.
+    group = PNM.get_parallel_branch_map(nrd)[(1, 3)]
+    @test length(group) == 2
+    @test Set(PNM.get_arc_tuple(m, nrd) for m in group) == Set([(1, 3), (3, 1)])
+    Y11, _, _, Y22 = PNM.ybus_branch_entries(group, nrd)
+    @test abs(Y11 - Y22) > 0.1
+
+    # Same Schur-complement oracle as the symmetric fixture.
+    keep = [PNM.get_bus_lookup(y_full)[b] for b in PNM.get_bus_axis(y_red)]
+    drop = setdiff(1:size(y_full.data, 1), keep)
+    Ykk = Matrix(y_full.data[keep, keep])
+    Ykd = Matrix(y_full.data[keep, drop])
+    Ydk = Matrix(y_full.data[drop, keep])
+    Ydd = Matrix(y_full.data[drop, drop])
+    expected = Ykk - Ykd * (Ydd \ Ydk)
+    # Entrywise rather than a whole-matrix `isapprox`, which spreads the tolerance over the
+    # Frobenius norm and at rtol = 1e-4 would admit ~1e-2 concentrated in a single entry — the
+    # same order as the transpose asymmetry above. `rtol` is the ComplexF32 storage allowance.
+    reduced = Matrix(y_red.data)
+    for i in axes(reduced, 1), j in axes(reduced, 2)
+        @test isapprox(reduced[i, j], expected[i, j]; rtol = 1e-4, atol = 1e-4)
+    end
+end
+
+@testset "adjacency carries composite arcs created by a reduction" begin
+    sys = build_composite_arc_adjacency_system()
+    y = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    bus_lookup = PNM.get_bus_lookup(y)
+    bus_ax = PNM.get_bus_axis(y)
+    A = AdjacencyMatrix(y)
+
+    # Guard the precondition: the fixture must actually produce a composite arc.
+    @test (1, 3) in keys(PNM.get_parallel_branch_map(PNM.get_network_reduction_data(y)))
+    @test Set(bus_ax) == Set([1, 3, 5])
+
+    # Every surviving bus's adjacency degree must match its Ybus off-diagonal degree.
+    for b in bus_ax
+        col = bus_lookup[b]
+        ybus_deg = count(r -> r != col, findall(!iszero, Vector(y.data[:, col])))
+        adj_deg = length(SparseArrays.nzrange(A.data, A.lookup[1][b]))
+        @test adj_deg == ybus_deg
+    end
+end
+
+@testset "arc subnetwork axis carries composite arcs" begin
+    sys = build_composite_arc_adjacency_system()
+    y = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = PNM.get_network_reduction_data(y)
+    @test (1, 3) in keys(PNM.get_parallel_branch_map(nrd))
+
+    # Every arc in the reduction's arc axis must appear in at least one subnetwork's arc list.
+    all_subnetwork_arcs =
+        reduce(union!, values(y.arc_subnetwork_axis); init = Set{Tuple{Int, Int}}())
+    for arc in PNM.get_arc_axis(nrd)
+        @test arc in all_subnetwork_arcs
+    end
+end
+
+@testset "arc subnetwork axis restricts composite arcs to their own island" begin
+    sys = build_multi_island_composite_arc_system()
+    y = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = PNM.get_network_reduction_data(y)
+    @test (1, 3) in keys(PNM.get_parallel_branch_map(nrd))
+
+    # Two independent reference buses must produce two distinct subnetwork keys; otherwise the
+    # fixture collapsed to one island and the test below would be vacuous.
+    @test length(y.arc_subnetwork_axis) == 2
+
+    reducing_island_arcs = y.arc_subnetwork_axis[1]
+    other_island_arcs = y.arc_subnetwork_axis[200]
+    @test (1, 3) in reducing_island_arcs
+    @test (1, 3) ∉ other_island_arcs
+end
+
+# Every physical branch a composite arc resolves to, following the nesting. `keys` of the
+# production reverse-map builder is the same recursion the reduction itself uses.
+function _composite_leaf_branches(entry)
+    reverse_map = Dict{PSY.ACTransmission, Tuple{Int, Int}}()
+    PNM._register_composite_members!(reverse_map, (0, 0), entry)
+    return Set(keys(reverse_map))
+end
+
+@testset "DegreeTwoReduction folds both twins of an anti-parallel chain segment" begin
+    sys = build_antiparallel_chain_segment_system()
+    y_full = Ybus(sys)
+    y_red = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = PNM.get_network_reduction_data(y_red)
+
+    @test Set(PNM.get_bus_axis(y_red)) == Set([1, 2, 3, 4])
+
+    # No arc key may survive referencing an eliminated bus. The anti-parallel twin keyed `(3, 10)`
+    # is the one that does when a chain segment resolves to a single entry on its bus pair.
+    surviving = Set(PNM.get_bus_axis(y_red))
+    for map in (
+        PNM.get_direct_branch_map(nrd),
+        PNM.get_parallel_branch_map(nrd),
+        PNM.get_series_branch_map(nrd),
+    )
+        for arc in keys(map)
+            @test arc[1] in surviving
+            @test arc[2] in surviving
+        end
+    end
+    for arc in PNM.get_arc_axis(nrd)
+        @test arc[1] in surviving
+        @test arc[2] in surviving
+    end
+
+    # All three chain branches are folded into the composite arc: the single `1-10` segment and
+    # both twins of the `10-3` segment.
+    chain = PNM.get_series_branch_map(nrd)[(1, 3)]
+    @test _composite_leaf_branches(chain) ==
+          Set(PSY.get_component(Line, sys, n) for n in ("L_1_10", "L_10_3", "L_3_10"))
+
+    # Consumers that build off the arc axis must be able to resolve every arc's endpoints.
+    @test size(IncidenceMatrix(y_red).data, 1) == length(PNM.get_arc_axis(nrd))
+
+    _test_kron_oracle(y_full, y_red)
+end
+
+@testset "reduction validation rejects an arc key on an eliminated bus" begin
+    sys = build_antiparallel_chain_segment_system()
+    nr = get_network_reduction_data(AdjacencyMatrix(sys))
+
+    # The full bus set is consistent with every arc key, so the validation is silent.
+    @test isnothing(PNM._validate_surviving_arc_keys(nr, [1, 2, 3, 4, 10]))
+
+    # Dropping bus 10 without retiring the arcs on it is the corrupt state a reduction reaches
+    # when it eliminates a bus and leaves one of its arc keys live. Consumers that resolve arc
+    # endpoints — `IncidenceMatrix` first among them — fail with a bare `KeyError` several
+    # reductions downstream, so the reduction that produced it must raise instead.
+    err = try
+        PNM._validate_surviving_arc_keys(nr, [1, 2, 3, 4])
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("10", err.msg)
+end

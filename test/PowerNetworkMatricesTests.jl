@@ -22,7 +22,13 @@ import Aqua
 Aqua.test_unbound_args(PowerNetworkMatrices)
 Aqua.test_undefined_exports(PowerNetworkMatrices)
 Aqua.test_ambiguities(PowerNetworkMatrices)
-Aqua.test_stale_deps(PowerNetworkMatrices; ignore = [:Pardiso])
+# `PowerCoreOpenAPIModels`/`PowerOperationsOpenAPIModels` are `[deps]` only so the root
+# `[sources]` can pin them for PSY (PSY's own pins are ignored once it is a dependency rather
+# than the root project). PNM never imports them, so they are stale by construction.
+Aqua.test_stale_deps(
+    PowerNetworkMatrices;
+    ignore = [:Pardiso, :PowerCoreOpenAPIModels, :PowerOperationsOpenAPIModels],
+)
 Aqua.test_deps_compat(PowerNetworkMatrices)
 # `find_persistent_tasks_deps`/`test_persistent_tasks` are deliberately not run: they
 # precompile PNM inside a throwaway temp project that does not inherit this repo's
