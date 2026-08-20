@@ -22,7 +22,14 @@ import Aqua
 Aqua.test_unbound_args(PowerNetworkMatrices)
 Aqua.test_undefined_exports(PowerNetworkMatrices)
 Aqua.test_ambiguities(PowerNetworkMatrices)
-Aqua.test_stale_deps(PowerNetworkMatrices; ignore = [:Pardiso])
+# The two OpenAPI packages are never loaded by PNM. They sit in `[deps]` only because Pkg
+# requires every `[sources]` entry to appear in `deps` or `extras`, and PNM must carry its own
+# pins for PSY's unregistered OpenAPI deps (see the comment in Project.toml). Drop both from
+# this ignore list when the psy6 pins come off at release.
+Aqua.test_stale_deps(
+    PowerNetworkMatrices;
+    ignore = [:Pardiso, :PowerCoreOpenAPIModels, :PowerOperationsOpenAPIModels],
+)
 Aqua.test_deps_compat(PowerNetworkMatrices)
 # `find_persistent_tasks_deps`/`test_persistent_tasks` are deliberately not run: they
 # precompile PNM inside a throwaway temp project that does not inherit this repo's

@@ -127,12 +127,12 @@ network reduction algorithms.
 - `boundary_bus_to_removed_arcs::Dict{Int, Set{Tuple{Int, Int}}}`: Maps boundary buses to the set of removed arcs connected to them
 - `added_admittance_map::Dict{Int, PSY.FixedAdmittance}`: Admittances added to buses during reduction
 - `added_arc_impedance_map::Dict{Tuple{Int, Int}, PSY.GenericArcImpedance}`: New arcs created during reduction
-- `all_branch_maps_by_type::BranchMapsByType`: Branch mappings organized by component type
 - `reductions::ReductionContainer`: Container tracking applied reduction algorithms
-- `name_to_arc_map::Dict{Type, DataStructures.SortedDict{String, Tuple{Tuple{Int, Int}, String}}}`: Lazily filled with the call to [`populate_branch_maps_by_type!`](@ref), maps string names to their corresponding arcs and the map where the arc can be found.
-- `component_to_reduction_name_map::Dict{Type, Dict{String, String}}`: Lazily filled with the call to [`populate_branch_maps_by_type!`](@ref), maps component names to the names of the reduction entries used in name_to_arc_map.
-- `filters_applied::Dict{Type, Function}`: Filters applied when populating branch maps by type
 - `direct_branch_name_map::Dict{String, Tuple{Int, Int}}`: Lazily filled, maps branch names to their corresponding arc tuples for direct branches
+
+Type-organized views of these maps are not stored here: they depend on the caller's branch
+filters, not on the reduction alone, so they are derived on demand with
+[`build_branch_maps_by_type`](@ref) and owned by the caller.
 """
 @kwdef mutable struct NetworkReductionData <:
                       IS.InfrastructureMatrices.AbstractInfrastructureNetworkReductionData
@@ -160,15 +160,7 @@ network reduction algorithms.
     added_admittance_map::Dict{Int, PSY.FixedAdmittance} = Dict{Int, PSY.FixedAdmittance}()
     added_arc_impedance_map::Dict{Tuple{Int, Int}, PSY.GenericArcImpedance} =
         Dict{Tuple{Int, Int}, PSY.GenericArcImpedance}()
-    all_branch_maps_by_type::BranchMapsByType = BranchMapsByType()
     reductions::ReductionContainer = ReductionContainer()
-    name_to_arc_map::Dict{
-        Type,
-        DataStructures.SortedDict{String, Tuple{Tuple{Int, Int}, String}},
-    } = Dict{Type, DataStructures.SortedDict{String, Tuple{Tuple{Int, Int}, String}}}()
-    component_to_reduction_name_map::Dict{Type, Dict{String, String}} =
-        Dict{Type, Dict{String, String}}()
-    filters_applied = Dict{Type, Function}() #Filters applied when populating branch maps by type
     direct_branch_name_map::Dict{String, Tuple{Int, Int}} = Dict{String, Tuple{Int, Int}}()
 end
 
@@ -190,44 +182,42 @@ function populate_direct_branch_name_map!(nr::NetworkReductionData)
     end
 end
 
+const NameToArcMap = Dict{
+    DataType,
+    DataStructures.SortedDict{String, Tuple{Tuple{Int, Int}, String}},
+}
+const ComponentToReductionNameMap = Dict{DataType, Dict{String, String}}
+
+_empty_name_to_arc_entry() =
+    DataStructures.SortedDict{String, Tuple{Tuple{Int, Int}, String}}()
+
 """
-    populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict())
+    build_branch_maps_by_type(nrd::NetworkReductionData, filters = Dict())
 
-Populate the branch maps organized by component type within the NetworkReductionData structure.
+Derive type-organized views of `nrd`'s branch maps, keyed by component type.
 
-This function processes various types of branch mappings (direct, parallel, series, and 3-winding transformers)
-and organizes them by their component types. It applies optional filters to determine which branches should
-be included in the type-organized maps.
+`nrd` alone does not determine the result: `filters` selects which branches participate, and
+different callers legitimately want different selections over one reduction. The maps are
+therefore returned rather than stored, and the caller owns them for as long as its filter
+choice holds. `nrd` is not modified.
 
 # Arguments
-- `nrd::NetworkReductionData`: The network reduction data structure to populate
-- `filters`: Optional dictionary of filters to apply when determining which branches to include (default: empty Dict)
-
-# Details
-The function creates and populates the following map types organized by component type:
-- `direct_branch_map`: Direct branch connections between buses
-- `reverse_direct_branch_map`: Reverse lookup for direct branches
-- `parallel_branch_map`: Parallel branch connections between the same bus pair
-- `reverse_parallel_branch_map`: Reverse lookup for parallel branches
-- `series_branch_map`: Series branch connections (chains of branches)
-- `reverse_series_branch_map`: Reverse lookup for series branches
-
-Three-winding transformer windings flow through the direct blocks (they are one-to-one
-arc mappings), bucketed under the parent transformer type.
-
-The function also populates the `name_to_arc_map` to provide name-based lookups for branches
-and stores the applied filters in `nrd.filters_applied`.
-
-# Modifies
-- `nrd.all_branch_maps_by_type`: Populated with type-organized branch maps
-- `nrd.name_to_arc_map`: Updated with name-to-arc mappings
-- `nrd.filters_applied`: Set to the provided filters
+- `nrd::NetworkReductionData`: The reduction whose maps are being organized
+- `filters`: Per-type predicates selecting which branches to include (default: include all)
 
 # Returns
-- `nothing`: This function modifies the input structure in-place
+A 3-tuple:
+- `BranchMapsByType`: each of the six reduction maps split into per-component-type buckets
+- `NameToArcMap`: entry name => (arc, name of the reduction map holding that arc)
+- `ComponentToReductionNameMap`: component name => name of the reduction entry that absorbed it
+
+Three-winding transformer windings flow through the direct blocks (they are one-to-one arc
+mappings), bucketed under the parent transformer type.
 """
-function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict())
+function build_branch_maps_by_type(nrd::NetworkReductionData, filters = Dict())
     all_branch_maps_by_type = BranchMapsByType()
+    name_to_arc = NameToArcMap()
+    component_to_reduction_name = ComponentToReductionNameMap()
 
     for (k, v) in nrd.direct_branch_map
         if add_to_map(v, filters)
@@ -241,9 +231,9 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
             )
             map_by_type[k] = v
             name_to_arc_map = get!(
-                nrd.name_to_arc_map,
+                _empty_name_to_arc_entry,
+                name_to_arc,
                 _get_segment_type(v),
-                DataStructures.SortedDict{String, Tuple{Int, Int}}(),
             )
             name_to_arc_map[get_name(v)] = (k, "direct_branch_map")
         end
@@ -257,7 +247,7 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
             )
             map_by_type[k] = v
             component_name_map = get!(
-                nrd.component_to_reduction_name_map,
+                component_to_reduction_name,
                 _get_segment_type(k),
                 Dict{String, String}(),
             )
@@ -274,9 +264,9 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
                 )
                 map_by_type[k] = v
                 name_to_arc_map = get!(
-                    nrd.name_to_arc_map,
+                    _empty_name_to_arc_entry,
+                    name_to_arc,
                     concrete_type,
-                    DataStructures.SortedDict{String, Tuple{Int, Int}}(),
                 )
                 name_to_arc_map[get_name(v)] = (k, "parallel_branch_map")
             end
@@ -291,7 +281,7 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
             )
             map_by_type[k] = v
             component_name_map = get!(
-                nrd.component_to_reduction_name_map,
+                component_to_reduction_name,
                 _get_segment_type(k),
                 Dict{String, String}(),
             )
@@ -311,13 +301,13 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
                     map_by_type[k] = v
 
                     name_to_arc_map = get!(
-                        nrd.name_to_arc_map,
+                        _empty_name_to_arc_entry,
+                        name_to_arc,
                         concrete_type,
-                        DataStructures.SortedDict{String, Tuple{Int, Int}}(),
                     )
                     name_to_arc_map[get_name(segment)] = (k, "series_branch_map")
                     component_name_map = get!(
-                        nrd.component_to_reduction_name_map,
+                        component_to_reduction_name,
                         concrete_type,
                         Dict{String, String}(),
                     )
@@ -339,10 +329,7 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
             map_by_type[k] = v
         end
     end
-    populate_direct_branch_name_map!(nrd)
-    nrd.all_branch_maps_by_type = all_branch_maps_by_type
-    nrd.filters_applied = filters
-    return
+    return all_branch_maps_by_type, name_to_arc, component_to_reduction_name
 end
 
 _get_segment_components(x::T) where {T <: PSY.ACBranch} = [x]
@@ -392,7 +379,6 @@ get_removed_arcs(rb::NetworkReductionData) = rb.removed_arcs
 get_removed_arc_to_surviving_bus(rb::NetworkReductionData) = rb.removed_arc_to_surviving_bus
 get_added_admittance_map(rb::NetworkReductionData) = rb.added_admittance_map
 get_added_arc_impedance_map(rb::NetworkReductionData) = rb.added_arc_impedance_map
-get_all_branch_maps_by_type(rb::NetworkReductionData) = rb.all_branch_maps_by_type
 
 """
     get_reductions(rb::NetworkReductionData)
@@ -424,35 +410,23 @@ function get_applied_reductions(rb::NetworkReductionData)
     return applied
 end
 
-get_component_to_reduction_name_map(rb::NetworkReductionData) =
-    rb.component_to_reduction_name_map
+"""
+The type key under which `build_branch_maps_by_type` buckets entries of branch type `T`.
 
-get_component_to_reduction_name_map(
-    rb::NetworkReductionData,
-    ::Type{T},
-) where {T <: PSY.ACTransmission} = rb.component_to_reduction_name_map[T]
-# 3W winding entries are stored under the parent transformer type (see `_get_segment_type`);
-# a lookup keyed by the (non-parametric) wrapper type translates to that key. This override
-# is strictly more specific than the generic `T <: PSY.ACTransmission` method above, which
-# would otherwise (wrongly) index by the wrapper type.
-get_component_to_reduction_name_map(
-    rb::NetworkReductionData,
-    ::Type{ThreeWindingTransformerCircuit},
-) = rb.component_to_reduction_name_map[PSY.ThreeWindingTransformer]
+3W winding entries are bucketed under the parent transformer type (see `_get_segment_type`),
+so a lookup keyed by the non-parametric wrapper type must translate to that key. Callers
+holding the maps index them through this rather than with `T` directly.
 
-get_name_to_arc_maps(rb::NetworkReductionData) = rb.name_to_arc_map
-
-get_name_to_arc_map(rb::NetworkReductionData, ::Type{T}) where {T <: PSY.ACTransmission} =
-    rb.name_to_arc_map[T]
-# See `get_component_to_reduction_name_map`: 3W winding lookups translate to the parent
-# transformer key; more specific than the generic `T <: PSY.ACTransmission` method.
-get_name_to_arc_map(rb::NetworkReductionData, ::Type{ThreeWindingTransformerCircuit}) =
-    rb.name_to_arc_map[PSY.ThreeWindingTransformer]
+Total on `Type`, not just `PSY.ACTransmission`: callers reach the maps from generic branch
+code whose type parameter may be any component type (HVDC branches, for instance). Every
+type but the 3W wrapper is its own key.
+"""
+branch_map_key(::Type{T}) where {T} = T
+branch_map_key(::Type{ThreeWindingTransformerCircuit}) = PSY.ThreeWindingTransformer
 
 has_radial_reduction(rb::NetworkReductionData) = has_radial_reduction(rb.reductions)
 has_degree_two_reduction(rb::NetworkReductionData) = has_degree_two_reduction(rb.reductions)
 has_ward_reduction(rb::NetworkReductionData) = has_ward_reduction(rb.reductions)
-has_filtered_branches(rb::NetworkReductionData) = !isempty(rb.filters_applied)
 
 function Base.isempty(rb::NetworkReductionData)
     for field in fieldnames(NetworkReductionData)

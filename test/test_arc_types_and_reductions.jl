@@ -197,11 +197,16 @@ end
             DegreeTwoReduction(),
         ],
     )
-    PowerNetworkMatrices.populate_branch_maps_by_type!(PNM.get_network_reduction_data(ptdf),
-        Dict(Line => x -> occursin("B", get_name(x)),
-            TwoWindingTransformer => x -> occursin("B", get_name(x))))
-    @test PNM.has_filtered_branches(PNM.get_network_reduction_data(ptdf))
-    for k in keys(PNM.get_network_reduction_data(ptdf).name_to_arc_map[Line])
+    filters = Dict(
+        Line => x -> occursin("B", get_name(x)),
+        TwoWindingTransformer => x -> occursin("B", get_name(x)),
+    )
+    _, name_to_arc, _ = PowerNetworkMatrices.build_branch_maps_by_type(
+        PNM.get_network_reduction_data(ptdf),
+        filters,
+    )
+    @test !isempty(name_to_arc[Line])
+    for k in keys(name_to_arc[Line])
         @test occursin("B", k)
     end
     PNM.empty!(PNM.get_network_reduction_data(ptdf))

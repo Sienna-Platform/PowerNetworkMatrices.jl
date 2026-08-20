@@ -20,8 +20,14 @@ The linear-algebra layer of the psy6 stack: Ybus, Incidence/Adjacency, BA/ABA, P
 Known weak spots (2026-07-02 audit) — don't extend them:
 
   - Reduction invariants (forward/reverse map sync) are never checked; islanding during radial reduction only `@warn`s (`radial_reduction.jl:~195`). New reduction code should validate loudly.
-  - `populate_branch_maps_by_type!` (`NetworkReductionData.jl`) is lazy with no invalidation — mutating reduction state after first query is unsafe.
   - PF and POM currently iterate `NetworkReductionData` internal maps directly; prefer adding accessor API here over widening that reach.
+
+**Type-organized branch maps are derived, not stored.**
+`build_branch_maps_by_type(nrd, filters)` (`NetworkReductionData.jl`) returns `(BranchMapsByType, NameToArcMap, ComponentToReductionNameMap)` and does not touch `nrd`.
+They are not fields on `NetworkReductionData` because `filters` — not the reduction — decides which branches participate, so one reduction has as many valid map sets as there are callers with different filters.
+The caller owns the result for as long as its filter choice holds; POM wraps it per model build.
+Index the per-type buckets through `branch_map_key(T)`, which translates a `ThreeWindingTransformerCircuit` lookup to its parent transformer key.
+A type filtered out entirely is absent from the maps rather than present-and-empty — treat a missing key as "no entries".
 
 ## Transformers are circuits, not types (PSY `d19f3244f`, PR #1714)
 
