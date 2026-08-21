@@ -37,7 +37,7 @@ end
 @testset "equivalent cache: series chain invalidates on segment append" begin
     sys = _mk_line_pst_parallel_system()
     nr = Ybus(sys).network_reduction_data
-    bs = PNM.BranchesSeries()
+    bs = PNM.BranchesSeries((1, 2))
     PNM.add_branch!(bs, PSY.get_component(Line, sys, "L2"), :FromTo)
     @test !bs.equivalent_ybus_populated
     PNM.populate_equivalent_ybus!(bs, nr)

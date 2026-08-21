@@ -1,3 +1,5 @@
+import SparseArrays
+
 @testset "Large 2d Reduction Test" begin
     sys = build_system(
         MatpowerTestSystems,
@@ -172,4 +174,260 @@ end
         end
     end
     @test n_compared > 0
+end
+
+@testset "BranchesSeries carries an arc identity" begin
+    bs = PNM.BranchesSeries((7, 11))
+    @test PNM.get_arc_tuple(bs) == (7, 11)
+    # Remapped through a reduction the same way a parallel group's arc_key is.
+    nrd = PNM.NetworkReductionData(; reverse_bus_search_map = Dict(11 => 4))
+    @test PNM.get_arc_tuple(bs, nrd) == (7, 4)
+end
+
+@testset "parallel group of series chains yields the summed two-port" begin
+    # Two three-segment chains between Bus 1 and Bus 4 of c_sys14, built by hand so the
+    # aggregate can be exercised without depending on the reduction that will create it.
+    sys = build_system(PSITestSystems, "c_sys14"; add_forecasts = false)
+    nrd = PNM.NetworkReductionData()
+    lines = collect(get_components(Line, sys))
+    chain_a = PNM.BranchesSeries((1, 4))
+    PNM.add_branch!(chain_a, lines[1], :FromTo)
+    PNM.add_branch!(chain_a, lines[2], :FromTo)
+    chain_b = PNM.BranchesSeries((1, 4))
+    PNM.add_branch!(chain_b, lines[3], :FromTo)
+    PNM.add_branch!(chain_b, lines[4], :FromTo)
+
+    group = PNM.BranchesParallel(PNM.BranchesSeries[chain_a, chain_b])
+    @test PNM.get_arc_tuple(group, nrd) == (1, 4)
+
+    ya = PNM.ybus_branch_entries(chain_a, nrd)
+    yb = PNM.ybus_branch_entries(chain_b, nrd)
+    yg = PNM.ybus_branch_entries(group, nrd)
+    # Parallel members in the same arc frame add entry-wise. A single chain's two-port comes
+    # back as ComplexF32 (Ybus storage precision), while the group accumulates in ComplexF64;
+    # promote before summing so the comparison isn't dominated by a second, avoidable F32
+    # rounding of the addition itself.
+    for i in 1:4
+        @test isapprox(yg[i], ComplexF64(ya[i]) + ComplexF64(yb[i]); rtol = 1e-10)
+    end
+end
+
+@testset "parallel group reports a nested chain's phase shift" begin
+    sys = build_system(PSITestSystems, "c_sys14"; add_forecasts = false)
+    nrd = PNM.NetworkReductionData()
+    lines = collect(get_components(Line, sys))
+    pst = first(get_components(PSY.TwoWindingTransformer, sys))
+    PSY.set_α!(PSY.get_circuit(pst), 0.15)
+
+    # One chain carries the shifter, the other is purely lossless line segments.
+    shifted = PNM.BranchesSeries((1, 4))
+    PNM.add_branch!(shifted, pst, :FromTo)
+    PNM.add_branch!(shifted, lines[1], :FromTo)
+    plain = PNM.BranchesSeries((1, 4))
+    PNM.add_branch!(plain, lines[2], :FromTo)
+    PNM.add_branch!(plain, lines[3], :FromTo)
+
+    # The chain's own accumulated shift is the reference value.
+    chain_alpha = PNM.get_series_phase_shift(shifted, nrd)
+    @test chain_alpha != 0.0
+
+    group = PNM.BranchesParallel(PNM.BranchesSeries[shifted, plain])
+    b_shifted = PNM.get_series_susceptance(shifted, PSY.SU)
+    b_plain = PNM.get_series_susceptance(plain, PSY.SU)
+    expected = b_shifted * chain_alpha / (b_shifted + b_plain)
+    @test isapprox(PNM.get_series_phase_shift(group, nrd), expected; rtol = 1e-10)
+end
+
+# Symmetric value-based adjacency from an undirected edge list.
+function _adjacency_from_edges(edges, n)
+    I = Int[]
+    J = Int[]
+    for (a, b) in edges
+        push!(I, a, b)
+        push!(J, b, a)
+    end
+    return SparseArrays.sparse(I, J, ones(Int8, length(I)), n, n)
+end
+
+@testset "find_degree2_chains returns every sibling chain on one endpoint pair" begin
+    # Buses 1 and 2 are held above degree two by a triangle core on 7 and 8, so they are chain
+    # terminals while 7 and 8 are degree three. Two interior paths connect them, one through
+    # 3-4 and one through 5-6, and both are valid chains on the endpoint pair (1, 2).
+    edges = [(1, 3), (3, 4), (4, 2), (1, 5), (5, 6), (6, 2),
+        (1, 7), (1, 8), (2, 7), (2, 8), (7, 8)]
+    A = _adjacency_from_edges(edges, 8)
+    chains = PNM.find_degree2_chains(A, Set{Int}())
+    @test length(chains) == 2
+    @test Set(Set(c) for c in chains) == Set([Set([1, 3, 4, 2]), Set([1, 5, 6, 2])])
+end
+
+@testset "find_degree2_chains returns opposite-traversal siblings separately" begin
+    # Same topology, but the second chain's interior numbering makes it traverse 2 -> 1.
+    edges = [(1, 3), (3, 4), (4, 2), (2, 5), (5, 6), (6, 1),
+        (1, 7), (1, 8), (2, 7), (2, 8), (7, 8)]
+    A = _adjacency_from_edges(edges, 8)
+    chains = PNM.find_degree2_chains(A, Set{Int}())
+    @test length(chains) == 2
+    # Endpoint pair is the same unordered set regardless of traversal direction.
+    @test all(Set([c[1], c[end]]) == Set([1, 2]) for c in chains)
+end
+
+@testset "DegreeTwoReduction: sibling chains on one arc become a parallel group" begin
+    # A meshed core (buses 1-4) with two independent two-bus chains between buses 1 and 3.
+    sys = build_two_parallel_degree_two_chains()
+    ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = get_network_reduction_data(ybus)
+
+    # Every interior bus of both chains is eliminated; neither chain is left behind.
+    for b in (10, 11, 20, 21)
+        @test b in PNM.get_removed_buses(nrd)
+        @test b ∉ keys(PNM.get_bus_lookup(ybus))
+    end
+
+    # The composite arc carries a parallel group of two chains, not a bare chain.
+    group_arcs = [
+        k for (k, v) in PNM.get_parallel_branch_map(nrd)
+        if all(m isa PNM.BranchesSeries for m in v)
+    ]
+    @test length(group_arcs) == 1
+    group = PNM.get_parallel_branch_map(nrd)[only(group_arcs)]
+    @test length(group) == 2
+    @test Set(only(group_arcs)) == Set([1, 3])
+    # No composite arc is left in the series map for that pair, in either orientation.
+    @test !haskey(PNM.get_series_branch_map(nrd), (1, 3))
+    @test !haskey(PNM.get_series_branch_map(nrd), (3, 1))
+end
+
+@testset "grouped chain members resolve to their composite arc" begin
+    sys = build_two_parallel_degree_two_chains()
+    ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = get_network_reduction_data(ybus)
+
+    # Every line that was folded into either chain must resolve to the composite arc, by
+    # physical component identity, not by the aggregate wrapper.
+    for name in ["L_1_10", "L_10_11", "L_11_3", "L_1_20", "L_20_21", "L_21_3"]
+        br = get_component(Line, sys, name)
+        tag, arc = PNM._resolve_branch_arc(nrd, br)
+        @test tag == :parallel
+        @test Set(arc) == Set([1, 3])
+    end
+end
+
+"""
+Meshed core on buses 1-4 with TWO independent grouped degree-two composite arcs: one on
+(1, 3) (interiors 10-11 and 20-21) and one on (2, 4) (interiors 40-41 and 42-43). Neither
+composite arc's endpoints host an injector, so a `WardReduction` naming only [1, 2, 3] as
+study buses drops bus 4 and, with it, the whole (2, 4) composite arc — while (1, 3) survives
+untouched in `parallel_branch_map`.
+
+This is the system used to exercise `_remake_reverse_parallel_branch_map!`: removing the
+(2, 4) composite arc forces the reverse-map rebuild, and since that rebuild recomputes the
+map from every surviving entry in `parallel_branch_map`, the (1, 3) composite arc's
+recursive registration goes through the rebuild too even though it was never itself removed.
+"""
+function _build_two_composite_arcs_system()
+    edges = [
+        (1, 2, 0.0, 0.05, 0.0, 0.0), (2, 3, 0.0, 0.06, 0.0, 0.0),
+        (3, 4, 0.0, 0.07, 0.0, 0.0), (4, 1, 0.0, 0.08, 0.0, 0.0),
+        (1, 10, 0.0, 0.10, 0.0, 0.0), (10, 11, 0.0, 0.11, 0.0, 0.0),
+        (11, 3, 0.0, 0.12, 0.0, 0.0),
+        (1, 20, 0.0, 0.20, 0.0, 0.0), (20, 21, 0.0, 0.21, 0.0, 0.0),
+        (21, 3, 0.0, 0.22, 0.0, 0.0),
+        (2, 40, 0.0, 0.30, 0.0, 0.0), (40, 41, 0.0, 0.31, 0.0, 0.0),
+        (41, 4, 0.0, 0.32, 0.0, 0.0),
+        (2, 42, 0.0, 0.40, 0.0, 0.0), (42, 43, 0.0, 0.41, 0.0, 0.0),
+        (43, 4, 0.0, 0.42, 0.0, 0.0),
+    ]
+    sys = PSY.System(100.0)
+    buses = Dict{Int, ACBus}()
+    for n in (1, 2, 3, 4, 10, 11, 20, 21, 40, 41, 42, 43)
+        b = ACBus(;
+            number = n,
+            name = "Bus $n",
+            available = true,
+            bustype = n == 1 ? ACBusTypes.REF : ACBusTypes.PQ,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        PSY.add_component!(sys, b)
+        buses[n] = b
+    end
+    for (f, t, r, x, b_from, b_to) in edges
+        arc = Arc(buses[f], buses[t])
+        PSY.add_component!(sys, arc)
+        PSY.add_component!(
+            sys,
+            Line("L_$(f)_$(t)", true, 0.0, 0.0, arc, r, x,
+                (from = b_from, to = b_to), 2.0, (-1.6, 1.6)),
+        )
+    end
+    PSY.add_component!(
+        sys,
+        ThermalStandard(; name = "G1", available = true, status = true, bus = buses[1],
+            active_power = 1.0, reactive_power = 0.0, rating = 2.0,
+            prime_mover_type =
+            PSY.PrimeMovers.OT, fuel = PSY.ThermalFuels.OTHER,
+            active_power_limits = (min = 0.0, max = 2.0),
+            reactive_power_limits = nothing, ramp_limits = nothing,
+            time_limits = nothing, base_power = 100.0,
+            operation_cost = ThermalGenerationCost(nothing)),
+    )
+    PSY.add_component!(
+        sys,
+        PowerLoad(; name = "D3", available = true, bus = buses[3], active_power = 1.0,
+            reactive_power = 0.0, base_power = 100.0, max_active_power = 1.0,
+            max_reactive_power = 0.0),
+    )
+    return sys
+end
+
+@testset "grouped chain members survive a later rebuild of the reverse parallel map" begin
+    sys = _build_two_composite_arcs_system()
+    ybus = Ybus(
+        sys;
+        network_reductions = NetworkReduction[
+            DegreeTwoReduction(),
+            WardReduction([1, 2, 3]),
+        ],
+    )
+    nrd = get_network_reduction_data(ybus)
+
+    # The (2, 4) composite arc was dropped by the Ward reduction; only (1, 3) remains.
+    parallel_map = PNM.get_parallel_branch_map(nrd)
+    @test Set(keys(parallel_map)) == Set([(1, 3)])
+
+    # Every line folded into the surviving (1, 3) composite arc resolves to it by physical
+    # component identity: the reverse map is keyed by each physical `Line`, not by the
+    # `BranchesSeries` chain wrapping it.
+    reverse_series_map = PNM.get_reverse_series_branch_map(nrd)
+    for name in ["L_1_10", "L_10_11", "L_11_3", "L_1_20", "L_20_21", "L_21_3"]
+        br = get_component(Line, sys, name)
+        tag, arc = PNM._resolve_branch_arc(nrd, br)
+        @test tag == :parallel
+        @test Set(arc) == Set([1, 3])
+        # A branch must be registered in exactly one reverse map, or `_resolve_branch_arc`'s
+        # probe order would silently mask a duplicate registration.
+        @test !haskey(reverse_series_map, br)
+    end
+end
+
+@testset "branch map entries report both keys of an anti-parallel pair" begin
+    sys = build_antiparallel_chain_segment_system()
+    forward = PSY.get_component(Line, sys, "L_10_3")
+    twin = PSY.get_component(Line, sys, "L_3_10")
+
+    direct = Dict{Tuple{Int, Int}, PSY.ACTransmission}(
+        (10, 3) => forward,
+        (3, 10) => twin,
+    )
+    parallel = Dict{Tuple{Int, Int}, PNM.AbstractBranchesParallel}()
+
+    # Probed from either direction the pair reports both keys, and the probe's own direction is
+    # what decides which one is principal — the group frame follows the chain's traversal.
+    @test PNM._get_branch_map_entries(direct, parallel, (10, 3)) ==
+          [((10, 3), forward, :FromTo), ((3, 10), twin, :ToFrom)]
+    @test PNM._get_branch_map_entries(direct, parallel, (3, 10)) ==
+          [((3, 10), twin, :FromTo), ((10, 3), forward, :ToFrom)]
 end
