@@ -234,20 +234,20 @@ end
 
 # Resolve a contingency identifier to the `NetworkModification` used as the
 # cache key. Accepts a modification, a `ContingencySpec`, a registered
-# `PSY.Outage`, or a registered outage UUID.
+# `PSY.Outage`, or a registered outage id.
 _resolve_modification(::VirtualMODF, mod::NetworkModification) = mod
 _resolve_modification(::VirtualMODF, ctg::ContingencySpec) = ctg.modification
 function _resolve_modification(vmodf::VirtualMODF, outage::PSY.Outage)
-    return _resolve_modification(vmodf, IS.get_uuid(outage))
+    return _resolve_modification(vmodf, IS.get_id(outage))
 end
-function _resolve_modification(vmodf::VirtualMODF, uuid::Base.UUID)
+function _resolve_modification(vmodf::VirtualMODF, id::Int)
     contingency_cache = get_contingency_cache(vmodf)
-    haskey(contingency_cache, uuid) || error(
-        "Contingency (UUID=$uuid) is not registered. Construct the VirtualMODF " *
+    haskey(contingency_cache, id) || error(
+        "Contingency (id=$id) is not registered. Construct the VirtualMODF " *
         "with the system containing this outage, or pass the NetworkModification " *
         "/ ContingencySpec directly.",
     )
-    return contingency_cache[uuid].modification
+    return contingency_cache[id].modification
 end
 
 # Resolve a monitored arc identifier to its row index. Tuples go through

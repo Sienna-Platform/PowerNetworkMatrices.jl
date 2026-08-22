@@ -169,15 +169,15 @@ Base.:(==)(a::NetworkModification, b::NetworkModification) =
     ContingencySpec
 
 A resolved, self-contained contingency specification backed by a
-[`NetworkModification`](@ref). The UUID links back to the source
+[`NetworkModification`](@ref). The id links back to the source
 `PSY.Outage` supplemental attribute for caching purposes.
 
 # Fields
-- `uuid::Base.UUID`: Unique identifier matching the source Outage supplemental attribute.
+- `id::Int`: IS id matching the source Outage supplemental attribute.
 - `modification::NetworkModification`: The network topology change.
 """
 struct ContingencySpec
-    uuid::Base.UUID
+    id::Int
     modification::NetworkModification
 end
 

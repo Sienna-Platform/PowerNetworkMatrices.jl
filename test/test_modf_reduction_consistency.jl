@@ -34,7 +34,7 @@ function _branch_on_arcs(sys, nrd, arcs)
     return nothing
 end
 
-_fixed_outage(; monitored = Base.UUID[]) =
+_fixed_outage(; monitored = Int[]) =
     PSY.FixedForcedOutage(; outage_status = 0.0, monitored_components = monitored)
 
 function _arc_buses(branch)
@@ -166,7 +166,7 @@ end
     @test haskey(arc_lookup, (fb, tb)) || haskey(arc_lookup, (tb, fb))
 
     outage = PSY.get_supplemental_attributes(target)[1]
-    ctg = get_registered_contingencies(protected_modf)[IS.get_uuid(outage)]
+    ctg = get_registered_contingencies(protected_modf)[IS.get_id(outage)]
     @test !isempty(ctg.modification.arc_modifications)
 end
 
@@ -306,10 +306,10 @@ end
     e = 1
     b_e = base.arc_susceptances[e]
     ctg = ContingencySpec(
-        Base.UUID(UInt128(123456)),
+        123456,
         NetworkModification("ctg", [ArcModification(e, -b_e)]),
     )
-    base.contingency_cache[ctg.uuid] = ctg
+    base.contingency_cache[ctg.id] = ctg
 
     err = try
         base[missing_arc, ctg]
@@ -357,7 +357,7 @@ end
     @test haskey(arc_lookup, (fb, tb)) || haskey(arc_lookup, (tb, fb))
 
     outage = PSY.get_supplemental_attributes(external)[1]
-    ctg = get_registered_contingencies(vmodf)[IS.get_uuid(outage)]
+    ctg = get_registered_contingencies(vmodf)[IS.get_id(outage)]
     @test !isempty(ctg.modification.arc_modifications)
 end
 
@@ -390,7 +390,7 @@ end
     tfb, ttb = _arc_buses(target)
     target_arc = haskey(PNM.get_arc_lookup(reduced), (tfb, ttb)) ? (tfb, ttb) : (ttb, tfb)
     @test haskey(PNM.get_arc_lookup(reduced), target_arc)
-    target_uuid = IS.get_uuid(PSY.get_supplemental_attributes(target)[1])
+    target_id = IS.get_id(PSY.get_supplemental_attributes(target)[1])
 
     bus_lookup_full = PNM.get_bus_lookup(full)
     nrd_full = full.network_reduction_data
@@ -404,11 +404,11 @@ end
     tested_target = false
     for br in candidate
         outage = PSY.get_supplemental_attributes(br)[1]
-        uuid = IS.get_uuid(outage)
-        haskey(get_registered_contingencies(full), uuid) || continue
-        haskey(get_registered_contingencies(reduced), uuid) || continue
-        ctg_full = get_registered_contingencies(full)[uuid]
-        ctg_red = get_registered_contingencies(reduced)[uuid]
+        id = IS.get_id(outage)
+        haskey(get_registered_contingencies(full), id) || continue
+        haskey(get_registered_contingencies(reduced), id) || continue
+        ctg_full = get_registered_contingencies(full)[id]
+        ctg_red = get_registered_contingencies(reduced)[id]
         for arc in arcs_to_compare
             haskey(PNM.get_arc_lookup(full), arc) || continue
             ix_full = PNM.get_arc_lookup(full)[arc]
@@ -420,7 +420,7 @@ end
                 ib_red = PNM.get_bus_index(bus, bus_lookup_red, nrd_red)
                 @test isapprox(row_red[ib_red], row_full[ib_full]; atol = 1e-6)
                 tested_any = true
-                uuid == target_uuid && (tested_target = true)
+                id == target_id && (tested_target = true)
             end
         end
     end

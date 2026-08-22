@@ -32,7 +32,7 @@ serializes through the process-wide `_LIBKLU_LOCK`.
 - `dist_slack::Vector{Float64}`:
         Distributed slack bus weights (retained for API symmetry; not used by the
         Woodbury kernel).
-- `contingency_cache::Dict{Base.UUID, ContingencySpec}`:
+- `contingency_cache::Dict{Int, ContingencySpec}`:
         Resolved contingencies keyed by outage UUID.
 - `woodbury_cache::Dict{NetworkModification, WoodburyFactors}`:
         Precomputed Woodbury factors keyed by modification.
@@ -45,7 +45,7 @@ struct VirtualMODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}, K} <:
        PowerNetworkMatrix{Float64}
     core::VirtualFactorCore{Ax, L, K}
     dist_slack::Vector{Float64}
-    contingency_cache::Dict{Base.UUID, ContingencySpec}
+    contingency_cache::Dict{Int, ContingencySpec}
     woodbury_cache::Dict{NetworkModification, WoodburyFactors}
     row_caches::Dict{NetworkModification, RowCache}
     max_cache_size_bytes::Int
@@ -124,7 +124,7 @@ function _apply_woodbury_correction(
 end
 
 """
-    get_registered_contingencies(vmodf::VirtualMODF) -> Dict{Base.UUID, ContingencySpec}
+    get_registered_contingencies(vmodf::VirtualMODF) -> Dict{Int, ContingencySpec}
 
 Return the cached contingency registrations for inspection.
 """
@@ -237,7 +237,7 @@ function VirtualMODF(
         Ymatrix;
         linear_solver = linear_solver,
         tol = tol,
-        system_uuid = IS.get_uuid(sys),
+        system_uuid = PSY.get_system_uuid(sys),
     )
 
     return VirtualMODF(
@@ -267,7 +267,7 @@ function VirtualMODF(
     vmodf = VirtualMODF(
         core,
         dist_slack,
-        Dict{Base.UUID, ContingencySpec}(),
+        Dict{Int, ContingencySpec}(),
         Dict{NetworkModification, WoodburyFactors}(),
         Dict{NetworkModification, RowCache}(),
         max_cache_bytes,
@@ -349,14 +349,14 @@ Delegates to `NetworkModification(mat, sys, outage)` for the resolution logic.
 """
 function _register_outage!(vmodf::VirtualMODF, sys::PSY.System, outage::PSY.Outage)
     contingency_cache = get_contingency_cache(vmodf)
-    outage_uuid = IS.get_uuid(outage)
-    if haskey(contingency_cache, outage_uuid)
-        @warn "Outage with UUID $(outage_uuid) is already registered; skipping."
+    outage_id = IS.get_id(outage)
+    if haskey(contingency_cache, outage_id)
+        @warn "Outage with UUID $(outage_id) is already registered; skipping."
         return
     end
     mod = NetworkModification(vmodf, sys, outage)
-    ctg = ContingencySpec(outage_uuid, mod)
-    contingency_cache[outage_uuid] = ctg
+    ctg = ContingencySpec(outage_id, mod)
+    contingency_cache[outage_id] = ctg
     _warn_if_transmission_dropped(sys, outage, mod)
     return
 end
@@ -470,7 +470,7 @@ function Base.getindex(
     return vmodf[monitored, contingency.modification]
 end
 
-# --- getindex: by PSY.Outage (UUID lookup → ContingencySpec → NetworkModification) ---
+# --- getindex: by PSY.Outage (id lookup → ContingencySpec → NetworkModification) ---
 
 """
 Get the post-contingency PTDF row for monitored arc `monitored` when outage `outage` trips.
@@ -481,17 +481,17 @@ $(TYPEDSIGNATURES)
 function Base.getindex(vmodf::VirtualMODF, monitored::Int, outage::PSY.Outage)
     core = get_core(vmodf)
     contingency_cache = get_contingency_cache(vmodf)
-    outage_uuid = IS.get_uuid(outage)
+    outage_id = IS.get_id(outage)
     # Pair with the locked `empty!` in `clear_all_caches!`; without it, a
     # concurrent clear could rehash `contingency_cache` mid-lookup.
     ctg = @lock core.solver_lock begin
-        if !haskey(contingency_cache, outage_uuid)
+        if !haskey(contingency_cache, outage_id)
             error(
-                "Outage (UUID=$outage_uuid) is not registered. " *
+                "Outage (UUID=$outage_id) is not registered. " *
                 "Construct VirtualMODF with the system containing this outage.",
             )
         end
-        contingency_cache[outage_uuid]
+        contingency_cache[outage_id]
     end
     return vmodf[monitored, ctg.modification]
 end

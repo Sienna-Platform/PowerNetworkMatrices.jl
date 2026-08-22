@@ -323,8 +323,8 @@ function NetworkModification(mat::PowerNetworkMatrix, sys::PSY.System, outage::P
               "The outage may only affect non-network components (e.g., generators)."
     end
 
-    outage_uuid = IS.get_uuid(outage)
-    ctg_name = isempty(component_names) ? string(outage_uuid) : join(component_names, "+")
+    outage_id = IS.get_id(outage)
+    ctg_name = isempty(component_names) ? string(outage_id) : join(component_names, "+")
 
     # A fully-outaged ThreeWindingTransformer isolates its star bus and may
     # island a real terminal bus; flag that on `is_islanding`.

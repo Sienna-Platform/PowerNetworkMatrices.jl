@@ -85,12 +85,12 @@ function verify_modf_lodf_identity(
     b_arc = vmodf.arc_susceptances[arc_idx]
 
     # Build and register ContingencySpec
-    ctg_uuid = Base.UUID(UInt128(hash((arc_idx, delta_b))))
+    ctg_id = Int(hash((arc_idx, delta_b)) & 0x7fffffffffffffff)
     ctg = ContingencySpec(
-        ctg_uuid,
+        ctg_id,
         NetworkModification("test_arc_$(arc_idx)", [ArcModification(arc_idx, delta_b)]),
     )
-    vmodf.contingency_cache[ctg_uuid] = ctg
+    vmodf.contingency_cache[ctg_id] = ctg
 
     # LODF reference: standard column for full outage, partial otherwise
     is_full_outage = isapprox(delta_b, -b_arc; atol = 1e-12)
@@ -156,15 +156,15 @@ function verify_modf_n2_lodf_identity(
             "Arc pair ($arc_idx1, $arc_idx2) is an N-2 islanding pair (denom=$denom); use a non-islanding pair",
         )
 
-    ctg_uuid = Base.UUID(UInt128(hash((arc_idx1, arc_idx2, :n2))))
+    ctg_id = Int(hash((arc_idx1, arc_idx2, :n2)) & 0x7fffffffffffffff)
     ctg = ContingencySpec(
-        ctg_uuid,
+        ctg_id,
         NetworkModification(
             "n2_test_$(arc_idx1)_$(arc_idx2)",
             [ArcModification(arc_idx1, -b_arc1), ArcModification(arc_idx2, -b_arc2)],
         ),
     )
-    vmodf.contingency_cache[ctg_uuid] = ctg
+    vmodf.contingency_cache[ctg_id] = ctg
 
     for m in 1:n_arcs
         Lm1 = vlodf[m, arc_idx1]
@@ -389,9 +389,9 @@ end
         )
         n2_mod = NetworkModification("n2_parallel_xfmr_plus_line", n2_mods)
 
-        ctg_uuid = Base.UUID(UInt128(515151))
-        ctg = ContingencySpec(ctg_uuid, n2_mod)
-        vmodf.contingency_cache[ctg_uuid] = ctg
+        ctg_id = 515151
+        ctg = ContingencySpec(ctg_id, n2_mod)
+        vmodf.contingency_cache[ctg_id] = ctg
 
         sys_post = deepcopy(sys)
         PSY.remove_component!(
@@ -451,9 +451,9 @@ end
         )
         n3_mod = NetworkModification("n3_parallel_xfmr_plus_two_lines", n3_mods)
 
-        ctg_uuid = Base.UUID(UInt128(515251))
-        ctg = ContingencySpec(ctg_uuid, n3_mod)
-        vmodf.contingency_cache[ctg_uuid] = ctg
+        ctg_id = 515251
+        ctg = ContingencySpec(ctg_id, n3_mod)
+        vmodf.contingency_cache[ctg_id] = ctg
 
         sys_post = deepcopy(sys)
         PSY.remove_component!(
@@ -518,9 +518,9 @@ end
         )
         n3_mod = NetworkModification("n3_three_regular_lines", n3_mods)
 
-        ctg_uuid = Base.UUID(UInt128(515252))
-        ctg = ContingencySpec(ctg_uuid, n3_mod)
-        vmodf.contingency_cache[ctg_uuid] = ctg
+        ctg_id = 515252
+        ctg = ContingencySpec(ctg_id, n3_mod)
+        vmodf.contingency_cache[ctg_id] = ctg
 
         sys_post = deepcopy(sys)
         PSY.remove_component!(sys_post, PSY.get_component(PSY.Line, sys_post, "A23"))
