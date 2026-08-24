@@ -52,7 +52,8 @@ get_name_to_arc_map(c::BranchCatalog, ::Type{ThreeWindingTransformerCircuit}) =
 get_component_to_reduction_name_map(
     c::BranchCatalog,
     ::Type{T},
-) where {T <: PSY.ACTransmission} = get(c.component_to_entry_name, T, Dict{String, String}())
+) where {T <: PSY.ACTransmission} =
+    get(c.component_to_entry_name, T, Dict{String, String}())
 
 get_component_to_reduction_name_map(
     c::BranchCatalog,

@@ -100,10 +100,12 @@ end
     # DegreeTwoReduction folds bus 2, producing a series chain keyed (1, 3).
     sys = _mk_line_pst_parallel_system()
     nr =
-        get_network_reduction_data(Ybus(
-            sys;
-            network_reductions = NetworkReduction[DegreeTwoReduction()],
-        ))
+        get_network_reduction_data(
+            Ybus(
+                sys;
+                network_reductions = NetworkReduction[DegreeTwoReduction()],
+            ),
+        )
     arc = first(keys(PNM.get_series_branch_map(nr)))
 
     @test PNM.arc_dc_phase_shift(nr, arc) isa Float64

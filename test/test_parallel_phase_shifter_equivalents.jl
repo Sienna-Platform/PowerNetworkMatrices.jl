@@ -140,10 +140,12 @@ end
 @testset "issue 231: series chain containing a non-representable group errors precisely" begin
     sys = _mk_line_pst_parallel_system(; pst_r = 0.05)
     nr =
-        get_network_reduction_data(Ybus(
-            sys;
-            network_reductions = NetworkReduction[DegreeTwoReduction()],
-        ))
+        get_network_reduction_data(
+            Ybus(
+                sys;
+                network_reductions = NetworkReduction[DegreeTwoReduction()],
+            ),
+        )
     arc, bs = first(PNM.get_series_branch_map(nr))
 
     @test !PNM.has_single_pi_equivalent(bs, nr)

@@ -481,7 +481,8 @@ end
         )],
     )
     @test 3 ∉ PNM.get_bus_axis(ybus_custom)
-    @test get(get_network_reduction_data(ybus_custom).reverse_bus_search_map, 3, nothing) == 2
+    @test get(get_network_reduction_data(ybus_custom).reverse_bus_search_map, 3, nothing) ==
+          2
 end
 
 @testset "ZeroImpedanceBranchReduction: custom minimum_retained_impedance" begin

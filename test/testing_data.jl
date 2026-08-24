@@ -919,8 +919,11 @@ test on them proves nothing.
 function branch_catalog_test_cases()
     cases = Tuple{String, PSY.System, Vector{PNM.NetworkReduction}}[]
     for (label, sys) in (
-        ("psse14", PSB.build_system(PSSEParsingTestSystems,
-            "psse_14_network_reduction_test_system")),
+        (
+            "psse14",
+            PSB.build_system(PSSEParsingTestSystems,
+                "psse_14_network_reduction_test_system"),
+        ),
         ("case10", PSB.build_system(PSB.PSITestSystems,
             "case10_radial_series_reductions")),
         ("antiparallel", build_antiparallel_chain_segment_system()),

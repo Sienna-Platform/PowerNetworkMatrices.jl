@@ -94,9 +94,12 @@ end
         # The important one: a filter keeping SOME members is what distinguishes the ANY
         # rule on BranchesParallel from the ALL rule on MixedBranchesParallel and
         # BranchesSeries. Reject-all and keep-all cannot tell them apart.
-        ("reject_half_lines", Dict{DataType, Function}(
-            PSY.Line => (b -> isodd(length(PSY.get_name(b)))),
-        )),
+        (
+            "reject_half_lines",
+            Dict{DataType, Function}(
+                PSY.Line => (b -> isodd(length(PSY.get_name(b)))),
+            ),
+        ),
     ]
     for (label, sys, reductions) in branch_catalog_test_cases()
         for (fl, filters) in filter_configs
@@ -143,12 +146,15 @@ end
     )
     zi_arc = PSY.Arc(; from = busD, to = sec_bus)
     PSY.add_component!(sys, zi_arc)
-    PSY.add_component!(sys, PSY.Line(;
-        name = "zi_line", available = true, active_power_flow = 0.0,
-        reactive_power_flow = 0.0, arc = zi_arc, r = 0.0, x = 1.0e-5,
-        b = (from = 0.0, to = 0.0), rating = 10.0,
-        angle_limits = (min = -1.57, max = 1.57),
-    ))
+    PSY.add_component!(
+        sys,
+        PSY.Line(;
+            name = "zi_line", available = true, active_power_flow = 0.0,
+            reactive_power_flow = 0.0, arc = zi_arc, r = 0.0, x = 1.0e-5,
+            b = (from = 0.0, to = 0.0), rating = 10.0,
+            angle_limits = (min = -1.57, max = 1.57),
+        ),
+    )
 
     ybus = Ybus(sys)
     nrd = PNM.get_network_reduction_data(ybus)
