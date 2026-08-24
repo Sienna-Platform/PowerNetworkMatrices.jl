@@ -149,7 +149,7 @@ end
     sys, full, reduced_away = _rts_reduced_away_arcs()
     @test !isempty(reduced_away)  # sanity: reduction actually removed arcs
 
-    target = _branch_on_arcs(sys, full.network_reduction_data, reduced_away)
+    target = _branch_on_arcs(sys, get_network_reduction_data(full), reduced_away)
     @test target !== nothing
 
     PSY.add_supplemental_attribute!(sys, target, _fixed_outage())
@@ -172,7 +172,7 @@ end
 
 @testset "VirtualMODF protects monitored component declared on the outage (RTS)" begin
     sys, full, reduced_away = _rts_reduced_away_arcs()
-    nrd_full = full.network_reduction_data
+    nrd_full = get_network_reduction_data(full)
 
     # Monitored branch sits on a reduced-away arc; the outaged branch can be any
     # retained branch.
@@ -306,7 +306,7 @@ end
     e = 1
     b_e = base.arc_susceptances[e]
     ctg = ContingencySpec(
-        123456,
+        Base.UUID(123456),
         NetworkModification("ctg", [ArcModification(e, -b_e)]),
     )
     base.contingency_cache[ctg.id] = ctg
@@ -366,7 +366,7 @@ end
     # protection path is exercised numerically and not just on retained backbone
     # branches (otherwise the test could pass without the feature working).
     sys, full_no_outage, reduced_away = _rts_reduced_away_arcs()
-    target = _branch_on_arcs(sys, full_no_outage.network_reduction_data, reduced_away)
+    target = _branch_on_arcs(sys, get_network_reduction_data(full_no_outage), reduced_away)
     @test target !== nothing
 
     candidate = PSY.ACTransmission[target]
@@ -393,9 +393,9 @@ end
     target_id = IS.get_uuid(PSY.get_supplemental_attributes(target)[1])
 
     bus_lookup_full = PNM.get_bus_lookup(full)
-    nrd_full = full.network_reduction_data
+    nrd_full = get_network_reduction_data(full)
     bus_lookup_red = PNM.get_bus_lookup(reduced)
-    nrd_red = reduced.network_reduction_data
+    nrd_red = get_network_reduction_data(reduced)
 
     arcs_to_compare = collect(keys(PNM.get_arc_lookup(reduced)))
     buses_to_compare = collect(keys(nrd_red.bus_reduction_map))

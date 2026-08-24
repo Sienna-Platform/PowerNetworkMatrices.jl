@@ -76,6 +76,7 @@ get_lookup(M::VirtualPTDF) = get_lookup(get_core(M))
 get_ref_bus(M::VirtualPTDF) = get_ref_bus(get_core(M))
 get_ref_bus_position(M::VirtualPTDF) = get_ref_bus_position(get_core(M))
 get_network_reduction_data(M::VirtualPTDF) = get_network_reduction_data(get_core(M))
+get_branch_catalog(M::VirtualPTDF) = get_branch_catalog(get_core(M))
 get_bus_lookup(M::VirtualPTDF) = get_bus_lookup(get_core(M))
 get_arc_lookup(M::VirtualPTDF) = get_arc_lookup(get_core(M))
 get_system_uuid(M::VirtualPTDF) = get_system_uuid(get_core(M))
@@ -106,7 +107,7 @@ function redistribute_dist_slack(
     core::VirtualFactorCore,
 )
     dist_slack_vector = zeros(length(core.axes[2]))
-    nr = core.network_reduction_data
+    nr = get_network_reduction_data(core)
     bus_lookup = core.lookup[2]
     for (bus_no, dist_slack_factor) in dist_slack
         bus_no_ = get(nr.reverse_bus_search_map, bus_no, bus_no)

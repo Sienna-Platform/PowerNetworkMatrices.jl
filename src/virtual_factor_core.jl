@@ -34,7 +34,7 @@ single-scratch model.
 - `subnetwork_axes::Dict{Int, Ax}`: per-reference-bus subnetwork axes (bus form).
 - `tol::SparsificationCutoff`: resolved per-row sparsification rule (absolute
   cutoff for a `Float64` `tol`, relative cutoff for an [`AutoTolerance`](@ref)).
-- `network_reduction_data::NetworkReductionData`: reduction maps.
+- `branch_catalog::BranchCatalog`: reduction maps.
 - `temp_data::Vector{Vector{Float64}}`: single-slot scratch (size n_buses).
 - `work_ba_col::Vector{Vector{Float64}}`: single-slot scratch (size n_valid).
 - `solver_lock::ReentrantLock`: serializes solves + scratch access.
@@ -55,7 +55,7 @@ struct VirtualFactorCore{Ax, L <: NTuple{2, Dict}, K}
     bus_to_valid_idx::Vector{Int}
     subnetwork_axes::Dict{Int, Ax}
     tol::SparsificationCutoff
-    network_reduction_data::NetworkReductionData
+    branch_catalog::BranchCatalog
     temp_data::Vector{Vector{Float64}}
     work_ba_col::Vector{Vector{Float64}}
     solver_lock::ReentrantLock
@@ -83,7 +83,9 @@ function get_ref_bus_position(c::VirtualFactorCore)
     nr = get_network_reduction_data(c)
     return [get_bus_index(x, bus_lookup, nr) for x in keys(c.subnetwork_axes)]
 end
-get_network_reduction_data(c::VirtualFactorCore) = c.network_reduction_data
+get_branch_catalog(c::VirtualFactorCore) = c.branch_catalog
+get_network_reduction_data(c::VirtualFactorCore) =
+    get_network_reduction_data(get_branch_catalog(c))
 get_system_uuid(c::VirtualFactorCore) = c.system_uuid
 # Resolved cutoff object (used for per-row sparsification); `get_tol` returns its
 # Float64 representative for display/serialization.
@@ -140,7 +142,7 @@ function get_branch_susceptances_by_arc(c::VirtualFactorCore)
         bs = c.branch_susceptances_by_arc
         !isempty(bs) && return bs
         new_bs = _extract_branch_susceptances_by_arc(
-            c.BA, c.axes[1], c.network_reduction_data,
+            c.BA, c.axes[1], get_network_reduction_data(c),
         )
         resize!(bs, length(new_bs))
         copyto!(bs, new_bs)
@@ -204,7 +206,7 @@ function VirtualFactorCore(
         bus_to_valid_idx,
         subnetwork_axes,
         cutoff,
-        ybus.network_reduction_data,
+        get_branch_catalog(ybus),
         temp_data,
         work_ba_col,
         ReentrantLock(),

@@ -2,7 +2,7 @@
     # This tests the function populate_branch_maps_by_type! by rebuilding the original branch maps and testing the round trip.
     sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
     ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
-    nrd = ybus.network_reduction_data
+    nrd = get_network_reduction_data(ybus)
     PNM.populate_branch_maps_by_type!(nrd)
     all_branch_maps_by_type = nrd.all_branch_maps_by_type
     nrd_rebuild = NetworkReductionData()
@@ -33,7 +33,7 @@ end
     # outages associated with branches can be mapped to the appropriate reduction entry.
     sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
     ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
-    nrd = ybus.network_reduction_data
+    nrd = get_network_reduction_data(ybus)
     PNM.populate_branch_maps_by_type!(nrd)
     component_name_map = nrd.component_to_reduction_name_map
     for g in get_components(ACTransmission, sys)

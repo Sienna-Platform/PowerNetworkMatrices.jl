@@ -150,7 +150,7 @@ function test_ybus_equivalence_branches_parallel(vector_branches)
         add_component!(sys, br_copy)
     end
     ybus = Ybus(sys)
-    branches_parallel = ybus.network_reduction_data.parallel_branch_map[(1, 2)]
+    branches_parallel = get_network_reduction_data(ybus).parallel_branch_map[(1, 2)]
     sys_equivalent = deepcopy(sys)
     for l in get_components(ACTransmission, sys_equivalent)
         remove_component!(sys_equivalent, l)
@@ -160,7 +160,7 @@ function test_ybus_equivalence_branches_parallel(vector_branches)
     equivalent_pbranch =
         PNM.get_equivalent_physical_branch_parameters(
             branches_parallel,
-            ybus.network_reduction_data,
+            get_network_reduction_data(ybus),
         )
     if PNM.get_equivalent_shift(equivalent_pbranch) == 0.0
         equivalent_branch = PSY.Line(;
@@ -252,7 +252,7 @@ function test_ybus_equivalence_branches_series(vector_branches)
         add_component!(sys, br_copy)
     end
     ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
-    branches_series = ybus.network_reduction_data.series_branch_map[(1, n_buses)]
+    branches_series = get_network_reduction_data(ybus).series_branch_map[(1, n_buses)]
     sys_equivalent = deepcopy(sys)
     for l in get_components(ACTransmission, sys_equivalent)
         remove_component!(sys_equivalent, l)
@@ -266,7 +266,7 @@ function test_ybus_equivalence_branches_series(vector_branches)
     equivalent_pbranch =
         PNM.get_equivalent_physical_branch_parameters(
             branches_series,
-            ybus.network_reduction_data,
+            get_network_reduction_data(ybus),
         )
     if PNM.get_equivalent_shift(equivalent_pbranch) == 0.0
         equivalent_branch = PSY.Line(;
@@ -482,7 +482,7 @@ end
 @testset "Compute equivalent physical parameters for WECC 240 bus" begin
     sys = PSB.build_system(PSYTestSystems, "psse_240_parsing_sys"; runchecks = false)
     ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
-    nr = ybus.network_reduction_data
+    nr = get_network_reduction_data(ybus)
     for branches_parallel in values(nr.parallel_branch_map)
         @test isa(
             PNM.get_equivalent_physical_branch_parameters(branches_parallel, nr),

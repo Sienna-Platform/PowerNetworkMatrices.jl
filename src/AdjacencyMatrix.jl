@@ -19,7 +19,7 @@ Diagonal elements are typically zero since self-loops are not meaningful in powe
   and their corresponding matrix indices
 - `subnetwork_axes::Dict{Int, Ax}`: Dictionary mapping subnetwork identifiers to their
   corresponding axis information, used for handling electrical islands
-- `network_reduction_data::NetworkReductionData`: Container for network reduction algorithms
+- `branch_catalog::BranchCatalog`: Container for network reduction algorithms
   and their associated data, enabling efficient matrix operations on reduced networks
 
 # Examples
@@ -45,14 +45,14 @@ struct AdjacencyMatrix{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
     axes::Ax
     lookup::L
     subnetwork_axes::Dict{Int, Ax}
-    network_reduction_data::NetworkReductionData
+    branch_catalog::BranchCatalog
 end
 
 # functions to get stored data
 get_axes(M::AdjacencyMatrix) = M.axes
 get_lookup(M::AdjacencyMatrix) = M.lookup
 get_ref_bus(M::AdjacencyMatrix) = sort!(collect(keys(M.subnetwork_axes)))
-get_network_reduction_data(M::AdjacencyMatrix) = M.network_reduction_data
+get_branch_catalog(M::AdjacencyMatrix) = M.branch_catalog
 get_bus_axis(M::AdjacencyMatrix) = M.axes[1]
 get_bus_lookup(M::AdjacencyMatrix) = M.lookup[1]
 
@@ -133,7 +133,7 @@ function AdjacencyMatrix(ybus::Ybus)
         deepcopy(ybus.axes),
         deepcopy(ybus.lookup),
         deepcopy(ybus.subnetwork_axes),
-        ybus.network_reduction_data,
+        get_branch_catalog(ybus),
     )
 end
 

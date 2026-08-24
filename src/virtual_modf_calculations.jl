@@ -32,7 +32,7 @@ serializes through the process-wide `_LIBKLU_LOCK`.
 - `dist_slack::Vector{Float64}`:
         Distributed slack bus weights (retained for API symmetry; not used by the
         Woodbury kernel).
-- `contingency_cache::Dict{Int, ContingencySpec}`:
+- `contingency_cache::Dict{Base.UUID, ContingencySpec}`:
         Resolved contingencies keyed by outage UUID.
 - `woodbury_cache::Dict{NetworkModification, WoodburyFactors}`:
         Precomputed Woodbury factors keyed by modification.
@@ -45,7 +45,7 @@ struct VirtualMODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}, K} <:
        PowerNetworkMatrix{Float64}
     core::VirtualFactorCore{Ax, L, K}
     dist_slack::Vector{Float64}
-    contingency_cache::Dict{Int, ContingencySpec}
+    contingency_cache::Dict{Base.UUID, ContingencySpec}
     woodbury_cache::Dict{NetworkModification, WoodburyFactors}
     row_caches::Dict{NetworkModification, RowCache}
     max_cache_size_bytes::Int
@@ -88,6 +88,7 @@ get_lookup(M::VirtualMODF) = get_lookup(get_core(M))
 get_ref_bus(M::VirtualMODF) = get_ref_bus(get_core(M))
 get_ref_bus_position(M::VirtualMODF) = get_ref_bus_position(get_core(M))
 get_network_reduction_data(M::VirtualMODF) = get_network_reduction_data(get_core(M))
+get_branch_catalog(M::VirtualMODF) = get_branch_catalog(get_core(M))
 get_arc_lookup(M::VirtualMODF) = get_arc_lookup(get_core(M))
 get_bus_lookup(M::VirtualMODF) = get_bus_lookup(get_core(M))
 get_arc_axis(M::VirtualMODF) = get_arc_axis(get_core(M))
@@ -124,7 +125,7 @@ function _apply_woodbury_correction(
 end
 
 """
-    get_registered_contingencies(vmodf::VirtualMODF) -> Dict{Int, ContingencySpec}
+    get_registered_contingencies(vmodf::VirtualMODF) -> Dict{Base.UUID, ContingencySpec}
 
 Return the cached contingency registrations for inspection.
 """
@@ -267,7 +268,7 @@ function VirtualMODF(
     vmodf = VirtualMODF(
         core,
         dist_slack,
-        Dict{Int, ContingencySpec}(),
+        Dict{Base.UUID, ContingencySpec}(),
         Dict{NetworkModification, WoodburyFactors}(),
         Dict{NetworkModification, RowCache}(),
         max_cache_bytes,

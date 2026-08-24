@@ -321,6 +321,10 @@ if the matrix type does not track system origin.
 """
 get_system_uuid(::PowerNetworkMatrix) = nothing
 
+"""Get the [`NetworkReduction`](@ref) data applied to this matrix, via its branch catalog."""
+get_network_reduction_data(M::PowerNetworkMatrix) =
+    get_network_reduction_data(get_branch_catalog(M))
+
 """
     _validate_system_uuid(mat::PowerNetworkMatrix, sys::PSY.System)
 
@@ -371,7 +375,7 @@ Throws when the name matches no retained branch, or matches more than one parall
 member (name-based lookup is ambiguous).
 """
 function get_branch_multiplier(A::T, branch_name::String) where {T <: PowerNetworkMatrix}
-    nr = A.network_reduction_data
+    nr = get_network_reduction_data(A)
     if isempty(nr.direct_branch_name_map)
         populate_direct_branch_name_map!(nr)
     end

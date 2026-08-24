@@ -14,7 +14,7 @@ computed as the product of the incidence matrix A and the susceptance matrix B.
         Tuple of dictionaries providing fast lookup from bus/branch names to matrix indices
 - `subnetwork_axes::Dict{Int, Ax}`:
         Mapping from reference bus numbers to their corresponding subnetwork axes
-- `network_reduction_data::NetworkReductionData`:
+- `branch_catalog::BranchCatalog`:
         Container for network reduction information applied during matrix construction
 
 # Notes
@@ -28,13 +28,13 @@ struct BA_Matrix{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
     axes::Ax
     lookup::L
     subnetwork_axes::Dict{Int, Ax}
-    network_reduction_data::NetworkReductionData
+    branch_catalog::BranchCatalog
 end
 
 get_axes(M::BA_Matrix) = M.axes
 get_lookup(M::BA_Matrix) = M.lookup
 get_ref_bus(M::BA_Matrix) = sort!(collect(keys(M.subnetwork_axes)))
-get_network_reduction_data(M::BA_Matrix) = M.network_reduction_data
+get_branch_catalog(M::BA_Matrix) = M.branch_catalog
 get_bus_axis(M::BA_Matrix) = M.axes[1]
 get_bus_lookup(M::BA_Matrix) = M.lookup[1]
 get_arc_axis(M::BA_Matrix) = M.axes[2]
@@ -107,7 +107,7 @@ function _arc_component_susceptance(nr_data::NetworkReductionData, arc::Tuple{In
 end
 
 function BA_Matrix(ybus::Ybus)
-    nr = ybus.network_reduction_data
+    nr = get_network_reduction_data(ybus)
     bus_ax = get_bus_axis(ybus)
     bus_lookup = get_bus_lookup(ybus)
     arc_ax = get_arc_axis(nr)
@@ -166,7 +166,7 @@ function BA_Matrix(ybus::Ybus)
     axes = (bus_ax, arc_ax)
     lookup = (make_ax_ref(bus_ax), make_ax_ref(arc_ax))
     subnetwork_axes = make_bus_arc_subnetwork_axes(ybus)
-    return BA_Matrix(data, axes, lookup, subnetwork_axes, ybus.network_reduction_data)
+    return BA_Matrix(data, axes, lookup, subnetwork_axes, get_branch_catalog(ybus))
 end
 
 """
@@ -190,7 +190,7 @@ power flow analysis, sensitivity calculations, and linear power system studies.
         Vector containing the original indices of reference buses before matrix reduction
 - `K::F <: Union{Nothing, KLULinSolveCache{Float64}}`:
         Optional KLU factorization object for efficient linear system solving. Nothing if unfactorized
-- `network_reduction_data::NetworkReductionData`:
+- `branch_catalog::BranchCatalog`:
         Container for network reduction information applied during matrix construction
 
 # Mathematical Properties
@@ -216,14 +216,14 @@ struct ABA_Matrix{
     subnetwork_axes::Dict{Int, Ax}
     ref_bus_position::Vector{Int}
     K::F
-    network_reduction_data::NetworkReductionData
+    branch_catalog::BranchCatalog
 end
 
 get_axes(M::ABA_Matrix) = M.axes
 get_lookup(M::ABA_Matrix) = M.lookup
 get_ref_bus(M::ABA_Matrix) = sort!(collect(keys(M.subnetwork_axes)))
 get_ref_bus_position(M::ABA_Matrix) = M.ref_bus_position
-get_network_reduction_data(M::ABA_Matrix) = M.network_reduction_data
+get_branch_catalog(M::ABA_Matrix) = M.branch_catalog
 get_bus_axis(M::ABA_Matrix) = M.axes[1]
 get_bus_lookup(M::ABA_Matrix) = M.lookup[1]
 
@@ -335,7 +335,7 @@ function ABA_Matrix(ybus::Ybus; factorize::Bool = false)
         subnetwork_axes,
         ref_bus_positions,
         K,
-        ybus.network_reduction_data,
+        get_branch_catalog(ybus),
     )
 end
 
@@ -369,7 +369,7 @@ function factorize(ABA::ABA_Matrix{Ax, L, Nothing}) where {Ax, L <: NTuple{2, Di
         deepcopy(ABA.subnetwork_axes),
         deepcopy(ABA.ref_bus_position),
         klu_factorize(ABA.data),
-        deepcopy(ABA.network_reduction_data),
+        deepcopy(get_branch_catalog(ABA)),
     )
     return ABA_lu
 end

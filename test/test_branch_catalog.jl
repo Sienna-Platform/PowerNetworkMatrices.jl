@@ -179,3 +179,23 @@ end
     @test haskey(redirects, "T3W_degenerate_winding_1")
     @test haskey(redirects, "T3W_degenerate_winding_2")
 end
+
+@testset "BranchCatalog is built eagerly on every matrix" begin
+    for (label, sys, reductions) in branch_catalog_test_cases()
+        ybus = Ybus(sys; network_reductions = deepcopy(reductions),
+            make_arc_admittance_matrices = true)
+        for m in (ybus, PNM.VirtualFactorCore(ybus), IncidenceMatrix(ybus),
+            AdjacencyMatrix(ybus), BA_Matrix(ybus), ABA_Matrix(ybus))
+            catalog = PNM.get_branch_catalog(m)
+            # No populate call anywhere: the index exists because the matrix exists.
+            @test !isempty(catalog_fingerprint(catalog).names)
+            # The delegating getter keeps every downstream nrd signature working.
+            @test PNM.get_network_reduction_data(m) ===
+                  PNM.get_network_reduction_data(catalog)
+        end
+        # A contained arc-admittance matrix shares its parent's reduction object, so the
+        # two can never describe different networks.
+        @test PNM.get_network_reduction_data(ybus.arc_admittance_from_to) ===
+              PNM.get_network_reduction_data(ybus)
+    end
+end

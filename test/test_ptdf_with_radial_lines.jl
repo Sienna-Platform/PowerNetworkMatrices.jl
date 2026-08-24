@@ -9,7 +9,7 @@
         BA_rad = BA_Matrix(sys; network_reductions = NetworkReduction[RadialReduction()])
 
         # get the NetworkReduction struct
-        rb = A_rad.network_reduction_data
+        rb = get_network_reduction_data(A_rad)
 
         # get the original and reduced PTDF matrices (consider different methods)
         ptdf = PTDF(sys)

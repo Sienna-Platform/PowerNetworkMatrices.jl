@@ -18,7 +18,7 @@ flow on line j.
         Mapping from reference bus numbers to their corresponding subnetwork branch axes
 - `tol::Base.RefValue{Float64}`:
         Tolerance threshold used for matrix sparsification (elements below this value are dropped)
-- `network_reduction_data::NetworkReductionData`:
+- `branch_catalog::BranchCatalog`:
         Container for network reduction information applied during matrix construction
 
 # Mathematical Properties
@@ -53,7 +53,7 @@ struct LODF{Ax, L <: NTuple{2, Dict}, M <: AbstractArray{Float64, 2}} <:
     lookup::L
     subnetwork_axes::Dict{Int, Ax}
     tol::Base.RefValue{Float64}
-    network_reduction_data::NetworkReductionData
+    branch_catalog::BranchCatalog
 end
 
 get_axes(M::LODF) = M.axes
@@ -62,7 +62,7 @@ get_ref_bus(M::LODF) = sort!(collect(keys(M.subnetwork_axes)))
 # Arc-indexed: no get_bus_lookup(M::LODF) exists, so this throws MethodError on any call.
 # Pre-existing; kept here so LODF does not silently inherit the bus-indexed generic method.
 get_ref_bus_position(M::LODF) = [get_bus_lookup(M)[x] for x in keys(M.subnetwork_axes)]
-get_network_reduction_data(M::LODF) = M.network_reduction_data
+get_branch_catalog(M::LODF) = M.branch_catalog
 get_arc_lookup(M::LODF) = M.lookup[1]
 stores_transpose(::LODF) = true
 
@@ -391,7 +391,7 @@ function LODF(
         PTDFm_data = PTDFm.data
     end
 
-    if !isequal(A.network_reduction_data, PTDFm.network_reduction_data)
+    if !isequal(get_network_reduction_data(A), get_network_reduction_data(PTDFm))
         error("A and PTDF matrices have non-equivalent network reductions.")
     end
     ax_ref = make_ax_ref(get_arc_axis(A))
@@ -405,7 +405,7 @@ function LODF(
             (ax_ref, ax_ref),
             subnetwork_axes,
             Ref(tol_value),
-            A.network_reduction_data,
+            get_branch_catalog(A),
         )
     end
     return LODF(
@@ -414,7 +414,7 @@ function LODF(
         (ax_ref, ax_ref),
         subnetwork_axes,
         Ref(tol_value),
-        A.network_reduction_data,
+        get_branch_catalog(A),
     )
 end
 
@@ -486,8 +486,8 @@ function LODF(
     # for API consistency; passing anything other than "KLU" will error in
     # `_buildlodf`.
     if !(
-        isequal(A.network_reduction_data, BA.network_reduction_data) &&
-        isequal(BA.network_reduction_data, ABA.network_reduction_data)
+        isequal(get_network_reduction_data(A), get_network_reduction_data(BA)) &&
+        isequal(get_network_reduction_data(BA), get_network_reduction_data(ABA))
     )
         error(
             "Mismatch in `NetworkReduction`, A, BA, and ABA matrices must be computed with the same network reduction.",
@@ -507,7 +507,7 @@ function LODF(
         (ax_ref, ax_ref),
         subnetwork_axes,
         Ref(tol_value),
-        A.network_reduction_data,
+        get_branch_catalog(A),
     )
 end
 

@@ -131,13 +131,13 @@ end
         network_reductions = NetworkReduction[WardReduction([101, 102])],
     )
     existing_line_susceptance = PNM.get_series_susceptance(
-        ptdf_2.network_reduction_data.direct_branch_map[(101, 102)],
+        get_network_reduction_data(ptdf_2).direct_branch_map[(101, 102)],
         PSY.SU,
     )
     # The ward equivalent is a detached synthetic branch storing system-base
     # impedance; read it back with device base (identity).
     ward_line_susceptance = PNM.get_series_susceptance(
-        ptdf_2.network_reduction_data.added_arc_impedance_map[(101, 102)],
+        get_network_reduction_data(ptdf_2).added_arc_impedance_map[(101, 102)],
         PSY.DU,
     )
     ward_multiplier =

@@ -47,7 +47,7 @@ end
 @testset "dc phase shift: parallel group and per-arc accessors" begin
     sys = _mk_line_pst_parallel_system()   # L1 (x=0.1) ∥ PST (x=0.2, α=0.15) on (1,2); L2 on (2,3)
     ybus = Ybus(sys)
-    nr = ybus.network_reduction_data
+    nr = get_network_reduction_data(ybus)
     bp = PNM.get_parallel_branch_map(nr)[(1, 2)]
 
     @test PNM.get_series_phase_shift(bp, nr) ≈ 0.05          # (5·0.15)/15
@@ -61,7 +61,7 @@ end
     # Lossy shifted group: b = 1/(t·x) is r-independent; the accessor must not throw
     # (unlike arc_equivalent_branch's single-π extraction).
     sys_lossy = _mk_line_pst_parallel_system(; pst_r = 0.05)
-    nr_lossy = Ybus(sys_lossy).network_reduction_data
+    nr_lossy = get_network_reduction_data(Ybus(sys_lossy))
     @test PNM.arc_dc_phase_shift(nr_lossy, (1, 2)) ≈ 0.05
 
     err = try
@@ -142,7 +142,7 @@ end
     )
 
     ybus = Ybus(sys)
-    nr = ybus.network_reduction_data
+    nr = get_network_reduction_data(ybus)
     key, bp = first(nr.parallel_branch_map)
 
     line = PSY.get_component(Line, sys, "L1")
@@ -223,7 +223,7 @@ end
         add_component!(sys, br_copy)
     end
     ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
-    nr = ybus.network_reduction_data
+    nr = get_network_reduction_data(ybus)
     arc = (1, n_buses)
     bs = PNM.get_series_branch_map(nr)[arc]
 
@@ -238,7 +238,7 @@ end
 
 @testset "dc phase shift: parallel circulating flow" begin
     sys = _mk_line_pst_parallel_system()
-    nr = Ybus(sys).network_reduction_data
+    nr = get_network_reduction_data(Ybus(sys))
     bp = PNM.get_parallel_branch_map(nr)[(1, 2)]
     line = PSY.get_component(Line, sys, "L1")
     pst = PSY.get_component(PSY.TwoWindingTransformer, sys, "PST")
@@ -263,7 +263,7 @@ end
 @testset "dc resistance: total on lossy shifted groups" begin
     # Non-shifting arcs are bit-identical to the single-π path.
     sys = _mk_line_pst_parallel_system()
-    nr = Ybus(sys).network_reduction_data
+    nr = get_network_reduction_data(Ybus(sys))
     @test PNM.arc_dc_resistance(nr, (2, 3)) ==
           PNM.get_equivalent_r(PNM.arc_equivalent_branch(nr, (2, 3)))
     # Lossless shifted group: member reactances only, r = 0.
@@ -271,7 +271,7 @@ end
 
     # Lossy shifted group: arc_equivalent_branch throws; arc_dc_resistance must not.
     sys_lossy = _mk_line_pst_parallel_system(; pst_r = 0.05)
-    nr_lossy = Ybus(sys_lossy).network_reduction_data
+    nr_lossy = get_network_reduction_data(Ybus(sys_lossy))
     z_line = complex(0.0, 0.1)
     z_pst = complex(0.05, 0.2)
     expected = real(inv(inv(z_line) + inv(z_pst)))
