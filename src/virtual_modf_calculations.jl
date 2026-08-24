@@ -238,7 +238,7 @@ function VirtualMODF(
         Ymatrix;
         linear_solver = linear_solver,
         tol = tol,
-        system_uuid = IS.get_uuid(sys),
+        system_uuid = PSY.get_system_uuid(sys),
     )
 
     return VirtualMODF(
@@ -350,7 +350,7 @@ Delegates to `NetworkModification(mat, sys, outage)` for the resolution logic.
 """
 function _register_outage!(vmodf::VirtualMODF, sys::PSY.System, outage::PSY.Outage)
     contingency_cache = get_contingency_cache(vmodf)
-    outage_id = IS.get_uuid(outage)
+    outage_id = IS.get_id(outage)
     if haskey(contingency_cache, outage_id)
         @warn "Outage with UUID $(outage_id) is already registered; skipping."
         return
@@ -482,7 +482,7 @@ $(TYPEDSIGNATURES)
 function Base.getindex(vmodf::VirtualMODF, monitored::Int, outage::PSY.Outage)
     core = get_core(vmodf)
     contingency_cache = get_contingency_cache(vmodf)
-    outage_id = IS.get_uuid(outage)
+    outage_id = IS.get_id(outage)
     # Pair with the locked `empty!` in `clear_all_caches!`; without it, a
     # concurrent clear could rehash `contingency_cache` mid-lookup.
     ctg = @lock core.solver_lock begin

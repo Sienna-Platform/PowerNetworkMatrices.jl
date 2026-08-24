@@ -166,7 +166,7 @@ end
     @test haskey(arc_lookup, (fb, tb)) || haskey(arc_lookup, (tb, fb))
 
     outage = PSY.get_supplemental_attributes(target)[1]
-    ctg = get_registered_contingencies(protected_modf)[IS.get_uuid(outage)]
+    ctg = get_registered_contingencies(protected_modf)[IS.get_id(outage)]
     @test !isempty(ctg.modification.arc_modifications)
 end
 
@@ -357,7 +357,7 @@ end
     @test haskey(arc_lookup, (fb, tb)) || haskey(arc_lookup, (tb, fb))
 
     outage = PSY.get_supplemental_attributes(external)[1]
-    ctg = get_registered_contingencies(vmodf)[IS.get_uuid(outage)]
+    ctg = get_registered_contingencies(vmodf)[IS.get_id(outage)]
     @test !isempty(ctg.modification.arc_modifications)
 end
 
@@ -390,7 +390,7 @@ end
     tfb, ttb = _arc_buses(target)
     target_arc = haskey(PNM.get_arc_lookup(reduced), (tfb, ttb)) ? (tfb, ttb) : (ttb, tfb)
     @test haskey(PNM.get_arc_lookup(reduced), target_arc)
-    target_id = IS.get_uuid(PSY.get_supplemental_attributes(target)[1])
+    target_id = IS.get_id(PSY.get_supplemental_attributes(target)[1])
 
     bus_lookup_full = PNM.get_bus_lookup(full)
     nrd_full = get_network_reduction_data(full)
@@ -404,7 +404,7 @@ end
     tested_target = false
     for br in candidate
         outage = PSY.get_supplemental_attributes(br)[1]
-        id = IS.get_uuid(outage)
+        id = IS.get_id(outage)
         haskey(get_registered_contingencies(full), id) || continue
         haskey(get_registered_contingencies(reduced), id) || continue
         ctg_full = get_registered_contingencies(full)[id]

@@ -264,7 +264,7 @@ end
     buses_to_compare = collect(keys(nrd_d2.bus_reduction_map))
     for branch in valid_outage_branches
         outage = get_supplemental_attributes(branch)[1]
-        ctg_id = IS.get_uuid(outage)
+        ctg_id = IS.get_id(outage)
         # Skip branches not registered as contingencies in either system
         haskey(get_registered_contingencies(vmodf), ctg_id) || continue
         haskey(get_registered_contingencies(vmodf_d2), ctg_id) || continue
@@ -363,7 +363,7 @@ end
     for branch in get_components(ACTransmission, sys)
         !has_supplemental_attributes(branch) && continue
         outage = get_supplemental_attributes(branch)[1]
-        ctg_id = IS.get_uuid(outage)
+        ctg_id = IS.get_id(outage)
         ctg = get_registered_contingencies(vmodf)[ctg_id]
         @test ctg.modification.arc_modifications[1].delta_b <= 0.0
     end

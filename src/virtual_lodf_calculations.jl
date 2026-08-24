@@ -152,7 +152,7 @@ function VirtualLODF(
         Ymatrix;
         linear_solver = linear_solver,
         tol = tol,
-        system_uuid = IS.get_uuid(sys),
+        system_uuid = PSY.get_system_uuid(sys),
     )
     return VirtualLODF(
         core;
