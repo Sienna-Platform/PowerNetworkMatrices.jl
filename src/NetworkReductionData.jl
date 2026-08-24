@@ -132,7 +132,6 @@ network reduction algorithms.
 - `name_to_arc_map::Dict{Type, DataStructures.SortedDict{String, Tuple{Tuple{Int, Int}, String}}}`: Lazily filled with the call to [`populate_branch_maps_by_type!`](@ref), maps string names to their corresponding arcs and the map where the arc can be found.
 - `component_to_reduction_name_map::Dict{Type, Dict{String, String}}`: Lazily filled with the call to [`populate_branch_maps_by_type!`](@ref), maps component names to the names of the reduction entries used in name_to_arc_map.
 - `filters_applied::Dict{Type, Function}`: Filters applied when populating branch maps by type
-- `direct_branch_name_map::Dict{String, Tuple{Int, Int}}`: Lazily filled, maps branch names to their corresponding arc tuples for direct branches
 """
 @kwdef mutable struct NetworkReductionData <:
                       IS.InfrastructureMatrices.AbstractInfrastructureNetworkReductionData
@@ -169,7 +168,6 @@ network reduction algorithms.
     component_to_reduction_name_map::Dict{Type, Dict{String, String}} =
         Dict{Type, Dict{String, String}}()
     filters_applied = Dict{Type, Function}() #Filters applied when populating branch maps by type
-    direct_branch_name_map::Dict{String, Tuple{Int, Int}} = Dict{String, Tuple{Int, Int}}()
 end
 
 function add_to_map(device::T, filters::Dict) where {T <: PSY.ACTransmission}
@@ -181,13 +179,6 @@ end
 
 function get_name(device::T) where {T <: PSY.ACTransmission}
     return PSY.get_name(device)
-end
-
-function populate_direct_branch_name_map!(nr::NetworkReductionData)
-    for (arc_tuple, branch) in nr.direct_branch_map
-        branch_name = get_name(branch)
-        nr.direct_branch_name_map[branch_name] = arc_tuple
-    end
 end
 
 """
@@ -339,7 +330,6 @@ function populate_branch_maps_by_type!(nrd::NetworkReductionData, filters = Dict
             map_by_type[k] = v
         end
     end
-    populate_direct_branch_name_map!(nrd)
     nrd.all_branch_maps_by_type = all_branch_maps_by_type
     nrd.filters_applied = filters
     return
@@ -534,9 +524,6 @@ end
 
 function isequal(rb1::NetworkReductionData, rb2::NetworkReductionData)
     for field in fieldnames(NetworkReductionData)
-        # direct_branch_name_map is populated when indexing into matrices with branch names
-        # this should not prevent using matrices for downstream computations (e.g. LODF(A, BA, ABA))
-        field == :direct_branch_name_map && continue
         if getfield(rb1, field) != getfield(rb2, field)
             return false
         end

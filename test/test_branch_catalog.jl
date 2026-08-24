@@ -199,3 +199,39 @@ end
               PNM.get_network_reduction_data(ybus)
     end
 end
+
+@testset "BranchCatalog resolves branch names for matrix indexing" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    ptdf = PTDF(Ybus(sys; network_reductions = PNM.NetworkReduction[]))
+
+    # A branch owning its arc one-to-one scales by 1.0.
+    nr = PNM.get_network_reduction_data(ptdf)
+    arc, branch = first(PNM.get_direct_branch_map(nr))
+    mult, resolved = PNM.get_branch_multiplier(ptdf, PNM.get_name(branch))
+    @test mult == 1.0
+    @test resolved == arc
+
+    @test_throws ErrorException PNM.get_branch_multiplier(ptdf, "no_such_branch")
+end
+
+@testset "BranchCatalog reports colliding branch names instead of guessing" begin
+    # PSY names are unique only per type, so a Line and a transformer may share one.
+    # A bare-name lookup cannot resolve that, and must say so rather than pick one.
+    # c_sys14 is the fixture that carries both a Line and a TwoWindingTransformer.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    line = first(PSY.get_available_components(PSY.Line, sys))
+    transformer = first(PSY.get_available_components(PSY.TwoWindingTransformer, sys))
+    shared = PSY.get_name(line)
+    PSY.set_name!(sys, transformer, shared)
+
+    ptdf = PTDF(Ybus(sys; network_reductions = PNM.NetworkReduction[]))
+    err = try
+        PNM.get_branch_multiplier(ptdf, shared)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("Line", err.msg)
+    @test occursin("TwoWindingTransformer", err.msg)
+end

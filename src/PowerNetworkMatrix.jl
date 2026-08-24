@@ -375,34 +375,32 @@ Throws when the name matches no retained branch, or matches more than one parall
 member (name-based lookup is ambiguous).
 """
 function get_branch_multiplier(A::T, branch_name::String) where {T <: PowerNetworkMatrix}
-    nr = get_network_reduction_data(A)
-    if isempty(nr.direct_branch_name_map)
-        populate_direct_branch_name_map!(nr)
+    catalog = get_branch_catalog(A)
+    candidates = get(get_component_name_index(catalog), branch_name, nothing)
+    if isnothing(candidates)
+        error("Branch $branch_name not found in the network reduction data.")
     end
-    if haskey(nr.direct_branch_name_map, branch_name)
-        arc_tuple = nr.direct_branch_name_map[branch_name]
-        return 1.0, arc_tuple
+    if length(candidates) > 1
+        listed = join(
+            ("$(component_type) on arc $(arc)" for (component_type, arc, _) in candidates),
+            ", ",
+        )
+        error(
+            "Branch name $(branch_name) is claimed by $(length(candidates)) components " *
+            "($(listed)); a bare name cannot resolve between them because component " *
+            "names are unique only per type.",
+        )
     end
-
-    if !isempty(nr.reverse_parallel_branch_map)
-        matches = [
-            (k, v) for
-            (k, v) in nr.reverse_parallel_branch_map if branch_name == get_name(k)
-        ]
-        if length(matches) > 1
-            error(
-                "Branch name $(branch_name) matches $(length(matches)) parallel-group " *
-                "members; name-based lookup is ambiguous.",
-            )
-        end
-        if length(matches) == 1
-            matched, matched_arc = only(matches)
-            parallel_branch_set = nr.parallel_branch_map[matched_arc]
-            multiplier = compute_parallel_multiplier(parallel_branch_set, matched)
-            return multiplier, matched_arc
-        end
+    (_, arc_tuple, kind) = only(candidates)
+    kind === :direct_branch_map && return 1.0, arc_tuple
+    # A parallel-group member carries its susceptance-fraction share of the group flow.
+    group = get_parallel_branch_map(get_network_reduction_data(catalog))[arc_tuple]
+    for member in group
+        get_name(member) == branch_name || continue
+        return compute_parallel_multiplier(group, member), arc_tuple
     end
-
-    error("Branch $branch_name not found in the network reduction data.")
-    return
+    error(
+        "Branch $branch_name is indexed on arc $(arc_tuple) but no member of the group " *
+        "there carries that name.",
+    )
 end
