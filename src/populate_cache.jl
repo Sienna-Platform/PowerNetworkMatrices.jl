@@ -238,7 +238,7 @@ end
 _resolve_modification(::VirtualMODF, mod::NetworkModification) = mod
 _resolve_modification(::VirtualMODF, ctg::ContingencySpec) = ctg.modification
 function _resolve_modification(vmodf::VirtualMODF, outage::PSY.Outage)
-    return _resolve_modification(vmodf, IS.get_id(outage))
+    return _resolve_modification(vmodf, IS.get_uuid(outage))
 end
 function _resolve_modification(vmodf::VirtualMODF, id::Int)
     contingency_cache = get_contingency_cache(vmodf)

@@ -1,6 +1,6 @@
 @testset "System UUID tracking in VirtualPTDF" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
-    sys_uuid = PSY.get_system_uuid(sys)
+    sys_uuid = IS.get_uuid(sys)
 
     # UUID is stored when constructing from system
     vptdf = VirtualPTDF(sys)
@@ -14,7 +14,7 @@ end
 
 @testset "System UUID tracking in VirtualMODF" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
-    sys_uuid = PSY.get_system_uuid(sys)
+    sys_uuid = IS.get_uuid(sys)
 
     vmodf = VirtualMODF(sys)
     @test get_system_uuid(vmodf) == sys_uuid

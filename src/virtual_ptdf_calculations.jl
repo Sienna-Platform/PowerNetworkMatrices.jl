@@ -167,7 +167,7 @@ function VirtualPTDF(
         tol = tol,
         max_cache_size = max_cache_size,
         persistent_arcs = persistent_arcs,
-        system_uuid = PSY.get_system_uuid(sys),
+        system_uuid = IS.get_uuid(sys),
     )
 end
 

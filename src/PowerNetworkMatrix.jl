@@ -330,10 +330,10 @@ the UUID of `sys`. No-op when the matrix does not track system origin.
 """
 function _validate_system_uuid(mat::PowerNetworkMatrix, sys::PSY.System)
     mat_uuid = get_system_uuid(mat)
-    if !isnothing(mat_uuid) && mat_uuid != PSY.get_system_uuid(sys)
+    if !isnothing(mat_uuid) && mat_uuid != IS.get_uuid(sys)
         error(
             "System UUID mismatch: the matrix was constructed from a system with " *
-            "UUID $mat_uuid, but the provided system has UUID $(PSY.get_system_uuid(sys)). " *
+            "UUID $mat_uuid, but the provided system has UUID $(IS.get_uuid(sys)). " *
             "Ensure the matrix and system originate from the same source.",
         )
     end
