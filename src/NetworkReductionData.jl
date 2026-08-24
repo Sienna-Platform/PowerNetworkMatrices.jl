@@ -356,10 +356,17 @@ _get_segment_type(w::ThreeWindingTransformerCircuit) = get_transformer_type(w)
 
 _get_concrete_types(x::T) where {T <: PSY.ACBranch} = [T]
 _get_concrete_types(::BranchesParallel{T}) where {T <: PSY.ACTransmission} = [T]
-# A heterogeneous group must be discoverable under each of its members'
-# concrete branch types so that downstream per-type iteration (e.g. PSI's
-# `name_to_arc_map[MonitoredLine]`) can find it.
-_get_concrete_types(bp::MixedBranchesParallel) = unique(typeof.(bp.branches))
+# Bucket keys are always PSY component types, so a group of 3W windings is filed under the
+# parent transformer type -- matching how a winding in the direct map is filed, and what the
+# wrapper-keyed accessors redirect to. A group can hold windings of transformers with
+# different concrete types, so every distinct parent is returned.
+_get_concrete_types(bp::BranchesParallel{ThreeWindingTransformerCircuit}) =
+    unique(get_transformer_type.(bp.branches))
+# A heterogeneous group must be discoverable under each of its members' branch types so that
+# downstream per-type iteration (e.g. POM's `name_to_arc_map[MonitoredLine]`) can find it.
+# Fan-out is by `_get_segment_type`, which maps a winding to its parent transformer and every
+# other branch to its own type, keeping every bucket key a PSY component type.
+_get_concrete_types(bp::MixedBranchesParallel) = unique(_get_segment_type.(bp.branches))
 
 # Construct an empty per-slot dict for `BranchMapsByType.parallel_branch_map`.
 # Value type is `AbstractBranchesParallel` so that the same per-type bucket can
