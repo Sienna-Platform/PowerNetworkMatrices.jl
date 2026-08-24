@@ -29,7 +29,7 @@ TimeSeries = "9e3dc215-6440-5c97-bce1-76c03772f85e"
 
 [sources]
 InfrastructureSystems = {rev = "IS4", url = "https://github.com/NREL-Sienna/InfrastructureSystems.jl"}
-PowerFlowFileParser = {rev = "psy6", url = "https://github.com/NREL-Sienna/PowerFlowFileParser.jl"}
+PowerFlowFileParser = {rev = "mb/shunt-pu-bug", url = "https://github.com/Sienna-Platform/PowerFlowFileParser.jl"}
 PowerSystemCaseBuilder = {rev = "psy6", url = "https://github.com/NREL-Sienna/PowerSystemCaseBuilder.jl"}
 PowerSystems = {rev = "psy6", url = "https://github.com/NREL-Sienna/PowerSystems.jl"}
 # PSY's own [sources] pins for these are ignored once PSY is a dependency rather than the
