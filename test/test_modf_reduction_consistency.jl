@@ -306,7 +306,7 @@ end
     e = 1
     b_e = base.arc_susceptances[e]
     ctg = ContingencySpec(
-        Base.UUID(123456),
+        123456,
         NetworkModification("ctg", [ArcModification(e, -b_e)]),
     )
     base.contingency_cache[ctg.id] = ctg
