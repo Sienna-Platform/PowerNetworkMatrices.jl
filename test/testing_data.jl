@@ -936,3 +936,10 @@ function branch_catalog_test_cases()
     end
     return cases
 end
+
+"Fingerprint a `BranchCatalog`, comparably with `nrd_fingerprint`."
+catalog_fingerprint(c::PNM.BranchCatalog) = branch_index_fingerprint(
+    PNM.get_all_branch_maps_by_type(c),
+    PNM.get_name_to_arc_maps(c),
+    PNM.get_component_to_reduction_name_map(c),
+)

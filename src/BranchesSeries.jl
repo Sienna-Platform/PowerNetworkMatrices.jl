@@ -241,6 +241,23 @@ function get_equivalent_emergency_rating(branch::PSY.GenericArcImpedance)
     return PSY.get_max_flow(branch, PSY.DU)
 end
 
+# A chain is indexed only when every segment is: a chain missing a segment is not a valid
+# representation of the path between its endpoints.
+function _entry_matches(chain::BranchesSeries, predicate)
+    if chain.needs_insertion_order && !_is_unfiltered(predicate)
+        _warn_mixed_group("Series circuit", _chain_branches(chain))
+    end
+    for (branch_type, branch_list) in chain.branches
+        for device in branch_list
+            predicate(branch_type, device) || return false
+        end
+    end
+    return true
+end
+
+_chain_branches(chain::BranchesSeries) =
+    reduce(vcat, values(chain.branches); init = PSY.ACTransmission[])
+
 function add_to_map(series_circuit::BranchesSeries, filters::Dict)
     if isempty(filters)
         return true

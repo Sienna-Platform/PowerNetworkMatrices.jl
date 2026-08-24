@@ -144,6 +144,10 @@ The circuit's tap (turns ratio). Defaults to `1.0` for circuits with no tap.
 """
 get_equivalent_tap(tw::ThreeWindingTransformerCircuit) = PSY.get_tap(tw.circuit)
 
+# A winding follows its parent transformer: the template models transformers, not windings.
+_entry_matches(winding::ThreeWindingTransformerCircuit, predicate) =
+    _entry_matches(get_transformer(winding), predicate)
+
 function add_to_map(device::ThreeWindingTransformerCircuit, filters::Dict)
     isempty(filters) && return true
     return add_to_map(get_transformer(device), filters)

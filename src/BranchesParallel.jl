@@ -323,6 +323,23 @@ function add_to_map(
     return any(filters[T](device) for device in double_circuit)
 end
 
+# A homogeneous group is indexed when ANY member is: the arc is modeled, so the group that
+# represents it must be reachable. Mirrors `add_to_map`'s policy.
+_entry_matches(
+    group::BranchesParallel{T},
+    predicate,
+) where {T <: PSY.ACTransmission} = any(predicate(T, device) for device in group)
+
+# A heterogeneous group is indexed only when EVERY member is, so a partially-filtered group
+# never presents itself as a complete representation of its arc.
+function _entry_matches(group::MixedBranchesParallel, predicate)
+    _is_unfiltered(predicate) || _warn_mixed_group("Parallel circuit", group.branches)
+    for branch in group.branches
+        predicate(typeof(branch), branch) || return false
+    end
+    return true
+end
+
 function add_to_map(double_circuit::MixedBranchesParallel, filters::Dict)
     isempty(filters) && return true
     @warn "Parallel circuit contains mixed branch types, filters might be applied to more components than intended. Use Logging.Debug for additional information."

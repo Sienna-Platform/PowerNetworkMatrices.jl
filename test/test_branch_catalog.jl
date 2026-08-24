@@ -58,3 +58,75 @@ end
     @test issubset(Set(filtered.by_type), Set(base.by_type))
     @test length(filtered.names) < length(base.names)
 end
+
+@testset "BranchCatalog base constructor matches populate_branch_maps_by_type!" begin
+    for (label, sys, reductions) in branch_catalog_test_cases()
+        ybus = Ybus(sys; network_reductions = deepcopy(reductions))
+        nrd = PNM.get_network_reduction_data(ybus)
+        PNM.populate_branch_maps_by_type!(nrd)
+
+        catalog = PNM.BranchCatalog(nrd)
+        @test catalog_fingerprint(catalog) == nrd_fingerprint(nrd)
+        # The catalog indexes the NRD it was handed, not a copy.
+        @test PNM.get_network_reduction_data(catalog) === nrd
+        # An absent branch type yields an empty map, never a KeyError. PF and POM both
+        # need this: a type can be missing when every branch of it was absorbed by a
+        # radial reduction. Probe whichever concrete types this fixture lacks rather than
+        # naming one, so the assertion holds across fixtures.
+        indexed = keys(PNM.get_name_to_arc_maps(catalog))
+        for T in (
+            PSY.Line, PSY.MonitoredLine, PSY.TwoWindingTransformer,
+            PSY.ThreeWindingTransformer, PSY.GenericArcImpedance,
+            PSY.DiscreteControlledACBranch,
+        )
+            T in indexed && continue
+            @test isempty(PNM.get_name_to_arc_map(catalog, T))
+        end
+    end
+end
+
+@testset "BranchCatalog filtered constructor matches populate with filters" begin
+    # Each entry: a label, and filters keyed by PSY concrete type exactly as
+    # IOM._get_filters produces them (keys are DeviceModel component types).
+    filter_configs = [
+        ("reject_all_lines", Dict{DataType, Function}(PSY.Line => (_ -> false))),
+        ("keep_all_lines", Dict{DataType, Function}(PSY.Line => (_ -> true))),
+        # The important one: a filter keeping SOME members is what distinguishes the ANY
+        # rule on BranchesParallel from the ALL rule on MixedBranchesParallel and
+        # BranchesSeries. Reject-all and keep-all cannot tell them apart.
+        ("reject_half_lines", Dict{DataType, Function}(
+            PSY.Line => (b -> isodd(length(PSY.get_name(b)))),
+        )),
+    ]
+    for (label, sys, reductions) in branch_catalog_test_cases()
+        for (fl, filters) in filter_configs
+            base_nrd = PNM.get_network_reduction_data(
+                Ybus(sys; network_reductions = deepcopy(reductions)),
+            )
+            PNM.populate_branch_maps_by_type!(base_nrd, filters)
+
+            catalog_nrd = PNM.get_network_reduction_data(
+                Ybus(sys; network_reductions = deepcopy(reductions)),
+            )
+            predicate = (T, c) -> haskey(filters, T) ? filters[T](c) : true
+            catalog = PNM.BranchCatalog(catalog_nrd, predicate)
+
+            @test catalog_fingerprint(catalog) == nrd_fingerprint(base_nrd)
+        end
+    end
+end
+
+@testset "BranchCatalog filtered is a subset sharing one reduction" begin
+    sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
+    ybus = Ybus(sys; network_reductions = PNM.NetworkReduction[PNM.DegreeTwoReduction()])
+    nrd = PNM.get_network_reduction_data(ybus)
+
+    base = PNM.BranchCatalog(nrd)
+    filtered = PNM.BranchCatalog(nrd, (T, c) -> T !== PSY.Line)
+
+    @test PNM.get_network_reduction_data(filtered) === PNM.get_network_reduction_data(base)
+    bf, ff = catalog_fingerprint(base), catalog_fingerprint(filtered)
+    @test issubset(Set(ff.names), Set(bf.names))
+    @test issubset(Set(ff.by_type), Set(bf.by_type))
+    @test length(ff.names) < length(bf.names)
+end
