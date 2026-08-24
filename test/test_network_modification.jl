@@ -167,7 +167,7 @@ end
 
     for e in 1:n_arcs
         b_e = vptdf.arc_susceptances[e]
-        ctg_id = e + 10000
+        ctg_id = Base.UUID(e + 10000)
         ctg = ContingencySpec(
             ctg_id,
             NetworkModification("test_$e", [ArcModification(e, -b_e)]),

@@ -93,7 +93,7 @@ end
     ctgs = ContingencySpec[]
     for e in 1:3
         b_e = PNM._get_arc_susceptances(v_pop)[e]
-        uuid = 7000 + e
+        uuid = Base.UUID(7000 + e)
         ctg = ContingencySpec(
             uuid,
             NetworkModification("populate_ctg_$e", [ArcModification(e, -b_e)]),
@@ -124,7 +124,7 @@ end
 
     e = 1
     b_e = PNM._get_arc_susceptances(vmodf)[e]
-    uuid = 7100
+    uuid = Base.UUID(7100)
     ctg = ContingencySpec(
         uuid,
         NetworkModification("populate_tuple_ctg", [ArcModification(e, -b_e)]),
@@ -175,7 +175,7 @@ end
     # MODF on the shared core: register one contingency in both and populate.
     e = 1
     b_e = PNM._get_arc_susceptances(vmodf)[e]
-    uuid = 7300
+    uuid = Base.UUID(7300)
     ctg = ContingencySpec(
         uuid,
         NetworkModification("shared_core_ctg", [ArcModification(e, -b_e)]),

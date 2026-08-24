@@ -76,7 +76,7 @@ end
     @testset "M=1 single bridge arc" begin
         b = vmodf.arc_susceptances[e_bridge1]
         ctg = ContingencySpec(
-            50001,
+            Base.UUID(50001),
             NetworkModification("island_m1", [ArcModification(e_bridge1, -b)]),
         )
         vmodf.contingency_cache[ctg.id] = ctg
@@ -101,7 +101,7 @@ end
         b_br = vmodf.arc_susceptances[e_bridge1]
         b_ot = vmodf.arc_susceptances[e_other]
         ctg = ContingencySpec(
-            50002,
+            Base.UUID(50002),
             NetworkModification(
                 "island_m2",
                 [ArcModification(e_bridge1, -b_br), ArcModification(e_other, -b_ot)],
@@ -120,7 +120,7 @@ end
         b1 = vmodf.arc_susceptances[e_bridge1]
         b2 = vmodf.arc_susceptances[e_bridge2]
         ctg = ContingencySpec(
-            50003,
+            Base.UUID(50003),
             NetworkModification(
                 "island_2bridge",
                 [ArcModification(e_bridge1, -b1), ArcModification(e_bridge2, -b2)],
@@ -144,7 +144,7 @@ end
         b2 = vmodf.arc_susceptances[e_bridge2]
         b3 = vmodf.arc_susceptances[e_other]
         ctg = ContingencySpec(
-            50004,
+            Base.UUID(50004),
             NetworkModification(
                 "island_m3",
                 [
@@ -178,7 +178,7 @@ end
 
     for e in 1:n_arcs
         b_e = vmodf.arc_susceptances[e]
-        ctg_id = 60000 + e
+        ctg_id = Base.UUID(60000 + e)
         ctg = ContingencySpec(
             ctg_id,
             NetworkModification("regression_$e", [ArcModification(e, -b_e)]),
