@@ -904,13 +904,6 @@ function branch_index_fingerprint(
     return (; by_type, names, redirects)
 end
 
-"Fingerprint the index fields still living on `NetworkReductionData`."
-nrd_fingerprint(nrd::PNM.NetworkReductionData) = branch_index_fingerprint(
-    nrd.all_branch_maps_by_type,
-    nrd.name_to_arc_map,
-    nrd.component_to_reduction_name_map,
-)
-
 """
 The reduction fixtures worth testing a branch index against. `c_sys5`/`c_sys14` reduce
 nothing (empty series/parallel maps), so they are deliberately absent: a passing reduction
@@ -940,7 +933,7 @@ function branch_catalog_test_cases()
     return cases
 end
 
-"Fingerprint a `BranchCatalog`, comparably with `nrd_fingerprint`."
+"Order-independent fingerprint of a `BranchCatalog`."
 catalog_fingerprint(c::PNM.BranchCatalog) = branch_index_fingerprint(
     PNM.get_all_branch_maps_by_type(c),
     PNM.get_name_to_arc_maps(c),

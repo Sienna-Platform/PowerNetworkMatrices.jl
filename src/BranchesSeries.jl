@@ -258,33 +258,6 @@ end
 _chain_branches(chain::BranchesSeries) =
     reduce(vcat, values(chain.branches); init = PSY.ACTransmission[])
 
-function add_to_map(series_circuit::BranchesSeries, filters::Dict)
-    if isempty(filters)
-        return true
-    end
-
-    if series_circuit.needs_insertion_order
-        if isempty(intersect(keys(series_circuit.branches), keys(filters)))
-            return true
-        end
-
-        @warn "Series circuit contains mixed branch types, filters might be applied to more components than intended. Use Logging.Debug for additional information."
-        @debug "Series circuit branch types: $(keys(series_circuit.branches))"
-        for (branch_type, branch_list) in series_circuit.branches
-            filter = get(filters, branch_type, x -> true)
-            for device in branch_list
-                if !filter(device)
-                    return false
-                end
-            end
-        end
-        return true
-    else
-        filter = get(filters, first(keys(series_circuit.branches)), x -> true)
-        return all([filter(device) for device in first(values(series_circuit.branches))])
-    end
-    error("Invalid condition reached in add_to_map for BranchesSeries")
-end
 
 function Base.:(==)(a::BranchesSeries, b::BranchesSeries)
     return a.branches == b.branches

@@ -177,14 +177,15 @@ end
     @test PNM.get_single_element_contingency_rating(mbp) ≈ 80.0
     @test PNM.get_equivalent_emergency_rating(mbp) ≈ 100.0 + 80.0
 
-    # add_to_map: empty filters short-circuit (no warning).
-    @test PNM.add_to_map(mbp, Dict{DataType, Function}()) == true
+    # The unfiltered path short-circuits: every entry is indexed, and no warning fires.
+    @test PNM._entry_matches(mbp, PNM._keep_all) == true
 
-    # add_to_map: non-empty filters trigger the mixed-type warning.
-    filters = Dict{DataType, Function}(PSY.Line => x -> true)
+    # A real predicate on a heterogeneous group warns that it may reach more components
+    # than intended. A mixed group is indexed only when EVERY member passes.
     @test_logs (:warn, r"mixed branch types") match_mode = :any begin
-        @test PNM.add_to_map(mbp, filters) == true
+        @test PNM._entry_matches(mbp, (T, component) -> true) == true
     end
+    @test PNM._entry_matches(mbp, (T, component) -> T !== PSY.Line) == false
 end
 
 @testset "Test Reductions with filters" begin
@@ -197,11 +198,16 @@ end
             DegreeTwoReduction(),
         ],
     )
-    PowerNetworkMatrices.populate_branch_maps_by_type!(PNM.get_network_reduction_data(ptdf),
-        Dict(Line => x -> occursin("B", get_name(x)),
-            TwoWindingTransformer => x -> occursin("B", get_name(x))))
-    @test PNM.has_filtered_branches(PNM.get_network_reduction_data(ptdf))
-    for k in keys(PNM.get_network_reduction_data(ptdf).name_to_arc_map[Line])
+    # The optimization-side filter is a predicate over (branch type, component); the base
+    # catalog on the matrix stays complete.
+    filtered = PNM.BranchCatalog(
+        PNM.get_network_reduction_data(ptdf),
+        (T, component) ->
+            T in (Line, TwoWindingTransformer) ? occursin("B", get_name(component)) : true,
+    )
+    line_entries = PNM.get_name_to_arc_map(filtered, Line)
+    @test !isempty(line_entries)
+    for k in keys(line_entries)
         @test occursin("B", k)
     end
     PNM.empty!(PNM.get_network_reduction_data(ptdf))

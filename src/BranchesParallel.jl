@@ -312,19 +312,9 @@ function Base.length(bp::AbstractBranchesParallel)
     return length(bp.branches)
 end
 
-function add_to_map(
-    double_circuit::BranchesParallel{T},
-    filters::Dict,
-) where {T <: PSY.ACTransmission}
-    isempty(filters) && return true
-    if !haskey(filters, T)
-        return true
-    end
-    return any(filters[T](device) for device in double_circuit)
-end
 
 # A homogeneous group is indexed when ANY member is: the arc is modeled, so the group that
-# represents it must be reachable. Mirrors `add_to_map`'s policy.
+# represents it must be reachable.
 _entry_matches(
     group::BranchesParallel{T},
     predicate,
@@ -340,19 +330,6 @@ function _entry_matches(group::MixedBranchesParallel, predicate)
     return true
 end
 
-function add_to_map(double_circuit::MixedBranchesParallel, filters::Dict)
-    isempty(filters) && return true
-    @warn "Parallel circuit contains mixed branch types, filters might be applied to more components than intended. Use Logging.Debug for additional information."
-    @debug "Parallel circuit branch types: $(typeof.(double_circuit.branches))"
-    @debug "Parallel circuit branch names: $(PSY.get_name.(double_circuit.branches))"
-    for branch in double_circuit.branches
-        filter = get(filters, typeof(branch), x -> true)
-        if !filter(branch)
-            return false
-        end
-    end
-    return true
-end
 
 function Base.:(==)(a::AbstractBranchesParallel, b::AbstractBranchesParallel)
     return a.branches == b.branches
