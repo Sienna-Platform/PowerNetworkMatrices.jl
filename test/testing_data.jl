@@ -856,3 +856,83 @@ function build_antiparallel_chain_segment_system()
     ]
     return _build_degree_two_chain_system(edges)
 end
+
+##############################################################################
+###################### Branch index fingerprinting ###########################
+##############################################################################
+
+"""
+Stable, order-independent summary of a branch index. Two indexes with equal fingerprints
+agree on every (map kind, branch type, arc) => entry-name association, which is what the
+downstream axis and lookup code actually depends on. Types and map-kind tags are stringified
+so an index keying them by `Symbol` compares equal to one keying them by `String`.
+"""
+function branch_index_fingerprint(
+    maps_by_type::PNM.BranchMapsByType,
+    name_to_arc::Dict,
+    component_to_entry::Dict,
+)
+    by_type = Tuple{String, String, Tuple{Int, Int}, String}[]
+    for (kind, per_type) in maps_by_type
+        for (T, submap) in per_type
+            for (key, value) in submap
+                # Forward maps are arc-keyed with an entry value; reverse maps are
+                # entry-keyed with an arc value.
+                arc, entry = key isa Tuple{Int, Int} ? (key, value) : (value, key)
+                push!(by_type, (String(kind), string(T), arc, PNM.get_name(entry)))
+            end
+        end
+    end
+    sort!(by_type)
+
+    names = Tuple{String, String, Tuple{Int, Int}, String}[]
+    for (T, submap) in name_to_arc
+        for (name, (arc, kind)) in submap
+            push!(names, (string(T), name, arc, String(kind)))
+        end
+    end
+    sort!(names)
+
+    redirects = Tuple{String, String, String}[]
+    for (T, submap) in component_to_entry
+        for (component, entry) in submap
+            push!(redirects, (string(T), component, entry))
+        end
+    end
+    sort!(redirects)
+
+    return (; by_type, names, redirects)
+end
+
+"Fingerprint the index fields still living on `NetworkReductionData`."
+nrd_fingerprint(nrd::PNM.NetworkReductionData) = branch_index_fingerprint(
+    nrd.all_branch_maps_by_type,
+    nrd.name_to_arc_map,
+    nrd.component_to_reduction_name_map,
+)
+
+"""
+The reduction fixtures worth testing a branch index against. `c_sys5`/`c_sys14` reduce
+nothing (empty series/parallel maps), so they are deliberately absent: a passing reduction
+test on them proves nothing.
+"""
+function branch_catalog_test_cases()
+    cases = Tuple{String, PSY.System, Vector{PNM.NetworkReduction}}[]
+    for (label, sys) in (
+        ("psse14", PSB.build_system(PSSEParsingTestSystems,
+            "psse_14_network_reduction_test_system")),
+        ("case10", PSB.build_system(PSB.PSITestSystems,
+            "case10_radial_series_reductions")),
+        ("antiparallel", build_antiparallel_chain_segment_system()),
+    )
+        for reductions in (
+            PNM.NetworkReduction[],
+            PNM.NetworkReduction[PNM.RadialReduction()],
+            PNM.NetworkReduction[PNM.DegreeTwoReduction()],
+            PNM.NetworkReduction[PNM.RadialReduction(), PNM.DegreeTwoReduction()],
+        )
+            push!(cases, (label, sys, reductions))
+        end
+    end
+    return cases
+end
