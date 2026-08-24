@@ -203,7 +203,11 @@ end
     filtered = PNM.BranchCatalog(
         PNM.get_network_reduction_data(ptdf),
         (T, component) ->
-            T in (Line, TwoWindingTransformer) ? occursin("B", get_name(component)) : true,
+            if T in (Line, TwoWindingTransformer)
+                occursin("B", get_name(component))
+            else
+                true
+            end,
     )
     line_entries = PNM.get_name_to_arc_map(filtered, Line)
     @test !isempty(line_entries)

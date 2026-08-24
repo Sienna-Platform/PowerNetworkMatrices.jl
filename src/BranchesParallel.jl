@@ -312,7 +312,6 @@ function Base.length(bp::AbstractBranchesParallel)
     return length(bp.branches)
 end
 
-
 # A homogeneous group is indexed when ANY member is: the arc is modeled, so the group that
 # represents it must be reachable.
 _entry_matches(
@@ -329,7 +328,6 @@ function _entry_matches(group::MixedBranchesParallel, predicate)
     end
     return true
 end
-
 
 function Base.:(==)(a::AbstractBranchesParallel, b::AbstractBranchesParallel)
     return a.branches == b.branches

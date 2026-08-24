@@ -258,7 +258,6 @@ end
 _chain_branches(chain::BranchesSeries) =
     reduce(vcat, values(chain.branches); init = PSY.ACTransmission[])
 
-
 function Base.:(==)(a::BranchesSeries, b::BranchesSeries)
     return a.branches == b.branches
 end

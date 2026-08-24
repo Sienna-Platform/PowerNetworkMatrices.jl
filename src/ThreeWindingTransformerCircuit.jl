@@ -148,7 +148,6 @@ get_equivalent_tap(tw::ThreeWindingTransformerCircuit) = PSY.get_tap(tw.circuit)
 _entry_matches(winding::ThreeWindingTransformerCircuit, predicate) =
     _entry_matches(get_transformer(winding), predicate)
 
-
 function has_time_series(
     device::ThreeWindingTransformerCircuit,
     ts_type::Type{T},

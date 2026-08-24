@@ -164,11 +164,9 @@ network reduction algorithms.
     reductions::ReductionContainer = ReductionContainer()
 end
 
-
 function get_name(device::T) where {T <: PSY.ACTransmission}
     return PSY.get_name(device)
 end
-
 
 _get_segment_components(x::T) where {T <: PSY.ACBranch} = [x]
 _get_segment_components(x::AbstractBranchesParallel) = x.branches
@@ -254,10 +252,6 @@ function get_applied_reductions(rb::NetworkReductionData)
     has_ward_reduction(c) && push!(applied, c.ward_reduction)
     return applied
 end
-
-
-
-
 
 has_radial_reduction(rb::NetworkReductionData) = has_radial_reduction(rb.reductions)
 has_degree_two_reduction(rb::NetworkReductionData) = has_degree_two_reduction(rb.reductions)

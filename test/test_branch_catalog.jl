@@ -34,9 +34,6 @@
     end
 end
 
-
-
-
 @testset "BranchCatalog filtered is a subset sharing one reduction" begin
     sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
     ybus = Ybus(sys; network_reductions = PNM.NetworkReduction[PNM.DegreeTwoReduction()])
