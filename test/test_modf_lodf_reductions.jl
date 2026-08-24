@@ -85,7 +85,7 @@ function verify_modf_lodf_identity(
     b_arc = vmodf.arc_susceptances[arc_idx]
 
     # Build and register ContingencySpec
-    ctg_id = Base.UUID(Int(hash((arc_idx, delta_b)) & 0x7fffffffffffffff))
+    ctg_id = Int(hash((arc_idx, delta_b)) & 0x7fffffffffffffff)
     ctg = ContingencySpec(
         ctg_id,
         NetworkModification("test_arc_$(arc_idx)", [ArcModification(arc_idx, delta_b)]),
@@ -156,7 +156,7 @@ function verify_modf_n2_lodf_identity(
             "Arc pair ($arc_idx1, $arc_idx2) is an N-2 islanding pair (denom=$denom); use a non-islanding pair",
         )
 
-    ctg_id = Base.UUID(Int(hash((arc_idx1, arc_idx2, :n2)) & 0x7fffffffffffffff))
+    ctg_id = Int(hash((arc_idx1, arc_idx2, :n2)) & 0x7fffffffffffffff)
     ctg = ContingencySpec(
         ctg_id,
         NetworkModification(
@@ -389,7 +389,7 @@ end
         )
         n2_mod = NetworkModification("n2_parallel_xfmr_plus_line", n2_mods)
 
-        ctg_id = Base.UUID(515151)
+        ctg_id = 515151
         ctg = ContingencySpec(ctg_id, n2_mod)
         vmodf.contingency_cache[ctg_id] = ctg
 
@@ -451,7 +451,7 @@ end
         )
         n3_mod = NetworkModification("n3_parallel_xfmr_plus_two_lines", n3_mods)
 
-        ctg_id = Base.UUID(515251)
+        ctg_id = 515251
         ctg = ContingencySpec(ctg_id, n3_mod)
         vmodf.contingency_cache[ctg_id] = ctg
 
@@ -518,7 +518,7 @@ end
         )
         n3_mod = NetworkModification("n3_three_regular_lines", n3_mods)
 
-        ctg_id = Base.UUID(515252)
+        ctg_id = 515252
         ctg = ContingencySpec(ctg_id, n3_mod)
         vmodf.contingency_cache[ctg_id] = ctg
 

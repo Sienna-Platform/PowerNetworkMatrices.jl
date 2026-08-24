@@ -173,11 +173,11 @@ A resolved, self-contained contingency specification backed by a
 `PSY.Outage` supplemental attribute for caching purposes.
 
 # Fields
-- `id::Base.UUID`: UUID of the source Outage supplemental attribute.
+- `id::Int`: IS id matching the source Outage supplemental attribute.
 - `modification::NetworkModification`: The network topology change.
 """
 struct ContingencySpec
-    id::Base.UUID
+    id::Int
     modification::NetworkModification
 end
 
