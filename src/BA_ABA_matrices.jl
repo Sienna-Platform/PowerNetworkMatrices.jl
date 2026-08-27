@@ -369,9 +369,8 @@ function factorize(ABA::ABA_Matrix{Ax, L, Nothing}) where {Ax, L <: NTuple{2, Di
         deepcopy(ABA.subnetwork_axes),
         deepcopy(ABA.ref_bus_position),
         klu_factorize(ABA.data),
-        # The catalog is immutable and indexes the reduction this matrix was built from, so
-        # both matrices share it. Copying it would clone the PSY branch components held in
-        # the reduction maps, detaching them from their system.
+        # Shared, not copied: copying would clone the PSY components held in the reduction
+        # maps, detaching them from their system.
         get_branch_catalog(ABA),
     )
     return ABA_lu

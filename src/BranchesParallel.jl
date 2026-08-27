@@ -312,15 +312,14 @@ function Base.length(bp::AbstractBranchesParallel)
     return length(bp.branches)
 end
 
-# A homogeneous group is indexed when ANY member is: the arc is modeled, so the group that
-# represents it must be reachable.
+# Indexed when ANY member is: the arc is modeled, so its group must be reachable.
 _entry_matches(
     group::BranchesParallel{T},
     predicate,
 ) where {T <: PSY.ACTransmission} = any(predicate(T, device) for device in group)
 
-# A heterogeneous group is indexed only when EVERY member is, so a partially-filtered group
-# never presents itself as a complete representation of its arc.
+# Indexed only when EVERY member is: a partially-filtered group is not a complete
+# representation of its arc.
 function _entry_matches(group::MixedBranchesParallel, predicate)
     _is_unfiltered(predicate) || _warn_mixed_group("Parallel circuit", group.branches)
     for branch in group.branches

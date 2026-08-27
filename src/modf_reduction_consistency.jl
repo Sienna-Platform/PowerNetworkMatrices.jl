@@ -76,14 +76,12 @@ _merge_irreducible(existing, protected::Set{Int}) =
     sort!(collect(union(Set(existing), protected)))
 
 """
-Branches whose outage or monitoring the MODF must be able to represent: an outaged branch is
-turned into an `ArcModification` on its own arc, and a monitored branch is the row a
-contingency query is read from. Both need their arc to survive the reduction.
+Branches whose outage or monitoring the MODF must be able to represent: an outaged branch
+becomes an `ArcModification` on its own arc, and a monitored branch is the row a contingency
+query is read from. Both need their arc to survive the reduction.
 
-Outaged *injectors* are deliberately excluded. They register as contingencies with an empty
-`NetworkModification` -- no arc modifications, no shunt modifications -- so no reduction can
-invalidate them, and gating a topological reduction on generator reliability data would make
-Ward unusable on any system carrying it.
+Outaged *injectors* are excluded. They register with an empty `NetworkModification`, so no
+reduction can invalidate them.
 """
 function _contingency_relevant_branches(sys::PSY.System)
     branches = Set{PSY.ACTransmission}()
@@ -108,15 +106,10 @@ end
 """
 Reject a `WardReduction` whose study area does not contain every branch the MODF needs.
 
-`study_buses` *defines* the network Ward retains -- unlike the radial/degree-two irreducible
-set, which merely exempts buses from elimination. A contingency on a branch outside it
-therefore cannot survive: the arc is gone after the reduction and every query for that
-contingency silently returns the base-case row.
-
-Widening `study_buses` to swallow such a branch would hand the caller a different reduction
-than they specified, and on a system carrying system-wide forced-outage data it widens to the
-entire network, making Ward a guaranteed no-op. Failing here instead keeps the conflict
-visible at the point where it can actually be resolved.
+`study_buses` *defines* the network Ward retains, unlike the radial/degree-two irreducible
+set, which only exempts buses from elimination. A contingency on a branch outside it cannot
+survive: the arc is gone after the reduction, and every query for that contingency resolves
+to the base-case row.
 """
 function _validate_ward_contingency_coverage(
     reductions::Vector{NetworkReduction},

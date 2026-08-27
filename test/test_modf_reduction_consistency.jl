@@ -290,9 +290,8 @@ end
 
 @testset "VirtualMODF Ward rejects an outaged branch outside the study area (RTS)" begin
     # Ward retains exactly its study area, so a contingency on a branch outside it cannot
-    # survive. This used to pass by silently widening study_buses until they covered the
-    # whole network, which made Ward a no-op: RTS ships forced-outage data on 120 branches
-    # spanning all 73 buses, so the widened study area was the entire system.
+    # survive and the specification is rejected. RTS carries forced-outage data on 120
+    # branches spanning all 73 buses, so no proper subset of them is a valid study area.
     sys = PSB.build_system(PSB.PSISystems, "RTS_GMLC_DA_sys")
     bus_numbers = [PSY.get_number(x) for x in PSY.get_components(PSY.ACBus, sys)]
     # Study area = area 1 (leading digit 1), matching test_ward_reduction.jl.

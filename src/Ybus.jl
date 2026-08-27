@@ -826,9 +826,7 @@ function Ybus(
         switched_admittances,
         standard_loads,
     )
-    # The branch maps are final here, so the whole build shares one index. The
-    # arc-admittance matrices below are contained in this Ybus and must not each build
-    # their own.
+    # The branch maps are final here; the arc-admittance matrices below share this index.
     catalog = BranchCatalog(nr)
     # Build adjacency matrix from COO triplets in a single sparse() call to avoid
     # ~2×branchcount structural insertions into a growing CSC matrix.
@@ -2516,12 +2514,9 @@ function get_reduction(ybus::Ybus, ::PSY.System, reduction::WardReduction)
     end
 
     if Set(subnetwork_bus_axis) == Set(study_buses)
-        # `removed_buses` holds the buses of every *other* island. When there are none,
-        # Ward has nothing to eliminate anywhere: it cannot reduce inside the study area
-        # (that is the whole island) and there is no other island to drop. Returning a
-        # reduction here would record `ward_reduction` as applied while removing nothing,
-        # so every downstream consumer would believe the network was reduced when it was
-        # not -- and a test asserting "this branch survived" would pass vacuously.
+        # `removed_buses` holds the buses of every *other* island. With none, Ward has
+        # nothing to eliminate anywhere: the study area is the whole island, and there is no
+        # other island to drop.
         if isempty(removed_buses)
             throw(
                 IS.DataFormatError(

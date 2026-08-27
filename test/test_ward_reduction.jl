@@ -163,8 +163,8 @@ end
     @test length(wr.added_admittance_map) == 1
 
     # Study buses covering one island entirely: Ward cannot reduce inside it, but the other
-    # islands are still eliminated, so this is legitimate and only warns. (Asserted by
-    # behavior rather than `@test_logs`, which MethodErrors on failure in this suite.)
+    # islands are still eliminated, so this is legitimate and only warns. Asserted by
+    # behavior; `@test_logs` MethodErrors on failure in this suite.
     wr = get_network_reduction_data(
         Ybus(sys; network_reductions = NetworkReduction[WardReduction([15, 16, 17])]),
     )

@@ -228,9 +228,8 @@ function VirtualMODF(
     )
 
     # radial/degree-two read the container's irreducible set (already seeded above via
-    # `Ybus`'s `irreducible_buses`). Ward's `study_buses` defines the retained network
-    # rather than exempting buses, so it is validated against the contingencies instead of
-    # being widened by them.
+    # `Ybus`'s `irreducible_buses`). Ward's `study_buses` defines the retained network rather
+    # than exempting buses, so it is validated against the contingencies.
     _validate_ward_contingency_coverage(network_reductions, sys)
     for reduction in network_reductions
         Ymatrix = build_reduced_ybus(Ymatrix, sys, reduction)

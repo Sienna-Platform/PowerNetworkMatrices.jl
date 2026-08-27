@@ -5,8 +5,7 @@
         nrd = PNM.get_network_reduction_data(catalog)
         fp = catalog_fingerprint(catalog)
 
-        # A reducing fixture must produce a non-empty index. This is the assertion that
-        # would have caught the vacuous-pass footgun in the downstream tests.
+        # A reducing fixture must produce a non-empty index.
         @test !isempty(fp.by_type)
         @test !isempty(fp.names)
 
@@ -17,10 +16,8 @@
             @test arc[2] in retained
         end
 
-        # Every available branch is either reachable by name through the redirect map, or
-        # was absorbed by the reduction. A radial reduction absorbs a branch outright --
-        # both its endpoints leave the bus axis and it carries no reduction entry at all --
-        # so "present in the index" is not the invariant; "present unless absorbed" is.
+        # The invariant is "indexed unless absorbed": a radial reduction absorbs a branch
+        # outright, taking both endpoints off the bus axis and leaving no reduction entry.
         removed_arcs = PNM.get_removed_arcs(nrd)
         for branch in PSY.get_available_components(PSY.ACTransmission, sys)
             branch isa PSY.ThreeWindingTransformer && continue
@@ -76,10 +73,10 @@ end
     merged_arc = (PSY.get_number(busD), PSY.get_number(star_bus))
     @assert haskey(nrd.parallel_branch_map, merged_arc) "fixture no longer promotes the windings"
 
-    # Constructing the catalog must not throw (defect A).
+    # Constructing the catalog must not throw.
     catalog = PNM.BranchCatalog(nrd)
 
-    # The group is reachable under the parent transformer type (defect B).
+    # The group is reachable under the parent transformer type.
     parent = PSY.ThreeWindingTransformer
     arc_map = PNM.get_name_to_arc_map(catalog, parent)
     @test any(v -> v == (merged_arc, :parallel_branch_map), values(arc_map))
@@ -108,9 +105,9 @@ end
         for m in (ybus, PNM.VirtualFactorCore(ybus), IncidenceMatrix(ybus),
             AdjacencyMatrix(ybus), BA_Matrix(ybus), ABA_Matrix(ybus))
             catalog = PNM.get_branch_catalog(m)
-            # No populate call anywhere: the index exists because the matrix exists.
+            # The index exists because the matrix exists.
             @test !isempty(catalog_fingerprint(catalog).names)
-            # The delegating getter keeps every downstream nrd signature working.
+            # The delegating getter resolves to the catalog's own reduction.
             @test PNM.get_network_reduction_data(m) ===
                   PNM.get_network_reduction_data(catalog)
         end
