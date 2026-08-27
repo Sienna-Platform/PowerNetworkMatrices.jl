@@ -108,41 +108,6 @@ end
     end
 end
 
-@testset "augment Ward study_buses with protected buses" begin
-    # Under the unified-irreducibles design the user-supplied protected set lives
-    # on the orchestrator (`Ybus(sys; irreducible_buses=...)`) and is consumed by
-    # every Radial / DegreeTwo / ZIBR step through the `ReductionContainer`. Only
-    # `WardReduction` keeps its own (semantically distinct) `study_buses` field
-    # and so still needs explicit augmentation at the orchestrator boundary.
-    protected = Set{Int}([101, 205])
-
-    ward = WardReduction([1, 2, 3])
-    wardb = PNM._augment_ward(ward, protected)
-    @test wardb isa WardReduction
-    @test Set(wardb.study_buses) == Set([1, 2, 3, 101, 205])
-
-    # Empty protection set leaves the reduction identity-equal.
-    @test PNM._augment_ward(ward, Set{Int}()) === ward
-
-    # Non-Ward reductions pass through `_augment_ward` unchanged — they don't
-    # carry a per-spec protected set anymore.
-    radial = RadialReduction()
-    @test PNM._augment_ward(radial, protected) === radial
-
-    deg2 = DegreeTwoReduction(; reduce_reactive_power_injectors = false)
-    @test PNM._augment_ward(deg2, protected) === deg2
-
-    adjusted = PNM._augment_ward_reductions(
-        NetworkReduction[radial, deg2, ward],
-        protected,
-    )
-    @test length(adjusted) == 3
-    @test adjusted[1] === radial
-    @test adjusted[2] === deg2
-    @test adjusted[3] isa WardReduction
-    @test Set(adjusted[3].study_buses) == Set([1, 2, 3, 101, 205])
-end
-
 # --- Phase 2/3: constructor wiring + validation ----------------------------
 
 @testset "VirtualMODF auto-protects outaged branch under reduction (RTS)" begin
@@ -323,42 +288,22 @@ end
 
 # --- Phase 4: numerical correctness ----------------------------------------
 
-@testset "VirtualMODF Ward reduction protects an external outaged branch (RTS)" begin
+@testset "VirtualMODF Ward rejects an outaged branch outside the study area (RTS)" begin
+    # Ward retains exactly its study area, so a contingency on a branch outside it cannot
+    # survive. This used to pass by silently widening study_buses until they covered the
+    # whole network, which made Ward a no-op: RTS ships forced-outage data on 120 branches
+    # spanning all 73 buses, so the widened study area was the entire system.
     sys = PSB.build_system(PSB.PSISystems, "RTS_GMLC_DA_sys")
     bus_numbers = [PSY.get_number(x) for x in PSY.get_components(PSY.ACBus, sys)]
     # Study area = area 1 (leading digit 1), matching test_ward_reduction.jl.
     study_buses = filter(x -> digits(x)[end] == 1, bus_numbers)
     @test !isempty(study_buses)
-    study_set = Set(study_buses)
+    @test length(study_buses) < length(bus_numbers)
 
-    # An external line: both endpoints outside the study area.
-    external = nothing
-    for br in PSY.get_components(PSY.ACTransmission, sys)
-        _is_phase_shifting_2w(br) && continue
-        fb, tb = _arc_buses(br)
-        if !(fb in study_set) && !(tb in study_set)
-            external = br
-            break
-        end
-    end
-    @test external !== nothing
-
-    PSY.add_supplemental_attribute!(sys, external, _fixed_outage())
-    vmodf = VirtualMODF(
+    @test_throws IS.ConflictingInputsError VirtualMODF(
         sys;
         network_reductions = NetworkReduction[WardReduction(study_buses)],
     )
-
-    fb, tb = _arc_buses(external)
-    @test fb in _retained_buses(vmodf)
-    @test tb in _retained_buses(vmodf)
-
-    arc_lookup = PNM.get_arc_lookup(vmodf)
-    @test haskey(arc_lookup, (fb, tb)) || haskey(arc_lookup, (tb, fb))
-
-    outage = PSY.get_supplemental_attributes(external)[1]
-    ctg = get_registered_contingencies(vmodf)[IS.get_id(outage)]
-    @test !isempty(ctg.modification.arc_modifications)
 end
 
 @testset "VirtualMODF reduced+protected matches unreduced at common buses (RTS)" begin

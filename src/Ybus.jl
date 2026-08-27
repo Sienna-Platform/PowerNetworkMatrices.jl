@@ -2516,7 +2516,24 @@ function get_reduction(ybus::Ybus, ::PSY.System, reduction::WardReduction)
     end
 
     if Set(subnetwork_bus_axis) == Set(study_buses)
-        @error "The study buses comprise an entire island; ward reduction will not modify this island and other islands will be eliminated"
+        # `removed_buses` holds the buses of every *other* island. When there are none,
+        # Ward has nothing to eliminate anywhere: it cannot reduce inside the study area
+        # (that is the whole island) and there is no other island to drop. Returning a
+        # reduction here would record `ward_reduction` as applied while removing nothing,
+        # so every downstream consumer would believe the network was reduced when it was
+        # not -- and a test asserting "this branch survived" would pass vacuously.
+        if isempty(removed_buses)
+            throw(
+                IS.DataFormatError(
+                    "WardReduction study_buses cover the entire network \
+                    ($(length(study_buses)) buses, one island), so the reduction would \
+                    remove nothing. Narrow study_buses to the area to retain, or drop the \
+                    WardReduction.",
+                ),
+            )
+        end
+        @warn "The study buses comprise an entire island; ward reduction will not modify \
+               this island, and the other islands will be eliminated."
         return NetworkReductionData(;
             removed_arcs = removed_arcs,
             removed_buses = removed_buses,
