@@ -210,20 +210,68 @@ function _build_component_name_index(nrd::NetworkReductionData, predicate)
 end
 
 """
-    BranchCatalog(nrd::NetworkReductionData)
+Throws unless every arc the reduction *folded* is still reachable by component type. Opt-in:
+pass `validate = true` to [`BranchCatalog`](@ref), or call this directly on a catalog under
+test. Construction does not run it by default.
 
-The complete index over `nrd`.
+Radial reduction legitimately removes a branch: its arc leaves the network and leaves these
+maps, so there is nothing left to index. Series and parallel reductions remove nothing --
+they fold branches into a composite arc that still exists and still carries flow, so it must
+stay reachable. This checks that the distinction held.
+
+The two are indistinguishable to a consumer, which is why the check is worth writing: an arc
+is reached only by asking for a PSY component type, and a type that indexes nothing returns
+an empty map rather than an error. A folded arc that lost its entry is therefore invisible --
+no flow variable, no rating constraint, no nodal-balance term, and no complaint.
 """
-BranchCatalog(nrd::NetworkReductionData) = BranchCatalog(nrd, _keep_all)
+function _validate_catalog_closure(nrd::NetworkReductionData, name_to_arc::NAME_TO_ARC)
+    indexed = Set{Tuple{Int, Int}}()
+    for by_name in values(name_to_arc)
+        for (arc, _) in values(by_name)
+            push!(indexed, arc)
+        end
+    end
+    # Only the component-backed maps. Ward's `added_arc_impedance_map` arcs come out of
+    # Gaussian elimination and are backed by no component, so no component type can claim
+    # them; they are outside this invariant by construction.
+    for (map_name, source) in (
+        (:direct_branch_map, nrd.direct_branch_map),
+        (:parallel_branch_map, nrd.parallel_branch_map),
+        (:series_branch_map, nrd.series_branch_map),
+    )
+        for (arc, entry) in source
+            arc in indexed && continue
+            error(
+                "Arc $arc ($(get_name(entry)) in $map_name) is reachable from no branch " *
+                "type in the catalog, so nothing that indexes by component type can find " *
+                "it. Leaf types: $(_get_concrete_types(entry)).",
+            )
+        end
+    end
+    return
+end
 
 """
-    BranchCatalog(nrd::NetworkReductionData, predicate)
+    BranchCatalog(nrd::NetworkReductionData; validate = false)
+
+The complete index over `nrd`. See `validate` on the filtered method below.
+"""
+BranchCatalog(nrd::NetworkReductionData; validate::Bool = false) =
+    BranchCatalog(nrd, _keep_all; validate = validate)
+
+"""
+    BranchCatalog(nrd::NetworkReductionData, predicate; validate = false)
 
 Index over `nrd` holding only entries `predicate` accepts, where `predicate(T, component)`
 returns whether a component of branch type `T` should be indexed. An aggregate is judged by
-`_entry_matches`, which applies the predicate to its members.
+`_entry_matches`, which applies the predicate to every physical branch at its leaves.
+
+`validate` runs [`_validate_catalog_closure`](@ref) before returning. It is off by default so
+that indexing stays a pure build step; turn it on in tests, or wherever a caller wants the
+folded-arc invariant enforced rather than assumed. It is rejected for a filtered catalog,
+where the invariant does not hold by design.
 """
-function BranchCatalog(nrd::NetworkReductionData, predicate)
+function BranchCatalog(nrd::NetworkReductionData, predicate; validate::Bool = false)
     maps = BranchMapsByType()
     name_to_arc = NAME_TO_ARC()
     component_to_entry = COMPONENT_TO_ENTRY()
@@ -257,6 +305,19 @@ function BranchCatalog(nrd::NetworkReductionData, predicate)
     _index_reverse_series!(
         maps.reverse_series_branch_map, nrd.reverse_series_branch_map, predicate,
     )
+
+    if validate
+        # Refused rather than skipped: a filter drops arcs by design, so an unreachable arc
+        # there is a filter decision, not a lost entry. Silently answering "valid" would
+        # report a guarantee this cannot give.
+        _is_unfiltered(predicate) || throw(
+            ArgumentError(
+                "validate = true applies only to an unfiltered catalog; a filtered one \
+                 omits arcs by design.",
+            ),
+        )
+        _validate_catalog_closure(nrd, name_to_arc)
+    end
 
     return BranchCatalog(
         nrd,
