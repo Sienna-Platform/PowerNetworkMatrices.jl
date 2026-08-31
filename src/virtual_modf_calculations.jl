@@ -316,6 +316,10 @@ end
 
 # --- Outage registration ---
 
+_warn_or_rethrow_failed_outage(e::ErrorException) =
+    @warn "Could not register outage: $(e.msg)"
+_warn_or_rethrow_failed_outage(e) = rethrow()
+
 """
     _register_all_outages!(vmodf, sys)
 
@@ -329,8 +333,7 @@ function _register_all_outages!(vmodf::VirtualMODF, sys::PSY.System)
             _register_outage!(vmodf, sys, outage)
             count += 1
         catch e
-            e isa ErrorException || rethrow()
-            @warn "Could not register outage: $(e.msg)"
+            _warn_or_rethrow_failed_outage(e)
         end
     end
 

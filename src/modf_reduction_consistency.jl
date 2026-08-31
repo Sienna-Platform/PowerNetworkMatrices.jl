@@ -83,11 +83,15 @@ query is read from. Both need their arc to survive the reduction.
 Outaged *injectors* are excluded. They register with an empty `NetworkModification`, so no
 reduction can invalidate them.
 """
+_push_if_branch!(branches::Set{PSY.ACTransmission}, c::PSY.ACTransmission) =
+    push!(branches, c)
+_push_if_branch!(::Set{PSY.ACTransmission}, ::PSY.Component) = nothing
+
 function _contingency_relevant_branches(sys::PSY.System)
     branches = Set{PSY.ACTransmission}()
     for outage in PSY.get_supplemental_attributes(PSY.Outage, sys)
         for component in PSY.get_associated_components(sys, outage)
-            component isa PSY.ACTransmission && push!(branches, component)
+            _push_if_branch!(branches, component)
         end
         for uuid in PSY.get_monitored_components(outage)
             local component
@@ -97,11 +101,14 @@ function _contingency_relevant_branches(sys::PSY.System)
                 _warn_or_rethrow_missing_component(e, uuid)
                 continue
             end
-            component isa PSY.ACTransmission && push!(branches, component)
+            _push_if_branch!(branches, component)
         end
     end
     return branches
 end
+
+_is_ward(::WardReduction) = true
+_is_ward(::NetworkReduction) = false
 
 """
 Reject a `WardReduction` whose study area does not contain every branch the MODF needs.
@@ -115,7 +122,7 @@ function _validate_ward_contingency_coverage(
     reductions::Vector{NetworkReduction},
     sys::PSY.System,
 )
-    wards = [r for r in reductions if r isa WardReduction]
+    wards = filter(_is_ward, reductions)
     isempty(wards) && return
     relevant = _contingency_relevant_branches(sys)
     isempty(relevant) && return

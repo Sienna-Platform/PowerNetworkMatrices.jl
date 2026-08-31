@@ -58,8 +58,10 @@ Base.eachindex(A::PowerNetworkMatrix) = CartesianIndices(size(A.data))
 Gets the matrix index corresponding to a given key (arc tuple, bus number, etc.)
 """
 function lookup_index(i, lookup::Dict)
-    return isa(i, Colon) ? Colon() : lookup[i]
+    return lookup[i]
 end
+
+lookup_index(::Colon, ::Dict) = Colon()
 
 """
 Gets the matrix index for a `PSY.Arc`, converting it to an arc tuple first.
@@ -71,7 +73,7 @@ Gets the matrix index for a `PSY.Arc`, converting it to an arc tuple first.
         Dictionary mapping arc tuples or bus numbers to matrix indices
 """
 function lookup_index(i::PSY.Arc, lookup::Dict)
-    return isa(i, Colon) ? Colon() : lookup[Base.to_index(i)]
+    return lookup[Base.to_index(i)]
 end
 
 """
@@ -84,7 +86,7 @@ Gets the matrix index for a `PSY.ACBus`, converting it to a bus number first.
         Dictionary mapping arc tuples or bus numbers to matrix indices
 """
 function lookup_index(i::PSY.ACBus, lookup::Dict)
-    return isa(i, Colon) ? Colon() : lookup[Base.to_index(i)]
+    return lookup[Base.to_index(i)]
 end
 
 # Lisp-y tuple recursion trick to handle indexing in a nice type-
@@ -123,7 +125,11 @@ to_index(A::PowerNetworkMatrix, idx...) = _to_index_tuple(idx, A.lookup)
 # a non-unrolled loop through the `idx` tuple which may be of
 # varying element type. Another lisp-y recursion trick fixes that
 has_colon(idx::Tuple{}) = false
-has_colon(idx::Tuple) = isa(first(idx), Colon) || has_colon(Base.tail(idx))
+
+_is_colon(::Colon) = true
+_is_colon(::Any) = false
+
+has_colon(idx::Tuple) = _is_colon(first(idx)) || has_colon(Base.tail(idx))
 
 # TODO: better error (or just handle correctly) when user tries to index with a range like a:b
 # overloading other methods to consider PowerNetworkMatrix
