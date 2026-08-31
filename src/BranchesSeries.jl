@@ -131,26 +131,45 @@ arc from elsewhere should use the two-argument method, which checks the frame.
 """
 get_segment_orientations(bs::BranchesSeries) = bs.segment_orientations
 
-"""
-Per-segment orientation of `bs` expressed relative to `equivalent_arc`.
+function _reverse_orientation(orientation::Symbol)
+    if orientation === :FromTo
+        return :ToFrom
+    elseif orientation === :ToFrom
+        return :FromTo
+    end
+    return error(
+        "Unknown segment orientation $orientation; expected :FromTo or :ToFrom.",
+    )
+end
 
-`equivalent_arc` must be the chain's own `arc_key`. A chain is a member of a
-`BranchesParallel` framed on the group's principal key, and a sibling keyed the other way round
-keeps its own `arc_key`, so a caller that reaches a chain through a group cannot assume the two
-agree. Traversal from the wrong endpoint has no meaning here — the orientations were recorded in
-one direction and the segments are stored in that order — so a mismatch errors rather than
-guessing a reversal.
+"""
+Per-segment orientation of `bs` expressed relative to `equivalent_arc`, in the chain's own
+iteration order.
+
+`equivalent_arc` may be the chain's `arc_key` or its reverse. The reverse is a routine
+request, not an error: `DegreeTwoReduction` groups sibling chains that resolve to the same
+*unordered* endpoint pair into one `BranchesParallel` framed on the seed chain's key, so a
+sibling legitimately keeps the opposite key while consumers reach it through the group and
+hold only the group's frame. Reframing is well defined — traversing from the other endpoint
+flips every segment's relation to the traversal, so each orientation negates while the
+segment order is preserved, which is what callers zipping this against the chain's members
+require. This mirrors `_subset_two_port`, which transposes an anti-frame member rather than
+refusing it.
+
+Returns a fresh vector; the one-argument method exposes the stored field and must be treated
+as read-only.
 """
 function get_segment_orientations(bs::BranchesSeries, equivalent_arc::Tuple{Int, Int})
     key = get_arc_key(bs)
-    if equivalent_arc != key
-        error(
-            "Chain orientations are recorded against arc $key, but were requested against " *
-            "$equivalent_arc. A chain reached through a parallel group keeps its own arc " *
-            "key, which need not match the group's frame.",
-        )
+    orientations = get_segment_orientations(bs)
+    equivalent_arc == key && return copy(orientations)
+    if equivalent_arc == reverse(key)
+        return [_reverse_orientation(o) for o in orientations]
     end
-    return get_segment_orientations(bs)
+    return error(
+        "Chain orientations are recorded against arc $key, but were requested against " *
+        "$equivalent_arc, which is neither that arc nor its reverse.",
+    )
 end
 
 # `BranchesSeries` has no `name` field, so the generic `PSY.ACTransmission` fallback
