@@ -403,16 +403,6 @@ function get_branch_multiplier(A::T, branch_name::String) where {T <: PowerNetwo
             "names are unique only per type.",
         )
     end
-    (_, arc_tuple, kind) = only(candidates)
-    kind === :direct_branch_map && return 1.0, arc_tuple
-    # A parallel-group member carries its susceptance-fraction share of the group flow.
-    group = get_parallel_branch_map(get_network_reduction_data(catalog))[arc_tuple]
-    for member in group
-        get_name(member) == branch_name || continue
-        return compute_parallel_multiplier(group, member), arc_tuple
-    end
-    error(
-        "Branch $branch_name is indexed on arc $(arc_tuple) but no member of the group " *
-        "there carries that name.",
-    )
+    (_, arc_tuple, provenance) = only(candidates)
+    return _branch_multiplier(provenance, catalog, branch_name, arc_tuple), arc_tuple
 end

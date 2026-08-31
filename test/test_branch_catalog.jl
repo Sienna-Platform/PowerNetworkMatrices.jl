@@ -79,11 +79,11 @@ end
     # The group is reachable under the parent transformer type.
     parent = PSY.ThreeWindingTransformer
     arc_map = PNM.get_name_to_arc_map(catalog, parent)
-    @test any(v -> v == (merged_arc, :parallel_branch_map), values(arc_map))
+    @test any(v -> v == (merged_arc, PNM.ParallelArc()), values(arc_map))
 
     # And through the wrapper-keyed accessor, which redirects to the parent.
     wrapper_map = PNM.get_name_to_arc_map(catalog, PNM.ThreeWindingTransformerCircuit)
-    @test any(v -> v == (merged_arc, :parallel_branch_map), values(wrapper_map))
+    @test any(v -> v == (merged_arc, PNM.ParallelArc()), values(wrapper_map))
 
     # No bucket anywhere is keyed by the wrapper type.
     maps = PNM.get_all_branch_maps_by_type(catalog)
@@ -152,4 +152,76 @@ end
     @test err isa ErrorException
     @test occursin("Line", err.msg)
     @test occursin("TwoWindingTransformer", err.msg)
+end
+
+@testset "arc_provenance answers from the entry's type" begin
+    # The blanket arm is `::PSY.ACTransmission`, which aggregates subtype. Each aggregate
+    # needs its own arm or it is silently reported as an untouched physical branch -- the
+    # hazard `AbstractReductionAggregate` exists to expose.
+    sys = build_two_parallel_degree_two_chains()
+    ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = PNM.get_network_reduction_data(ybus)
+
+    line = first(PSY.get_components(PSY.Line, sys))
+    @test PNM.arc_provenance(line) == PNM.DirectArc()
+
+    chains = PNM.get_series_branch_map(nrd)
+    groups = PNM.get_parallel_branch_map(nrd)
+    @test !isempty(groups)
+    for (_, group) in groups
+        @test PNM.arc_provenance(group) == PNM.ParallelArc()
+        @test PNM.arc_provenance(group) != PNM.DirectArc()
+    end
+    for (_, chain) in chains
+        @test PNM.arc_provenance(chain) == PNM.SeriesArc()
+        @test PNM.arc_provenance(chain) != PNM.DirectArc()
+    end
+
+    # A Ward equivalent is a PSY component, so only its own arm keeps it from claiming the
+    # component backing that `DirectArc` asserts.
+    ward_arc = PSY.GenericArcImpedance(;
+        name = "ward_equivalent",
+        available = true,
+        active_power_flow = 0.0,
+        reactive_power_flow = 0.0,
+        max_flow = 1e6,
+        arc = PSY.Arc(nothing),
+        r = 0.01,
+        x = 0.1,
+    )
+    @test PNM.arc_provenance(ward_arc) == PNM.SyntheticArc()
+end
+
+@testset "Provenance reaches the name-to-arc index and the multiplier" begin
+    sys = build_two_parallel_degree_two_chains()
+    ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    catalog = PNM.get_branch_catalog(ybus)
+
+    # Every entry carries a provenance singleton, never a bare symbol.
+    seen = Set{PNM.ArcProvenance}()
+    for (_, by_name) in PNM.get_name_to_arc_maps(catalog)
+        for (_, provenance) in values(by_name)
+            @test provenance isa PNM.ArcProvenance
+            push!(seen, provenance)
+        end
+    end
+    # This fixture folds sibling chains into one parallel group, so both kinds appear.
+    @test PNM.ParallelArc() in seen
+
+    # `get_branch_multiplier` now routes by provenance rather than by an equality test that
+    # sent everything non-direct down the parallel path.
+    @test PNM._branch_multiplier(PNM.DirectArc(), catalog, "anything", (1, 3)) == 1.0
+    @test PNM._branch_multiplier(PNM.SyntheticArc(), catalog, "anything", (1, 3)) == 1.0
+
+    # A series segment reports why it has no multiplier instead of failing as a missing key
+    # in the parallel map.
+    err = try
+        PNM._branch_multiplier(PNM.SeriesArc(), catalog, "L_1_10", (1, 3))
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("series chain", err.msg)
+    @test occursin("component identity", err.msg)
 end

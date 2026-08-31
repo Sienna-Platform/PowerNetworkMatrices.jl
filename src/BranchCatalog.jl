@@ -1,7 +1,41 @@
-const ARC_ENTRY = Tuple{Tuple{Int, Int}, Symbol}
+"""
+How an arc of the reduced network came to exist.
+
+Not stored anywhere: the entry occupying an arc already determines its provenance, so
+[`arc_provenance`](@ref) reads it back by dispatch. A stored copy would be a second source of
+truth for something the type system already knows, and the pair can drift — the `Symbol` this
+replaced was compared against `String` literals across a package boundary, where every arm was
+silently `false`.
+
+Radial reduction has no member here on purpose. It removes an arc rather than producing one,
+so there is nothing left to describe; its work is injection remapping through
+`bus_reduction_map`.
+"""
+abstract type ArcProvenance end
+
+"One physical branch holding its arc alone, untouched by any reduction."
+struct DirectArc <: ArcProvenance end
+
+"Two or more branches on one bus pair, folded into a single parallel group."
+struct ParallelArc <: ArcProvenance end
+
+"A degree-two chain, folded into one arc spanning the chain's endpoints."
+struct SeriesArc <: ArcProvenance end
+
+"""
+A Ward equivalent: admittance produced by Gaussian elimination, backed by no component.
+
+Nothing routes such an arc into a `BranchCatalog` yet, but a `PSY.GenericArcImpedance`
+subtypes `PSY.ACTransmission`, so without this arm one would answer [`DirectArc`](@ref) from
+the blanket method and claim component backing it does not have.
+"""
+struct SyntheticArc <: ArcProvenance end
+
+const ARC_ENTRY = Tuple{Tuple{Int, Int}, ArcProvenance}
 const NAME_TO_ARC = Dict{DataType, DataStructures.SortedDict{String, ARC_ENTRY}}
 const COMPONENT_TO_ENTRY = Dict{DataType, Dict{String, String}}
-const COMPONENT_NAME_INDEX = Dict{String, Vector{Tuple{DataType, Tuple{Int, Int}, Symbol}}}
+const COMPONENT_NAME_INDEX =
+    Dict{String, Vector{Tuple{DataType, Tuple{Int, Int}, ArcProvenance}}}
 
 # Shared empty-map sentinels returned on a miss; callers must never mutate these.
 const EMPTY_NAME_TO_ARC_MAP = DataStructures.SortedDict{String, ARC_ENTRY}()
@@ -86,6 +120,69 @@ end
 _entry_matches(device::T, predicate) where {T <: PSY.ACTransmission} =
     predicate(T, device)
 
+"""
+    arc_provenance(entry) -> ArcProvenance
+
+How the arc `entry` occupies came to exist, read off the entry's own type.
+
+The blanket arm answers for a single physical branch, so the two `AbstractReductionAggregate`
+subtypes need arms of their own -- they subtype `PSY.ACTransmission` and would otherwise be
+claimed by it and reported as untouched by any reduction. This is the hazard
+[`AbstractReductionAggregate`](@ref) exists to make visible.
+"""
+arc_provenance(::PSY.ACTransmission) = DirectArc()
+arc_provenance(::AbstractBranchesParallel) = ParallelArc()
+arc_provenance(::BranchesSeries) = SeriesArc()
+arc_provenance(::PSY.GenericArcImpedance) = SyntheticArc()
+
+"""
+    _branch_multiplier(provenance, catalog, branch_name, arc) -> Float64
+
+Factor scaling a per-arc matrix entry to the named branch's share of it, dispatched on how
+the arc came to exist. Backs [`get_branch_multiplier`](@ref).
+
+Each arm states its own reason, which is what the `kind === :direct_branch_map` test this
+replaced could not: everything that was not direct fell to the parallel branch, so a series
+or Ward arc reaching here produced a `KeyError` from the parallel map rather than saying what
+was wrong.
+"""
+_branch_multiplier(::DirectArc, ::BranchCatalog, ::String, ::Tuple{Int, Int}) = 1.0
+
+# Backed by no component, so nothing shares it.
+_branch_multiplier(::SyntheticArc, ::BranchCatalog, ::String, ::Tuple{Int, Int}) = 1.0
+
+# A member carries its susceptance-fraction share of the group flow.
+function _branch_multiplier(
+    ::ParallelArc,
+    catalog::BranchCatalog,
+    branch_name::String,
+    arc::Tuple{Int, Int},
+)
+    group = get_parallel_branch_map(get_network_reduction_data(catalog))[arc]
+    for member in group
+        get_name(member) == branch_name || continue
+        return compute_parallel_multiplier(group, member)
+    end
+    return error(
+        "Branch $branch_name is indexed on arc $(arc) but no member of the group there " *
+        "carries that name.",
+    )
+end
+
+# Unreachable today -- `_build_component_name_index` indexes no series entry -- but the arm
+# names the limitation instead of failing as a missing key somewhere else.
+_branch_multiplier(
+    ::SeriesArc,
+    ::BranchCatalog,
+    branch_name::String,
+    arc::Tuple{Int, Int},
+) =
+    error(
+        "Branch $branch_name is a segment of the series chain on arc $(arc). A chain's " *
+        "flow does not decompose into per-segment shares of one matrix row, so it has no " *
+        "multiplier; resolve the segment by component identity instead.",
+    )
+
 ##############################################################################
 ############################## Index building ################################
 ##############################################################################
@@ -112,7 +209,6 @@ function _index_forward!(
     dest::Dict{DataType, Any},
     name_to_arc::NAME_TO_ARC,
     source,
-    kind::Symbol,
     predicate,
     bucket_types,
     empty_bucket,
@@ -121,7 +217,8 @@ function _index_forward!(
         _entry_matches(entry, predicate) || continue
         for T in bucket_types(entry)
             _store!(get!(() -> empty_bucket(entry), dest, T), arc, entry)
-            _bucket_name_to_arc(name_to_arc, T)[get_name(entry)] = (arc, kind)
+            _bucket_name_to_arc(name_to_arc, T)[get_name(entry)] =
+                (arc, arc_provenance(entry))
         end
     end
     return
@@ -173,7 +270,7 @@ function _index_series!(
                     chain,
                 )
                 _bucket_name_to_arc(name_to_arc, T)[get_name(segment)] =
-                    (arc, :series_branch_map)
+                    (arc, arc_provenance(chain))
                 names = _bucket_entry_names(component_to_entry, T)
                 for component in _get_segment_components(segment)
                     names[get_name(component)] = get_name(segment)
@@ -202,7 +299,7 @@ function _index_reverse_series!(dest::Dict{DataType, Any}, source, predicate)
 end
 
 _name_candidates(index::COMPONENT_NAME_INDEX, name::String) =
-    get!(() -> Tuple{DataType, Tuple{Int, Int}, Symbol}[], index, name)
+    get!(() -> Tuple{DataType, Tuple{Int, Int}, ArcProvenance}[], index, name)
 
 """
 Component-name index for name-based matrix indexing (`get_branch_multiplier`), whose API takes
@@ -218,14 +315,16 @@ function _build_component_name_index(nrd::NetworkReductionData, predicate)
         _entry_matches(entry, predicate) || continue
         push!(
             _name_candidates(index, get_name(entry)),
-            (typeof(entry), arc, :direct_branch_map),
+            (typeof(entry), arc, arc_provenance(entry)),
         )
     end
     for (member, arc) in nrd.reverse_parallel_branch_map
         _entry_matches(member, predicate) || continue
+        # Provenance describes the arc, not the component: the key here is a member, whose own
+        # type would answer `DirectArc`. The group holding the arc is what to ask.
         push!(
             _name_candidates(index, get_name(member)),
-            (typeof(member), arc, :parallel_branch_map),
+            (typeof(member), arc, arc_provenance(nrd.parallel_branch_map[arc])),
         )
     end
     return index
@@ -300,7 +399,7 @@ function BranchCatalog(nrd::NetworkReductionData, predicate; validate::Bool = fa
 
     _index_forward!(
         maps.direct_branch_map, name_to_arc, nrd.direct_branch_map,
-        :direct_branch_map, predicate,
+        predicate,
         entry -> (_get_segment_type(entry),),
         entry -> Dict{Tuple{Int, Int}, typeof(entry)}(),
     )
@@ -311,7 +410,7 @@ function BranchCatalog(nrd::NetworkReductionData, predicate; validate::Bool = fa
 
     _index_forward!(
         maps.parallel_branch_map, name_to_arc, nrd.parallel_branch_map,
-        :parallel_branch_map, predicate,
+        predicate,
         _get_concrete_types,
         _ -> _empty_parallel_branch_map(),
     )

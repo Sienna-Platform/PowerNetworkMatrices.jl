@@ -887,8 +887,8 @@ function branch_index_fingerprint(
 
     names = Tuple{String, String, Tuple{Int, Int}, String}[]
     for (T, submap) in name_to_arc
-        for (name, (arc, kind)) in submap
-            push!(names, (string(T), name, arc, String(kind)))
+        for (name, (arc, provenance)) in submap
+            push!(names, (string(T), name, arc, string(provenance)))
         end
     end
     sort!(names)
