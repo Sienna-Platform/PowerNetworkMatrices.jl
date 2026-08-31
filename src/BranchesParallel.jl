@@ -83,10 +83,6 @@ The bus numbers are the group's own `arc_key`, i.e. the endpoints as they stood 
 group was formed; a later reduction can remap them, so this is an identity for reading, not a
 key to look the group up with. `BranchCatalog._entry_name` derives the *indexed* name from
 the arc the catalog files the entry under, which is the remapped one.
-
-This replaced the longest common prefix of the member names, which was not injective -- `La`
-∥ `Lb` and `Lc` ∥ `Ld` both produced `Ldouble_circuit` -- and which moved whenever membership
-did, so a corridor was renamed by the act of adding a circuit to it.
 """
 get_name(bp::AbstractBranchesParallel) = "parallel_$(bp.arc_key[1])_$(bp.arc_key[2])"
 

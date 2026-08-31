@@ -885,10 +885,12 @@ function branch_index_fingerprint(
     end
     sort!(by_type)
 
-    names = Tuple{String, String, Tuple{Int, Int}, String}[]
+    # No map-of-origin column: an entry is identified by its arc, and which reduction map
+    # holds it is answered by `arc_provenance` off the entry rather than stored alongside.
+    names = Tuple{String, String, Tuple{Int, Int}}[]
     for (T, submap) in name_to_arc
-        for (name, (arc, kind)) in submap
-            push!(names, (string(T), name, arc, String(kind)))
+        for (name, arc) in submap
+            push!(names, (string(T), name, arc))
         end
     end
     sort!(names)

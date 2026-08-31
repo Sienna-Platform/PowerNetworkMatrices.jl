@@ -11,7 +11,7 @@
 
         # Every arc the index exposes must have both endpoints on the reduced bus axis.
         retained = keys(PNM.get_bus_reduction_map(nrd))
-        for (_, _, arc, _) in fp.names
+        for (_, _, arc) in fp.names
             @test arc[1] in retained
             @test arc[2] in retained
         end
@@ -79,11 +79,11 @@ end
     # The group is reachable under the parent transformer type.
     parent = PSY.ThreeWindingTransformer
     arc_map = PNM.get_name_to_arc_map(catalog, parent)
-    @test any(v -> v == (merged_arc, :parallel_branch_map), values(arc_map))
+    @test merged_arc in values(arc_map)
 
     # And through the wrapper-keyed accessor, which redirects to the parent.
     wrapper_map = PNM.get_name_to_arc_map(catalog, PNM.ThreeWindingTransformerCircuit)
-    @test any(v -> v == (merged_arc, :parallel_branch_map), values(wrapper_map))
+    @test merged_arc in values(wrapper_map)
 
     # No bucket anywhere is keyed by the wrapper type.
     maps = PNM.get_all_branch_maps_by_type(catalog)

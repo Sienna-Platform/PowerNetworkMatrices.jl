@@ -1,7 +1,31 @@
-const ARC_ENTRY = Tuple{Tuple{Int, Int}, Symbol}
+"""
+One reduced arc: the entry occupying it, the name it is indexed under, and every physical
+branch at its leaves.
+
+`leaves` is the only derived thing worth storing. It is what every type-keyed lookup needs
+and it costs a tree walk to recompute, whereas the *structure* is already reachable by
+iterating `entry`, and the *provenance* is already `entry`'s type -- see
+[`arc_provenance`](@ref). Empty leaves means an arc backed by no component, which today only
+a Ward equivalent can be.
+"""
+struct ArcEntry
+    entry::PSY.ACTransmission
+    name::String
+    leaves::Vector{PSY.ACTransmission}
+end
+
+get_entry(e::ArcEntry) = e.entry
+get_name(e::ArcEntry) = e.name
+get_leaves(e::ArcEntry) = e.leaves
+
+# The arc alone: concrete and isbits, 16 bytes. This carried a `Symbol` naming the
+# `BranchMapsByType` field that held the entry, so consumers could navigate back to it; that
+# is now `get_reduction_entry`, and the arc is the whole identity.
+const ARC_ENTRY = Tuple{Int, Int}
+const ARC_TABLE = Dict{ARC_ENTRY, ArcEntry}
 const NAME_TO_ARC = Dict{DataType, DataStructures.SortedDict{String, ARC_ENTRY}}
 const COMPONENT_TO_ENTRY = Dict{DataType, Dict{String, String}}
-const COMPONENT_NAME_INDEX = Dict{String, Vector{Tuple{DataType, Tuple{Int, Int}, Symbol}}}
+const COMPONENT_NAME_INDEX = Dict{String, Vector{Tuple{DataType, ARC_ENTRY}}}
 
 # Shared empty-map sentinels returned on a miss; callers must never mutate these.
 const EMPTY_NAME_TO_ARC_MAP = DataStructures.SortedDict{String, ARC_ENTRY}()
@@ -13,10 +37,14 @@ const EMPTY_COMPONENT_TO_ENTRY_MAP = Dict{String, String}()
 An immutable, per-branch-type index over the branch maps a network reduction produced. Every
 matrix carries one, reachable with `get_branch_catalog`.
 
+`arcs` is the table; every other field is an index into it, keyed by arc. They are built in
+one pass over the reduction maps.
+
 # Fields
 - `network_reduction_data::NetworkReductionData`: the reduction this indexes
+- `arcs`: arc => [`ArcEntry`](@ref). The single source of truth.
 - `maps_by_type::BranchMapsByType`: the six reduction maps re-bucketed by branch type
-- `name_to_arc`: per type, entry name => (arc, which map holds it)
+- `name_to_arc`: per type, entry name => arc
 - `component_to_entry_name`: per type, component name => name of the entry representing it
 - `component_name_index`: component name => every candidate claiming it. Names are unique
   only per type, so a name can have several; lookup reports the ambiguity rather than
@@ -24,6 +52,7 @@ matrix carries one, reachable with `get_branch_catalog`.
 """
 struct BranchCatalog
     network_reduction_data::NetworkReductionData
+    arcs::ARC_TABLE
     maps_by_type::BranchMapsByType
     name_to_arc::NAME_TO_ARC
     component_to_entry_name::COMPONENT_TO_ENTRY
@@ -31,10 +60,32 @@ struct BranchCatalog
 end
 
 get_network_reduction_data(c::BranchCatalog) = c.network_reduction_data
+get_arc_table(c::BranchCatalog) = c.arcs
 get_all_branch_maps_by_type(c::BranchCatalog) = c.maps_by_type
 get_name_to_arc_maps(c::BranchCatalog) = c.name_to_arc
 get_component_to_reduction_name_map(c::BranchCatalog) = c.component_to_entry_name
 get_component_name_index(c::BranchCatalog) = c.component_name_index
+
+"""
+    get_reduction_entry(c::BranchCatalog, arc) -> PSY.ACTransmission
+    get_reduction_entry(c::BranchCatalog, ::Type{T}, name) -> PSY.ACTransmission
+
+The entry occupying `arc` -- a single branch, or the aggregate a reduction folded onto it.
+"""
+get_reduction_entry(c::BranchCatalog, arc::ARC_ENTRY) = get_entry(c.arcs[arc])
+
+function get_reduction_entry(
+    c::BranchCatalog,
+    ::Type{T},
+    name::AbstractString,
+) where {T <: PSY.ACTransmission}
+    return get_reduction_entry(c, get_name_to_arc_map(c, T)[name])
+end
+
+"""
+Every physical branch at the leaves of the entry on `arc`, precomputed at build time.
+"""
+get_arc_leaves(c::BranchCatalog, arc::ARC_ENTRY) = get_leaves(c.arcs[arc])
 
 """
 Entries for branch type `T`. An absent `T` yields an empty map: a type is legitimately
@@ -108,6 +159,89 @@ _entry_name(arc::Tuple{Int, Int}, ::AbstractBranchesParallel) =
     "parallel_$(arc[1])_$(arc[2])"
 _entry_name(arc::Tuple{Int, Int}, ::BranchesSeries) = "series_$(arc[1])_$(arc[2])"
 
+"""
+How an arc of the reduced network came to exist. Read off the entry with
+[`arc_provenance`](@ref); never stored, since the entry's type already determines it.
+
+Radial has no member on purpose: it removes an arc rather than producing one, so there is
+nothing left to describe.
+"""
+abstract type ArcProvenance end
+
+"One physical branch holding its arc alone, untouched by any reduction."
+struct DirectArc <: ArcProvenance end
+
+"Two or more branches on one bus pair, folded into a single parallel group."
+struct ParallelArc <: ArcProvenance end
+
+"A degree-two chain, folded into one arc spanning the chain's endpoints."
+struct SeriesArc <: ArcProvenance end
+
+"""
+A Ward equivalent: admittance from Gaussian elimination, backed by no component.
+
+Unreachable today -- nothing routes such an arc into a catalog -- but `GenericArcImpedance`
+subtypes `PSY.ACTransmission`, so without this arm one would answer `DirectArc` from the
+blanket method and assert component backing it does not have.
+"""
+struct SyntheticArc <: ArcProvenance end
+
+"""
+    arc_provenance(entry) -> ArcProvenance
+    arc_provenance(c::BranchCatalog, arc) -> ArcProvenance
+
+How the arc `entry` occupies came to exist, read off the entry's own type.
+"""
+arc_provenance(::PSY.ACTransmission) = DirectArc()
+arc_provenance(::AbstractBranchesParallel) = ParallelArc()
+arc_provenance(::BranchesSeries) = SeriesArc()
+arc_provenance(::PSY.GenericArcImpedance) = SyntheticArc()
+
+arc_provenance(c::BranchCatalog, arc::ARC_ENTRY) =
+    arc_provenance(get_reduction_entry(c, arc))
+
+"""
+    _branch_multiplier(provenance, entry, branch_name, arc) -> Float64
+
+Factor scaling a per-arc matrix entry to the named branch's share of it, dispatched on how
+the arc came to exist. Backs [`get_branch_multiplier`](@ref).
+"""
+_branch_multiplier(::DirectArc, ::PSY.ACTransmission, ::AbstractString, ::ARC_ENTRY) = 1.0
+
+# Backed by no component, so nothing shares it.
+_branch_multiplier(::SyntheticArc, ::PSY.ACTransmission, ::AbstractString, ::ARC_ENTRY) =
+    1.0
+
+# A member carries its susceptance-fraction share of the group flow.
+function _branch_multiplier(
+    ::ParallelArc,
+    group::PSY.ACTransmission,
+    branch_name::AbstractString,
+    arc::ARC_ENTRY,
+)
+    for member in group
+        get_name(member) == branch_name || continue
+        return compute_parallel_multiplier(group, member)
+    end
+    return error(
+        "Branch $branch_name is indexed on arc $(arc) but no member of the group there " *
+        "carries that name.",
+    )
+end
+
+# Unreachable today -- `_build_component_name_index` indexes no series entry -- but the arm
+# names the limitation instead of failing as a missing key somewhere else.
+_branch_multiplier(
+    ::SeriesArc,
+    ::PSY.ACTransmission,
+    branch_name::AbstractString,
+    arc::ARC_ENTRY,
+) = error(
+    "Branch $branch_name is a segment of the series chain on arc $(arc). A chain's flow " *
+    "does not decompose into per-segment shares of one matrix row, so it has no " *
+    "multiplier; resolve the segment by component identity instead.",
+)
+
 ##############################################################################
 ############################## Index building ################################
 ##############################################################################
@@ -124,6 +258,19 @@ function _store!(bucket::Dict{K, V}, k, v) where {K, V}
 end
 
 """
+Record `arc`'s row in the table and return the name it is indexed under.
+
+The single place an entry's name and leaves are computed. Every index then reads them back
+from here rather than recomputing.
+"""
+function _record_arc!(arcs::ARC_TABLE, arc::ARC_ENTRY, entry)
+    row = get!(arcs, arc) do
+        ArcEntry(entry, _entry_name(arc, entry), leaf_components(entry))
+    end
+    return get_name(row)
+end
+
+"""
 Index a forward (arc-keyed) reduction map under the buckets `bucket_types(entry)` names,
 creating each with `empty_bucket(entry)`.
 
@@ -132,18 +279,19 @@ The parallel map's buckets are widened to `AbstractBranchesParallel` so a
 """
 function _index_forward!(
     dest::Dict{DataType, Any},
+    arcs::ARC_TABLE,
     name_to_arc::NAME_TO_ARC,
     source,
-    kind::Symbol,
     predicate,
     bucket_types,
     empty_bucket,
 )
     for (arc, entry) in source
         _entry_matches(entry, predicate) || continue
+        name = _record_arc!(arcs, arc, entry)
         for T in bucket_types(entry)
             _store!(get!(() -> empty_bucket(entry), dest, T), arc, entry)
-            _bucket_name_to_arc(name_to_arc, T)[_entry_name(arc, entry)] = (arc, kind)
+            _bucket_name_to_arc(name_to_arc, T)[name] = arc
         end
     end
     return
@@ -159,17 +307,18 @@ type, holding `ThreeWindingTransformerCircuit` keys.
 """
 function _index_reverse!(
     dest::Dict{DataType, Any},
+    arcs::ARC_TABLE,
     component_to_entry::COMPONENT_TO_ENTRY,
     source,
-    forward,
     predicate,
 )
     for (member, arc) in source
         _entry_matches(member, predicate) || continue
         T = _get_segment_type(member)
         _store!(get!(() -> Dict{typeof(member), Tuple{Int, Int}}(), dest, T), member, arc)
-        _bucket_entry_names(component_to_entry, T)[get_name(member)] =
-            _entry_name(arc, forward[arc])
+        # The name comes from the table, not from a second call to `_entry_name`: one
+        # computation, so forward and reverse cannot disagree about what the entry is called.
+        _bucket_entry_names(component_to_entry, T)[get_name(member)] = get_name(arcs[arc])
     end
     return
 end
@@ -178,13 +327,12 @@ end
 Index the series map. A chain is filed under every type appearing anywhere in it, so a caller
 iterating one branch type finds every chain that type participates in.
 
-One entry name per arc, not one per segment. A folded chain is a single corridor carrying a
-single flow, so it has one identity, and the parallel map has always filed groups this way --
-filing chains per segment made the two maps disagree about what an entry *is*. Members reach
-their entry through `component_to_entry`, which is where the per-component view belongs.
+One entry name per arc, not one per segment. Members reach their entry through
+`component_to_entry`, which is where the per-component view belongs.
 """
 function _index_series!(
     dest::Dict{DataType, Any},
+    arcs::ARC_TABLE,
     name_to_arc::NAME_TO_ARC,
     component_to_entry::COMPONENT_TO_ENTRY,
     source,
@@ -192,14 +340,14 @@ function _index_series!(
 )
     for (arc, chain) in source
         _entry_matches(chain, predicate) || continue
-        name = _entry_name(arc, chain)
+        name = _record_arc!(arcs, arc, chain)
         for T in _get_concrete_types(chain)
             _store!(
                 get!(() -> Dict{Tuple{Int, Int}, BranchesSeries}(), dest, T),
                 arc,
                 chain,
             )
-            _bucket_name_to_arc(name_to_arc, T)[name] = (arc, :series_branch_map)
+            _bucket_name_to_arc(name_to_arc, T)[name] = arc
         end
         # Each leaf redirects to the one entry carrying its flow, filed under the leaf's own
         # bucket rather than under every type in the chain.
@@ -231,7 +379,7 @@ function _index_reverse_series!(dest::Dict{DataType, Any}, source, predicate)
 end
 
 _name_candidates(index::COMPONENT_NAME_INDEX, name::String) =
-    get!(() -> Tuple{DataType, Tuple{Int, Int}, Symbol}[], index, name)
+    get!(() -> Tuple{DataType, ARC_ENTRY}[], index, name)
 
 """
 Component-name index for name-based matrix indexing (`get_branch_multiplier`), whose API takes
@@ -247,14 +395,14 @@ function _build_component_name_index(nrd::NetworkReductionData, predicate)
         _entry_matches(entry, predicate) || continue
         push!(
             _name_candidates(index, get_name(entry)),
-            (typeof(entry), arc, :direct_branch_map),
+            (typeof(entry), arc),
         )
     end
     for (member, arc) in nrd.reverse_parallel_branch_map
         _entry_matches(member, predicate) || continue
         push!(
             _name_candidates(index, get_name(member)),
-            (typeof(member), arc, :parallel_branch_map),
+            (typeof(member), arc),
         )
     end
     return index
@@ -278,7 +426,7 @@ no flow variable, no rating constraint, no nodal-balance term, and no complaint.
 function _validate_catalog_closure(nrd::NetworkReductionData, name_to_arc::NAME_TO_ARC)
     indexed = Set{Tuple{Int, Int}}()
     for by_name in values(name_to_arc)
-        for (arc, _) in values(by_name)
+        for arc in values(by_name)
             push!(indexed, arc)
         end
     end
@@ -324,33 +472,34 @@ where the invariant does not hold by design.
 """
 function BranchCatalog(nrd::NetworkReductionData, predicate; validate::Bool = false)
     maps = BranchMapsByType()
+    arcs = ARC_TABLE()
     name_to_arc = NAME_TO_ARC()
     component_to_entry = COMPONENT_TO_ENTRY()
 
     _index_forward!(
-        maps.direct_branch_map, name_to_arc, nrd.direct_branch_map,
-        :direct_branch_map, predicate,
+        maps.direct_branch_map, arcs, name_to_arc, nrd.direct_branch_map,
+        predicate,
         entry -> (_get_segment_type(entry),),
         entry -> Dict{Tuple{Int, Int}, typeof(entry)}(),
     )
     _index_reverse!(
-        maps.reverse_direct_branch_map, component_to_entry,
-        nrd.reverse_direct_branch_map, nrd.direct_branch_map, predicate,
+        maps.reverse_direct_branch_map, arcs, component_to_entry,
+        nrd.reverse_direct_branch_map, predicate,
     )
 
     _index_forward!(
-        maps.parallel_branch_map, name_to_arc, nrd.parallel_branch_map,
-        :parallel_branch_map, predicate,
+        maps.parallel_branch_map, arcs, name_to_arc, nrd.parallel_branch_map,
+        predicate,
         _get_concrete_types,
         _ -> _empty_parallel_branch_map(),
     )
     _index_reverse!(
-        maps.reverse_parallel_branch_map, component_to_entry,
-        nrd.reverse_parallel_branch_map, nrd.parallel_branch_map, predicate,
+        maps.reverse_parallel_branch_map, arcs, component_to_entry,
+        nrd.reverse_parallel_branch_map, predicate,
     )
 
     _index_series!(
-        maps.series_branch_map, name_to_arc, component_to_entry,
+        maps.series_branch_map, arcs, name_to_arc, component_to_entry,
         nrd.series_branch_map, predicate,
     )
     _index_reverse_series!(
@@ -372,6 +521,7 @@ function BranchCatalog(nrd::NetworkReductionData, predicate; validate::Bool = fa
 
     return BranchCatalog(
         nrd,
+        arcs,
         maps,
         name_to_arc,
         component_to_entry,
