@@ -377,8 +377,9 @@ its susceptance-fraction share of the group flow (`compute_parallel_multiplier`)
 indexing into PTDF/LODF/VirtualPTDF uses this so per-branch values can be read from matrices
 whose rows are per-arc.
 
-Throws when the name matches no retained branch, or matches more than one parallel-group
-member (name-based lookup is ambiguous).
+Throws when the name matches no retained branch, or matches more than one component under
+that name — collisions across unrelated branch types are just as ambiguous as collisions
+within one parallel group.
 """
 function get_branch_multiplier(A::T, branch_name::String) where {T <: PowerNetworkMatrix}
     catalog = get_branch_catalog(A)

@@ -64,7 +64,7 @@ get_axes(M::Ybus) = M.axes
 get_lookup(M::Ybus) = M.lookup
 get_ref_bus(M::Ybus) = sort!(collect(keys(M.subnetwork_axes)))
 
-"""Get the [`NetworkReduction`](@ref) data applied to this matrix."""
+"""Get the [`BranchCatalog`](@ref) recording every branch merged into this matrix."""
 get_branch_catalog(M::Ybus) = M.branch_catalog
 get_bus_axis(M::Ybus) = M.axes[1]
 get_bus_lookup(M::Ybus) = M.lookup[1]

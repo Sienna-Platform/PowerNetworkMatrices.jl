@@ -167,8 +167,11 @@ Outage supplemental attributes found in the system.
 
 The buses of every outaged component and the components each outage declares
 monitored (`get_monitored_components`) are automatically added to the irreducible
-set before the base `Ybus` is built, and (when `network_reductions` are supplied)
-any `WardReduction.study_buses` are augmented to match. This is mandatory: the
+set before the base `Ybus` is built. `WardReduction.study_buses` define the
+retained network rather than exempting buses, so — when outages are
+auto-registered (`automatically_register_outages`) — they are validated against
+the contingencies and a branch outside the study area is an error, not silently
+covered. This is mandatory: the
 ABA/Woodbury solve runs on the reduced network, so a branch in a contingency must
 survive every reduction step, including the zero-impedance reduction that is
 auto-applied during `Ybus` construction.
@@ -229,8 +232,10 @@ function VirtualMODF(
 
     # radial/degree-two read the container's irreducible set (already seeded above via
     # `Ybus`'s `irreducible_buses`). Ward's `study_buses` defines the retained network rather
-    # than exempting buses, so it is validated against the contingencies.
-    _validate_ward_contingency_coverage(network_reductions, sys)
+    # than exempting buses, so it is validated against the contingencies — but only the ones
+    # this MODF will actually register.
+    automatically_register_outages &&
+        _validate_ward_contingency_coverage(network_reductions, sys)
     for reduction in network_reductions
         Ymatrix = build_reduced_ybus(Ymatrix, sys, reduction)
     end
