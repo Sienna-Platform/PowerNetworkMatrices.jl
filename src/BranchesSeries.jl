@@ -241,22 +241,15 @@ function get_equivalent_emergency_rating(branch::PSY.GenericArcImpedance)
     return PSY.get_max_flow(branch, PSY.DU)
 end
 
-# Indexed only when every segment is: a chain missing one is not a valid representation of
+# Indexed only when EVERY segment is: a chain missing one is not a valid representation of
 # the path between its endpoints.
+# Recursive: might be nested, have BranchesParallel as link in degree 2 chain.
 function _entry_matches(chain::BranchesSeries, predicate)
     if chain.needs_insertion_order && !_is_unfiltered(predicate)
-        _warn_mixed_group("Series circuit", _chain_branches(chain))
+        _warn_mixed_group("Series circuit", _get_segment_components(chain))
     end
-    for (branch_type, branch_list) in chain.branches
-        for device in branch_list
-            predicate(branch_type, device) || return false
-        end
-    end
-    return true
+    return all(_entry_matches(segment, predicate) for segment in chain)
 end
-
-_chain_branches(chain::BranchesSeries) =
-    reduce(vcat, values(chain.branches); init = PSY.ACTransmission[])
 
 function Base.:(==)(a::BranchesSeries, b::BranchesSeries)
     return a.branches == b.branches

@@ -313,19 +313,16 @@ function Base.length(bp::AbstractBranchesParallel)
 end
 
 # Indexed when ANY member is: the arc is modeled, so its group must be reachable.
-_entry_matches(
-    group::BranchesParallel{T},
-    predicate,
-) where {T <: PSY.ACTransmission} = any(predicate(T, device) for device in group)
+# Recursive: consider series-in-parallel.
+_entry_matches(group::BranchesParallel, predicate) =
+    any(_entry_matches(member, predicate) for member in group)
 
-# Indexed only when EVERY member is: a partially-filtered group is not a complete
+# Indexed only when EVERY member is: a partially-filtered mixed group is not a complete
 # representation of its arc.
 function _entry_matches(group::MixedBranchesParallel, predicate)
-    _is_unfiltered(predicate) || _warn_mixed_group("Parallel circuit", group.branches)
-    for branch in group.branches
-        predicate(typeof(branch), branch) || return false
-    end
-    return true
+    _is_unfiltered(predicate) ||
+        _warn_mixed_group("Parallel circuit", _get_segment_components(group))
+    return all(_entry_matches(member, predicate) for member in group)
 end
 
 function Base.:(==)(a::AbstractBranchesParallel, b::AbstractBranchesParallel)

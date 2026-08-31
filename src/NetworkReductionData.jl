@@ -167,8 +167,19 @@ function get_name(device::T) where {T <: PSY.ACTransmission}
     return PSY.get_name(device)
 end
 
-_get_segment_components(x::T) where {T <: PSY.ACBranch} = [x]
-_get_segment_components(x::AbstractBranchesParallel) = x.branches
+# PERF: profile and optimize.
+# One idea: write specialized methods for depth 2 heterogeneous cases.
+"""
+Every physical branch at the leaves of `entry`, recursing through nested aggregates.
+
+Aggregates nest without a fixed shape, so we walk the full tree, even though depth should
+typically be small: 2, 3, *maybe* 4.
+"""
+leaf_components(branch::PSY.ACTransmission) = (branch,)
+leaf_components(entry::AbstractReductionAggregate) =
+    Iterators.flatten(leaf_components(member) for member in entry)
+
+_get_segment_components(x) = collect(leaf_components(x))
 _get_segment_type(::T) where {T <: PSY.ACBranch} = T
 _get_segment_type(::BranchesParallel{T}) where {T <: PSY.ACTransmission} = T
 _get_segment_type(::MixedBranchesParallel) = MixedBranchesParallel
@@ -176,15 +187,15 @@ _get_segment_type(::MixedBranchesParallel) = MixedBranchesParallel
 # (`PSY.ThreeWindingTransformer`), so 3W entries are looked up by the transformer type.
 _get_segment_type(w::ThreeWindingTransformerCircuit) = get_transformer_type(w)
 
-_get_concrete_types(x::T) where {T <: PSY.ACBranch} = [T]
-_get_concrete_types(::BranchesParallel{T}) where {T <: PSY.ACTransmission} = [T]
-# Bucket keys are always PSY component types, so a group of 3W windings is filed under the
-# parent transformer type. A group can hold windings of transformers of different concrete
-# types, so every distinct parent is returned.
-_get_concrete_types(bp::BranchesParallel{ThreeWindingTransformerCircuit}) =
-    unique(get_transformer_type.(bp.branches))
-# Discoverable under each member's branch type, so per-type iteration finds it.
-_get_concrete_types(bp::MixedBranchesParallel) = unique(_get_segment_type.(bp.branches))
+"""
+The bucket keys an entry is filed under: the type of every physical branch at its leaves, so
+per-type iteration finds every entry that type participates in at any nesting depth.
+
+Bucket keys are always PSY component types -- `_get_segment_type` maps a 3W winding to its
+parent transformer type -- never a PNM aggregate wrapper.
+"""
+_get_concrete_types(entry) =
+    unique(_get_segment_type(leaf) for leaf in leaf_components(entry))
 
 # Construct an empty per-slot dict for `BranchMapsByType.parallel_branch_map`.
 # Value type is `AbstractBranchesParallel` so that the same per-type bucket can
