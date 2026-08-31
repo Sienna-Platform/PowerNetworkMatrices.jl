@@ -118,6 +118,41 @@ function _is_phase_shifting(bs::BranchesSeries)
     return any(_is_phase_shifting, bs)
 end
 
+get_arc_key(bs::BranchesSeries) = bs.arc_key
+
+"""
+Per-segment orientation, in the chain's own iteration order, relative to its `arc_key`:
+`:FromTo` when the segment's arc runs along the chain's traversal direction, `:ToFrom` when
+it runs against it.
+
+Recorded by `add_branch!` while `_build_chain_segments!` walks the chain from `arc_key[1]` to
+`arc_key[2]`, so the vector is only meaningful in that frame. A caller holding an equivalent
+arc from elsewhere should use the two-argument method, which checks the frame.
+"""
+get_segment_orientations(bs::BranchesSeries) = bs.segment_orientations
+
+"""
+Per-segment orientation of `bs` expressed relative to `equivalent_arc`.
+
+`equivalent_arc` must be the chain's own `arc_key`. A chain is a member of a
+`BranchesParallel` framed on the group's principal key, and a sibling keyed the other way round
+keeps its own `arc_key`, so a caller that reaches a chain through a group cannot assume the two
+agree. Traversal from the wrong endpoint has no meaning here — the orientations were recorded in
+one direction and the segments are stored in that order — so a mismatch errors rather than
+guessing a reversal.
+"""
+function get_segment_orientations(bs::BranchesSeries, equivalent_arc::Tuple{Int, Int})
+    key = get_arc_key(bs)
+    if equivalent_arc != key
+        error(
+            "Chain orientations are recorded against arc $key, but were requested against " *
+            "$equivalent_arc. A chain reached through a parallel group keeps its own arc " *
+            "key, which need not match the group's frame.",
+        )
+    end
+    return get_segment_orientations(bs)
+end
+
 # `BranchesSeries` has no `name` field, so the generic `PSY.ACTransmission` fallback
 # (`get_name(device::T) where {T <: PSY.ACTransmission}`, NetworkReductionData.jl) errors on
 # it. Unqualified `get_name` on each segment recurses through nested parallel/series segments
