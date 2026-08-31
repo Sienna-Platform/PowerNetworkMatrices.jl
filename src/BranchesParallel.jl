@@ -312,29 +312,17 @@ function Base.length(bp::AbstractBranchesParallel)
     return length(bp.branches)
 end
 
-function add_to_map(
-    double_circuit::BranchesParallel{T},
-    filters::Dict,
-) where {T <: PSY.ACTransmission}
-    isempty(filters) && return true
-    if !haskey(filters, T)
-        return true
-    end
-    return any(filters[T](device) for device in double_circuit)
-end
+# Indexed when ANY member is: the arc is modeled, so its group must be reachable.
+# Recursive: consider series-in-parallel.
+_entry_matches(group::BranchesParallel, predicate) =
+    any(_entry_matches(member, predicate)::Bool for member in group)
 
-function add_to_map(double_circuit::MixedBranchesParallel, filters::Dict)
-    isempty(filters) && return true
-    @warn "Parallel circuit contains mixed branch types, filters might be applied to more components than intended. Use Logging.Debug for additional information."
-    @debug "Parallel circuit branch types: $(typeof.(double_circuit.branches))"
-    @debug "Parallel circuit branch names: $(PSY.get_name.(double_circuit.branches))"
-    for branch in double_circuit.branches
-        filter = get(filters, typeof(branch), x -> true)
-        if !filter(branch)
-            return false
-        end
-    end
-    return true
+# Indexed only when EVERY member is: a partially-filtered mixed group is not a complete
+# representation of its arc.
+function _entry_matches(group::MixedBranchesParallel, predicate)
+    _is_unfiltered(predicate) ||
+        _warn_mixed_group("Parallel circuit", _get_segment_components(group))
+    return all(_entry_matches(member, predicate)::Bool for member in group)
 end
 
 function Base.:(==)(a::AbstractBranchesParallel, b::AbstractBranchesParallel)

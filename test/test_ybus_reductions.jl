@@ -206,25 +206,25 @@ end
     sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
     # Test irreducible bus input for radial reduction
     ybus = Ybus(sys; network_reductions = NetworkReduction[RadialReduction()])
-    @test haskey(ybus.network_reduction_data.reverse_bus_search_map, 116)
+    @test haskey(get_network_reduction_data(ybus).reverse_bus_search_map, 116)
     ybus = Ybus(
         sys;
         network_reductions = NetworkReduction[RadialReduction()],
         irreducible_buses = Set([116]),
     )
-    @test !haskey(ybus.network_reduction_data.reverse_bus_search_map, 116)
-    @test ybus.network_reduction_data.irreducible_buses == Set{Int}(116)
+    @test !haskey(get_network_reduction_data(ybus).reverse_bus_search_map, 116)
+    @test get_network_reduction_data(ybus).irreducible_buses == Set{Int}(116)
 
     # Test irreducible bus input for degree two reduction
     ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
-    @test 117 ∈ ybus.network_reduction_data.removed_buses
+    @test 117 ∈ get_network_reduction_data(ybus).removed_buses
     ybus = Ybus(
         sys;
         network_reductions = NetworkReduction[DegreeTwoReduction()],
         irreducible_buses = Set([117]),
     )
-    @test 117 ∉ ybus.network_reduction_data.removed_buses
-    @test ybus.network_reduction_data.irreducible_buses ==
+    @test 117 ∉ get_network_reduction_data(ybus).removed_buses
+    @test get_network_reduction_data(ybus).irreducible_buses ==
           Set{Int}([112, 101, 114, 110, 105, 108, 103, 102, 111, 113, 117, 104, 106, 109])
 end
 
@@ -267,10 +267,10 @@ end
     ybus_1 = Ybus(sys; network_reductions = NetworkReduction[RadialReduction()])
     # Take the setdiff to ignore removed_arcs from breaker/switch reduction:
     radial_removed_arcs = setdiff(
-        ybus_1.network_reduction_data.removed_arcs,
-        Ybus(sys).network_reduction_data.removed_arcs,
+        get_network_reduction_data(ybus_1).removed_arcs,
+        get_network_reduction_data(Ybus(sys)).removed_arcs,
     )
-    rbsm = ybus_1.network_reduction_data.reverse_bus_search_map
+    rbsm = get_network_reduction_data(ybus_1).reverse_bus_search_map
     set_radial_removed_arcs_to_unavailable!(sys, radial_removed_arcs, rbsm)
     ybus_2 = Ybus(sys)
 
@@ -292,7 +292,7 @@ end
     _set_zero_impedance!(get_component(Line, sys, "Line6"))  # bus 3 → 4
 
     ybus = Ybus(sys)
-    nrd = ybus.network_reduction_data
+    nrd = get_network_reduction_data(ybus)
     rbsm = nrd.reverse_bus_search_map
 
     @test get(rbsm, 3, nothing) == 2
@@ -310,7 +310,7 @@ end
     set_x!(t, 1e-5 * PSY.SU)
 
     ybus = Ybus(sys)
-    nrd = ybus.network_reduction_data
+    nrd = get_network_reduction_data(ybus)
 
     @test !haskey(nrd.reverse_bus_search_map, 7)
     @test !haskey(nrd.reverse_bus_search_map, 8)
@@ -426,7 +426,7 @@ end
 
     # Baseline: confirm default merge direction.
     ybus_default = Ybus(sys)
-    nrd_default = ybus_default.network_reduction_data
+    nrd_default = get_network_reduction_data(ybus_default)
     @test get(nrd_default.reverse_bus_search_map, 113, nothing) == 112
     @test 112 ∉ keys(nrd_default.reverse_bus_search_map)
 
@@ -437,7 +437,7 @@ end
         network_reductions = NetworkReduction[RadialReduction()],
         irreducible_buses = Set([113]),
     )
-    nrd_flip = ybus_flip.network_reduction_data
+    nrd_flip = get_network_reduction_data(ybus_flip)
     @test 113 ∉ keys(nrd_flip.reverse_bus_search_map)   # 113 survived
     @test get(nrd_flip.reverse_bus_search_map, 112, nothing) == 113  # 112 removed → 113
     # The other ZI branch (104, 105) is unaffected.
@@ -454,7 +454,7 @@ end
         network_reductions = NetworkReduction[RadialReduction()],
         irreducible_buses = Set([112, 113]),
     )
-    nrd_skip = ybus_skip.network_reduction_data
+    nrd_skip = get_network_reduction_data(ybus_skip)
     @test 112 ∉ keys(nrd_skip.reverse_bus_search_map)   # neither bus removed
     @test 113 ∉ keys(nrd_skip.reverse_bus_search_map)
     @test 112 ∈ PNM.get_bus_axis(ybus_skip)
@@ -472,7 +472,7 @@ end
 
     ybus_default = Ybus(sys)
     @test 3 ∈ PNM.get_bus_axis(ybus_default)
-    @test !haskey(ybus_default.network_reduction_data.reverse_bus_search_map, 3)
+    @test !haskey(get_network_reduction_data(ybus_default).reverse_bus_search_map, 3)
 
     ybus_custom = Ybus(
         sys;
@@ -481,7 +481,8 @@ end
         )],
     )
     @test 3 ∉ PNM.get_bus_axis(ybus_custom)
-    @test get(ybus_custom.network_reduction_data.reverse_bus_search_map, 3, nothing) == 2
+    @test get(get_network_reduction_data(ybus_custom).reverse_bus_search_map, 3, nothing) ==
+          2
 end
 
 @testset "ZeroImpedanceBranchReduction: custom minimum_retained_impedance" begin
@@ -504,7 +505,7 @@ end
         )],
     )
     @test 3 ∈ PNM.get_bus_axis(ybus_custom)  # retained: substituted susceptance below threshold
-    @test !haskey(ybus_custom.network_reduction_data.reverse_bus_search_map, 3)
+    @test !haskey(get_network_reduction_data(ybus_custom).reverse_bus_search_map, 3)
 end
 
 @testset "ZeroImpedanceBranchReduction: stub off a merged junction (no fake island)" begin
@@ -556,7 +557,7 @@ end
     _mk_line("ZI_S_J", S, J, 0.0, 1e-5)            # zero-impedance, into J
 
     Y = Ybus(sys)
-    nr = Y.network_reduction_data
+    nr = get_network_reduction_data(Y)
     # The whole zero-impedance cluster collapses to a single surviving bus.
     surv = PNM.get_mapped_bus_number(nr, 901)
     @test PNM.get_mapped_bus_number(nr, 902) == surv
@@ -618,7 +619,7 @@ end
     _mk_line("grid_lo", grid_bus, lo, 0.01, 0.10)
 
     yb = Ybus(sys)
-    @test PNM.get_mapped_bus_number(yb.network_reduction_data, 910) == 920
+    @test PNM.get_mapped_bus_number(get_network_reduction_data(yb), 910) == 920
     bl = yb.lookup[1]
     g = bl[get_number(grid_bus)]
     s = bl[920]
@@ -680,7 +681,7 @@ end
         irreducible_buses = [1, 4, 5],
         network_reductions = NetworkReduction[DegreeTwoReduction()],
     )
-    nr = ybus.network_reduction_data
+    nr = get_network_reduction_data(ybus)
     # Bus 2 stays degree-3 (1 via the parallel group, plus 4 and 5), so it is not folded.
     @test 2 ∉ nr.removed_buses
     @test 2 ∈ PNM.get_bus_axis(ybus)
@@ -732,7 +733,7 @@ end
     _mk_line("ZIB", 1, 3, 1e-5, 0.0)   # zero-impedance: merges bus 3 into bus 1
 
     ybus = Ybus(sys)
-    nr = ybus.network_reduction_data
+    nr = get_network_reduction_data(ybus)
     @test length(nr.parallel_branch_map) == 1
     key, bp = first(nr.parallel_branch_map)
     bl = ybus.lookup[1]
@@ -825,7 +826,7 @@ end
     )
 
     ybus = Ybus(sys)
-    nr = ybus.network_reduction_data
+    nr = get_network_reduction_data(ybus)
     @test length(nr.parallel_branch_map) == 1
     key, bp = first(nr.parallel_branch_map)
     bl = ybus.lookup[1]
@@ -1001,7 +1002,7 @@ end
 @testset "issue 305: Line ∥ PST — Ybus, NRD completeness, BA susceptance" begin
     sys = _mk_line_pst_parallel_system()
     ybus = Ybus(sys)
-    nr = ybus.network_reduction_data
+    nr = get_network_reduction_data(ybus)
 
     # NRD completeness: both branches on (1, 2) are in the parallel maps.
     parallel = PNM.get_parallel_branch_map(nr)
@@ -1055,7 +1056,7 @@ end
     # Lossless members: |y12| == |y21|, the single-π equivalent is exact.
     sys = _mk_line_pst_parallel_system()
     ybus = Ybus(sys)
-    nr = ybus.network_reduction_data
+    nr = get_network_reduction_data(ybus)
     eq = PNM.arc_equivalent_branch(nr, (1, 2))
     @test eq isa PNM.EquivalentBranch
     # The extracted shift is intermediate between the members' angles (0 and 0.15).
@@ -1066,7 +1067,7 @@ end
     # `_get_equivalent_physical_branch_parameters`; smaller r can be absorbed by it.
     sys_lossy = _mk_line_pst_parallel_system(; pst_r = 0.05)
     ybus_lossy = Ybus(sys_lossy)
-    nr_lossy = ybus_lossy.network_reduction_data
+    nr_lossy = get_network_reduction_data(ybus_lossy)
     err = try
         PNM.arc_equivalent_branch(nr_lossy, (1, 2))
         nothing
@@ -1121,7 +1122,7 @@ end
     # merge; the per-branch term now catches it (issue #322 item 2).
     sys = _mk_zi_parallel_sys([(0.0, -1 / 1.2e4), (0.0, 1 / 6e3)])
     ybus = Ybus(sys)
-    rbsm = ybus.network_reduction_data.reverse_bus_search_map
+    rbsm = get_network_reduction_data(ybus).reverse_bus_search_map
     @test get(rbsm, 3, nothing) == 2
     @test 3 ∉ PNM.get_bus_axis(ybus)
 end
@@ -1133,7 +1134,7 @@ end
     # merged (issue #322 item 3).
     sys = _mk_zi_parallel_sys([(0.0, 1 / 6e3), (0.0, 1 / 6e3)])
     ybus = Ybus(sys)
-    rbsm = ybus.network_reduction_data.reverse_bus_search_map
+    rbsm = get_network_reduction_data(ybus).reverse_bus_search_map
     @test !haskey(rbsm, 3)
     @test 3 ∈ PNM.get_bus_axis(ybus)
 end
@@ -1142,7 +1143,7 @@ end
     # Each member and the combined entry are below threshold, so no merge occurs.
     sys = _mk_zi_parallel_sys([(0.0, 1 / 3e3), (0.0, 1 / 3e3)])  # |y|=3e3 each, |Y|=6e3
     ybus = Ybus(sys)
-    rbsm = ybus.network_reduction_data.reverse_bus_search_map
+    rbsm = get_network_reduction_data(ybus).reverse_bus_search_map
     @test !haskey(rbsm, 3)
     @test 3 ∈ PNM.get_bus_axis(ybus)
 end
@@ -1152,7 +1153,7 @@ end
     # |y| ≈ 7.07e4 ≥ 1e4 but r ≠ 0, so it is NOT merged (issue #322 item 1).
     sys = _mk_zi_parallel_sys([(1e-5, 1e-5)])  # single direct branch on arc (2, 3)
     ybus = Ybus(sys)
-    rbsm = ybus.network_reduction_data.reverse_bus_search_map
+    rbsm = get_network_reduction_data(ybus).reverse_bus_search_map
     @test !haskey(rbsm, 3)
     @test 3 ∈ PNM.get_bus_axis(ybus)
 end
@@ -1187,7 +1188,7 @@ end
     end
 
     yb = Ybus(_mk_sys(; with_zi = true))
-    @test get(yb.network_reduction_data.reverse_bus_search_map, 3, nothing) == 2
+    @test get(get_network_reduction_data(yb).reverse_bus_search_map, 3, nothing) == 2
     @test 3 ∉ PNM.get_bus_axis(yb)
 
     oracle = Ybus(_mk_sys(; with_zi = false))
@@ -1222,7 +1223,7 @@ end
     _add_test_line!(sys, "L24", arc!(2, 4), 0.0, 0.1)    # off-diagonal +10im
     _add_test_line!(sys, "L43", arc!(4, 3), 0.0, -0.1)   # anti-parallel cap, cancels at (2, 4)
     yb = Ybus(sys)
-    @test get(yb.network_reduction_data.reverse_bus_search_map, 3, nothing) == 2
+    @test get(get_network_reduction_data(yb).reverse_bus_search_map, 3, nothing) == 2
     lk = yb.lookup[1]
     i2, i4 = lk[2], lk[4]
     # The merged mutual admittance cancels to ~0 ...
@@ -1255,7 +1256,7 @@ end
     end
 
     y_red = Ybus(_mk_arc_adm_sys(); make_arc_admittance_matrices = true)
-    @test get(y_red.network_reduction_data.reverse_bus_search_map, 3, nothing) == 2
+    @test get(get_network_reduction_data(y_red).reverse_bus_search_map, 3, nothing) == 2
     y_raw = Ybus(
         _mk_arc_adm_sys();
         network_reductions = PNM.NetworkReduction[PNM.ZeroImpedanceBranchReduction(;

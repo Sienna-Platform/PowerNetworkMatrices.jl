@@ -72,21 +72,81 @@ function _collect_protected_buses(sys::PSY.System)
     return buses
 end
 
-_merge_irreducible(existing, protected::Set{Int}) =
-    sort!(collect(union(Set(existing), protected)))
+"""
+Branches whose outage or monitoring the MODF must be able to represent: an outaged branch
+becomes an `ArcModification` on its own arc, and a monitored branch is the row a contingency
+query is read from. Both need their arc to survive the reduction.
 
-# Ward's `study_buses` need explicit augmentation; other reductions read the
-# user set via the orchestrator container and pass through.
-_augment_ward(reduction::NetworkReduction, ::Set{Int}) = reduction
-function _augment_ward(reduction::WardReduction, protected::Set{Int})
-    isempty(protected) && return reduction
-    return WardReduction(_merge_irreducible(reduction.study_buses, protected))
+Outaged *injectors* are excluded. They register with an empty `NetworkModification`, so no
+reduction can invalidate them.
+"""
+_push_if_branch!(branches::Set{PSY.ACTransmission}, c::PSY.ACTransmission) =
+    push!(branches, c)
+_push_if_branch!(::Set{PSY.ACTransmission}, ::PSY.Component) = nothing
+
+function _contingency_relevant_branches(sys::PSY.System)
+    branches = Set{PSY.ACTransmission}()
+    for outage in PSY.get_supplemental_attributes(PSY.Outage, sys)
+        for component in PSY.get_associated_components(sys, outage)
+            _push_if_branch!(branches, component)
+        end
+        for uuid in PSY.get_monitored_components(outage)
+            local component
+            try
+                component = IS.get_component(sys, uuid)
+            catch e
+                _warn_or_rethrow_missing_component(e, uuid)
+                continue
+            end
+            _push_if_branch!(branches, component)
+        end
+    end
+    return branches
 end
 
-"""Extend any `WardReduction.study_buses` in `reductions` with `protected`."""
-function _augment_ward_reductions(
+_is_ward(::WardReduction) = true
+_is_ward(::NetworkReduction) = false
+
+"""
+Reject a `WardReduction` whose study area does not contain every branch the MODF needs.
+
+`study_buses` *defines* the network Ward retains, unlike the radial/degree-two irreducible
+set, which only exempts buses from elimination. A contingency on a branch outside it cannot
+survive: the arc is gone after the reduction, and every query for that contingency resolves
+to the base-case row.
+"""
+function _validate_ward_contingency_coverage(
     reductions::Vector{NetworkReduction},
-    protected::Set{Int},
+    sys::PSY.System,
 )
-    return NetworkReduction[_augment_ward(r, protected) for r in reductions]
+    wards = filter(_is_ward, reductions)
+    isempty(wards) && return
+    relevant = _contingency_relevant_branches(sys)
+    isempty(relevant) && return
+    for ward in wards
+        study = Set(get_study_buses(ward))
+        outside = String[]
+        for branch in relevant
+            buses = Set{Int}()
+            _add_arc_buses!(buses, branch)
+            issubset(buses, study) || push!(outside, PSY.get_name(branch))
+        end
+        isempty(outside) && continue
+        sort!(outside)
+        shown = join(first(outside, 5), ", ")
+        if length(outside) > 5
+            suffix = " (and $(length(outside) - 5) more)"
+        else
+            suffix = ""
+        end
+        throw(
+            IS.ConflictingInputsError(
+                "WardReduction retains only its study_buses, so $(length(outside)) \
+                outage-monitored branch(es) lying outside that area cannot survive it and \
+                their contingencies would silently resolve to the base case: $(shown)$(suffix). \
+                Extend study_buses to cover them, or drop the WardReduction.",
+            ),
+        )
+    end
+    return
 end

@@ -192,7 +192,7 @@ end
 Convert the user input for irreducible_buses to a set of indices based on the Ybus lookup and the prior reductions.
 """
 function get_irreducible_indices(A::AdjacencyMatrix, irreducible_buses::Vector{Int})
-    reverse_bus_search_map = A.network_reduction_data.reverse_bus_search_map
+    reverse_bus_search_map = get_network_reduction_data(A).reverse_bus_search_map
     irreducible_indices = zeros(Int, length(irreducible_buses))
     for (ix, bus_no) in enumerate(irreducible_buses)
         reduced_bus_no = get(reverse_bus_search_map, bus_no, bus_no)

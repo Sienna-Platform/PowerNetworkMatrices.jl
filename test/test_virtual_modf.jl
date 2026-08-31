@@ -251,10 +251,10 @@ end
     end
     vmodf = VirtualMODF(sys)
     bus_lookup = PNM.get_bus_lookup(vmodf)
-    nrd = vmodf.network_reduction_data
+    nrd = get_network_reduction_data(vmodf)
     vmodf_d2 = VirtualMODF(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
     bus_lookup_d2 = PNM.get_bus_lookup(vmodf_d2)
-    nrd_d2 = vmodf_d2.network_reduction_data
+    nrd_d2 = get_network_reduction_data(vmodf_d2)
     # Compare results for arcs that are present in the reduced system.
     arcs_to_compare = vcat(
         collect(keys(nrd_d2.direct_branch_map)),

@@ -100,6 +100,7 @@ get_ref_bus(M::VirtualLODF) = sort!(collect(keys(get_subnetwork_axes(M))))
 get_ref_bus_position(M::VirtualLODF) =
     [get_bus_lookup(M)[x] for x in keys(get_subnetwork_axes(M))]
 get_network_reduction_data(M::VirtualLODF) = get_network_reduction_data(get_core(M))
+get_branch_catalog(M::VirtualLODF) = get_branch_catalog(get_core(M))
 get_arc_lookup(M::VirtualLODF) = get_lookup(M)[1]
 get_system_uuid(M::VirtualLODF) = get_system_uuid(get_core(M))
 _get_BA(M::VirtualLODF) = _get_BA(get_core(M))

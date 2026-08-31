@@ -1,10 +1,10 @@
-@testset "Test populate_branch_maps_by_type!" begin
-    # This tests the function populate_branch_maps_by_type! by rebuilding the original branch maps and testing the round trip.
+@testset "BranchCatalog round-trips the reduction maps" begin
+    # Rebuild the reduction maps from the catalog's per-type buckets and check the round trip.
     sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
     ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
-    nrd = ybus.network_reduction_data
-    PNM.populate_branch_maps_by_type!(nrd)
-    all_branch_maps_by_type = nrd.all_branch_maps_by_type
+    catalog = PNM.get_branch_catalog(ybus)
+    nrd = PNM.get_network_reduction_data(catalog)
+    all_branch_maps_by_type = PNM.get_all_branch_maps_by_type(catalog)
     nrd_rebuild = NetworkReductionData()
     for (map_key, v1) in all_branch_maps_by_type
         for (type, v2) in v1
@@ -22,7 +22,7 @@
         :series_branch_map,
         :reverse_series_branch_map,
     ]
-        original_map = getproperty(nrd, entry)
+        original_map = getproperty(PNM.get_network_reduction_data(catalog), entry)
         rebuilt_map = getproperty(nrd_rebuild, entry)
         @test original_map == rebuilt_map
     end
@@ -33,9 +33,8 @@ end
     # outages associated with branches can be mapped to the appropriate reduction entry.
     sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
     ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
-    nrd = ybus.network_reduction_data
-    PNM.populate_branch_maps_by_type!(nrd)
-    component_name_map = nrd.component_to_reduction_name_map
+    catalog = PNM.get_branch_catalog(ybus)
+    component_name_map = PNM.get_component_to_reduction_name_map(catalog)
     for g in get_components(ACTransmission, sys)
         (typeof(g) <: ThreeWindingTransformer) && continue      # Not yet supported
         (typeof(g) <: DiscreteControlledACBranch) && continue   # Automatically reduced 

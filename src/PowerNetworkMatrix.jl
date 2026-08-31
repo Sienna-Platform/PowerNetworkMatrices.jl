@@ -58,8 +58,10 @@ Base.eachindex(A::PowerNetworkMatrix) = CartesianIndices(size(A.data))
 Gets the matrix index corresponding to a given key (arc tuple, bus number, etc.)
 """
 function lookup_index(i, lookup::Dict)
-    return isa(i, Colon) ? Colon() : lookup[i]
+    return lookup[i]
 end
+
+lookup_index(::Colon, ::Dict) = Colon()
 
 """
 Gets the matrix index for a `PSY.Arc`, converting it to an arc tuple first.
@@ -71,7 +73,7 @@ Gets the matrix index for a `PSY.Arc`, converting it to an arc tuple first.
         Dictionary mapping arc tuples or bus numbers to matrix indices
 """
 function lookup_index(i::PSY.Arc, lookup::Dict)
-    return isa(i, Colon) ? Colon() : lookup[Base.to_index(i)]
+    return lookup[Base.to_index(i)]
 end
 
 """
@@ -84,7 +86,7 @@ Gets the matrix index for a `PSY.ACBus`, converting it to a bus number first.
         Dictionary mapping arc tuples or bus numbers to matrix indices
 """
 function lookup_index(i::PSY.ACBus, lookup::Dict)
-    return isa(i, Colon) ? Colon() : lookup[Base.to_index(i)]
+    return lookup[Base.to_index(i)]
 end
 
 # Lisp-y tuple recursion trick to handle indexing in a nice type-
@@ -123,7 +125,11 @@ to_index(A::PowerNetworkMatrix, idx...) = _to_index_tuple(idx, A.lookup)
 # a non-unrolled loop through the `idx` tuple which may be of
 # varying element type. Another lisp-y recursion trick fixes that
 has_colon(idx::Tuple{}) = false
-has_colon(idx::Tuple) = isa(first(idx), Colon) || has_colon(Base.tail(idx))
+
+_is_colon(::Colon) = true
+_is_colon(::Any) = false
+
+has_colon(idx::Tuple) = _is_colon(first(idx)) || has_colon(Base.tail(idx))
 
 # TODO: better error (or just handle correctly) when user tries to index with a range like a:b
 # overloading other methods to consider PowerNetworkMatrix
@@ -321,6 +327,10 @@ if the matrix type does not track system origin.
 """
 get_system_uuid(::PowerNetworkMatrix) = nothing
 
+"""Get the [`NetworkReduction`](@ref) data applied to this matrix, via its branch catalog."""
+get_network_reduction_data(M::PowerNetworkMatrix) =
+    get_network_reduction_data(get_branch_catalog(M))
+
 """
     _validate_system_uuid(mat::PowerNetworkMatrix, sys::PSY.System)
 
@@ -367,38 +377,42 @@ its susceptance-fraction share of the group flow (`compute_parallel_multiplier`)
 indexing into PTDF/LODF/VirtualPTDF uses this so per-branch values can be read from matrices
 whose rows are per-arc.
 
-Throws when the name matches no retained branch, or matches more than one parallel-group
-member (name-based lookup is ambiguous).
+Throws when the name matches no retained branch, or matches more than one component under
+that name — collisions across unrelated branch types are just as ambiguous as collisions
+within one parallel group.
 """
 function get_branch_multiplier(A::T, branch_name::String) where {T <: PowerNetworkMatrix}
-    nr = A.network_reduction_data
-    if isempty(nr.direct_branch_name_map)
-        populate_direct_branch_name_map!(nr)
+    catalog = get_branch_catalog(A)
+    index = get_component_name_index(catalog)
+    if !haskey(index, branch_name)
+        error(
+            "Branch $branch_name resolves to no directly-indexed or parallel-group branch. " *
+            "A branch absorbed into a series chain is not resolvable by bare name and must " *
+            "be resolved by component identity.",
+        )
     end
-    if haskey(nr.direct_branch_name_map, branch_name)
-        arc_tuple = nr.direct_branch_name_map[branch_name]
-        return 1.0, arc_tuple
+    candidates = index[branch_name]
+    if length(candidates) > 1
+        listed = join(
+            ("$(component_type) on arc $(arc)" for (component_type, arc, _) in candidates),
+            ", ",
+        )
+        error(
+            "Branch name $(branch_name) is claimed by $(length(candidates)) components " *
+            "($(listed)); a bare name cannot resolve between them because component " *
+            "names are unique only per type.",
+        )
     end
-
-    if !isempty(nr.reverse_parallel_branch_map)
-        matches = [
-            (k, v) for
-            (k, v) in nr.reverse_parallel_branch_map if branch_name == get_name(k)
-        ]
-        if length(matches) > 1
-            error(
-                "Branch name $(branch_name) matches $(length(matches)) parallel-group " *
-                "members; name-based lookup is ambiguous.",
-            )
-        end
-        if length(matches) == 1
-            matched, matched_arc = only(matches)
-            parallel_branch_set = nr.parallel_branch_map[matched_arc]
-            multiplier = compute_parallel_multiplier(parallel_branch_set, matched)
-            return multiplier, matched_arc
-        end
+    (_, arc_tuple, kind) = only(candidates)
+    kind === :direct_branch_map && return 1.0, arc_tuple
+    # A parallel-group member carries its susceptance-fraction share of the group flow.
+    group = get_parallel_branch_map(get_network_reduction_data(catalog))[arc_tuple]
+    for member in group
+        get_name(member) == branch_name || continue
+        return compute_parallel_multiplier(group, member), arc_tuple
     end
-
-    error("Branch $branch_name not found in the network reduction data.")
-    return
+    error(
+        "Branch $branch_name is indexed on arc $(arc_tuple) but no member of the group " *
+        "there carries that name.",
+    )
 end

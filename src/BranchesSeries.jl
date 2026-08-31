@@ -241,32 +241,14 @@ function get_equivalent_emergency_rating(branch::PSY.GenericArcImpedance)
     return PSY.get_max_flow(branch, PSY.DU)
 end
 
-function add_to_map(series_circuit::BranchesSeries, filters::Dict)
-    if isempty(filters)
-        return true
+# Indexed only when EVERY segment is: a chain missing one is not a valid representation of
+# the path between its endpoints.
+# Recursive: might be nested, have BranchesParallel as link in degree 2 chain.
+function _entry_matches(chain::BranchesSeries, predicate)
+    if chain.needs_insertion_order && !_is_unfiltered(predicate)
+        _warn_mixed_group("Series circuit", _get_segment_components(chain))
     end
-
-    if series_circuit.needs_insertion_order
-        if isempty(intersect(keys(series_circuit.branches), keys(filters)))
-            return true
-        end
-
-        @warn "Series circuit contains mixed branch types, filters might be applied to more components than intended. Use Logging.Debug for additional information."
-        @debug "Series circuit branch types: $(keys(series_circuit.branches))"
-        for (branch_type, branch_list) in series_circuit.branches
-            filter = get(filters, branch_type, x -> true)
-            for device in branch_list
-                if !filter(device)
-                    return false
-                end
-            end
-        end
-        return true
-    else
-        filter = get(filters, first(keys(series_circuit.branches)), x -> true)
-        return all([filter(device) for device in first(values(series_circuit.branches))])
-    end
-    error("Invalid condition reached in add_to_map for BranchesSeries")
+    return all(_entry_matches(segment, predicate)::Bool for segment in chain)
 end
 
 function Base.:(==)(a::BranchesSeries, b::BranchesSeries)

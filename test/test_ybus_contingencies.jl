@@ -425,7 +425,7 @@ end
     )
 
     ybus = Ybus(sys)
-    nr = ybus.network_reduction_data
+    nr = get_network_reduction_data(ybus)
     (_, bp) = first(PNM.get_parallel_branch_map(nr))
     t = PSY.get_component(PSY.TwoWindingTransformer, sys, "PST")
     l1 = get_component(Line, sys, "L1")

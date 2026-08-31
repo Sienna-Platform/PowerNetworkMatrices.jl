@@ -9,14 +9,14 @@
 # parallel group is reachable both ways and every direct arc is forward-only.
 function _arc_resolution_fixtures()
     sys = _mk_line_pst_parallel_system()
-    return Ybus(sys).network_reduction_data
+    return get_network_reduction_data(Ybus(sys))
 end
 
 # Parked: `psid_test_ieee_9bus` predates IS4 integer ids and has no raw source. Restore with the dynamics campaign.
 # function _ward_added_arc_nr()
 #     sys = PSB.build_system(PSB.PSIDTestSystems, "psid_test_ieee_9bus")
 #     ybus = Ybus(sys; network_reductions = NetworkReduction[WardReduction([1, 2, 5, 4, 7])])
-#     return ybus.network_reduction_data
+#     return get_network_reduction_data(ybus)
 # end
 
 @testset "arc resolution: forward hits" begin
@@ -100,10 +100,12 @@ end
     # DegreeTwoReduction folds bus 2, producing a series chain keyed (1, 3).
     sys = _mk_line_pst_parallel_system()
     nr =
-        Ybus(
-            sys;
-            network_reductions = NetworkReduction[DegreeTwoReduction()],
-        ).network_reduction_data
+        get_network_reduction_data(
+            Ybus(
+                sys;
+                network_reductions = NetworkReduction[DegreeTwoReduction()],
+            ),
+        )
     arc = first(keys(PNM.get_series_branch_map(nr)))
 
     @test PNM.arc_dc_phase_shift(nr, arc) isa Float64

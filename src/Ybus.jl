@@ -12,7 +12,7 @@ electrical parameters needed for power flow calculations and network analysis.
 - `lookup::L`: Tuple of lookup dictionaries mapping bus numbers to matrix indices
 - `subnetwork_axes::Dict{Int, Ax}`: Bus axes for each electrical island/subnetwork
 - `arc_subnetwork_axis::Dict{Int, Vector{Tuple{Int, Int}}}`: Arc axes for each subnetwork
-- `network_reduction_data::NetworkReductionData`: Metadata from network reduction operations
+- `branch_catalog::BranchCatalog`: Metadata from network reduction operations
 - `arc_admittance_from_to::Union{ArcAdmittanceMatrix, Nothing}`: From-to arc admittance matrix
 - `arc_admittance_to_from::Union{ArcAdmittanceMatrix, Nothing}`: To-from arc admittance matrix
 
@@ -55,7 +55,7 @@ struct Ybus{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
     lookup::L
     subnetwork_axes::Dict{Int, Ax}
     arc_subnetwork_axis::Dict{Int, Vector{Tuple{Int, Int}}}
-    network_reduction_data::NetworkReductionData
+    branch_catalog::BranchCatalog
     arc_admittance_from_to::Union{ArcAdmittanceMatrix, Nothing}
     arc_admittance_to_from::Union{ArcAdmittanceMatrix, Nothing}
 end
@@ -64,8 +64,8 @@ get_axes(M::Ybus) = M.axes
 get_lookup(M::Ybus) = M.lookup
 get_ref_bus(M::Ybus) = sort!(collect(keys(M.subnetwork_axes)))
 
-"""Get the [`NetworkReduction`](@ref) data applied to this matrix."""
-get_network_reduction_data(M::Ybus) = M.network_reduction_data
+"""Get the [`BranchCatalog`](@ref) recording every branch merged into this matrix."""
+get_branch_catalog(M::Ybus) = M.branch_catalog
 get_bus_axis(M::Ybus) = M.axes[1]
 get_bus_lookup(M::Ybus) = M.lookup[1]
 
@@ -123,7 +123,7 @@ println("Number of buses: ", length(get_bus_reduction_map(reduction_data)))
 """
 function get_default_reduction(sys::PSY.System)
     ybus = Ybus(sys)
-    return ybus.network_reduction_data
+    return get_network_reduction_data(ybus)
 end
 
 """
@@ -826,6 +826,8 @@ function Ybus(
         switched_admittances,
         standard_loads,
     )
+    # The branch maps are final here; the arc-admittance matrices below share this index.
+    catalog = BranchCatalog(nr)
     # Build adjacency matrix from COO triplets in a single sparse() call to avoid
     # ~2×branchcount structural insertions into a growing CSC matrix.
     # Values: diagonal = +1, forward arc (from→to) = +1, reverse arc (to→from) = -1.
@@ -885,14 +887,14 @@ function Ybus(
             yft_data,
             (arc_axis, bus_ax),
             (arc_lookup, bus_lookup),
-            nr,
+            catalog,
             :FromTo,
         )
         arc_admittance_to_from = ArcAdmittanceMatrix(
             ytf_data,
             (arc_axis, bus_ax),
             (arc_lookup, bus_lookup),
-            nr,
+            catalog,
             :ToFrom,
         )
     else
@@ -920,7 +922,7 @@ function Ybus(
         lookup,
         subnetwork_axes,
         arc_subnetwork_axis,
-        nr,
+        catalog,
         arc_admittance_from_to,
         arc_admittance_to_from,
     )
@@ -1174,18 +1176,19 @@ function _resolve_arc_admittance(
     yft_data = new_y_ft.data[arc_keep_ixs, bus_ix]
     ytf_data = new_y_tf.data[arc_keep_ixs, bus_ix]
 
+    catalog = BranchCatalog(nr)
     arc_admittance_from_to = ArcAdmittanceMatrix(
         yft_data,
         (arc_ax, bus_ax),
         (arc_lookup, bus_lookup),
-        nr,
+        catalog,
         :FromTo,
     )
     arc_admittance_to_from = ArcAdmittanceMatrix(
         ytf_data,
         (arc_ax, bus_ax),
         (arc_lookup, bus_lookup),
-        nr,
+        catalog,
         :ToFrom,
     )
     return arc_admittance_from_to, arc_admittance_to_from
@@ -1260,10 +1263,10 @@ function _merge_arc_admittance_bus_columns(
 )
     new_yft = ArcAdmittanceMatrix(
         _merge_arc_admittance_columns(yft.data, bus_lookup, merged_bus_pairs),
-        yft.axes, yft.lookup, yft.network_reduction_data, yft.direction)
+        yft.axes, yft.lookup, get_branch_catalog(yft), yft.direction)
     new_ytf = ArcAdmittanceMatrix(
         _merge_arc_admittance_columns(ytf.data, bus_lookup, merged_bus_pairs),
-        ytf.axes, ytf.lookup, ytf.network_reduction_data, ytf.direction)
+        ytf.axes, ytf.lookup, get_branch_catalog(ytf), ytf.direction)
     return new_yft, new_ytf
 end
 
@@ -1598,7 +1601,7 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
         (bus_lookup, bus_lookup),
         subnetwork_axes,
         arc_subnetwork_axis,
-        nr,
+        BranchCatalog(nr),
         arc_admittance_from_to,
         arc_admittance_to_from,
     )
@@ -2026,18 +2029,19 @@ function _add_series_branches_to_ybus!(
     yft_data = SparseArrays.sparse(I_yft, J_yft, V_yft, row_ix - 1, n_buses)
     ytf_data = SparseArrays.sparse(I_ytf, J_ytf, V_ytf, row_ix - 1, n_buses)
 
+    catalog = BranchCatalog(nrd)
     arc_admittance_from_to = ArcAdmittanceMatrix(
         yft_data,
         (arc_axis, get_bus_axis(yft)),
         (arc_lookup, get_bus_lookup(yft)),
-        nrd,
+        catalog,
         :FromTo,
     )
     arc_admittance_to_from = ArcAdmittanceMatrix(
         ytf_data,
         (arc_axis, get_bus_axis(ytf)),
         (arc_lookup, get_bus_lookup(ytf)),
-        nrd,
+        catalog,
         :ToFrom,
     )
     return arc_admittance_from_to, arc_admittance_to_from
@@ -2511,7 +2515,21 @@ function get_reduction(ybus::Ybus, ::PSY.System, reduction::WardReduction)
     end
 
     if Set(subnetwork_bus_axis) == Set(study_buses)
-        @error "The study buses comprise an entire island; ward reduction will not modify this island and other islands will be eliminated"
+        # `removed_buses` holds the buses of every *other* island. With none, Ward has
+        # nothing to eliminate anywhere: the study area is the whole island, and there is no
+        # other island to drop.
+        if isempty(removed_buses)
+            throw(
+                IS.DataFormatError(
+                    "WardReduction study_buses cover the entire network \
+                    ($(length(study_buses)) buses, one island), so the reduction would \
+                    remove nothing. Narrow study_buses to the area to retain, or drop the \
+                    WardReduction.",
+                ),
+            )
+        end
+        @warn "The study buses comprise an entire island; ward reduction will not modify \
+               this island, and the other islands will be eliminated."
         return NetworkReductionData(;
             removed_arcs = removed_arcs,
             removed_buses = removed_buses,

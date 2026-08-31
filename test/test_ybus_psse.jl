@@ -62,7 +62,7 @@ end
     ]
     skip_indices = indexin(ref_bus_numbers, Ybus_pnm.axes[1])
     n_ref_bus_elements = nnz(Ybus_pnm.data[skip_indices, :])
-    nr = Ybus_pnm.network_reduction_data
+    nr = get_network_reduction_data(Ybus_pnm)
 
     #Test adjacency and Ybus have same non-zero elements
     findnz(Ybus_pnm.data)[1] == findnz(Ybus_pnm.adjacency_data)[1]
@@ -92,7 +92,7 @@ end
 @testset "WECC 240 bus" begin
     sys = PSB.build_system(PSYTestSystems, "psse_240_parsing_sys"; runchecks = false)
     Ybus_pnm = Ybus(sys; include_constant_impedance_loads = true)
-    nr = Ybus_pnm.network_reduction_data
+    nr = get_network_reduction_data(Ybus_pnm)
     ref_bus_numbers = [
         get_number(x) for
         x in get_components(x -> get_bustype(x) == PSY.ACBusTypes.REF, ACBus, sys)
@@ -140,7 +140,7 @@ end
             susceptance_threshold = Inf,
         )],
     )
-    nr = Ybus_pnm.network_reduction_data
+    nr = get_network_reduction_data(Ybus_pnm)
     ref_bus_numbers = [
         get_number(x) for
         x in get_components(x -> get_bustype(x) == PSY.ACBusTypes.REF, ACBus, sys)
@@ -189,7 +189,7 @@ end
     ]
     skip_indices = indexin(ref_bus_numbers, Ybus_pnm.axes[1])
     n_ref_bus_elements = nnz(Ybus_pnm.data[skip_indices, :])
-    nr = Ybus_pnm.network_reduction_data
+    nr = get_network_reduction_data(Ybus_pnm)
 
     #Test adjacency and Ybus have same non-zero elements
     findnz(Ybus_pnm.data)[1] == findnz(Ybus_pnm.adjacency_data)[1]
@@ -225,7 +225,7 @@ end
     ]
     skip_indices = indexin(ref_bus_numbers, Ybus_pnm.axes[1])
     n_ref_bus_elements = nnz(Ybus_pnm.data[skip_indices, :])
-    nr = Ybus_pnm.network_reduction_data
+    nr = get_network_reduction_data(Ybus_pnm)
 
     #Test adjacency and Ybus have same non-zero elements
     findnz(Ybus_pnm.data)[1] == findnz(Ybus_pnm.adjacency_data)[1]

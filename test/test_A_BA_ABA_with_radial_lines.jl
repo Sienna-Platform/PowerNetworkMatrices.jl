@@ -3,7 +3,7 @@
         sys = PSB.build_system(PSB.PSITestSystems, name)
         BA = BA_Matrix(sys)
         BA_rad = BA_Matrix(sys; network_reductions = NetworkReduction[RadialReduction()])
-        nr = BA_rad.network_reduction_data
+        nr = get_network_reduction_data(BA_rad)
         bus_numbers = []
         for i in keys(nr.bus_reduction_map)
             append!(bus_numbers, collect(nr.bus_reduction_map[i]))
@@ -35,7 +35,7 @@ end
             network_reductions = NetworkReduction[RadialReduction()],
         )
 
-        nr = A_rad.network_reduction_data
+        nr = get_network_reduction_data(A_rad)
         # check if the same angles and flows are computed with the matrices of the reduced systems
         # get the indices for the reduced system
         bus_numbers = []

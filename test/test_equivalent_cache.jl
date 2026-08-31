@@ -4,7 +4,7 @@
 
 @testset "equivalent cache: warm query skips the two-port rebuild" begin
     sys = _mk_line_pst_parallel_system()
-    nr = Ybus(sys).network_reduction_data
+    nr = get_network_reduction_data(Ybus(sys))
     bp = PNM.get_parallel_branch_map(nr)[(1, 2)]
 
     @test !bp.equivalent_ybus_populated
@@ -22,7 +22,7 @@ end
 
 @testset "equivalent cache: adding a member invalidates" begin
     sys = _mk_line_pst_parallel_system()
-    nr = Ybus(sys).network_reduction_data
+    nr = get_network_reduction_data(Ybus(sys))
     bp = PNM.get_parallel_branch_map(nr)[(1, 2)]
     before = PNM.get_equivalent_physical_branch_parameters(bp, nr)
     @test bp.equivalent_ybus_populated
@@ -36,7 +36,7 @@ end
 
 @testset "equivalent cache: series chain invalidates on segment append" begin
     sys = _mk_line_pst_parallel_system()
-    nr = Ybus(sys).network_reduction_data
+    nr = get_network_reduction_data(Ybus(sys))
     bs = PNM.BranchesSeries((1, 2))
     PNM.add_branch!(bs, PSY.get_component(Line, sys, "L2"), :FromTo)
     @test !bs.equivalent_ybus_populated
@@ -48,7 +48,7 @@ end
 
 @testset "equivalent cache: field type is ComplexF64 for both aggregate kinds" begin
     sys = _mk_line_pst_parallel_system(; pst_r = 0.05)
-    nr = Ybus(sys).network_reduction_data
+    nr = get_network_reduction_data(Ybus(sys))
     bp = PNM.get_parallel_branch_map(nr)[(1, 2)]
     @test typeof(bp.equivalent_ybus) === PNM.CACHED_TWO_PORT
     @test PNM.CACHED_TWO_PORT === NTuple{4, ComplexF64}
@@ -67,7 +67,7 @@ end
         sys = _mk_line_pst_parallel_system(; pst_r = 0.05)
         ybus = Ybus(sys; network_reductions = reductions)
         @test eltype(ybus.data) === PNM.YBUS_ELTYPE
-        nr = ybus.network_reduction_data
+        nr = get_network_reduction_data(ybus)
         # Warm every cache, then re-assert: populating a ComplexF64 cache must not promote the
         # stored ComplexF32 Ybus (a promoted `V` in `sparse(I, J, V)` doubles memory silently).
         for arc in PNM.get_arc_axis(nr)

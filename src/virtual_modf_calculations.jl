@@ -88,6 +88,7 @@ get_lookup(M::VirtualMODF) = get_lookup(get_core(M))
 get_ref_bus(M::VirtualMODF) = get_ref_bus(get_core(M))
 get_ref_bus_position(M::VirtualMODF) = get_ref_bus_position(get_core(M))
 get_network_reduction_data(M::VirtualMODF) = get_network_reduction_data(get_core(M))
+get_branch_catalog(M::VirtualMODF) = get_branch_catalog(get_core(M))
 get_arc_lookup(M::VirtualMODF) = get_arc_lookup(get_core(M))
 get_bus_lookup(M::VirtualMODF) = get_bus_lookup(get_core(M))
 get_arc_axis(M::VirtualMODF) = get_arc_axis(get_core(M))
@@ -166,8 +167,11 @@ Outage supplemental attributes found in the system.
 
 The buses of every outaged component and the components each outage declares
 monitored (`get_monitored_components`) are automatically added to the irreducible
-set before the base `Ybus` is built, and (when `network_reductions` are supplied)
-any `WardReduction.study_buses` are augmented to match. This is mandatory: the
+set before the base `Ybus` is built. `WardReduction.study_buses` define the
+retained network rather than exempting buses, so — when outages are
+auto-registered (`automatically_register_outages`) — they are validated against
+the contingencies and a branch outside the study area is an error, not silently
+covered. This is mandatory: the
 ABA/Woodbury solve runs on the reduced network, so a branch in a contingency must
 survive every reduction step, including the zero-impedance reduction that is
 auto-applied during `Ybus` construction.
@@ -227,9 +231,12 @@ function VirtualMODF(
     )
 
     # radial/degree-two read the container's irreducible set (already seeded above via
-    # `Ybus`'s `irreducible_buses`), while Ward reads `study_buses` (augmented separately).
-    applied_reductions = _augment_ward_reductions(network_reductions, applied_irreducible)
-    for reduction in applied_reductions
+    # `Ybus`'s `irreducible_buses`). Ward's `study_buses` defines the retained network rather
+    # than exempting buses, so it is validated against the contingencies — but only the ones
+    # this MODF will actually register.
+    automatically_register_outages &&
+        _validate_ward_contingency_coverage(network_reductions, sys)
+    for reduction in network_reductions
         Ymatrix = build_reduced_ybus(Ymatrix, sys, reduction)
     end
 
@@ -314,6 +321,10 @@ end
 
 # --- Outage registration ---
 
+_warn_or_rethrow_failed_outage(e::ErrorException) =
+    @warn "Could not register outage: $(e.msg)"
+_warn_or_rethrow_failed_outage(e) = rethrow()
+
 """
     _register_all_outages!(vmodf, sys)
 
@@ -327,8 +338,7 @@ function _register_all_outages!(vmodf::VirtualMODF, sys::PSY.System)
             _register_outage!(vmodf, sys, outage)
             count += 1
         catch e
-            e isa ErrorException || rethrow()
-            @warn "Could not register outage: $(e.msg)"
+            _warn_or_rethrow_failed_outage(e)
         end
     end
 

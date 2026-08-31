@@ -2,7 +2,7 @@
 
 @testset "issue 231: equivalent recovery is Float64-accurate" begin
     sys = _mk_line_pst_parallel_system()
-    nr = Ybus(sys).network_reduction_data
+    nr = get_network_reduction_data(Ybus(sys))
     eb = PNM.arc_equivalent_branch(nr, (1, 2))
     # The recovery is imag(log(Y21/Y12))/2, a nonlinear function of the two summed phasors
     # (b1=10 at angle 0, b2=5 at angle 0.15) -- NOT the susceptance-weighted average of member
@@ -16,7 +16,7 @@ end
     # Lossless line ∥ lossless PST: both purely reactive -> one bucket, even though
     # their alphas differ (0.0 vs 0.15).
     sys = _mk_line_pst_parallel_system()
-    nr = Ybus(sys).network_reduction_data
+    nr = get_network_reduction_data(Ybus(sys))
     bp = PNM.get_parallel_branch_map(nr)[(1, 2)]
     @test length(PNM._partition_members_by_impedance_angle(bp)) == 1
     @test PNM._is_single_pi_representable(PNM.ybus_branch_entries(bp, nr)[2:3]...)
@@ -24,7 +24,7 @@ end
     # Lossy PST ∥ lossless line: different impedance angles -> two buckets, and the
     # whole-group two-port is NOT single-pi representable.
     sys_lossy = _mk_line_pst_parallel_system(; pst_r = 0.05)
-    nr_lossy = Ybus(sys_lossy).network_reduction_data
+    nr_lossy = get_network_reduction_data(Ybus(sys_lossy))
     bp_lossy = PNM.get_parallel_branch_map(nr_lossy)[(1, 2)]
     parts = PNM._partition_members_by_impedance_angle(bp_lossy)
     @test length(parts) == 2
@@ -44,7 +44,7 @@ end
 
 @testset "issue 231: subset two-port sums to the group two-port" begin
     sys = _mk_line_pst_parallel_system(; pst_r = 0.05)
-    nr = Ybus(sys).network_reduction_data
+    nr = get_network_reduction_data(Ybus(sys))
     bp = PNM.get_parallel_branch_map(nr)[(1, 2)]
     reference = PNM.get_arc_tuple(bp, nr)
     total = zeros(ComplexF64, 4)
@@ -58,7 +58,7 @@ end
 
 @testset "issue 231: exact partition equivalents for a lossy shifted group" begin
     sys = _mk_line_pst_parallel_system(; pst_r = 0.05)
-    nr = Ybus(sys).network_reduction_data
+    nr = get_network_reduction_data(Ybus(sys))
     bp = PNM.get_parallel_branch_map(nr)[(1, 2)]
 
     @test !PNM.has_single_pi_equivalent(bp, nr)
@@ -80,7 +80,7 @@ end
 
 @testset "issue 231: representable groups yield exactly one partition" begin
     sys = _mk_line_pst_parallel_system()
-    nr = Ybus(sys).network_reduction_data
+    nr = get_network_reduction_data(Ybus(sys))
     bp = PNM.get_parallel_branch_map(nr)[(1, 2)]
 
     @test PNM.has_single_pi_equivalent(bp, nr)
@@ -96,7 +96,7 @@ end
 
 @testset "issue 231: partition ratings sum per partition" begin
     sys = _mk_line_pst_parallel_system(; pst_r = 0.05)
-    nr = Ybus(sys).network_reduction_data
+    nr = get_network_reduction_data(Ybus(sys))
     bp = PNM.get_parallel_branch_map(nr)[(1, 2)]
     for pe in PNM.equivalent_partitions(bp, nr)
         expected = sum(PNM.get_equivalent_rating(m) for m in PNM.get_members(pe))
@@ -106,7 +106,7 @@ end
 
 @testset "issue 231: arc_equivalent_branches is total" begin
     sys = _mk_line_pst_parallel_system(; pst_r = 0.05)
-    nr = Ybus(sys).network_reduction_data
+    nr = get_network_reduction_data(Ybus(sys))
 
     # The lossy shifted group: singular accessor throws and steers to the plural one, which
     # returns both branches.
@@ -140,10 +140,12 @@ end
 @testset "issue 231: series chain containing a non-representable group errors precisely" begin
     sys = _mk_line_pst_parallel_system(; pst_r = 0.05)
     nr =
-        Ybus(
-            sys;
-            network_reductions = NetworkReduction[DegreeTwoReduction()],
-        ).network_reduction_data
+        get_network_reduction_data(
+            Ybus(
+                sys;
+                network_reductions = NetworkReduction[DegreeTwoReduction()],
+            ),
+        )
     arc, bs = first(PNM.get_series_branch_map(nr))
 
     @test !PNM.has_single_pi_equivalent(bs, nr)
@@ -199,7 +201,7 @@ end
     sys = _mk_two_transformer_parallel_system(;
         alpha1 = 0.15, alpha2 = 0.15, r1 = 0.0, x1 = 0.1, r2 = 0.05, x2 = 0.2,
     )
-    nr = Ybus(sys).network_reduction_data
+    nr = get_network_reduction_data(Ybus(sys))
     bp = PNM.get_parallel_branch_map(nr)[(1, 2)]
 
     @test length(PNM._partition_members_by_impedance_angle(bp)) == 2
@@ -214,7 +216,7 @@ end
     sys = _mk_two_transformer_parallel_system(;
         alpha1 = 0.1, alpha2 = 0.3, r1 = 0.05, x1 = 0.10, r2 = 0.10, x2 = 0.20,
     )
-    nr = Ybus(sys).network_reduction_data
+    nr = get_network_reduction_data(Ybus(sys))
     bp = PNM.get_parallel_branch_map(nr)[(1, 2)]
 
     @test length(PNM._partition_members_by_impedance_angle(bp)) == 1
@@ -260,7 +262,7 @@ end
 
 @testset "issue 231: three members partition into two impedance-angle groups" begin
     sys = _mk_two_lines_one_pst_parallel_system()
-    nr = Ybus(sys).network_reduction_data
+    nr = get_network_reduction_data(Ybus(sys))
     bp = PNM.get_parallel_branch_map(nr)[(1, 2)]
     l1 = PSY.get_component(PSY.Line, sys, "L1")
     l2 = PSY.get_component(PSY.Line, sys, "L2")
@@ -313,7 +315,7 @@ end
 
 @testset "issue 231: anti-parallel member exercises per-partition orientation swap" begin
     sys = _mk_antiparallel_pst_system(; pst_r = 0.05)
-    nr = Ybus(sys).network_reduction_data
+    nr = get_network_reduction_data(Ybus(sys))
     _, bp = first(PNM.get_parallel_branch_map(nr))
 
     @test !PNM.has_single_pi_equivalent(bp, nr)
@@ -377,7 +379,7 @@ end
 
 @testset "issue 231: three-winding transformer winding sharing an arc with a lossy line" begin
     sys = _mk_3w_winding_line_parallel_system()
-    nr = Ybus(sys).network_reduction_data
+    nr = get_network_reduction_data(Ybus(sys))
     bp = PNM.get_parallel_branch_map(nr)[(1, 4)]
     @test length(bp) == 2
 
