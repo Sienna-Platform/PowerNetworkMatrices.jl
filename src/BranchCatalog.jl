@@ -86,6 +86,28 @@ end
 _entry_matches(device::T, predicate) where {T <: PSY.ACTransmission} =
     predicate(T, device)
 
+"""
+    _entry_name(arc, entry) -> String
+
+The name an arc's entry is indexed under.
+
+A direct arc is one branch and keeps that branch's own name: it is already unique per type,
+already stable, and renaming it would move result keys for the ~90% of arcs no reduction
+touched. A composite arc takes its name from the arc instead.
+
+Deriving a composite's name here rather than on the aggregate is deliberate on two counts.
+The catalog knows the arc the entry is *filed under*, while an aggregate's `arc_key` holds
+original bus numbers that `reverse_bus_search_map` may since have remapped -- the two can
+disagree. And `_composite_entries` admits at most one composite per unordered bus pair, so
+arc => name is injective by construction here, where on the aggregate it was the longest
+common prefix of member names: `La`/`Lb` and `Lc`/`Ld` both yielded `Lseries_chain`, and the
+name moved whenever membership did.
+"""
+_entry_name(::Tuple{Int, Int}, entry::PSY.ACTransmission) = get_name(entry)
+_entry_name(arc::Tuple{Int, Int}, ::AbstractBranchesParallel) =
+    "parallel_$(arc[1])_$(arc[2])"
+_entry_name(arc::Tuple{Int, Int}, ::BranchesSeries) = "series_$(arc[1])_$(arc[2])"
+
 ##############################################################################
 ############################## Index building ################################
 ##############################################################################
@@ -121,7 +143,7 @@ function _index_forward!(
         _entry_matches(entry, predicate) || continue
         for T in bucket_types(entry)
             _store!(get!(() -> empty_bucket(entry), dest, T), arc, entry)
-            _bucket_name_to_arc(name_to_arc, T)[get_name(entry)] = (arc, kind)
+            _bucket_name_to_arc(name_to_arc, T)[_entry_name(arc, entry)] = (arc, kind)
         end
     end
     return
@@ -147,7 +169,7 @@ function _index_reverse!(
         T = _get_segment_type(member)
         _store!(get!(() -> Dict{typeof(member), Tuple{Int, Int}}(), dest, T), member, arc)
         _bucket_entry_names(component_to_entry, T)[get_name(member)] =
-            get_name(forward[arc])
+            _entry_name(arc, forward[arc])
     end
     return
 end
@@ -155,6 +177,11 @@ end
 """
 Index the series map. A chain is filed under every type appearing anywhere in it, so a caller
 iterating one branch type finds every chain that type participates in.
+
+One entry name per arc, not one per segment. A folded chain is a single corridor carrying a
+single flow, so it has one identity, and the parallel map has always filed groups this way --
+filing chains per segment made the two maps disagree about what an entry *is*. Members reach
+their entry through `component_to_entry`, which is where the per-component view belongs.
 """
 function _index_series!(
     dest::Dict{DataType, Any},
@@ -165,20 +192,22 @@ function _index_series!(
 )
     for (arc, chain) in source
         _entry_matches(chain, predicate) || continue
-        for segment in chain
-            for T in _get_concrete_types(segment)
-                _store!(
-                    get!(() -> Dict{Tuple{Int, Int}, BranchesSeries}(), dest, T),
-                    arc,
-                    chain,
-                )
-                _bucket_name_to_arc(name_to_arc, T)[get_name(segment)] =
-                    (arc, :series_branch_map)
-                names = _bucket_entry_names(component_to_entry, T)
-                for component in _get_segment_components(segment)
-                    names[get_name(component)] = get_name(segment)
-                end
-            end
+        name = _entry_name(arc, chain)
+        for T in _get_concrete_types(chain)
+            _store!(
+                get!(() -> Dict{Tuple{Int, Int}, BranchesSeries}(), dest, T),
+                arc,
+                chain,
+            )
+            _bucket_name_to_arc(name_to_arc, T)[name] = (arc, :series_branch_map)
+        end
+        # Each leaf redirects to the one entry carrying its flow, filed under the leaf's own
+        # bucket rather than under every type in the chain.
+        for leaf in leaf_components(chain)
+            _bucket_entry_names(component_to_entry, _get_segment_type(leaf))[get_name(
+                leaf,
+            )] =
+                name
         end
     end
     return

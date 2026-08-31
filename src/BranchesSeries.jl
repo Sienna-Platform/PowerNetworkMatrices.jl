@@ -172,18 +172,16 @@ function get_segment_orientations(bs::BranchesSeries, equivalent_arc::Tuple{Int,
     )
 end
 
-# `BranchesSeries` has no `name` field, so the generic `PSY.ACTransmission` fallback
-# (`get_name(device::T) where {T <: PSY.ACTransmission}`, NetworkReductionData.jl) errors on
-# it. Unqualified `get_name` on each segment recurses through nested parallel/series segments
-# the same way `_is_phase_shifting` does.
-function get_name(bs::BranchesSeries)
-    names = [get_name(br) for br in bs]
-    base_string = _longest_starting_substring(names...)
-    if isempty(base_string)
-        base_string = join(names, "_") * "_"
-    end
-    return base_string *= "series_chain"
-end
+"""
+A chain's name is its arc, spelled `series_<from>_<to>`. See the `AbstractBranchesParallel`
+method (BranchesParallel.jl) for why the aggregate spells its own key and the catalog spells
+the indexed one.
+
+A nested chain keeps its own frame, so two siblings in one group can name themselves from
+opposite endpoint orders -- they are not indexed, and #353 established that a nested chain's
+`arc_key` is a traversal frame rather than an identity.
+"""
+get_name(bs::BranchesSeries) = "series_$(bs.arc_key[1])_$(bs.arc_key[2])"
 
 function get_series_susceptance(
     series_chain::BranchesSeries,
