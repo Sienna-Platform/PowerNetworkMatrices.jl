@@ -1,11 +1,8 @@
 #=
-`PNM._get_chain_data(equivalent_arc, chain, nrd)` was deleted in `e67ee3b`; PowerOperationsModels
-still calls it to sign interface flow contributions. `get_segment_orientations` replaces its
-second return value. These tests pin the equivalence, because the replacement reads a stored
-field where the old code recomputed the walk.
-
-The reference below is the removed function's body verbatim. It lives here, not in `src/`: the
-point is to prove the stored vector agrees with it, not to keep the algorithm.
+`get_segment_orientations` replaces the second return value of the removed `_get_chain_data`,
+which PowerOperationsModels still calls to sign interface flow contributions. The reference
+below is that function's body verbatim — the point is to prove the stored vector agrees with
+it, not to keep the algorithm.
 =#
 
 function _reference_chain_data(equivalent_arc, chain, nrd)
@@ -73,7 +70,7 @@ _is_chain(::PSY.ACTransmission) = false
     end
 end
 
-@testset "get_segment_orientations matches for chains nested in a parallel group" begin
+@testset "get_segment_orientations matches the removed walk for chains inside a parallel group" begin
     sys = build_two_parallel_degree_two_chains()
     ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
     nrd = PNM.get_network_reduction_data(ybus)
