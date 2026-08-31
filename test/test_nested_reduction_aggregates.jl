@@ -109,6 +109,42 @@ end
     @test isempty(PNM.get_name_to_arc_map(empty_catalog, PSY.Line))
 end
 
+@testset "Mixed-group debug logging survives a three-winding wrapper" begin
+    # `_warn_mixed_group`'s `@debug` line is only evaluated once Debug logging is on, so a
+    # bad `get_name` there is invisible until someone turns it on. A group's leaves can
+    # include a `ThreeWindingTransformerCircuit`, whose fields are
+    # `(transformer, circuit, winding_number)` -- `PSY.get_name` resolves to IS's generic
+    # fallback, reads `.name`, and throws.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
+    busD = PSY.get_component(PSY.ACBus, sys, "nodeD")
+    sec_bus, ter_bus, star_bus = _add_star_buses!(sys, busD)
+    t3w = _add_three_winding_transformer!(
+        sys, busD, sec_bus, ter_bus, star_bus; name = "T3W_mixed_group",
+    )
+    winding = PNM.ThreeWindingTransformerCircuit(t3w, 1)
+    line = first(PSY.get_components(PSY.Line, sys))
+
+    @test PNM.get_name(winding) == "T3W_mixed_group_winding_1"
+    @test_throws Exception PSY.get_name(winding)
+
+    group = PNM.MixedBranchesParallel(PSY.ACTransmission[winding, line])
+
+    # `Test.collect_test_logs` with `min_level = Debug` is what actually forces the `@debug`
+    # message to be built. A plain `ConsoleLogger(devnull, Debug)` does not: the body stays
+    # unevaluated, and the test passes whether or not the name lookup is correct.
+    matched = nothing
+    records, _ = Test.collect_test_logs(; min_level = Logging.Debug) do
+        matched = PNM._entry_matches(group, (T, c) -> true)
+    end
+    @test matched === true
+
+    # Both the warning and the two debug lines must have been emitted -- if the debug
+    # message threw while being built, we would not get here at all.
+    @test count(r -> r.level == Logging.Warn, records) == 1
+    @test count(r -> r.level == Logging.Debug, records) == 2
+    @test any(r -> occursin("T3W_mixed_group_winding_1", r.message), records)
+end
+
 @testset "Nested filters fold per level, not over flattened leaves" begin
     sys, nrd, _ = _nested_aggregate_catalog()
     lines = Dict(PSY.get_name(l) => l for l in PSY.get_components(PSY.Line, sys))
