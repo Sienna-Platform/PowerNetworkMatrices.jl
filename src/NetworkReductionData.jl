@@ -167,19 +167,32 @@ function get_name(device::T) where {T <: PSY.ACTransmission}
     return PSY.get_name(device)
 end
 
-# PERF: profile and optimize.
-# One idea: write specialized methods for depth 2 heterogeneous cases.
+function _collect_leaves!(out::Vector{PSY.ACTransmission}, branch::PSY.ACTransmission)
+    push!(out, branch)
+    return out
+end
+
+function _collect_leaves!(
+    out::Vector{PSY.ACTransmission},
+    entry::AbstractReductionAggregate,
+)
+    for member in entry
+        _collect_leaves!(out, member)
+    end
+    return out
+end
+
 """
 Every physical branch at the leaves of `entry`, recursing through nested aggregates.
 
 Aggregates nest without a fixed shape, so we walk the full tree, even though depth should
 typically be small: 2, 3, *maybe* 4.
 """
-leaf_components(branch::PSY.ACTransmission) = (branch,)
+leaf_components(branch::PSY.ACTransmission) = PSY.ACTransmission[branch]
 leaf_components(entry::AbstractReductionAggregate) =
-    Iterators.flatten(leaf_components(member) for member in entry)
+    _collect_leaves!(PSY.ACTransmission[], entry)
 
-_get_segment_components(x) = collect(leaf_components(x))
+_get_segment_components(x) = leaf_components(x)
 _get_segment_type(::T) where {T <: PSY.ACBranch} = T
 _get_segment_type(::BranchesParallel{T}) where {T <: PSY.ACTransmission} = T
 _get_segment_type(::MixedBranchesParallel) = MixedBranchesParallel
@@ -194,8 +207,9 @@ per-type iteration finds every entry that type participates in at any nesting de
 Bucket keys are always PSY component types -- `_get_segment_type` maps a 3W winding to its
 parent transformer type -- never a PNM aggregate wrapper.
 """
-_get_concrete_types(entry) =
-    unique(_get_segment_type(leaf) for leaf in leaf_components(entry))
+function _get_concrete_types(entry)
+    return unique(DataType[_get_segment_type(leaf) for leaf in leaf_components(entry)])
+end
 
 # Construct an empty per-slot dict for `BranchMapsByType.parallel_branch_map`.
 # Value type is `AbstractBranchesParallel` so that the same per-type bucket can

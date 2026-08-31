@@ -87,6 +87,11 @@ _bucket_name_to_arc(name_to_arc::NAME_TO_ARC, T::DataType) =
 _bucket_entry_names(component_to_entry::COMPONENT_TO_ENTRY, T::DataType) =
     get!(() -> Dict{String, String}(), component_to_entry, T)
 
+function _store!(bucket::Dict{K, V}, k, v) where {K, V}
+    bucket[k] = v
+    return
+end
+
 """
 Index a forward (arc-keyed) reduction map under the buckets `bucket_types(entry)` names,
 creating each with `empty_bucket(entry)`.
@@ -106,7 +111,7 @@ function _index_forward!(
     for (arc, entry) in source
         _entry_matches(entry, predicate) || continue
         for T in bucket_types(entry)
-            get!(() -> empty_bucket(entry), dest, T)[arc] = entry
+            _store!(get!(() -> empty_bucket(entry), dest, T), arc, entry)
             _bucket_name_to_arc(name_to_arc, T)[get_name(entry)] = (arc, kind)
         end
     end
@@ -131,7 +136,7 @@ function _index_reverse!(
     for (member, arc) in source
         _entry_matches(member, predicate) || continue
         T = _get_segment_type(member)
-        get!(() -> Dict{typeof(member), Tuple{Int, Int}}(), dest, T)[member] = arc
+        _store!(get!(() -> Dict{typeof(member), Tuple{Int, Int}}(), dest, T), member, arc)
         _bucket_entry_names(component_to_entry, T)[get_name(member)] =
             get_name(forward[arc])
     end
@@ -153,7 +158,11 @@ function _index_series!(
         _entry_matches(chain, predicate) || continue
         for segment in chain
             for T in _get_concrete_types(segment)
-                get!(() -> Dict{Tuple{Int, Int}, BranchesSeries}(), dest, T)[arc] = chain
+                _store!(
+                    get!(() -> Dict{Tuple{Int, Int}, BranchesSeries}(), dest, T),
+                    arc,
+                    chain,
+                )
                 _bucket_name_to_arc(name_to_arc, T)[get_name(segment)] =
                     (arc, :series_branch_map)
                 names = _bucket_entry_names(component_to_entry, T)
@@ -170,11 +179,15 @@ end
 function _index_reverse_series!(dest::Dict{DataType, Any}, source, predicate)
     for (member, arc) in source
         _entry_matches(member, predicate) || continue
-        get!(
-            () -> Dict{PSY.ACTransmission, Tuple{Int, Int}}(),
-            dest,
-            _get_segment_type(member),
-        )[member] = arc
+        _store!(
+            get!(
+                () -> Dict{PSY.ACTransmission, Tuple{Int, Int}}(),
+                dest,
+                _get_segment_type(member),
+            ),
+            member,
+            arc,
+        )
     end
     return
 end

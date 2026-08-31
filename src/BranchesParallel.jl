@@ -315,14 +315,14 @@ end
 # Indexed when ANY member is: the arc is modeled, so its group must be reachable.
 # Recursive: consider series-in-parallel.
 _entry_matches(group::BranchesParallel, predicate) =
-    any(_entry_matches(member, predicate) for member in group)
+    any(_entry_matches(member, predicate)::Bool for member in group)
 
 # Indexed only when EVERY member is: a partially-filtered mixed group is not a complete
 # representation of its arc.
 function _entry_matches(group::MixedBranchesParallel, predicate)
     _is_unfiltered(predicate) ||
         _warn_mixed_group("Parallel circuit", _get_segment_components(group))
-    return all(_entry_matches(member, predicate) for member in group)
+    return all(_entry_matches(member, predicate)::Bool for member in group)
 end
 
 function Base.:(==)(a::AbstractBranchesParallel, b::AbstractBranchesParallel)

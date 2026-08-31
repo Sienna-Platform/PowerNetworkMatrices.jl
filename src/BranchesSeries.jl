@@ -248,7 +248,7 @@ function _entry_matches(chain::BranchesSeries, predicate)
     if chain.needs_insertion_order && !_is_unfiltered(predicate)
         _warn_mixed_group("Series circuit", _get_segment_components(chain))
     end
-    return all(_entry_matches(segment, predicate) for segment in chain)
+    return all(_entry_matches(segment, predicate)::Bool for segment in chain)
 end
 
 function Base.:(==)(a::BranchesSeries, b::BranchesSeries)

@@ -2029,18 +2029,19 @@ function _add_series_branches_to_ybus!(
     yft_data = SparseArrays.sparse(I_yft, J_yft, V_yft, row_ix - 1, n_buses)
     ytf_data = SparseArrays.sparse(I_ytf, J_ytf, V_ytf, row_ix - 1, n_buses)
 
+    catalog = BranchCatalog(nrd)
     arc_admittance_from_to = ArcAdmittanceMatrix(
         yft_data,
         (arc_axis, get_bus_axis(yft)),
         (arc_lookup, get_bus_lookup(yft)),
-        BranchCatalog(nrd),
+        catalog,
         :FromTo,
     )
     arc_admittance_to_from = ArcAdmittanceMatrix(
         ytf_data,
         (arc_axis, get_bus_axis(ytf)),
         (arc_lookup, get_bus_lookup(ytf)),
-        BranchCatalog(nrd),
+        catalog,
         :ToFrom,
     )
     return arc_admittance_from_to, arc_admittance_to_from
