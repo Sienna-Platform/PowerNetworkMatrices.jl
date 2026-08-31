@@ -66,11 +66,15 @@ _keep_all(::Type, ::Any) = true
 
 _is_unfiltered(predicate) = predicate === _keep_all
 
+# PNM's `get_name`, not `PSY.get_name`: a group's leaves can include a
+# `ThreeWindingTransformerCircuit`, whose fields are `(transformer, circuit, winding_number)`.
+# `PSY.get_name` resolves to IS's generic fallback, which reads `.name` and throws a
+# `FieldError` on it -- inside the logging call, and only once Debug logging is on.
 function _warn_mixed_group(kind::String, branches)
     @warn "$kind contains mixed branch types, filters might be applied to more " *
           "components than intended. Use Logging.Debug for additional information."
     @debug "$kind branch types: $(typeof.(branches))"
-    @debug "$kind branch names: $(PSY.get_name.(branches))"
+    @debug "$kind branch names: $(get_name.(branches))"
     return
 end
 
