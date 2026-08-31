@@ -2116,7 +2116,7 @@ function _stamp_composite_arc!(
 end
 
 function _build_chain_ybus(series_chain::BranchesSeries, nr::NetworkReductionData)
-    segment_orientations = series_chain.segment_orientations
+    segment_orientations = get_segment_orientations(series_chain)
     fb = Vector{Int}()
     tb = Vector{Int}()
     y11 = Vector{YBUS_ELTYPE}()

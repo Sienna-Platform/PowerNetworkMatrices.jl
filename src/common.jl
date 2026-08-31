@@ -469,7 +469,7 @@ function get_series_phase_shift(bs::BranchesSeries, nr::NetworkReductionData)
     total = 0.0
     for (ix, seg) in enumerate(bs)
         α = _segment_phase_shift(seg, nr)
-        if bs.segment_orientations[ix] == :ToFrom
+        if get_segment_orientations(bs)[ix] == :ToFrom
             α = -α
         end
         total += α
