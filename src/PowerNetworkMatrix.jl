@@ -382,10 +382,15 @@ member (name-based lookup is ambiguous).
 """
 function get_branch_multiplier(A::T, branch_name::String) where {T <: PowerNetworkMatrix}
     catalog = get_branch_catalog(A)
-    candidates = get(get_component_name_index(catalog), branch_name, nothing)
-    if isnothing(candidates)
-        error("Branch $branch_name not found in the network reduction data.")
+    index = get_component_name_index(catalog)
+    if !haskey(index, branch_name)
+        error(
+            "Branch $branch_name resolves to no directly-indexed or parallel-group branch. " *
+            "A branch absorbed into a series chain is not resolvable by bare name and must " *
+            "be resolved by component identity.",
+        )
     end
+    candidates = index[branch_name]
     if length(candidates) > 1
         listed = join(
             ("$(component_type) on arc $(arc)" for (component_type, arc, _) in candidates),

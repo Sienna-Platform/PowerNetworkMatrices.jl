@@ -3,6 +3,10 @@ const NAME_TO_ARC = Dict{DataType, DataStructures.SortedDict{String, ARC_ENTRY}}
 const COMPONENT_TO_ENTRY = Dict{DataType, Dict{String, String}}
 const COMPONENT_NAME_INDEX = Dict{String, Vector{Tuple{DataType, Tuple{Int, Int}, Symbol}}}
 
+# Shared empty-map sentinels returned on a miss; callers must never mutate these.
+const EMPTY_NAME_TO_ARC_MAP = DataStructures.SortedDict{String, ARC_ENTRY}()
+const EMPTY_COMPONENT_TO_ENTRY_MAP = Dict{String, String}()
+
 """
     BranchCatalog
 
@@ -37,7 +41,7 @@ Entries for branch type `T`. An absent `T` yields an empty map: a type is legiti
 missing when every branch of it was absorbed by a reduction.
 """
 get_name_to_arc_map(c::BranchCatalog, ::Type{T}) where {T <: PSY.ACTransmission} =
-    get(c.name_to_arc, T, DataStructures.SortedDict{String, ARC_ENTRY}())
+    get(c.name_to_arc, T, EMPTY_NAME_TO_ARC_MAP)
 
 # 3W windings are filed under the parent transformer type, so the wrapper key translates.
 get_name_to_arc_map(c::BranchCatalog, ::Type{ThreeWindingTransformerCircuit}) =
@@ -47,16 +51,17 @@ get_component_to_reduction_name_map(
     c::BranchCatalog,
     ::Type{T},
 ) where {T <: PSY.ACTransmission} =
-    get(c.component_to_entry_name, T, Dict{String, String}())
+    get(c.component_to_entry_name, T, EMPTY_COMPONENT_TO_ENTRY_MAP)
 
 get_component_to_reduction_name_map(
     c::BranchCatalog,
     ::Type{ThreeWindingTransformerCircuit},
 ) = get_component_to_reduction_name_map(c, PSY.ThreeWindingTransformer)
 
-Base.isempty(c::BranchCatalog) =
-    isempty(c.maps_by_type) && isempty(c.name_to_arc) &&
-    isempty(c.component_to_entry_name) && isempty(c.component_name_index)
+function Base.isempty(c::BranchCatalog)
+    return isempty(c.maps_by_type) && isempty(c.name_to_arc) &&
+           isempty(c.component_to_entry_name) && isempty(c.component_name_index)
+end
 
 ##############################################################################
 ############################ Entry matching ##################################

@@ -72,9 +72,6 @@ function _collect_protected_buses(sys::PSY.System)
     return buses
 end
 
-_merge_irreducible(existing, protected::Set{Int}) =
-    sort!(collect(union(Set(existing), protected)))
-
 """
 Branches whose outage or monitoring the MODF must be able to represent: an outaged branch
 becomes an `ArcModification` on its own arc, and a monitored branch is the row a contingency
@@ -137,7 +134,11 @@ function _validate_ward_contingency_coverage(
         isempty(outside) && continue
         sort!(outside)
         shown = join(first(outside, 5), ", ")
-        suffix = length(outside) > 5 ? " (and $(length(outside) - 5) more)" : ""
+        if length(outside) > 5
+            suffix = " (and $(length(outside) - 5) more)"
+        else
+            suffix = ""
+        end
         throw(
             IS.ConflictingInputsError(
                 "WardReduction retains only its study_buses, so $(length(outside)) \
