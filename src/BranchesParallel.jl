@@ -77,18 +77,23 @@ function _is_phase_shifting(bp::AbstractBranchesParallel)
 end
 
 """
-An aggregate's name is its arc, spelled `parallel_<from>_<to>`.
+An aggregate's name is its arc, spelled `<from>_<to>_double_circuit`.
+
+`double_circuit` is kept from the previous scheme: it is what tells a reader of results that
+the row is a total across the parallel members rather than one member's own flow. Only the
+stem changed, from the members' longest common prefix to the arc.
 
 The bus numbers are the group's own `arc_key`, i.e. the endpoints as they stood when the
 group was formed; a later reduction can remap them, so this is an identity for reading, not a
 key to look the group up with. `BranchCatalog._entry_name` derives the *indexed* name from
 the arc the catalog files the entry under, which is the remapped one.
 
-This replaced the longest common prefix of the member names, which was not injective -- `La`
-∥ `Lb` and `Lc` ∥ `Ld` both produced `Ldouble_circuit` -- and which moved whenever membership
-did, so a corridor was renamed by the act of adding a circuit to it.
+The prefix stem was not injective -- `La` ∥ `Lb` and `Lc` ∥ `Ld` both produced
+`Ldouble_circuit` -- and it moved whenever membership did, so a corridor was renamed by the
+act of adding a circuit to it. The arc stem is injective by construction.
 """
-get_name(bp::AbstractBranchesParallel) = "parallel_$(bp.arc_key[1])_$(bp.arc_key[2])"
+get_name(bp::AbstractBranchesParallel) =
+    "$(bp.arc_key[1])_$(bp.arc_key[2])_double_circuit"
 
 """
     compute_parallel_multiplier(parallel_branch_set, branch) -> Float64
