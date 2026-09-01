@@ -153,3 +153,57 @@ end
     @test occursin("Line", err.msg)
     @test occursin("TwoWindingTransformer", err.msg)
 end
+
+@testset "BranchCatalog files one reporting row per series segment" begin
+    # `name_to_arc`'s keys are the rows results are reported under, and the rule is not
+    # "one per arc": a lossless chain carries the same flow in every segment, so each
+    # segment is a row a caller can look up under a real component name. Parallel members
+    # are the exception -- their individual flows are never computed -- so a parallel group
+    # reports once, whether it stands alone on an arc or sits inside a chain.
+    #
+    # Collapsing a chain to a single row passes every other test in this suite while
+    # silently deleting result columns (measured: 691 rows -> 332 on ACTIVSg10k), which is
+    # why the shape is pinned here explicitly.
+    sys = PSB.build_system(PSITestSystems, "case11_network_reductions")
+    ybus = Ybus(
+        sys;
+        network_reductions = PNM.NetworkReduction[
+            PNM.RadialReduction(),
+            PNM.DegreeTwoReduction(; reduce_reactive_power_injectors = false),
+        ],
+    )
+    catalog = PNM.get_branch_catalog(ybus)
+    line_rows = PNM.get_name_to_arc_map(catalog, PSY.Line)
+
+    # The (1,2) chain is three plain segments -> three rows, all on the one arc.
+    for name in ("1-6-i_1", "6-7-i_1", "7-2-i_1")
+        @test haskey(line_rows, name)
+        @test line_rows[name] == (1, 2)
+    end
+
+    # The (2,3) chain is one plain segment plus a parallel pair. The pair is ONE row, under
+    # the group's own name -- neither member name is a row.
+    @test haskey(line_rows, "10-3-i_1")
+    @test line_rows["10-3-i_1"] == (2, 3)
+    @test haskey(line_rows, "parallel_2_10")
+    @test line_rows["parallel_2_10"] == (2, 3)
+    @test !haskey(line_rows, "2-10-i_1")
+    @test !haskey(line_rows, "2-10-i_2")
+
+    # A top-level parallel group behaves the same way.
+    @test haskey(line_rows, "parallel_1_4")
+    @test !haskey(line_rows, "1-4-i_1")
+    @test !haskey(line_rows, "1-4-i_2")
+
+    # Redirects point every component at the row its flow is reported under: itself for a
+    # plain segment, the group for a parallel member.
+    redirects = PNM.get_component_to_reduction_name_map(catalog, PSY.Line)
+    @test redirects["1-6-i_1"] == "1-6-i_1"
+    @test redirects["2-10-i_1"] == "parallel_2_10"
+    @test redirects["2-10-i_2"] == "parallel_2_10"
+    @test redirects["1-4-i_1"] == "parallel_1_4"
+    # Every redirect target must actually be a row, or the lookup dead-ends.
+    for (_, entry_name) in redirects
+        @test haskey(line_rows, entry_name)
+    end
+end

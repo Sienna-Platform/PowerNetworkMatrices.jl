@@ -348,22 +348,32 @@ function _index_series!(
 )
     for (arc, chain) in source
         _entry_matches(chain, predicate) || continue
-        name = _record_arc!(arcs, arc, chain)
-        for T in _get_concrete_types(chain)
-            _store!(
-                get!(() -> Dict{Tuple{Int, Int}, BranchesSeries}(), dest, T),
-                arc,
-                chain,
-            )
-            _bucket_name_to_arc(name_to_arc, T)[name] = arc
-        end
-        # Each leaf redirects to the one entry carrying its flow, filed under the leaf's own
-        # bucket rather than under every type in the chain.
-        for leaf in leaf_components(chain)
-            _bucket_entry_names(component_to_entry, _get_segment_type(leaf))[get_name(
-                leaf,
-            )] =
-                name
+        _record_arc!(arcs, arc, chain)
+        # One row per SEGMENT, not one per chain. The rows of `name_to_arc` are the rows
+        # results are reported under, and a lossless chain carries the same flow in every
+        # segment -- so each segment reports under its own name, and that name is a real
+        # component the caller can look up. A parallel segment is the exception: the flows
+        # of its members are never computed individually, so the group reports once under
+        # its own name, exactly as a top-level parallel group does. The chain's own
+        # `series_<from>_<to>` identity lives in `arcs`; it is not a reporting row.
+        for segment in chain
+            segment_name = get_name(segment)
+            for T in _get_concrete_types(segment)
+                _store!(
+                    get!(() -> Dict{Tuple{Int, Int}, BranchesSeries}(), dest, T),
+                    arc,
+                    chain,
+                )
+                _bucket_name_to_arc(name_to_arc, T)[segment_name] = arc
+            end
+            # A leaf redirects to the row its flow is reported under -- its segment, which
+            # for a plain branch is the leaf itself.
+            for component in leaf_components(segment)
+                _bucket_entry_names(
+                    component_to_entry,
+                    _get_segment_type(component),
+                )[get_name(component)] = segment_name
+            end
         end
     end
     return
