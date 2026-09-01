@@ -160,7 +160,7 @@ name moved whenever membership did.
 """
 _entry_name(::Tuple{Int, Int}, entry::PSY.ACTransmission) = get_name(entry)
 _entry_name(arc::Tuple{Int, Int}, ::AbstractBranchesParallel) =
-    "parallel_$(arc[1])_$(arc[2])"
+    "$(arc[1])_$(arc[2])_double_circuit"
 _entry_name(arc::Tuple{Int, Int}, ::BranchesSeries) = "series_$(arc[1])_$(arc[2])"
 
 """

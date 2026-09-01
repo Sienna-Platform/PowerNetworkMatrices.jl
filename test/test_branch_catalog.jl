@@ -185,13 +185,13 @@ end
     # the group's own name -- neither member name is a row.
     @test haskey(line_rows, "10-3-i_1")
     @test line_rows["10-3-i_1"] == (2, 3)
-    @test haskey(line_rows, "parallel_2_10")
-    @test line_rows["parallel_2_10"] == (2, 3)
+    @test haskey(line_rows, "2_10_double_circuit")
+    @test line_rows["2_10_double_circuit"] == (2, 3)
     @test !haskey(line_rows, "2-10-i_1")
     @test !haskey(line_rows, "2-10-i_2")
 
     # A top-level parallel group behaves the same way.
-    @test haskey(line_rows, "parallel_1_4")
+    @test haskey(line_rows, "1_4_double_circuit")
     @test !haskey(line_rows, "1-4-i_1")
     @test !haskey(line_rows, "1-4-i_2")
 
@@ -199,9 +199,9 @@ end
     # plain segment, the group for a parallel member.
     redirects = PNM.get_component_to_reduction_name_map(catalog, PSY.Line)
     @test redirects["1-6-i_1"] == "1-6-i_1"
-    @test redirects["2-10-i_1"] == "parallel_2_10"
-    @test redirects["2-10-i_2"] == "parallel_2_10"
-    @test redirects["1-4-i_1"] == "parallel_1_4"
+    @test redirects["2-10-i_1"] == "2_10_double_circuit"
+    @test redirects["2-10-i_2"] == "2_10_double_circuit"
+    @test redirects["1-4-i_1"] == "1_4_double_circuit"
     # Every redirect target must actually be a row, or the lookup dead-ends.
     for (_, entry_name) in redirects
         @test haskey(line_rows, entry_name)
