@@ -5,8 +5,12 @@ branch at its leaves.
 `leaves` is the only derived thing worth storing. It is what every type-keyed lookup needs
 and it costs a tree walk to recompute, whereas the *structure* is already reachable by
 iterating `entry`, and the *provenance* is already `entry`'s type -- see
-[`arc_provenance`](@ref). Empty leaves means an arc backed by no component, which today only
-a Ward equivalent can be.
+[`arc_provenance`](@ref).
+
+`leaves` is never empty. `leaf_components` yields the branch itself for anything that is not
+an aggregate, so even a Ward `GenericArcImpedance` -- an arc genuinely backed by no component
+-- appears as its own leaf. Emptiness is therefore not a test for "synthetic"; ask
+[`arc_provenance`](@ref).
 """
 struct ArcEntry
     entry::PSY.ACTransmission
@@ -209,13 +213,17 @@ the arc came to exist. Backs [`get_branch_multiplier`](@ref).
 _branch_multiplier(::DirectArc, ::PSY.ACTransmission, ::AbstractString, ::ARC_ENTRY) = 1.0
 
 # Backed by no component, so nothing shares it.
-_branch_multiplier(::SyntheticArc, ::PSY.ACTransmission, ::AbstractString, ::ARC_ENTRY) =
-    1.0
+_branch_multiplier(
+    ::SyntheticArc,
+    ::PSY.GenericArcImpedance,
+    ::AbstractString,
+    ::ARC_ENTRY,
+) = 1.0
 
 # A member carries its susceptance-fraction share of the group flow.
 function _branch_multiplier(
     ::ParallelArc,
-    group::PSY.ACTransmission,
+    group::AbstractBranchesParallel,
     branch_name::AbstractString,
     arc::ARC_ENTRY,
 )
@@ -233,7 +241,7 @@ end
 # names the limitation instead of failing as a missing key somewhere else.
 _branch_multiplier(
     ::SeriesArc,
-    ::PSY.ACTransmission,
+    ::BranchesSeries,
     branch_name::AbstractString,
     arc::ARC_ENTRY,
 ) = error(
