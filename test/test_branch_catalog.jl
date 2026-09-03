@@ -207,3 +207,62 @@ end
         @test haskey(line_rows, entry_name)
     end
 end
+
+@testset "BranchCatalog reverse indexing defers to the forward filter verdict" begin
+    # `_entry_matches` is not uniform across aggregates: `BranchesParallel` matches on
+    # `any`, `MixedBranchesParallel` on `all`. Forward indexing evaluates the predicate on
+    # the GROUP, reverse indexing on each MEMBER, so under `all` a member can pass while its
+    # group did not. The forward pass owns `arcs`; reverse must take its verdict rather than
+    # reach a different one, or it names an entry that is not a row.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    line = first(PSY.get_components(PSY.Line, sys))
+    xfmr = first(PSY.get_components(PSY.TwoWindingTransformer, sys))
+    arc = PSY.get_arc(line)
+
+    # Force the two onto one arc, which promotes them to a mixed parallel group.
+    nrd = PNM.NetworkReductionData()
+    PNM.add_to_branch_maps!(nrd, arc, line)
+    PNM.add_to_branch_maps!(nrd, arc, xfmr)
+    arc_tuple = PNM.get_arc_tuple(arc, nrd)
+    group = PNM.get_parallel_branch_map(nrd)[arc_tuple]
+    @test group isa PNM.MixedBranchesParallel
+
+    # Unfiltered: the group is a row and both members redirect to it. Without this the
+    # filtered assertions below would pass on an empty catalog.
+    base = PNM.BranchCatalog(nrd)
+    group_name = PNM.get_name(PNM.get_reduction_entry(base, arc_tuple))
+    @test PNM.get_name_to_arc_map(base, PSY.Line)[group_name] == arc_tuple
+    @test PNM.get_component_to_reduction_name_map(base, PSY.Line)[PSY.get_name(line)] ==
+          group_name
+    @test PNM.get_component_to_reduction_name_map(
+        base, PSY.TwoWindingTransformer,
+    )[PSY.get_name(xfmr)] == group_name
+
+    # Filtering out `Line` makes `all` reject the group while the transformer member still
+    # passes. This threw `KeyError: $(arc_tuple)` from the reverse pass.
+    filtered = PNM.BranchCatalog(nrd, (T, c) -> T !== PSY.Line)
+    @test filtered isa PNM.BranchCatalog
+
+    # The group is not a row anywhere...
+    for T in (PSY.Line, PSY.TwoWindingTransformer)
+        @test !haskey(PNM.get_name_to_arc_map(filtered, T), group_name)
+    end
+    # ...so no member may redirect to it, the transformer included even though it matched.
+    @test !haskey(
+        PNM.get_component_to_reduction_name_map(filtered, PSY.TwoWindingTransformer),
+        PSY.get_name(xfmr),
+    )
+    @test !haskey(
+        PNM.get_component_to_reduction_name_map(filtered, PSY.Line),
+        PSY.get_name(line),
+    )
+
+    # The general invariant the above is one instance of: a redirect that names no row is a
+    # dead end, which is what the pre-guard code wrote before it started throwing.
+    for (T, redirects) in PNM.get_component_to_reduction_name_map(filtered)
+        rows = PNM.get_name_to_arc_map(filtered, T)
+        for (_, entry_name) in redirects
+            @test haskey(rows, entry_name)
+        end
+    end
+end

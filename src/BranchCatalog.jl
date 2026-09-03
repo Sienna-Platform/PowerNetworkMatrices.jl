@@ -322,6 +322,12 @@ function _index_reverse!(
 )
     for (member, arc) in source
         _entry_matches(member, predicate) || continue
+        # The forward pass owns `arcs`, and its verdict is the catalog's verdict. Reaching a
+        # different one here is not possible for a group matching on `any` -- acceptance
+        # there is a superset of its members' -- but `MixedBranchesParallel` matches on
+        # `all`, so a member can pass this predicate while its group did not. Redirecting it
+        # would name an entry that is not a row.
+        haskey(arcs, arc) || continue
         T = _get_segment_type(member)
         _store!(get!(() -> Dict{typeof(member), Tuple{Int, Int}}(), dest, T), member, arc)
         # The name comes from the table, not from a second call to `_entry_name`: one
