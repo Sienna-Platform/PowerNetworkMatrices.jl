@@ -89,7 +89,8 @@ function get_reduction(ybus::Ybus, sys::PSY.System, reduction::ZeroImpedanceBran
         for (arc_key, br) in branch_map
             _is_zero_impedance_arc(
                 br, susceptance_threshold, min_x_eps, resistance_tolerance) || continue
-            from_no, to_no = arc_key
+            from_no = get(nr.reverse_bus_search_map, arc_key[1], arc_key[1])
+            to_no = get(nr.reverse_bus_search_map, arc_key[2], arc_key[2])
             from_irred = from_no ∈ user_irreducible
             to_irred = to_no ∈ user_irreducible
             if from_irred && to_irred
