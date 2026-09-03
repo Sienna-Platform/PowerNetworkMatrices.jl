@@ -50,7 +50,7 @@ end
     composite = _composite_arc(nrd)
 
     line_entries = PNM.get_name_to_arc_map(catalog, PSY.Line)
-    arcs = Set(arc for (arc, _) in values(line_entries))
+    arcs = Set(values(line_entries))
 
     # `PSY.Line` is the only type any DeviceModel would ask for, so the composite arc has to
     # be reachable there...
@@ -100,7 +100,7 @@ end
     @test !any(T -> T <: PNM.AbstractReductionAggregate, seen)
 
     # Every line here is 230 kV, so the filter keeps the composite arc.
-    arcs = Set(arc for (arc, _) in values(PNM.get_name_to_arc_map(catalog, PSY.Line)))
+    arcs = Set(values(PNM.get_name_to_arc_map(catalog, PSY.Line)))
     @test _composite_arc(nrd) in arcs
 
     # A filter excluding everything drops the arc. That is a filter decision, not a lost
