@@ -461,6 +461,39 @@ end
     @test 113 ∈ PNM.get_bus_axis(ybus_skip)
 end
 
+@testset "ZeroImpedanceBranchReduction: pinned bus survives a chained merge" begin
+    # Zero-impedance chain 2 -> 3 -> 4 (Line3, Line6). Bus 4 is pinned, so whichever
+    # arc the map iteration reaches first, the merged group must collapse onto bus 4.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    for name in ("Line3", "Line6")
+        line = get_component(Line, sys, name)
+        set_r!(line, 0.0 * PSY.SU)
+        set_x!(line, 0.0 * PSY.SU)
+    end
+    ybus = Ybus(sys; irreducible_buses = Set([4]))
+    nrd = get_network_reduction_data(ybus)
+    @test 4 ∈ PNM.get_bus_axis(ybus)
+    @test 4 ∉ keys(nrd.reverse_bus_search_map)
+    @test get(nrd.reverse_bus_search_map, 2, nothing) == 4
+    @test get(nrd.reverse_bus_search_map, 3, nothing) == 4
+    @test get(nrd.bus_reduction_map, 4, nothing) == Set([2, 3])
+
+    # Both ends of the chain pinned: the collision only appears once bus 3 resolves to
+    # bus 2, so the skip must be decided on the resolved roots, not the raw arc numbers.
+    sys2 = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    for name in ("Line3", "Line6")
+        line = get_component(Line, sys2, name)
+        set_r!(line, 0.0 * PSY.SU)
+        set_x!(line, 0.0 * PSY.SU)
+    end
+    ybus2 = Ybus(sys2; irreducible_buses = Set([2, 4]))
+    nrd2 = get_network_reduction_data(ybus2)
+    @test 2 ∈ PNM.get_bus_axis(ybus2)
+    @test 4 ∈ PNM.get_bus_axis(ybus2)
+    @test 2 ∉ keys(nrd2.reverse_bus_search_map)
+    @test 4 ∉ keys(nrd2.reverse_bus_search_map)
+end
+
 @testset "ZeroImpedanceBranchReduction: custom susceptance_threshold" begin
     # Line3 (bus 2 → 3) gets r=0 and a reactance giving |imag(Y)| ≈ 1e3, below the
     # default 1e4 threshold, so it is NOT merged by default. A custom, lower threshold
