@@ -76,35 +76,24 @@ function _is_phase_shifting(bp::AbstractBranchesParallel)
     return any(_is_phase_shifting, bp.branches)
 end
 
-# PNM's `get_name`, not `PSY.get_name`: a group can contain a `ThreeWindingTransformerCircuit`
-# (windings register through the merge-aware branch-map path), and that wrapper has no `name`
-# field for PSY to read.
-function get_name(bp::AbstractBranchesParallel)
-    member_names = get_name.(bp.branches)
-    base_string = _longest_starting_substring(member_names...)
-    if isempty(base_string)
-        base_string = join(member_names, "_") * "_"
-    end
-    return base_string *= "double_circuit"
-end
+"""
+An aggregate's name is its arc, spelled `<from>_<to>_double_circuit`.
 
-function _longest_starting_substring(branch_names...)
-    first_name = first(branch_names)
-    n_chars = minimum(length.(branch_names))
-    n_branches = length(branch_names)
-    for ix in 1:n_chars
-        for jx in 2:n_branches
-            if branch_names[jx][ix] != first_name[ix]
-                if ix == 1
-                    return ""
-                else
-                    return first_name[1:(ix - 1)]
-                end
-            end
-        end
-    end
-    return first_name[1:n_chars]
-end
+`double_circuit` is kept from the previous scheme: it is what tells a reader of results that
+the row is a total across the parallel members rather than one member's own flow. Only the
+stem changed, from the members' longest common prefix to the arc.
+
+The bus numbers are the group's own `arc_key`, i.e. the endpoints as they stood when the
+group was formed; a later reduction can remap them, so this is an identity for reading, not a
+key to look the group up with. `BranchCatalog._entry_name` derives the *indexed* name from
+the arc the catalog files the entry under, which is the remapped one.
+
+The prefix stem was not injective -- `La` ∥ `Lb` and `Lc` ∥ `Ld` both produced
+`Ldouble_circuit` -- and it moved whenever membership did, so a corridor was renamed by the
+act of adding a circuit to it. The arc stem is injective by construction.
+"""
+get_name(bp::AbstractBranchesParallel) =
+    "$(bp.arc_key[1])_$(bp.arc_key[2])_double_circuit"
 
 """
     compute_parallel_multiplier(parallel_branch_set, branch) -> Float64

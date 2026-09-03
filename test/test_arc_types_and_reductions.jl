@@ -211,8 +211,15 @@ end
     )
     line_entries = PNM.get_name_to_arc_map(filtered, Line)
     @test !isempty(line_entries)
-    for k in keys(line_entries)
-        @test occursin("B", k)
+    # A composite entry is named for its arc, not its members, so the filter's effect is
+    # asserted on what it admitted rather than on how the entry is spelled. `any`, not `all`:
+    # `_entry_matches` indexes a homogeneous parallel group when *any* member qualifies, so a
+    # kept group can legitimately carry a member the predicate rejected. What must never
+    # happen is an entry admitted with no qualifying member at all.
+    nrd = PNM.get_network_reduction_data(ptdf)
+    for (arc, kind) in values(line_entries)
+        entry = getproperty(nrd, kind)[arc]
+        @test any(l -> occursin("B", PNM.get_name(l)), PNM.leaf_components(entry))
     end
     PNM.empty!(PNM.get_network_reduction_data(ptdf))
     @test isempty(PNM.get_network_reduction_data(ptdf))

@@ -30,12 +30,13 @@ Aqua.test_stale_deps(
     PowerNetworkMatrices;
     ignore = [
         :Pardiso,
+        :InfrastructureCoreOpenAPIModels,
+        :InfrastructureTimeSeriesOpenAPIModels,
         :PowerCoreOpenAPIModels,
         :PowerDynamicsOpenAPIModels,
         :PowerInvestmentsOpenAPIModels,
         :PowerOpenAPIModels,
         :PowerOperationsOpenAPIModels,
-        :PowerTimeSeriesOpenAPIModels,
     ],
 )
 Aqua.test_deps_compat(PowerNetworkMatrices)
