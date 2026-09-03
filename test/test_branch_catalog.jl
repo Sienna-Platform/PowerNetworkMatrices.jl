@@ -11,7 +11,7 @@
 
         # Every arc the index exposes must have both endpoints on the reduced bus axis.
         retained = keys(PNM.get_bus_reduction_map(nrd))
-        for (_, _, arc, _) in fp.names
+        for (_, _, arc) in fp.names
             @test arc[1] in retained
             @test arc[2] in retained
         end
@@ -79,11 +79,11 @@ end
     # The group is reachable under the parent transformer type.
     parent = PSY.ThreeWindingTransformer
     arc_map = PNM.get_name_to_arc_map(catalog, parent)
-    @test any(v -> v == (merged_arc, :parallel_branch_map), values(arc_map))
+    @test merged_arc in values(arc_map)
 
     # And through the wrapper-keyed accessor, which redirects to the parent.
     wrapper_map = PNM.get_name_to_arc_map(catalog, PNM.ThreeWindingTransformerCircuit)
-    @test any(v -> v == (merged_arc, :parallel_branch_map), values(wrapper_map))
+    @test merged_arc in values(wrapper_map)
 
     # No bucket anywhere is keyed by the wrapper type.
     maps = PNM.get_all_branch_maps_by_type(catalog)
@@ -152,4 +152,58 @@ end
     @test err isa ErrorException
     @test occursin("Line", err.msg)
     @test occursin("TwoWindingTransformer", err.msg)
+end
+
+@testset "BranchCatalog files one reporting row per series segment" begin
+    # `name_to_arc`'s keys are the rows results are reported under, and the rule is not
+    # "one per arc": a lossless chain carries the same flow in every segment, so each
+    # segment is a row a caller can look up under a real component name. Parallel members
+    # are the exception -- their individual flows are never computed -- so a parallel group
+    # reports once, whether it stands alone on an arc or sits inside a chain.
+    #
+    # Collapsing a chain to a single row passes every other test in this suite while
+    # silently deleting result columns (measured: 691 rows -> 332 on ACTIVSg10k), which is
+    # why the shape is pinned here explicitly.
+    sys = PSB.build_system(PSITestSystems, "case11_network_reductions")
+    ybus = Ybus(
+        sys;
+        network_reductions = PNM.NetworkReduction[
+            PNM.RadialReduction(),
+            PNM.DegreeTwoReduction(; reduce_reactive_power_injectors = false),
+        ],
+    )
+    catalog = PNM.get_branch_catalog(ybus)
+    line_rows = PNM.get_name_to_arc_map(catalog, PSY.Line)
+
+    # The (1,2) chain is three plain segments -> three rows, all on the one arc.
+    for name in ("1-6-i_1", "6-7-i_1", "7-2-i_1")
+        @test haskey(line_rows, name)
+        @test line_rows[name] == (1, 2)
+    end
+
+    # The (2,3) chain is one plain segment plus a parallel pair. The pair is ONE row, under
+    # the group's own name -- neither member name is a row.
+    @test haskey(line_rows, "10-3-i_1")
+    @test line_rows["10-3-i_1"] == (2, 3)
+    @test haskey(line_rows, "2_10_double_circuit")
+    @test line_rows["2_10_double_circuit"] == (2, 3)
+    @test !haskey(line_rows, "2-10-i_1")
+    @test !haskey(line_rows, "2-10-i_2")
+
+    # A top-level parallel group behaves the same way.
+    @test haskey(line_rows, "1_4_double_circuit")
+    @test !haskey(line_rows, "1-4-i_1")
+    @test !haskey(line_rows, "1-4-i_2")
+
+    # Redirects point every component at the row its flow is reported under: itself for a
+    # plain segment, the group for a parallel member.
+    redirects = PNM.get_component_to_reduction_name_map(catalog, PSY.Line)
+    @test redirects["1-6-i_1"] == "1-6-i_1"
+    @test redirects["2-10-i_1"] == "2_10_double_circuit"
+    @test redirects["2-10-i_2"] == "2_10_double_circuit"
+    @test redirects["1-4-i_1"] == "1_4_double_circuit"
+    # Every redirect target must actually be a row, or the lookup dead-ends.
+    for (_, entry_name) in redirects
+        @test haskey(line_rows, entry_name)
+    end
 end

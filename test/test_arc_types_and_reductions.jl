@@ -216,10 +216,11 @@ end
     # `_entry_matches` indexes a homogeneous parallel group when *any* member qualifies, so a
     # kept group can legitimately carry a member the predicate rejected. What must never
     # happen is an entry admitted with no qualifying member at all.
-    nrd = PNM.get_network_reduction_data(ptdf)
-    for (arc, kind) in values(line_entries)
-        entry = getproperty(nrd, kind)[arc]
-        @test any(l -> occursin("B", PNM.get_name(l)), PNM.leaf_components(entry))
+    for arc in values(line_entries)
+        @test any(
+            l -> occursin("B", PNM.get_name(l)),
+            PNM.get_arc_leaves(filtered, arc),
+        )
     end
     PNM.empty!(PNM.get_network_reduction_data(ptdf))
     @test isempty(PNM.get_network_reduction_data(ptdf))

@@ -394,7 +394,7 @@ function get_branch_multiplier(A::T, branch_name::String) where {T <: PowerNetwo
     candidates = index[branch_name]
     if length(candidates) > 1
         listed = join(
-            ("$(component_type) on arc $(arc)" for (component_type, arc, _) in candidates),
+            ("$(component_type) on arc $(arc)" for (component_type, arc) in candidates),
             ", ",
         )
         error(
@@ -403,16 +403,8 @@ function get_branch_multiplier(A::T, branch_name::String) where {T <: PowerNetwo
             "names are unique only per type.",
         )
     end
-    (_, arc_tuple, kind) = only(candidates)
-    kind === :direct_branch_map && return 1.0, arc_tuple
-    # A parallel-group member carries its susceptance-fraction share of the group flow.
-    group = get_parallel_branch_map(get_network_reduction_data(catalog))[arc_tuple]
-    for member in group
-        get_name(member) == branch_name || continue
-        return compute_parallel_multiplier(group, member), arc_tuple
-    end
-    error(
-        "Branch $branch_name is indexed on arc $(arc_tuple) but no member of the group " *
-        "there carries that name.",
-    )
+    (_, arc_tuple) = only(candidates)
+    entry = get_reduction_entry(catalog, arc_tuple)
+    multiplier = _branch_multiplier(arc_provenance(entry), entry, branch_name, arc_tuple)
+    return multiplier, arc_tuple
 end
