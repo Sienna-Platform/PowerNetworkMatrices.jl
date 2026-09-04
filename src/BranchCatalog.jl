@@ -412,11 +412,19 @@ a bare name.
 Built from the component-keyed maps rather than `name_to_arc`, which holds *entry* names: an
 aggregate's entry name is the group's, not any component's. Series-chain members are absent;
 name-based matrix indexing does not resolve them.
+
+Reads the predicate per component, so it inherits the forward/reverse asymmetry
+[`_index_reverse!`](@ref) guards against: a `MixedBranchesParallel` member can match where
+its group did not. It resolves it the same way -- `arcs` is the forward pass's verdict, and
+an arc absent from it has no entry to scale, so the name does not resolve. Without the
+guard `get_branch_multiplier` walks name -> arc -> [`get_reduction_entry`](@ref) and throws
+a bare `KeyError` instead of its own diagnosis.
 """
-function _build_component_name_index(nrd::NetworkReductionData, predicate)
+function _build_component_name_index(nrd::NetworkReductionData, arcs::ARC_TABLE, predicate)
     index = COMPONENT_NAME_INDEX()
     for (arc, entry) in nrd.direct_branch_map
         _entry_matches(entry, predicate) || continue
+        haskey(arcs, arc) || continue
         push!(
             _name_candidates(index, get_name(entry)),
             (typeof(entry), arc),
@@ -424,6 +432,7 @@ function _build_component_name_index(nrd::NetworkReductionData, predicate)
     end
     for (member, arc) in nrd.reverse_parallel_branch_map
         _entry_matches(member, predicate) || continue
+        haskey(arcs, arc) || continue
         push!(
             _name_candidates(index, get_name(member)),
             (typeof(member), arc),
@@ -549,6 +558,6 @@ function BranchCatalog(nrd::NetworkReductionData, predicate; validate::Bool = fa
         maps,
         name_to_arc,
         component_to_entry,
-        _build_component_name_index(nrd, predicate),
+        _build_component_name_index(nrd, arcs, predicate),
     )
 end
