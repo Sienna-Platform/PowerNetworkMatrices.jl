@@ -265,4 +265,24 @@ end
             @test haskey(rows, entry_name)
         end
     end
+
+    # `_build_component_name_index` is a third pass reading the predicate per component, so
+    # it leaks the same asymmetry by its own route: it backs `get_branch_multiplier`, whose
+    # name -> arc -> entry walk ends in `get_reduction_entry`.
+    index = PNM.get_component_name_index(filtered)
+    @test !haskey(index, PSY.get_name(xfmr))
+    @test !haskey(index, PSY.get_name(line))
+    # Every arc the name index offers must have an entry to resolve to.
+    for (_, candidates) in index
+        for (_, candidate_arc) in candidates
+            @test PNM.get_reduction_entry(filtered, candidate_arc) isa PSY.ACTransmission
+        end
+    end
+
+    # Unfiltered, the transformer does resolve -- so the assertions above are the guard
+    # working, not the fixture failing to build a name index at all.
+    base_index = PNM.get_component_name_index(base)
+    @test haskey(base_index, PSY.get_name(xfmr))
+    @test only(base_index[PSY.get_name(xfmr)]) == (PSY.TwoWindingTransformer, arc_tuple)
+    @test PNM.get_reduction_entry(base, arc_tuple) === group
 end
