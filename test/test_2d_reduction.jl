@@ -431,3 +431,58 @@ end
     @test PNM._get_branch_map_entries(direct, parallel, (3, 10)) ==
           [((3, 10), twin, :FromTo), ((10, 3), forward, :ToFrom)]
 end
+
+@testset "series chain with a zero-impedance segment sums reactances" begin
+    # A zero-impedance transformer needs no pinning: ZIR excludes transformer arcs, so the
+    # segment survives inside the chain with x = 0.
+    sys, buses = _mk_bus_system(4)
+    for (f, t) in ((1, 2), (3, 4))
+        arc = Arc(; from = buses[f], to = buses[t])
+        add_component!(sys, arc)
+        _add_test_line!(sys, "L$(f)$(t)", arc, 0.0, 0.1)
+    end
+    zi_arc = Arc(; from = buses[2], to = buses[3])
+    add_component!(sys, zi_arc)
+    add_component!(
+        sys,
+        PSY.TwoWindingTransformer(;
+            name = "ZI_T",
+            circuit = PSY.TransformerCircuit(;
+                arc = zi_arc, tap = 1.0, α = 0.0, available = true,
+                active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
+                base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
+            ),
+            magnetizing_shunt = Complex(0.0, 0.0),
+        ),
+    )
+    chain = PNM.BranchesSeries((1, 4))
+    PNM.add_branch!(chain, PSY.get_component(Line, sys, "L12"), :FromTo)
+    PNM.add_branch!(
+        chain,
+        PSY.get_component(PSY.TwoWindingTransformer, sys, "ZI_T"),
+        :FromTo,
+    )
+    PNM.add_branch!(chain, PSY.get_component(Line, sys, "L34"), :FromTo)
+
+    # The zero-impedance segment contributes exactly zero reactance, so the chain
+    # equivalent is the two lines alone: 1/(0.1 + 0.1).
+    @test PNM._series_reactance(
+        PSY.get_component(PSY.TwoWindingTransformer, sys, "ZI_T"), PSY.SU) == 0.0
+    @test PNM._series_susceptance_raw(chain, PSY.SU) ≈ 1 / 0.2
+    @test isfinite(PNM._series_susceptance_raw(chain, PSY.SU))
+
+    # A chain whose every segment is zero-impedance has no finite equivalent. That is
+    # genuinely degenerate, and Task 7's assertion is what makes it loud; here the raw
+    # layer is still allowed to report it.
+    PSY.set_x!(PSY.get_component(Line, sys, "L12"), 0.0 * PSY.SU)
+    PSY.set_x!(PSY.get_component(Line, sys, "L34"), 0.0 * PSY.SU)
+    all_zero = PNM.BranchesSeries((1, 4))
+    PNM.add_branch!(all_zero, PSY.get_component(Line, sys, "L12"), :FromTo)
+    PNM.add_branch!(
+        all_zero,
+        PSY.get_component(PSY.TwoWindingTransformer, sys, "ZI_T"),
+        :FromTo,
+    )
+    PNM.add_branch!(all_zero, PSY.get_component(Line, sys, "L34"), :FromTo)
+    @test PNM._series_susceptance_raw(all_zero, PSY.SU) == Inf
+end

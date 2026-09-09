@@ -190,13 +190,28 @@ function get_series_susceptance(
     return _series_susceptance_raw(series_chain, units)
 end
 
+# Series segments add impedance, so the chain sums reactances rather than inverting each
+# member's susceptance. A leaf's `tap * x` is read directly, so a zero-impedance segment
+# contributes exactly 0.0 instead of forming a transient `Inf` that the reciprocal sum then
+# has to absorb. This is also marginally more accurate: no reciprocal round-trip.
+_series_reactance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem) =
+    PSY.get_x(b, units)
+_series_reactance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem) =
+    _series_reactance(PSY.get_circuit(t), units)
+_series_reactance(w::ThreeWindingTransformerCircuit, units::IS.AbstractUnitSystem) =
+    _series_reactance(w.circuit, units)
+_series_reactance(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem) =
+    PSY.get_x(c, units) * PSY.get_tap(c)
+# A parallel group has no single reactance, so invert its susceptance sum. An all-zero
+# group gives `Inf` there, and `inv(Inf) = 0.0` is the correct zero contribution.
+_series_reactance(seg::AbstractReductionAggregate, units::IS.AbstractUnitSystem) =
+    inv(_series_susceptance_raw(seg, units))
+
 function _series_susceptance_raw(
     series_chain::BranchesSeries,
     units::IS.AbstractUnitSystem,
 )
-    series_susceptances_sum =
-        sum(inv(_series_susceptance_raw(x, units)) for x in series_chain)
-    return 1 / series_susceptances_sum
+    return 1 / sum(_series_reactance(x, units) for x in series_chain)
 end
 
 """
