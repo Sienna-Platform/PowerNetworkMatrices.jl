@@ -42,6 +42,12 @@ ybus = Ybus(system; make_arc_admittance_matrices=true)
 ybus = Ybus(system; network_reductions=[RadialReduction(), DegreeTwoReduction()])
 ```
 
+# Notes
+- Asymmetry is expected and correct for phase-shifting transformers, whose off-diagonal
+  entries are ``Y[i,j] = -y/t^*`` and ``Y[j,i] = -y/t``. Do not "symmetrize" the matrix.
+- The element type is complex, so the factorization always uses KLU; the real-only
+  backends (`AppleAccelerateLU`, `AppleAccelerateLDL`) do not apply.
+
 # See Also
 - [`PTDF`](@ref): Power Transfer Distribution Factors
 - [`LODF`](@ref): Line Outage Distribution Factors

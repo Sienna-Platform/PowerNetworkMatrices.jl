@@ -55,7 +55,8 @@ cache and skips the recomputation.
 - `woodbury_cache::Dict{NetworkModification, WoodburyFactors}`:
         Precomputed Woodbury factors keyed by modification.
 - `row_caches::Dict{NetworkModification, RowCache}`:
-        One `RowCache` per modification. Mutations are serialized by
+        One `RowCache` per modification, each bounded by `max_cache_size_bytes` and
+        evicting least-recently-used rows. Mutations are serialized by
         `solver_lock`, the same mutex that wraps the libklu solve, so no
         separate cache lock is needed.
 - `subnetwork_axes::Dict{Int, Ax}`:
@@ -268,7 +269,10 @@ auto-applied during `Ybus` construction.
 - `sys::PSY.System`: Power system to build from
 
 # Keyword Arguments
-- `dist_slack::Vector{Float64}`: Distributed slack weights (default: empty)
+- `dist_slack::Vector{Float64}`: Distributed slack weights, one per bus and ordered
+        like the bus axis (default: empty, i.e. a single reference bus). They need not
+        sum to one; they are normalized internally. Note the input type differs from
+        [`PTDF`](@ref)/[`VirtualPTDF`](@ref), which take a `Dict{Int, Float64}`.
 - `linear_solver::String = _default_linear_solver()`: Linear solver for the
         ABA factorization. Options: "KLU", "AppleAccelerate". Defaults to
         "AppleAccelerate" on macOS and "KLU" elsewhere.
@@ -276,7 +280,10 @@ auto-applied during `Ybus` construction.
         A `Float64` applies a fixed absolute cutoff; an [`AutoTolerance`](@ref)
         (the default) applies a relative per-row cutoff so requested columns stay
         sparse on large systems.
-- `max_cache_size::Int`: Max cache size in MiB per contingency (default: `MAX_CACHE_SIZE_MiB`)
+- `max_cache_size::Int`: Maximum row-cache size in MiB per contingency (default
+        `MAX_CACHE_SIZE_MiB`, 100 MiB). Each contingency gets its own `RowCache`, bounded
+        both as a byte budget and as a row count; when either is reached the
+        least-recently-used row is evicted.
 - `network_reductions::Vector{NetworkReduction}`: Network reductions to apply
 - `automatically_register_outages::Bool`: Register all system Outage attributes (default: true)
 """

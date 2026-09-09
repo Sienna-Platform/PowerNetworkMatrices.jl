@@ -211,6 +211,12 @@ calculations, and linear power system studies.
 - Factorization enables efficient solving of linear systems ``\\mathrm{ABA}\\, \\theta = P``
 - Used primarily for DC power flow analysis and power system sensitivity studies
 - Supports various network reduction techniques for computational efficiency
+- Build the factorization with `factorize = true`, or call [`factorize`](@ref) afterwards
+  (it returns a fresh factorized copy; [`is_factorized`](@ref) checks). A stored
+  factorization is reused only by the low-level
+  `LODF(A::IncidenceMatrix, ABA::ABA_Matrix, BA::BA_Matrix)` constructor, which reads
+  `ABA.K` directly. The [`PTDF`](@ref) constructors do not accept an `ABA_Matrix` and
+  factorize internally, so there is no factorization to hand them.
 """
 struct ABA_Matrix{
     Ax <: NTuple{2, Vector},

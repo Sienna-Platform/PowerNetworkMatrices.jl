@@ -6,8 +6,8 @@ CurrentModule = PowerNetworkMatrices
 
 ## Matrix types
 
-Dense, virtual, and structural network matrices, plus the concrete type aliases.
-See [Matrix Overview](network_matrices_overview.md) for the taxonomy and indexing
+Dense, virtual, and structural network matrices. See
+[Matrix Overview](network_matrices_overview.md) for the taxonomy and indexing
 rules.
 
 ```@autodocs
@@ -19,9 +19,6 @@ Filter = t -> t in (
     PTDF, LODF, VirtualPTDF, VirtualLODF, VirtualMODF,
     Ybus, ArcAdmittanceMatrix, BA_Matrix, ABA_Matrix,
     IncidenceMatrix, AdjacencyMatrix,
-    DC_PTDF_Matrix, DC_vPTDF_Matrix, DC_BA_Matrix,
-    DC_ABA_Matrix_Factorized, DC_ABA_Matrix_Unfactorized,
-    AC_Ybus_Matrix, YBUS_ELTYPE,
 )
 ```
 

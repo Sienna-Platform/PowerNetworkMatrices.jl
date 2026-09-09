@@ -54,7 +54,9 @@ JuMP-side work (in callers) parallelizes freely.
         path iterate the nonzeros of a `BA` column instead of scanning the
         full bus axis.
 - `cache::RowCache`:
-        Cache where PTDF rows are stored.
+        Cache where PTDF rows are stored. Rows are evicted least-recently-used
+        once either bound set by `max_cache_size` is reached: the total byte budget,
+        or the implied maximum row count (`max_cache_size / row_size`).
 - `cache_lock::ReentrantLock`:
         Guards `cache` reads/writes for parallel `getindex` callers.
 - `subnetworks::Dict{Int, Set{Int}}`:
@@ -125,8 +127,10 @@ struct with an empty cache.
 
 # Keyword Arguments
 - `dist_slack::Dict{Int, Float64} = Dict{Int, Float64}()`:
-        Dictionary of weights to be used as distributed slack bus.
-        The distributed slack dictionary must have the same number of entries as the number of buses.
+        Bus number to weight, to be used as a distributed slack bus. The weights need not
+        sum to one; they are normalized internally. The empty default uses a single
+        reference bus. Note the input type differs from [`VirtualLODF`](@ref)/
+        [`VirtualMODF`](@ref), which take a `Vector{Float64}` ordered like the bus axis.
 - `linear_solver::String = _default_linear_solver()`:
         Linear solver to use for factorization. Options: "KLU", "AppleAccelerateLU".
         Defaults to "AppleAccelerateLU" on macOS 15.5+ and "KLU" elsewhere.
@@ -135,7 +139,9 @@ struct with an empty cache.
         fixed absolute cutoff; an [`AutoTolerance`](@ref) (the default) applies a
         relative per-row cutoff so requested rows stay sparse on large systems.
 - `max_cache_size::Int`:
-        max cache size in MiB (initialized as `MAX_CACHE_SIZE_MiB`).
+        Maximum row-cache size in MiB (default `MAX_CACHE_SIZE_MiB`, 100 MiB). It bounds
+        the cache both as a byte budget and as a row count (`max_cache_size / row_size`);
+        when either is reached the least-recently-used row is evicted.
 - `persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}()`:
         arcs to be evaluated as soon as the VirtualPTDF is created (initialized as empty vector of tuples).
 - `network_reduction::NetworkReduction`:
@@ -205,8 +211,10 @@ The return is a VirtualPTDF struct with an empty cache.
 
 # Keyword Arguments
 - `dist_slack::Dict{Int, Float64} = Dict{Int, Float64}()`:
-        Dictionary of weights to be used as distributed slack bus.
-        The distributed slack dictionary must have the same number of entries as the number of buses.
+        Bus number to weight, to be used as a distributed slack bus. The weights need not
+        sum to one; they are normalized internally. The empty default uses a single
+        reference bus. Note the input type differs from [`VirtualLODF`](@ref)/
+        [`VirtualMODF`](@ref), which take a `Vector{Float64}` ordered like the bus axis.
 - `linear_solver::String = _default_linear_solver()`:
         Linear solver to use for factorization. Options: "KLU", "AppleAccelerateLU".
         Defaults to "AppleAccelerateLU" on macOS 15.5+ and "KLU" elsewhere.
@@ -215,7 +223,9 @@ The return is a VirtualPTDF struct with an empty cache.
         fixed absolute cutoff; an [`AutoTolerance`](@ref) (the default) applies a
         relative per-row cutoff so requested rows stay sparse on large systems.
 - `max_cache_size::Int`:
-        max cache size in MiB (initialized as `MAX_CACHE_SIZE_MiB`).
+        Maximum row-cache size in MiB (default `MAX_CACHE_SIZE_MiB`, 100 MiB). It bounds
+        the cache both as a byte budget and as a row count (`max_cache_size / row_size`);
+        when either is reached the least-recently-used row is evicted.
 - `persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}()`:
         arcs to be evaluated as soon as the VirtualPTDF is created (initialized as empty vector of tuples).
 """

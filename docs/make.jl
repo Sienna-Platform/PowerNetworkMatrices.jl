@@ -28,7 +28,6 @@ pages = OrderedDict(
     ],
     "Reference" => Any[
         "Matrix Overview and Indexing" => "reference/network_matrices_overview.md",
-        "Matrix Types" => "reference/matrix_types.md",
         "Public API" => "reference/public.md",
         "Internals" => "reference/internals.md",
     ],

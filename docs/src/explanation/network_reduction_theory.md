@@ -14,7 +14,7 @@ is well-defined it helps to see the three matrices that encode the network's
 topology and electrical strength. These are the same building blocks the DC
 sensitivity matrices are assembled from, and what every reduction manipulates
 under the hood. (For constructors and accessors see the
-[matrix type reference](../reference/matrix_types.md); the discussion here is about
+[public API reference](../reference/public.md); the discussion here is about
 *what they mean*.)
 
 ### The incidence matrix: pure topology

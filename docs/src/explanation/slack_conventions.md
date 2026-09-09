@@ -9,8 +9,8 @@ the sensitivities.
 
 For the mechanics of configuring a distributed slack — the `dist_slack` keyword and
 its per-matrix input type (`Dict{Int, Float64}` for [`PTDF`](@ref)/[`VirtualPTDF`](@ref)
-versus `Vector{Float64}` for [`VirtualLODF`](@ref)/[`VirtualMODF`](@ref)) — see the
-[matrix type reference](../reference/matrix_types.md).
+versus `Vector{Float64}` for [`VirtualLODF`](@ref)/[`VirtualMODF`](@ref)) — see each
+constructor's docstring in the [public API reference](../reference/public.md).
 
 ## Why a reference is needed at all
 

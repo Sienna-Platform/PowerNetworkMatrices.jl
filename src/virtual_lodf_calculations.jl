@@ -61,7 +61,9 @@ callers can issue requests concurrently; the libklu work runs one at a time.
         Single-element scratch vector kept as a `Vector{Vector{Float64}}` for
         uniform `with_solver` callback signatures.
 - `cache::RowCache`:
-        Cache where LODF rows are stored.
+        Cache where LODF rows are stored. Rows are evicted least-recently-used
+        once either bound set by `max_cache_size` is reached: the total byte budget,
+        or the implied maximum row count (`max_cache_size / row_size`).
 - `cache_lock::ReentrantLock`:
         Guards `cache` reads/writes for parallel `getindex` callers.
 - `subnetworks::Dict{Int, Set{Int}}`:
@@ -265,13 +267,28 @@ struct with an empty cache.
         PSY system for which the matrix is constructed
 
 # Keyword Arguments
+- `dist_slack::Vector{Float64} = Float64[]`:
+        Weights to be used as a distributed slack bus, one per bus and ordered like the
+        bus axis. They need not sum to one; they are normalized internally. The empty
+        default uses a single reference bus. Note the input type differs from
+        [`PTDF`](@ref)/[`VirtualPTDF`](@ref), which take a `Dict{Int, Float64}`.
 - `linear_solver::String = _default_linear_solver()`: Linear solver for the
-        ABA factorization. Options: "KLU", "AppleAccelerate". Defaults to
-        "AppleAccelerate" on macOS and "KLU" elsewhere.
-- `network_reduction::NetworkReduction`:
-        Structure containing the details of the network reduction applied when computing the matrix
+        ABA factorization. Options: "KLU", "AppleAccelerateLU". Defaults to
+        "AppleAccelerateLU" on macOS 15.5+ and "KLU" elsewhere.
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
+        Tolerance related to sparsification and values to drop. A `Float64` applies a
+        fixed absolute cutoff; an [`AutoTolerance`](@ref) (the default) applies a
+        relative per-row cutoff so requested rows stay sparse on large systems.
+- `max_cache_size::Int`:
+        Maximum row-cache size in MiB (default `MAX_CACHE_SIZE_MiB`, 100 MiB). It bounds
+        the cache both as a byte budget and as a row count (`max_cache_size / row_size`);
+        when either is reached the least-recently-used row is evicted.
+- `persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}()`:
+        arcs to be evaluated as soon as the VirtualLODF is created (initialized as empty vector of tuples).
+- `network_reductions::Vector{NetworkReduction}`:
+        Network reductions applied when computing the matrix
 - `kwargs...`:
-        other keyword arguments used by VirtualPTDF
+        other keyword arguments forwarded to the underlying [`Ybus`](@ref) constructor
 """
 function VirtualLODF(
     sys::PSY.System;

@@ -47,7 +47,8 @@ The storage form is one of three kinds:
 
 Notes on the taxonomy:
 
-  - `Ybus` is complex-valued (`ComplexF64`); all other numeric matrices are
+  - `Ybus` is complex-valued (`YBUS_ELTYPE`, i.e. `ComplexF32`); all other numeric
+    matrices are
     real (`Float64`). `IncidenceMatrix` / `AdjacencyMatrix` store signed `Int8`
     topology.
   - `PTDF` and `LODF` store their data **transposed** internally; `getindex`
@@ -59,9 +60,8 @@ Notes on the taxonomy:
     construction keyword) rather than being independently constructed by typical
     users.
 
-Full constructor signatures, keyword arguments, and concrete type aliases
-(`DC_PTDF_Matrix`, `DC_ABA_Matrix_Factorized`, `AC_Ybus_Matrix`, …) are on the
-[Matrix type reference](matrix_types.md).
+Full constructor signatures and keyword arguments are in the
+[public API reference](public.md).
 
 ## Constructing matrices
 
@@ -300,8 +300,6 @@ share a source.
 
 This overview is the entry point. Detailed reference lives on the sibling pages:
 
-  - [Matrix type reference](matrix_types.md) — constructor signatures, keyword
-    arguments, and concrete type aliases for every matrix type.
   - [How to Diagnose a Disconnected Network](@ref) — testing whether the network is
     connected and enumerating electrical islands.
   - [How to Define and Apply Contingencies](@ref) — `ArcModification`,
