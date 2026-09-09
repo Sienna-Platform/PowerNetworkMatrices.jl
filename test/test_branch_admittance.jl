@@ -584,7 +584,8 @@ end
     add_component!(sys, arc)
     _add_test_line!(sys, "L12", arc, 0.01, 0.1)
     line = PSY.get_component(Line, sys, "L12")
-    @test PNM._series_susceptance_raw(line, PSY.SU) == PNM.get_series_susceptance(line, PSY.SU)
+    @test PNM._series_susceptance_raw(line, PSY.SU) ==
+          PNM.get_series_susceptance(line, PSY.SU)
 
     arc2 = Arc(; from = buses[1], to = buses[3])
     add_component!(sys, arc2)
@@ -606,4 +607,27 @@ end
     PSY.set_x!(line, 0.0 * PSY.SU)
     PSY.set_r!(line, 0.0 * PSY.SU)
     @test PNM._series_susceptance_raw(line, PSY.SU) == Inf
+end
+
+@testset "get_series_susceptance rejects a non-finite result" begin
+    sys, buses = _mk_bus_system(2)
+    arc = Arc(; from = buses[1], to = buses[2])
+    add_component!(sys, arc)
+    _add_test_line!(sys, "ZI", arc, 0.0, 0.0)
+    zi = PSY.get_component(Line, sys, "ZI")
+
+    err = try
+        PNM.get_series_susceptance(zi, PSY.SU)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("ZI", err.msg)
+    @test occursin("r == x == 0", err.msg) || occursin("non-finite", err.msg)
+
+    # The substituting accessor answers where the public one refuses.
+    ybus = Ybus(sys)
+    nr = get_network_reduction_data(ybus)
+    @test get_effective_series_susceptance(zi, nr) ≈ 1 / PNM.ZERO_IMPEDANCE_X_EPSILON
 end

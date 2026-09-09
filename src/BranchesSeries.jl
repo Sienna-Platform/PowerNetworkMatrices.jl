@@ -187,7 +187,9 @@ function get_series_susceptance(
     series_chain::BranchesSeries,
     units::IS.AbstractUnitSystem,
 )
-    return _series_susceptance_raw(series_chain, units)
+    v = _series_susceptance_raw(series_chain, units)
+    isfinite(v) || _throw_non_finite_susceptance(series_chain, v)
+    return v
 end
 
 # Series segments add impedance, so the chain sums reactances rather than inverting each

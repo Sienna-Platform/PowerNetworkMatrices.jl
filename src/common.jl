@@ -445,6 +445,19 @@ _finite_series_susceptance(segment, nr::NetworkReductionData) =
     _finite_series_susceptance(segment, _minimum_retained_impedance(nr))
 
 """
+    get_effective_series_susceptance(segment, nr::NetworkReductionData) -> Float64
+
+Series susceptance of `segment` as the assembled matrices see it: the stored `1/(tap*x)`,
+or the reduction's minimum retained impedance substituted when the branch has `r == x == 0`.
+
+This is the value `Ybus` and `BA_Matrix` are built from, and the one a consumer wants for
+any calculation that must agree with them. `get_series_susceptance` returns the stored
+value instead, and throws rather than returning a non-finite result.
+"""
+get_effective_series_susceptance(segment, nr::NetworkReductionData) =
+    _finite_series_susceptance(segment, nr)
+
+"""
     get_series_phase_shift(bp::AbstractBranchesParallel, nr) -> Float64
 
 Susceptance-weighted equivalent DC phase shift of a parallel group,

@@ -47,6 +47,20 @@ function _three_winding_shunt_split(
     )
 end
 
+# Kept out of line so the error body does not count against the caller's inlining budget.
+@noinline function _throw_non_finite_susceptance(segment, b::Float64)
+    error(
+        "Series susceptance of $(_susceptance_error_label(segment)) is $(b): the branch has r == x == 0. " *
+        "Ybus assembly substitutes the reduction's minimum retained impedance for such a " *
+        "branch, so a consumer that needs the value the matrices use should call " *
+        "`get_effective_series_susceptance(segment, nr)` instead.",
+    )
+end
+
+_susceptance_error_label(segment) = get_name(segment)
+_susceptance_error_label(c::PSY.TransformerCircuit) =
+    "transformer circuit on arc $(PSY.get_arc(c))"
+
 """
     get_series_susceptance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem)
 
@@ -56,9 +70,15 @@ method (below) that additionally divides by the winding tap ratio
 (`PSY.get_tap(PSY.get_circuit(t))`). This is a deliberate asymmetry: only the susceptance
 form is tap-divided; Ybus/PTDF/LODF assembly needs the tap-divided value, while callers that
 need the untapped complex admittance should build it directly from `PSY.get_r`/`PSY.get_x`.
+
+Throws if the branch has `r == x == 0` (susceptance is non-finite). A consumer that needs
+the value the matrices actually use should call `get_effective_series_susceptance` instead.
 """
-get_series_susceptance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem) =
-    _series_susceptance_raw(b, units)
+function get_series_susceptance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem)
+    v = _series_susceptance_raw(b, units)
+    isfinite(v) || _throw_non_finite_susceptance(b, v)
+    return v
+end
 
 """
     get_series_susceptance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem)
@@ -67,9 +87,15 @@ Series susceptance of a `PSY.TwoWindingTransformer`: the generic `ACTransmission
 value (`1/x`) divided by the winding tap ratio `PSY.get_tap(PSY.get_circuit(t))`. A
 fixed-ratio transformer has `tap = 1.0`, so this is a no-op for it and matches the plain
 `ACTransmission` value.
+
+Throws if the branch has `r == x == 0` (susceptance is non-finite). A consumer that needs
+the value the matrices actually use should call `get_effective_series_susceptance` instead.
 """
-get_series_susceptance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem) =
-    _series_susceptance_raw(t, units)
+function get_series_susceptance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem)
+    v = _series_susceptance_raw(t, units)
+    isfinite(v) || _throw_non_finite_susceptance(t, v)
+    return v
+end
 
 """
     get_series_susceptance(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem)
@@ -79,9 +105,15 @@ Tap-divided series susceptance of a transformer circuit: `(1/x)/tap`. The
 both delegate here, since series `x` and `tap` live on the circuit at either arity.
 The wrapper delegates explicitly because it subtypes `PSY.ACTransmission`, not
 `PSY.TransformerCircuit`, and would otherwise reach the tap-free generic method above.
+
+Throws if the branch has `r == x == 0` (susceptance is non-finite). A consumer that needs
+the value the matrices actually use should call `get_effective_series_susceptance` instead.
 """
-get_series_susceptance(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem) =
-    _series_susceptance_raw(c, units)
+function get_series_susceptance(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem)
+    v = _series_susceptance_raw(c, units)
+    isfinite(v) || _throw_non_finite_susceptance(c, v)
+    return v
+end
 
 # The raw layer is the single home for the `1/x` arithmetic. It may return `Inf` for a
 # branch with `r == x == 0`; `get_series_susceptance` rejects that and

@@ -157,7 +157,9 @@ function get_series_susceptance(
     segment::AbstractBranchesParallel,
     units::IS.AbstractUnitSystem,
 )
-    return _series_susceptance_raw(segment, units)
+    v = _series_susceptance_raw(segment, units)
+    isfinite(v) || _throw_non_finite_susceptance(segment, v)
+    return v
 end
 
 _series_susceptance_raw(
