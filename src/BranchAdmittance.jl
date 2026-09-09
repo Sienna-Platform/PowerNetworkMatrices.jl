@@ -58,7 +58,7 @@ form is tap-divided; Ybus/PTDF/LODF assembly needs the tap-divided value, while 
 need the untapped complex admittance should build it directly from `PSY.get_r`/`PSY.get_x`.
 """
 get_series_susceptance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem) =
-    1 / PSY.get_x(b, units)
+    _series_susceptance_raw(b, units)
 
 """
     get_series_susceptance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem)
@@ -69,7 +69,7 @@ fixed-ratio transformer has `tap = 1.0`, so this is a no-op for it and matches t
 `ACTransmission` value.
 """
 get_series_susceptance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem) =
-    get_series_susceptance(PSY.get_circuit(t), units)
+    _series_susceptance_raw(t, units)
 
 """
     get_series_susceptance(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem)
@@ -81,6 +81,16 @@ The wrapper delegates explicitly because it subtypes `PSY.ACTransmission`, not
 `PSY.TransformerCircuit`, and would otherwise reach the tap-free generic method above.
 """
 get_series_susceptance(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem) =
+    _series_susceptance_raw(c, units)
+
+# The raw layer is the single home for the `1/x` arithmetic. It may return `Inf` for a
+# branch with `r == x == 0`; `get_series_susceptance` rejects that and
+# `_finite_series_susceptance` substitutes for it.
+_series_susceptance_raw(b::PSY.ACTransmission, units::IS.AbstractUnitSystem) =
+    1 / PSY.get_x(b, units)
+_series_susceptance_raw(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem) =
+    _series_susceptance_raw(PSY.get_circuit(t), units)
+_series_susceptance_raw(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem) =
     (1 / PSY.get_x(c, units)) / PSY.get_tap(c)
 
 """

@@ -83,7 +83,12 @@ aggregation must sum on a common base.
 get_series_susceptance(
     segment::ThreeWindingTransformerCircuit,
     units::IS.AbstractUnitSystem,
-) = get_series_susceptance(segment.circuit, units)
+) = _series_susceptance_raw(segment, units)
+
+_series_susceptance_raw(
+    segment::ThreeWindingTransformerCircuit,
+    units::IS.AbstractUnitSystem,
+) = _series_susceptance_raw(segment.circuit, units)
 
 function get_series_phase_shift(tw::ThreeWindingTransformerCircuit)
     return get_series_phase_shift(tw.circuit)

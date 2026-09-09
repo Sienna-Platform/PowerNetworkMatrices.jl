@@ -433,10 +433,10 @@ _zero_impedance_susceptance(bp::AbstractBranchesParallel, min_x_eps::Float64) =
 _zero_impedance_susceptance(bs::BranchesSeries, min_x_eps::Float64) =
     1 / sum(inv(_finite_series_susceptance(seg, min_x_eps)) for seg in bs)
 
-# Kept as a guard on `get_series_susceptance` rather than a parallel implementation of it, so
-# every non-degenerate branch keeps the single source of truth.
+# Kept as a guard on the raw layer rather than a parallel implementation of it, so every
+# non-degenerate branch keeps the single source of truth.
 function _finite_series_susceptance(segment, min_x_eps::Float64)
-    b = get_series_susceptance(segment, PSY.SU)
+    b = _series_susceptance_raw(segment, PSY.SU)
     isfinite(b) && return b
     return _zero_impedance_susceptance(segment, min_x_eps)
 end

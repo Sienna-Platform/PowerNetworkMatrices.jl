@@ -187,10 +187,16 @@ function get_series_susceptance(
     series_chain::BranchesSeries,
     units::IS.AbstractUnitSystem,
 )
+    return _series_susceptance_raw(series_chain, units)
+end
+
+function _series_susceptance_raw(
+    series_chain::BranchesSeries,
+    units::IS.AbstractUnitSystem,
+)
     series_susceptances_sum =
-        sum(inv(get_series_susceptance(x, units)) for x in series_chain)
-    total_susceptance = 1 / series_susceptances_sum
-    return total_susceptance
+        sum(inv(_series_susceptance_raw(x, units)) for x in series_chain)
+    return 1 / series_susceptances_sum
 end
 
 """

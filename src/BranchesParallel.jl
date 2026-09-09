@@ -157,8 +157,13 @@ function get_series_susceptance(
     segment::AbstractBranchesParallel,
     units::IS.AbstractUnitSystem,
 )
-    return sum(get_series_susceptance(branch, units) for branch in segment.branches)
+    return _series_susceptance_raw(segment, units)
 end
+
+_series_susceptance_raw(
+    segment::AbstractBranchesParallel,
+    units::IS.AbstractUnitSystem,
+) = sum(_series_susceptance_raw(branch, units) for branch in segment.branches)
 
 # `get_equivalent_physical_branch_parameters` / `populate_equivalent_ybus!` for parallel and
 # series groups live in common.jl, which is included after NetworkReductionData so `nr` can be

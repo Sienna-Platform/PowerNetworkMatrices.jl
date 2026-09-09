@@ -574,3 +574,36 @@ end
     @test PNM.get_equivalent_g_from(eb) == g_psy.from
     @test PNM.get_equivalent_g_to(eb) == g_psy.to
 end
+
+@testset "raw susceptance layer matches the public accessor on finite data" begin
+    # The raw layer is a pure extraction: every branch kind must agree with the public
+    # accessor wherever the stored reactance is non-zero. The line sits on arc (1, 2) and
+    # the transformer on arc (1, 3), so the two branches don't share an `Arc`.
+    sys, buses = _mk_bus_system(3)
+    arc = Arc(; from = buses[1], to = buses[2])
+    add_component!(sys, arc)
+    _add_test_line!(sys, "L12", arc, 0.01, 0.1)
+    line = PSY.get_component(Line, sys, "L12")
+    @test PNM._series_susceptance_raw(line, PSY.SU) == PNM.get_series_susceptance(line, PSY.SU)
+
+    arc2 = Arc(; from = buses[1], to = buses[3])
+    add_component!(sys, arc2)
+    t = PSY.TwoWindingTransformer(;
+        name = "T13",
+        circuit = PSY.TransformerCircuit(;
+            arc = arc2, tap = 1.05, α = 0.0, available = true,
+            active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
+            base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.2,
+        ),
+        magnetizing_shunt = Complex(0.0, 0.0),
+    )
+    add_component!(sys, t)
+    @test PNM._series_susceptance_raw(t, PSY.SU) == PNM.get_series_susceptance(t, PSY.SU)
+    @test PNM._series_susceptance_raw(PSY.get_circuit(t), PSY.SU) ==
+          PNM.get_series_susceptance(PSY.get_circuit(t), PSY.SU)
+
+    # The raw layer is the only one allowed to answer for a degenerate branch.
+    PSY.set_x!(line, 0.0 * PSY.SU)
+    PSY.set_r!(line, 0.0 * PSY.SU)
+    @test PNM._series_susceptance_raw(line, PSY.SU) == Inf
+end
