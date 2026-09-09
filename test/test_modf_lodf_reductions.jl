@@ -580,3 +580,17 @@ end
         @test isapprox(modf_row, ptdf[m, :]; atol = 1e-6)
     end
 end
+
+@testset "virtual factor member weights are finite for a zero-impedance member" begin
+    sys = _mk_zi_parallel_sys([(0.0, 0.0), (0.0, 0.1)])
+    ybus = Ybus(sys; irreducible_buses = [2, 3])
+    nr = get_network_reduction_data(ybus)
+    ba = BA_Matrix(ybus)
+    arc_ax = PNM.get_arc_axis(nr)
+    weights = PNM._extract_branch_susceptances_by_arc(ba.data, arc_ax, nr)
+    ix = findfirst(==((2, 3)), arc_ax)
+    @test all(isfinite, weights[ix])
+    @test length(weights[ix]) == 2
+    # The zero-impedance member takes the substituted weight, the line its own.
+    @test sort(weights[ix]) ≈ sort([10.0, 1 / PNM.ZERO_IMPEDANCE_X_EPSILON])
+end
