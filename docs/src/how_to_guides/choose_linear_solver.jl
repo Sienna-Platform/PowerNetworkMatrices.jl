@@ -27,13 +27,16 @@
 # hardware), `KLU` everywhere else. KLU and Apple Accelerate are always-present
 # submodules — only MKL Pardiso is an optional extension.
 
-# The examples below use a small test system loaded with `PowerSystemCaseBuilder`:
+# The examples below use a small test system loaded with
+# [`PowerSystemCaseBuilder.build_system`](@extref):
 
 using PowerNetworkMatrices
-import PowerNetworkMatrices as PNM
-import PowerSystemCaseBuilder as PSB
+import PowerSystemCaseBuilder
 
-sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
+sys = PowerSystemCaseBuilder.build_system(
+    PowerSystemCaseBuilder.PSITestSystems,
+    "c_sys5",
+);
 
 # ## Choosing the Right Solver
 
@@ -47,7 +50,7 @@ sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
 # Use [`PTDF`](@ref) with the KLU solver (the default off Apple hardware):
 
 ptdf_matrix = PTDF(sys)  # platform default
-# or explicitly:
+## or explicitly:
 ptdf_matrix = PTDF(sys; linear_solver = "KLU");
 
 # ### Use Apple Accelerate When:
@@ -55,7 +58,8 @@ ptdf_matrix = PTDF(sys; linear_solver = "KLU");
 #   - Running on Apple-silicon macOS 15.5 or newer
 #   - You want the platform-tuned sparse LU (it is the default there)
 #
-# Select it explicitly with:
+# Select it explicitly with the line below. It is shown rather than executed because
+# this manual is built on Linux, where the backend is unavailable:
 
 # ```julia
 # ptdf_matrix = PTDF(sys; linear_solver = "AppleAccelerateLU");
@@ -67,7 +71,7 @@ ptdf_matrix = PTDF(sys; linear_solver = "KLU");
 #   - You're debugging or validating results
 #   - Matrix operations are simple and small-scale
 #
-# Specify the Dense solver explicitly:
+# Pass it to [`PTDF`](@ref) the same way:
 
 ptdf_matrix = PTDF(sys; linear_solver = "Dense");
 
@@ -79,7 +83,8 @@ ptdf_matrix = PTDF(sys; linear_solver = "Dense");
 #   - Working with very large systems (> 1000 buses)
 #
 # MKLPardiso lives in a weak-dependency package extension, so first add and
-# import `Pardiso.jl` to load it, then request the solver:
+# import `Pardiso.jl` to load it, then request the solver. `Pardiso.jl` is not a
+# dependency of this manual, so these two lines are shown rather than executed:
 
 # ```julia
 # using Pardiso   # loads the MKLPardisoExt extension
@@ -114,20 +119,20 @@ ptdf_matrix = PTDF(sys; linear_solver = "Dense");
 # `AppleAccelerateLU` silently factorizes a singular matrix and returns garbage,
 # whereas KLU raises. Prefer `"KLU"` whenever the `ABA` matrix may be singular — for
 # example a full outage that isolates a bus, such as a 3-winding transformer's
-# zero-injection star bus:
+# zero-injection star bus. Build the [`PTDF`](@ref) with KLU in that case:
 
-# ```julia
-# ptdf = PTDF(sys; linear_solver = "KLU")   # safe when singularity is possible
-# ```
+ptdf_safe = PTDF(sys; linear_solver = "KLU");   # safe when singularity is possible
 
 # ### Persisting a preferred backend
 
 # The active sparse backend can be pinned across Julia sessions with `Preferences.jl`
 # via the (non-exported) helpers in `src/linalg_settings.jl` —
-# `PNM.set_linalg_backend_preference` / `PNM.get_linalg_backend_preference`,
-# `PNM.set_linalg_backend_check` / `PNM.get_linalg_backend_check`, and
-# `PNM.check_linalg_backend` (reports the active BLAS/LAPACK library and whether the
-# requested backend is loaded).
+# `PowerNetworkMatrices.set_linalg_backend_preference` /
+# `PowerNetworkMatrices.get_linalg_backend_preference`,
+# `PowerNetworkMatrices.set_linalg_backend_check` /
+# `PowerNetworkMatrices.get_linalg_backend_check`, and
+# `PowerNetworkMatrices.check_linalg_backend` (reports the active BLAS/LAPACK library
+# and whether the requested backend is loaded).
 
 # ## Troubleshooting
 

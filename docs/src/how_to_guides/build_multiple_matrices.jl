@@ -7,9 +7,14 @@
 # feed them to the constructors that accept pre-built matrices.
 
 using PowerNetworkMatrices
-import PowerSystemCaseBuilder as PSB
+import PowerSystemCaseBuilder
 
-sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
+# Load an example test system with [`PowerSystemCaseBuilder.build_system`](@extref):
+
+sys = PowerSystemCaseBuilder.build_system(
+    PowerSystemCaseBuilder.PSITestSystems,
+    "c_sys5",
+);
 
 # ## Build the shared intermediates once
 
@@ -18,8 +23,8 @@ sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
 # > `Ybus` → `IncidenceMatrix`, `BA_Matrix` →
 # > `ABA_Matrix` / `PTDF`, and `PTDF` → `LODF`.
 #
-# The [`Ybus`](@ref) is the expensive shared root. Build it — and the incidence and
-# BA matrices derived from it — exactly once:
+# The [`Ybus`](@ref) is the expensive shared root. Build it — and the
+# [`IncidenceMatrix`](@ref) and [`BA_Matrix`](@ref) derived from it — exactly once:
 
 ybus = Ybus(sys)
 A = IncidenceMatrix(ybus)
@@ -38,14 +43,20 @@ ptdf = PTDF(A, BA)
 lodf = LODF(A, ptdf)
 
 # Alternatively, the factorized [`ABA_Matrix`](@ref) route builds [`LODF`](@ref)
-# from the same `A` and `BA`. All three inputs must share the same network
-# reduction — which they do here, because they all descend from one `ybus`:
+# from the same `A` and `BA`. The `factorize` keyword is what pre-factorizes it;
+# [`is_factorized`](@ref) reports the result. All three inputs must share the same
+# network reduction — which they do here, because they all descend from one `ybus`:
 
 aba = ABA_Matrix(ybus; factorize = true)
+is_factorized(aba)
+
+# That factorized [`ABA_Matrix`](@ref), the incidence matrix, and the BA matrix are all
+# [`LODF`](@ref) needs:
+
 lodf_via_aba = LODF(A, aba, BA)
 
-# Virtual matrices likewise accept a pre-built [`Ybus`](@ref), so the lazy forms
-# reuse the same root:
+# Virtual matrices likewise accept a pre-built [`Ybus`](@ref), so [`VirtualPTDF`](@ref)
+# and its siblings reuse the same root:
 
 vptdf = VirtualPTDF(ybus)
 

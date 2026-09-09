@@ -69,17 +69,22 @@ Every matrix type is a constructor that takes the
 [`System`](@extref PowerSystems.System) and returns the matrix object. The call is
 identical across types — only the name changes:
 
-```julia
+````@example overview
 using PowerNetworkMatrices
-import PowerSystemCaseBuilder as PSB
+import PowerSystems
+import PowerSystemCaseBuilder
 
-sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+sys = PowerSystemCaseBuilder.build_system(
+    PowerSystemCaseBuilder.PSITestSystems,
+    "c_sys5",
+)
 
 ptdf = PTDF(sys)
 lodf = LODF(sys)
 ybus = Ybus(sys)
 aba = ABA_Matrix(sys)
-```
+nothing # hide
+````
 
 The shared build-time keywords — `network_reductions`, `tol`, `linear_solver`,
 `dist_slack` — work on every constructor that accepts them; each has its own how-to.
@@ -114,22 +119,23 @@ identifier to an integer position through the per-dimension `lookup` dictionary
 
 The accepted element types for `row` and `column`, and how each resolves:
 
-| Index value                            | Resolves via                                                                                                                          | Supported                      |
-|:-------------------------------------- |:------------------------------------------------------------------------------------------------------------------------------------- |:------------------------------ |
-| `Int` (bus number)                     | direct `lookup[i]`                                                                                                                    | ✅                              |
-| arc tuple `(from, to)::Tuple{Int,Int}` | direct `lookup[i]`                                                                                                                    | ✅                              |
-| `PSY.ACBus`                            | `lookup_index` specialization → `Base.to_index(bus) = get_number(bus)`                                                                | ✅                              |
-| `PSY.Arc`                              | `lookup_index` specialization → `Base.to_index(arc) = get_arc_tuple(arc)`                                                             | ✅                              |
-| branch-name `String`                   | dedicated `getindex` on `PTDF` / `LODF` / `VirtualPTDF` (maps name → arc via reduction data, applies parallel/aggregation multiplier) | ✅ (PTDF/LODF/VirtualPTDF only) |
-| `Colon` (`:`)                          | returns the whole row/column                                                                                                          | ✅                              |
-| `PowerNetworkMatrixKey`                | `A[k]` splats `k.I` back into `A[k.I...]`                                                                                             | ✅                              |
-| raw `Int` position pair                | dense positional fast path (`A.data[…]`)                                                                                              | ✅                              |
-| `PSY.ACBranch`                         | —                                                                                                                                     | ❌ raises `KeyError`            |
+| Index value                                              | Resolves via                                                                                                                          | Supported                      |
+|:-------------------------------------------------------- |:------------------------------------------------------------------------------------------------------------------------------------- |:------------------------------ |
+| `Int` (bus number)                                       | direct `lookup[i]`                                                                                                                    | ✅                              |
+| arc tuple `(from, to)::Tuple{Int,Int}`                   | direct `lookup[i]`                                                                                                                    | ✅                              |
+| [`PowerSystems.ACBus`](@extref PowerSystems.ACBus)       | `lookup_index` specialization → `Base.to_index(bus) = get_number(bus)`                                                                | ✅                              |
+| [`PowerSystems.Arc`](@extref PowerSystems.Arc)           | `lookup_index` specialization → `Base.to_index(arc) = get_arc_tuple(arc)`                                                             | ✅                              |
+| branch-name `String`                                     | dedicated `getindex` on `PTDF` / `LODF` / `VirtualPTDF` (maps name → arc via reduction data, applies parallel/aggregation multiplier) | ✅ (PTDF/LODF/VirtualPTDF only) |
+| `Colon` (`:`)                                            | returns the whole row/column                                                                                                          | ✅                              |
+| `PowerNetworkMatrixKey`                                  | `A[k]` splats `k.I` back into `A[k.I...]`                                                                                             | ✅                              |
+| raw `Int` position pair                                  | dense positional fast path (`A.data[…]`)                                                                                              | ✅                              |
+| [`PowerSystems.ACBranch`](@extref PowerSystems.ACBranch) | —                                                                                                                                     | ❌ raises `KeyError`            |
 
 !!! warning "Branch objects are not directly indexable"
     
     A [`ACBranch`](@extref PowerSystems.ACBranch) component **cannot** be passed as
-    an index — doing so raises a `KeyError`. Although `Base.to_index(::PSY.ACBranch)`
+    an index — doing so raises a `KeyError`. Although
+    `Base.to_index(::PowerSystems.ACBranch)`
     is defined (returning the branch's arc tuple), the matrix `getindex` path routes
     only [`ACBus`](@extref PowerSystems.ACBus) and [`Arc`](@extref PowerSystems.Arc)
     through `Base.to_index`; branch components are not converted. Index a branch by
@@ -144,67 +150,70 @@ compatibility but is slower and less direct than arc-tuple indexing.
 
 ### Examples
 
-```julia
-using PowerNetworkMatrices
-import PowerSystems as PSY
-import PowerSystemCaseBuilder as PSB
-
-sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
-ptdf = PTDF(sys)
-
+````@example overview
 # By bus number and arc tuple (canonical):
 ptdf[(2, 3), 1]
+````
 
-# By PSY component objects:
-bus1 = first(b for b in PSY.get_components(PSY.ACBus, sys) if PSY.get_number(b) == 1)
-branch = first(PSY.get_components(PSY.ACBranch, sys))
-ptdf[PSY.get_arc(branch), bus1]        # PSY.Arc row, PSY.ACBus column
+````@example overview
+# By PowerSystems component objects: an Arc row and an ACBus column
+bus1 = first(
+    b for b in PowerSystems.get_components(PowerSystems.ACBus, sys) if
+    PowerSystems.get_number(b) == 1
+)
+branch = first(PowerSystems.get_components(PowerSystems.ACBranch, sys))
+ptdf[PowerSystems.get_arc(branch), bus1]
+````
 
+````@example overview
 # By branch name (PTDF/LODF/VirtualPTDF only):
-ptdf[PSY.get_name(branch), 1]
+ptdf[PowerSystems.get_name(branch), 1]
 
 # NOT allowed — raises KeyError:
-# ptdf[branch, 1]                      # a PSY.ACBranch object
+# ptdf[branch, 1]                      # a PowerSystems.ACBranch object
+````
 
+````@example overview
 # Whole row / column with a Colon:
 ptdf[:, 1]                             # column for bus 1
-```
+````
 
-The `Ybus` accepts bus numbers or `PSY.ACBus` objects on both dimensions:
+The [`Ybus`](@ref) accepts bus numbers or
+[`ACBus`](@extref PowerSystems.ACBus) objects on both dimensions:
 
-```julia
-ybus = Ybus(sys)
-ybus[3, 3]
-ybus[PSY.get_number(bus1), PSY.get_number(bus1)]
-```
+````@example overview
+ybus[3, 3], ybus[PowerSystems.get_number(bus1), PowerSystems.get_number(bus1)]
+````
 
 !!! note "Reduced arcs are not indexable"
     
     When network reductions (e.g. `RadialReduction`, `DegreeTwoReduction`) are
     applied, eliminated branches are absent from the matrix. Indexing with an arc
     tuple that was reduced away raises an error. Inspect the surviving
-    identifiers with `PNM.get_axes(A)` (see
+    identifiers with [`get_axes`](@ref) (see
     [Accessors: axes, lookups, and data](@ref)).
 
 ## Accessors: axes, lookups, and data
 
 The functions below read structural and numeric data from any matrix — the backing
 array, axes, lookup dictionaries, reference buses, reduction data, and system
-provenance. Exported accessors are documented in full on the
-[Full public API](public.md); the internal helpers are reached through the module
-prefix (commonly aliased `PNM.`) and are documented here.
+provenance. All of them are exported and documented in full on the
+[Full public API](public.md), with one deliberate exception noted below.
 
-  - **Exported:** [`get_ptdf_data`](@ref), [`get_lodf_data`](@ref),
-    [`get_partial_lodf_row`](@ref), [`get_network_reduction_data`](@ref),
-    [`get_system_uuid`](@ref).
-  - **Internal (call via `PNM.`):** `get_data`, `get_axes`, `get_lookup`,
-    `get_bus_axis`, `get_arc_axis`, `get_bus_lookup`, `get_arc_lookup`,
-    `get_ref_bus`, `get_ref_bus_position`.
+  - **Exported:** [`get_axes`](@ref), [`get_lookup`](@ref), [`get_bus_axis`](@ref),
+    [`get_arc_axis`](@ref), [`get_bus_lookup`](@ref), [`get_arc_lookup`](@ref),
+    [`get_ref_bus`](@ref), [`get_ref_bus_position`](@ref), [`get_ptdf_data`](@ref),
+    [`get_lodf_data`](@ref), [`get_partial_lodf_row`](@ref),
+    [`get_network_reduction_data`](@ref), [`get_system_uuid`](@ref).
+  - **Not exported:** `get_data`. `PowerSystems.get_data` already claims that name, so
+    exporting it would make a bare `get_data` call ambiguous for anyone who has both
+    packages in scope. Reach it as `PowerNetworkMatrices.get_data`.
 
 ### Data extraction
 
-  - **`PNM.get_data(mat)`** — the raw backing array (`mat.data`) exactly as stored:
-    a complex [`SparseMatrixCSC`](@extref Julia SparseArrays.SparseMatrixCSC) for
+  - **`PowerNetworkMatrices.get_data(mat)`** — the raw backing array (`mat.data`)
+    exactly as stored: a complex
+    [`SparseMatrixCSC`](@extref Julia SparseArrays.SparseMatrixCSC) for
     [`Ybus`](@ref), the internally **transposed** dense matrix for
     [`PTDF`](@ref)/[`LODF`](@ref).
   - **[`get_ptdf_data`](@ref)** / **[`get_lodf_data`](@ref)** — the matrix in
@@ -216,17 +225,21 @@ prefix (commonly aliased `PNM.`) and are documented here.
     entry point for partial outages that a plain [`VirtualLODF`](@ref) row (which
     assumes a full outage) does not cover.
 
-```julia
-import PowerNetworkMatrices as PNM
+````@example overview
+get_axes(ptdf)                        # (bus-number vector, arc-tuple vector)
+````
 
-PNM.get_axes(ptdf)     # (bus-number vector, arc-tuple vector)
-PNM.get_lookup(ptdf)   # (bus lookup Dict, arc lookup Dict)
-PNM.get_data(ybus)     # raw SparseMatrixCSC
-```
+````@example overview
+get_lookup(ptdf)                      # (bus lookup Dict, arc lookup Dict)
+````
+
+````@example overview
+PowerNetworkMatrices.get_data(ybus)   # raw SparseMatrixCSC
+````
 
 ### Axes and lookups
 
-`PNM.get_axes(mat)` returns `mat.axes` and `PNM.get_lookup(mat)` returns
+[`get_axes`](@ref) returns `mat.axes` and [`get_lookup`](@ref) returns
 `mat.lookup`, each a 2-tuple ordered `(dimension 1, dimension 2)`. The axis vector
 lists identifiers (bus numbers as `Int`, arcs as `Tuple{Int,Int}`) in position
 order; the matching lookup maps each identifier back to its integer position in
@@ -234,10 +247,10 @@ order; the matching lookup maps each identifier back to its integer position in
 after a reduction, where some arcs/buses are no longer present. Defined for every
 matrix type.
 
-The dimension-specific accessors `PNM.get_bus_axis` / `get_arc_axis` /
-`get_bus_lookup` / `get_arc_lookup` select the correct dimension without the caller
-knowing which index (1 or 2) is the bus or arc dimension for a given matrix type.
-They are defined only for the dimensions a matrix actually has:
+The dimension-specific accessors [`get_bus_axis`](@ref) / [`get_arc_axis`](@ref) /
+[`get_bus_lookup`](@ref) / [`get_arc_lookup`](@ref) select the correct dimension
+without the caller knowing which index (1 or 2) is the bus or arc dimension for a
+given matrix type. They are defined only for the dimensions a matrix actually has:
 
 | Matrix                | `get_bus_axis`    | `get_arc_axis`    |
 |:--------------------- |:-----------------:|:-----------------:|
@@ -255,8 +268,8 @@ They are defined only for the dimensions a matrix actually has:
 
 ### Reference buses
 
-`PNM.get_ref_bus(mat)` returns the sorted reference (slack) bus numbers — one per
-electrical island — and `PNM.get_ref_bus_position(mat)` their integer positions in
+[`get_ref_bus`](@ref) returns the sorted reference (slack) bus numbers — one per
+electrical island — and [`get_ref_bus_position`](@ref) their integer positions in
 the bus dimension. Together they identify the slack bus(es) held fixed when the
 matrix was built, which matters for interpreting [`PTDF`](@ref) columns and for
 reduction/contingency math. Defined for the distribution-factor, incidence,

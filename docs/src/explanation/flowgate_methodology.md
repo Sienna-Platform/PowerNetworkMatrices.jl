@@ -113,20 +113,46 @@ without additional derivation.
 [`ContingencySpec`](@ref) or a [`Outage`](@extref PowerSystems.Outage) that resolves
 to one). A [`NetworkModification`](@ref) can be built in several ways:
 
-```julia
-using PowerSystems
-using PowerNetworkMatrices
+The examples below run on a small test system whose branches all carry an outage
+attribute:
 
+````@example flowgate
+using PowerNetworkMatrices
+import PowerSystems
+import PowerSystemCaseBuilder
+
+sys = PowerSystemCaseBuilder.build_system(
+    PowerSystemCaseBuilder.PSITestSystems,
+    "c_sys5",
+)
+for branch in PowerSystems.get_components(PowerSystems.ACTransmission, sys)
+    PowerSystems.add_supplemental_attribute!(
+        sys,
+        branch,
+        PowerSystems.FixedForcedOutage(; outage_status = 1.0),
+    )
+end
+vmodf = VirtualMODF(sys)
+nothing # hide
+````
+
+Branch `"1"` of this system spans buses `1` and `2`, so the three routes below all
+describe the same outage and compare equal:
+
+````@example flowgate
 # Outage of a single arc identified by a (from_bus, to_bus) tuple
 mod_arc = NetworkModification(vmodf, (1, 2))
 
 # Outage of a specific branch component
-branch = get_component(Line, sys, "Line-1-2")
+branch = PowerSystems.get_component(PowerSystems.ACTransmission, sys, "1")
 mod_branch = NetworkModification(vmodf, branch)
 
 # Contingency resolved from a PowerSystems Outage supplemental attribute
+outage = first(PowerSystems.get_supplemental_attributes(PowerSystems.Outage, branch))
 mod_outage = NetworkModification(vmodf, sys, outage)
-```
+
+mod_arc == mod_branch == mod_outage
+````
 
 When a [`VirtualMODF`](@ref) is constructed from a
 [`System`](@extref PowerSystems.System), all
@@ -140,20 +166,24 @@ with [`get_registered_contingencies`](@ref) and queried directly by
 The post-contingency PTDF row for a monitored arc is obtained by indexing the
 `VirtualMODF`:
 
-```julia
-# Build a VirtualMODF (auto-registers outage attributes in the system)
-vmodf = VirtualMODF(sys)
-
+````@example flowgate
 # Post-contingency row for monitored arc (1, 4) under a NetworkModification
 row = vmodf[(1, 4), mod_arc]
+````
 
-# Same query keyed by a registered ContingencySpec
-ctg = first(values(get_registered_contingencies(vmodf)))
-row = vmodf[(1, 4), ctg]
+````@example flowgate
+# Same query keyed by the registered ContingencySpec for that modification
+ctg = first(
+    spec for spec in values(get_registered_contingencies(vmodf)) if
+    spec.modification == mod_arc
+)
+vmodf[(1, 4), ctg] == row
+````
 
-# Same query keyed by a PSY.Outage attribute
-row = vmodf[(1, 4), outage]
-```
+````@example flowgate
+# Same query keyed by the PowerSystems.Outage attribute
+vmodf[(1, 4), outage] == row
+````
 
 Monitored arcs can be passed as either an arc tuple `(from_bus, to_bus)` or
 an integer index.
@@ -162,10 +192,11 @@ Each returned row is a `Vector{Float64}` of length equal to the number of
 buses in the (possibly reduced) network. The distribution factor for a
 source/sink path is obtained by subtracting two of its entries:
 
-```julia
+````@example flowgate
+source_bus, sink_bus = 1, 5
 bus_lookup = get_bus_lookup(vmodf)
 df = row[bus_lookup[source_bus]] - row[bus_lookup[sink_bus]]
-```
+````
 
 ## Caching and sparsification
 
@@ -204,7 +235,7 @@ contingency registrations, so subsequent queries will simply recompute. Use
 | `VirtualLODF`         | Single-element line outage distribution factors (N-1)                           |
 | `VirtualMODF`         | Post-contingency PTDF rows via Woodbury; supports N-1 and multi-element outages |
 | `NetworkModification` | Contingency specification; keys the Woodbury and row caches in `VirtualMODF`    |
-| `ContingencySpec`     | Pairs a `PSY.Outage` UUID with its resolved `NetworkModification`               |
+| `ContingencySpec`     | Pairs a `PowerSystems.Outage` UUID with its resolved `NetworkModification`      |
 
 ## Limitations
 

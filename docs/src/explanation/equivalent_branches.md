@@ -30,7 +30,8 @@ by the internal `ThreeWindingTransformerWinding`.
 
 The equivalent electrical parameters are not chosen; they are *derived* from the
 requirement that the reduced branch present the same terminal behavior as the
-group it replaces. PNM does this by building the group's equivalent admittance
+group it replaces. `PowerNetworkMatrices` does this by building the group's
+equivalent admittance
 (`populate_equivalent_ybus!`) and reading the physical parameters back off it
 (`get_equivalent_physical_branch_parameters`, `src/common.jl`), yielding an
 `EquivalentBranch` with series `r`/`x`, shunt `g`/`b` at each end, tap,
@@ -52,7 +53,8 @@ Kirchhoff's laws.[^circuits] The equivalent is exact for the linear (DC) model.
 A **rating** is not an electrical quantity the way impedance is. It is a limit
 imposed by the study, and "the limit of the group" is a genuinely ambiguous
 question whose answer depends on what the study is protecting against. That is
-why PNM exposes several rating strategies for a parallel group rather than one
+why `PowerNetworkMatrices` exposes several rating strategies for a parallel group
+rather than one
 (`src/BranchesParallel.jl`):
 
   - **[`get_sum_of_max_rating`](@ref) — nominal capacity.** `Σ Sᵢ`, treating every
@@ -104,8 +106,9 @@ the underlying branches.
 ## Why this separation matters
 
 The clean split — **impedance is derived, rating is chosen** — is the key idea.
-Impedance aggregation has a unique physical answer and PNM computes it once.
-Rating aggregation encodes an operator's risk posture, so PNM refuses to pick for
+Impedance aggregation has a unique physical answer and `PowerNetworkMatrices`
+computes it once. Rating aggregation encodes an operator's risk posture, so
+`PowerNetworkMatrices` refuses to pick for
 you and instead names the policies (`sum_of_max`, `single_element_contingency`,
 `impedance_averaged`) so a study selects the one matching its purpose: raw
 capacity, N-1 security, or realistic DC loading.

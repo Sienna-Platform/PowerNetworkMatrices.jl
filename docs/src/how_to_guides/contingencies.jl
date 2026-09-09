@@ -17,30 +17,32 @@
 #   - A power system model
 
 using PowerNetworkMatrices
-import PowerNetworkMatrices as PNM
-import PowerSystems as PSY
-import PowerSystemCaseBuilder as PSB
+import PowerSystems
+import PowerSystemCaseBuilder
 
-sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
+sys = PowerSystemCaseBuilder.build_system(
+    PowerSystemCaseBuilder.PSITestSystems,
+    "c_sys5",
+);
 
 # ## Attach Outages to the System
 
-# Contingencies are defined as [`PSY.Outage`](@extref PowerSystems.Outage) supplemental attributes on the
-# components they trip. When a contingency only needs to *exist*, use a
-# [`PSY.FixedForcedOutage`](@extref PowerSystems.FixedForcedOutage) with `outage_status = 1.0` (outaged) and attach it to
-# each branch:
+# Contingencies are defined as [`PowerSystems.Outage`](@extref PowerSystems.Outage)
+# supplemental attributes on the components they trip. When a contingency only needs to
+# *exist*, use a
+# [`PowerSystems.FixedForcedOutage`](@extref PowerSystems.FixedForcedOutage) with
+# `outage_status = 1.0` (outaged) and attach it to each branch:
 
-for branch in PSY.get_components(PSY.ACTransmission, sys)
-    outage = PSY.FixedForcedOutage(; outage_status = 1.0)
-    PSY.add_supplemental_attribute!(sys, branch, outage)
+for branch in PowerSystems.get_components(PowerSystems.ACTransmission, sys)
+    outage = PowerSystems.FixedForcedOutage(; outage_status = 1.0)
+    PowerSystems.add_supplemental_attribute!(sys, branch, outage)
 end
 
 # ## Build the VirtualMODF
 
-# Registration is **automatic**: the constructor scans the system for [`PSY.Outage`](@extref PowerSystems.Outage)
-# attributes and resolves each into a [`ContingencySpec`](@ref). There is no
-# public `register_contingency` — construct the matrix from a system that already
-# carries its outages.
+# Registration is **automatic**: the [`VirtualMODF`](@ref) constructor scans the system
+# for [`PowerSystems.Outage`](@extref PowerSystems.Outage) attributes and resolves each
+# into a [`ContingencySpec`](@ref).
 
 vmodf = VirtualMODF(sys)
 
@@ -56,13 +58,13 @@ contingencies = get_registered_contingencies(vmodf)
 # post-contingency PTDF row for that arc — one sensitivity per bus.
 
 # Pick a monitored arc and outage a *different* arc — monitoring an element that
-# the contingency itself outages is undefined and raises. Here the spec is built
-# straight from an arc with the convenience [`NetworkModification`](@ref)
-# constructor:
+# the contingency itself outages is undefined and raises. [`get_arc_axis`](@ref) lists
+# the arcs available to pick from, and the convenience [`NetworkModification`](@ref)
+# constructor builds the spec straight from one of them:
 
-arcs = PNM.get_arc_axis(vmodf);
-monitored_arc = arcs[1];
-ctg = NetworkModification(vmodf, arcs[2]);
+arcs = get_arc_axis(vmodf)
+monitored_arc = arcs[1]
+ctg = NetworkModification(vmodf, arcs[2])
 
 # The returned row carries one post-contingency sensitivity per bus:
 
@@ -70,20 +72,31 @@ row = vmodf[monitored_arc, ctg]
 
 # The second index accepts three equivalent forms — the
 # [`NetworkModification`](@ref) used above, a [`ContingencySpec`](@ref) from the
-# registered set, or the original [`PSY.Outage`](@extref PowerSystems.Outage) (by
-# its registered UUID). All resolve to the same [`NetworkModification`](@ref) and
+# registered set, or the original [`PowerSystems.Outage`](@extref PowerSystems.Outage)
+# (by its registered UUID). All resolve to the same [`NetworkModification`](@ref) and
 # share the cached Woodbury factors, so repeated queries for one contingency across
-# different monitored arcs reuse work:
+# different monitored arcs reuse work.
 
-# ```julia
-# spec = first(values(contingencies))       # a registered ContingencySpec
-# vmodf[monitored_arc, spec]
-# vmodf[monitored_arc, spec.modification]   # its NetworkModification
-#
-# branch = first(PSY.get_components(PSY.ACTransmission, sys))
-# outage = first(PSY.get_supplemental_attributes(branch))
-# vmodf[monitored_arc, outage]              # the PSY.Outage, by UUID
-# ```
+# A [`ContingencySpec`](@ref) pairs a [`NetworkModification`](@ref) with the UUID of the
+# outage it came from, so the registered spec matching `ctg` is the one whose
+# `modification` field compares equal to it:
+
+spec = first(s for s in values(contingencies) if s.modification == ctg)
+vmodf[monitored_arc, spec] == vmodf[monitored_arc, spec.modification] == row
+
+# Indexing by the [`PowerSystems.Outage`](@extref PowerSystems.Outage) attribute itself
+# gives the same row again. Fetch the outage from the branch that `ctg` trips:
+
+outaged_branch = first(
+    branch for branch in PowerSystems.get_components(PowerSystems.ACTransmission, sys)
+    if PowerSystems.get_number(PowerSystems.get_from(PowerSystems.get_arc(branch))) ==
+    arcs[2][1] &&
+    PowerSystems.get_number(PowerSystems.get_to(PowerSystems.get_arc(branch))) ==
+    arcs[2][2]
+)
+outage =
+    first(PowerSystems.get_supplemental_attributes(PowerSystems.Outage, outaged_branch))
+vmodf[monitored_arc, outage] == row
 
 # ## The modification type model
 
@@ -96,7 +109,7 @@ row = vmodf[monitored_arc, ctg]
 # | [`ArcModification`](@ref)     | A susceptance change on one aggregated arc, plus optional Ybus Pi-model deltas | One arc              |
 # | [`ShuntModification`](@ref)   | A diagonal admittance change on one bus                                | One bus                    |
 # | [`NetworkModification`](@ref) | A canonical, [`System`](@extref PowerSystems.System)-independent bundle of arc and shunt changes plus islanding status | Whole modification |
-# | [`ContingencySpec`](@ref)     | A [`NetworkModification`](@ref) tagged with the source [`PSY.Outage`](@extref PowerSystems.Outage) UUID | One registered contingency |
+# | [`ContingencySpec`](@ref)     | A [`NetworkModification`](@ref) tagged with the source [`PowerSystems.Outage`](@extref PowerSystems.Outage) UUID | One registered contingency |
 #
 # [`NetworkModification`](@ref) is the canonical representation: once built it holds no
 # reference to the source [`System`](@extref PowerSystems.System) and serves as the
@@ -116,34 +129,44 @@ row = vmodf[monitored_arc, ctg]
 # assemble the low-level building blocks instead. An [`ArcModification`](@ref) is a
 # susceptance change on one arc (`delta_b` negative for an outage); a
 # [`ShuntModification`](@ref) is an admittance change on one bus. Both are indexed
-# by their **integer** position in the matrix:
+# by their **integer** position in the matrix, which [`get_arc_lookup`](@ref) and
+# [`get_bus_lookup`](@ref) provide:
 
-# ```julia
-# arc_index = PNM.get_arc_lookup(vmodf)[(1, 4)]
-# arc_mod = ArcModification(arc_index, -5.0)   # Δb removes the arc's susceptance
-#
-# bus_index = PNM.get_bus_lookup(vmodf)[3]
-# shunt_mod = ShuntModification(bus_index, ComplexF32(-0.1im))
-#
-# # Combine arc and shunt changes into one modification (label, arcs, shunts, islanding)
-# custom = NetworkModification("arc_and_shunt", [arc_mod], [shunt_mod], false)
-# vmodf[monitored_arc, custom]
-# ```
+arc_index = get_arc_lookup(vmodf)[(1, 4)]
+arc_mod = ArcModification(arc_index, -5.0)   # a partial Δb on a direct arc
+
+# A [`ShuntModification`](@ref) is built the same way, from the bus position that
+# [`get_bus_lookup`](@ref) returns:
+
+bus_index = get_bus_lookup(vmodf)[3]
+shunt_mod = ShuntModification(bus_index, ComplexF32(-0.1im))
+
+# Combining the two gives one [`NetworkModification`](@ref) — the constructor takes a
+# label, the arc changes, the shunt changes, and whether the modification islands the
+# network:
+
+custom = NetworkModification("arc_and_shunt", [arc_mod], [shunt_mod], false)
+vmodf[monitored_arc, custom]
 
 # Prefer the convenience constructors over hand-built [`ArcModification`](@ref)
 # values: they compute physically consistent `delta_b` and Pi-model deltas from the
-# network data, which is otherwise your responsibility to get right.
+# network data, which is otherwise your responsibility to get right. Compare the `-5.0`
+# above with the `delta_b` that [`NetworkModification`](@ref) derives for a full outage
+# of the same arc:
+
+only(NetworkModification(vmodf, (1, 4)).arc_modifications).delta_b
 
 # ## One-Shot Post-Modification Rows from a VirtualPTDF
 
 # If you already hold a [`VirtualPTDF`](@ref) and want a single post-modification
 # row without registering contingencies, use
 # [`get_post_modification_ptdf_row`](@ref). It applies a [`NetworkModification`](@ref)
-# through the same Woodbury correction:
+# through the same Woodbury correction, on an arc taken from
+# [`get_arc_axis`](@ref):
 
 vptdf = VirtualPTDF(sys)
-varcs = PNM.get_arc_axis(vptdf);
-mod = NetworkModification(vptdf, varcs[2]);
+varcs = get_arc_axis(vptdf)
+mod = NetworkModification(vptdf, varcs[2])
 row_oneshot = get_post_modification_ptdf_row(vptdf, varcs[1], mod)
 
 # Indexing is the equivalent form — it returns the same row:
@@ -161,10 +184,17 @@ isapprox(vptdf[varcs[1], mod], row_oneshot)
 # monitored-component buses are auto-protected from reduction. Declare monitored
 # branches on the outage so their buses are kept:
 
-# ```julia
-# monitored_line = PSY.get_component(PSY.ACTransmission, sys, "2")
-# PSY.set_monitored_components!(outage, [monitored_line])
-# ```
+monitored_line = PowerSystems.get_component(PowerSystems.ACTransmission, sys, "2")
+PowerSystems.set_monitored_components!(outage, [monitored_line])
+
+# The reduced [`VirtualMODF`](@ref) then keeps every arc the registered contingencies
+# need. Reductions are passed as a vector of [`NetworkReduction`](@ref) specs, and
+# [`get_arc_axis`](@ref) reports what survived. `c_sys5` has no radial buses to remove,
+# so here [`RadialReduction`](@ref) leaves the arc axis untouched; on a network that
+# does reduce, the protected arcs are the ones guaranteed to survive:
+
+vmodf_reduced = VirtualMODF(sys; network_reductions = NetworkReduction[RadialReduction()])
+get_arc_axis(vmodf_reduced)
 
 # Querying a monitored arc that was reduced away raises a clear error rather than
 # silently returning the base row.

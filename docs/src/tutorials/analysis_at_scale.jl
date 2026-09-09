@@ -1,48 +1,68 @@
 # # Analysis at Scale
 
+# A dense [`PTDF`](@ref) or [`LODF`](@ref) is an `O(N²)` array of `Float64`, which on a real interconnection is tens of gigabytes, and a screen reads each row exactly once. This tutorial makes use of **virtual** matrices that compute rows on demand to answer the following question:
 # > Across every single-line outage, which contingencies drive a surviving line closest to — or past — its limit?
-#
-# A dense [`PTDF`](@ref) or [`LODF`](@ref) is an `O(N²)` array of `Float64`, which on a real interconnection is tens of gigabytes, and a screen reads each row exactly once. This tutorial makes use of **virtual** matrices that compute rows on demand.
 #
 # !!! note
 #     We use a small network (73 buses) for demonstration purposes.
 
 using PowerNetworkMatrices
-import PowerNetworkMatrices as PNM
-import PowerSystems as PSY
-import PowerSystemCaseBuilder as PSB
+import PowerSystems
+import PowerSystemCaseBuilder
 using LinearAlgebra: dot
 using DataFrames
 
-sys = PSB.build_system(PSB.PSISystems, "RTS_GMLC_DA_sys");
+# Load an example test system with [`PowerSystemCaseBuilder.build_system`](@extref):
+
+sys = PowerSystemCaseBuilder.build_system(
+    PowerSystemCaseBuilder.PSISystems,
+    "RTS_GMLC_DA_sys",
+);
 
 # ## Step 1 — Set up the study: base-case flows and limits
 
 # A post-contingency flow requires the flow each line carries at present and the limit it must stay under.
 
-# **Base-case flows.** Under the DC approximation a line's flow is its [`PTDF`](@ref) row dotted with the vector of net bus injections, that is, generation minus load. We build the injection vector from the system, accumulating per bus because a bus can host several generators and loads, ordered to match the matrix's bus axis.
+# **Base-case flows.** Under the DC approximation a line's flow is its [`PTDF`](@ref) row dotted with the vector of net bus injections, that is, generation minus load. [`VirtualPTDF`](@ref) supplies those rows one at a time instead of materializing the whole matrix.
 
 vptdf = VirtualPTDF(sys)
-bus_lookup = PNM.get_bus_lookup(vptdf)
+
+# The injection vector has to line up with the matrix's bus dimension, so [`get_bus_lookup`](@ref) is what maps a bus number to its position in that vector:
+
+bus_lookup = get_bus_lookup(vptdf)
+
+# We build the injection vector from the system, accumulating per bus because a bus can host several generators and loads, ordered to match the matrix's bus axis.
 
 injection = zeros(Float64, length(bus_lookup))
-for gen in PSY.get_components(
-    d -> !isa(d, Union{PSY.ElectricLoad, PSY.SynchronousCondenser}),
-    PSY.StaticInjection, sys)
-    PSY.get_available(gen) || continue
-    injection[bus_lookup[PSY.get_number(PSY.get_bus(gen))]] += PSY.get_active_power(gen)
+for gen in PowerSystems.get_components(
+    d -> !isa(
+        d,
+        Union{PowerSystems.ElectricLoad, PowerSystems.SynchronousCondenser},
+    ),
+    PowerSystems.StaticInjection,
+    sys,
+)
+    PowerSystems.get_available(gen) || continue
+    bus_number = PowerSystems.get_number(PowerSystems.get_bus(gen))
+    injection[bus_lookup[bus_number]] += PowerSystems.get_active_power(gen)
 end
-for load in PSY.get_components(d -> !isa(d, PSY.FixedAdmittance), PSY.ElectricLoad, sys)
-    PSY.get_available(load) || continue
-    injection[bus_lookup[PSY.get_number(PSY.get_bus(load))]] -= PSY.get_active_power(load)
+for load in PowerSystems.get_components(
+    d -> !isa(d, PowerSystems.FixedAdmittance),
+    PowerSystems.ElectricLoad,
+    sys,
+)
+    PowerSystems.get_available(load) || continue
+    bus_number = PowerSystems.get_number(PowerSystems.get_bus(load))
+    injection[bus_lookup[bus_number]] -= PowerSystems.get_active_power(load)
 end
+injection
 
 # The system defaults to its per-unit *system base*, so these injections and the ratings read below are already on the same `100`-MVA base and are directly comparable. The injections do not need to sum to zero because the reference bus balances the difference.
 
-# The base flow on every line follows. Each `vptdf[arc, :]` computes that line's [`PTDF`](@ref) row on first access and caches it, so one pass touches each row once.
+# The base flow on every line follows. [`get_arc_axis`](@ref) enumerates the arcs to sweep, and each `vptdf[arc, :]` computes that line's [`PTDF`](@ref) row on first access and caches it, so one pass touches each row once.
 
-arcs = vptdf.axes[1]
-base_flow = Dict(arc => dot(vptdf[arc, :], injection) for arc in arcs);
+arcs = get_arc_axis(vptdf)
+base_flow = Dict(arc => dot(vptdf[arc, :], injection) for arc in arcs)
 
 # !!! note
 #     Building *every* base flow this way touches the whole [`PTDF`](@ref), one row at a
@@ -53,10 +73,13 @@ base_flow = Dict(arc => dot(vptdf[arc, :], injection) for arc in arcs);
 # **Line limits.** Each branch's rating is read and keyed by arc. Parallel branches share an arc, so their ratings are summed into the combined corridor limit.
 
 line_rating = Dict{Tuple{Int, Int}, Float64}()
-for branch in PSY.get_components(PSY.ACTransmission, sys)
-    arc = PSY.get_arc(branch)
-    key = (PSY.get_number(PSY.get_from(arc)), PSY.get_number(PSY.get_to(arc)))
-    line_rating[key] = get(line_rating, key, 0.0) + PSY.get_rating(branch)
+for branch in PowerSystems.get_components(PowerSystems.ACTransmission, sys)
+    arc = PowerSystems.get_arc(branch)
+    key = (
+        PowerSystems.get_number(PowerSystems.get_from(arc)),
+        PowerSystems.get_number(PowerSystems.get_to(arc)),
+    )
+    line_rating[key] = get(line_rating, key, 0.0) + PowerSystems.get_rating(branch)
 end
 
 # ## Step 2 — Screen every contingency on a VirtualLODF
@@ -67,10 +90,10 @@ end
 
 vlodf = VirtualLODF(sys; max_cache_size = 100)
 
-# A **row**, meaning one monitored line's factors against every outage, is the unit the cache stores, so the sweep proceeds row by row: compute each monitored line's row once, then score it against every outage. For each outage we keep the single worst-loaded survivor.
+# A **row**, meaning one monitored line's factors against every outage, is the unit the cache stores, so the sweep proceeds row by row: compute each monitored line's row once, then score it against every outage. Both dimensions of a [`LODF`](@ref) are arcs, so [`get_arc_axis`](@ref) lists the lines to sweep and [`get_arc_lookup`](@ref) turns an outaged arc into its position within a row. For each outage we keep the single worst-loaded survivor.
 
-lines = vlodf.axes[1]
-outage_col = vlodf.lookup[2]
+lines = get_arc_axis(vlodf)
+outage_col = get_arc_lookup(vlodf)
 
 worst = Dict{Tuple{Int, Int}, @NamedTuple{line::Tuple{Int, Int}, loading::Float64}}()
 for monitored in lines
@@ -104,9 +127,9 @@ count(>(1.0), screen.loading)
 
 # The worst contingency drives a line to roughly `1.3×` its limit. The top pair is reciprocal — tripping `(107, 108)` overloads `(107, 203)` and vice versa — because they form a tightly coupled corridor in which each inherits essentially the entire flow of the other. The numbers are identical to those of a dense [`LODF`](@ref); the difference is that no dense matrix was ever stored.
 
-# The sweep visited every row, so all of them are now cached.
+# The sweep visited every row, so all of them are now cached. For a virtual matrix, [`get_lodf_data`](@ref) returns exactly the rows the cache is holding, keyed by row index:
 
-length(vlodf.cache)
+length(get_lodf_data(vlodf))
 
 # On RTS-GMLC that is approximately 108 short rows, a negligible memory footprint, which is why nothing was evicted. At realistic scale the situation is the opposite: the rows do not all fit, and `max_cache_size` is a hard ceiling. Once the cache is full the **least-recently-used** row is dropped. A full screen still completes, trading a bounded memory footprint for the recomputation of an evicted row should the screen return to it. That trade is what allows an N-1 screen to run on a grid whose dense [`LODF`](@ref) would not fit.
 
@@ -114,7 +137,7 @@ length(vlodf.cache)
 
 # This screen is not run once. It reruns at every operating point, but the [`LODF`](@ref) is a property of the **topology** rather than the dispatch: the factors do not change from hour to hour, only the base flows they multiply. A study that reruns the screen therefore wants its rows to remain resident rather than be recomputed on each pass.
 
-# In practice a defined set of facilities is monitored every cycle, here the inter-area tie corridors. Declaring them up front as `persistent_arcs` holds those rows in the cache and makes them **exempt from eviction**, so no amount of churn from the rest of a screen can force them to be re-solved.
+# In practice a defined set of facilities is monitored every cycle, here the inter-area tie corridors. Declaring them up front as the [`VirtualLODF`](@ref) constructor's `persistent_arcs` holds those rows in the cache and makes them **exempt from eviction**, so no amount of churn from the rest of a screen can force them to be re-solved.
 
 tie_lines = [(107, 203), (113, 215), (123, 217)]
 vlodf_watch = VirtualLODF(sys; persistent_arcs = tie_lines, max_cache_size = 100)

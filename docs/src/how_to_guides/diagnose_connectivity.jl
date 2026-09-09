@@ -7,10 +7,15 @@
 # exactly what a fragmented result looks like — and how to get back.
 
 using PowerNetworkMatrices
-import PowerSystems as PSY
-import PowerSystemCaseBuilder as PSB
+import PowerSystems
+import PowerSystemCaseBuilder
 
-sys = PSB.build_system(PSB.PSITestSystems, "c_sys5");
+# Load an example test system with [`PowerSystemCaseBuilder.build_system`](@extref):
+
+sys = PowerSystemCaseBuilder.build_system(
+    PowerSystemCaseBuilder.PSITestSystems,
+    "c_sys5",
+);
 
 # ## Step 1 — Confirm a healthy network is connected
 
@@ -25,8 +30,9 @@ validate_connectivity(sys)
 
 find_subnetworks(sys)
 
-# Both functions also accept an already-built [`AdjacencyMatrix`](@ref) or
-# [`Ybus`](@ref), so a matrix you already have on hand is reused instead of rebuilt:
+# [`validate_connectivity`](@ref) and [`find_subnetworks`](@ref) also accept an
+# already-built [`AdjacencyMatrix`](@ref) or [`Ybus`](@ref), so a matrix you already
+# have on hand is reused instead of rebuilt:
 
 adj = AdjacencyMatrix(sys)
 validate_connectivity(adj)
@@ -35,25 +41,27 @@ validate_connectivity(adj)
 
 # To see a fragmented result on a real system, let's isolate one bus. A bus goes silent
 # when every branch touching it is out of service, so we find bus `5`'s incident
-# branches and mark them unavailable — `Ybus` (and therefore the connectivity check)
+# branches and mark them unavailable with
+# `PowerSystems.set_available!` — [`Ybus`](@ref) (and therefore the connectivity check)
 # only includes available branches:
 
 isolated_bus = 5
 incident = [
-    br for br in PSY.get_components(PSY.ACBranch, sys) if
-    PSY.get_number(PSY.get_from(PSY.get_arc(br))) == isolated_bus ||
-    PSY.get_number(PSY.get_to(PSY.get_arc(br))) == isolated_bus
+    br for br in PowerSystems.get_components(PowerSystems.ACBranch, sys) if
+    PowerSystems.get_number(PowerSystems.get_from(PowerSystems.get_arc(br))) ==
+    isolated_bus ||
+    PowerSystems.get_number(PowerSystems.get_to(PowerSystems.get_arc(br))) == isolated_bus
 ]
 
 for br in incident
-    PSY.set_available!(br, false)
+    PowerSystems.set_available!(br, false)
 end
 
-# The network is now split. `validate_connectivity` reports it:
+# The network is now split. [`validate_connectivity`](@ref) reports it:
 
 validate_connectivity(sys)
 
-# ...and `find_subnetworks` returns **two** entries — the main island, and bus `5`
+# ...and [`find_subnetworks`](@ref) returns **two** entries — the main island, and bus `5`
 # stranded on its own:
 
 find_subnetworks(sys)
@@ -66,15 +74,16 @@ find_subnetworks(sys)
 # ## Step 3 — Reconnect and recover
 
 # Restoring the branches we took out puts the network back together — bus `5` rejoins
-# the main island and connectivity is whole again:
+# the main island and [`validate_connectivity`](@ref) is `true` again:
 
 for br in incident
-    PSY.set_available!(br, true)
+    PowerSystems.set_available!(br, true)
 end
 
 validate_connectivity(sys)
 
-# ...and the decomposition is back to a single island, identical to where we started:
+# ...and [`find_subnetworks`](@ref) is back to a single island, identical to where we
+# started:
 
 find_subnetworks(sys)
 
@@ -91,7 +100,8 @@ find_subnetworks(sys)
 # not correctness. Prefer the default union-find; it avoids the deep recursion that
 # `depth_first_search` can hit on very large networks. The `subnetwork_algorithm`
 # keyword also threads through the matrix constructors, so islands are detected the same
-# way at build time as by an explicit [`find_subnetworks`](@ref) call:
+# way at build time as by an explicit [`find_subnetworks`](@ref) call — here an
+# [`ABA_Matrix`](@ref) built with [`depth_first_search`](@ref):
 
 ABA_Matrix(sys; subnetwork_algorithm = depth_first_search);
 

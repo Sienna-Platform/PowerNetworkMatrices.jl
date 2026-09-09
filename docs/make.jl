@@ -24,7 +24,7 @@ pages = OrderedDict(
         "Choose a Linear Solver" => "how_to_guides/generated_choose_linear_solver.md",
         "Reproduce Industry DFAX Values" => "how_to_guides/generated_reproduce_dfax_values.md",
         "Define and Apply Contingencies" => "how_to_guides/generated_contingencies.md",
-        "Diagnose Network Connectivity" => "how_to_guides/generated_diagnose_connectivity.md",
+        "Diagnose a Disconnected Network" => "how_to_guides/generated_diagnose_connectivity.md",
     ],
     "Reference" => Any[
         "Matrix Overview and Indexing" => "reference/network_matrices_overview.md",

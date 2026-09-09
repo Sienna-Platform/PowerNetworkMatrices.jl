@@ -111,9 +111,31 @@ Filter = t -> t in (
 )
 ```
 
+## Axes, lookups, and reference buses
+
+Read a matrix's structure: the identifier vectors for each dimension, the
+dictionaries mapping those identifiers to integer positions, and the reference
+(slack) buses held fixed when the matrix was built. See
+[Accessors: axes, lookups, and data](@ref) for which dimension each selects per
+matrix type.
+
+```@autodocs
+Modules = [PowerNetworkMatrices]
+Public = true
+Private = false
+Order = [:type, :constant, :function, :macro]
+Filter = t -> t in (
+    get_axes, get_lookup,
+    get_bus_axis, get_arc_axis, get_bus_lookup, get_arc_lookup,
+    get_ref_bus, get_ref_bus_position,
+)
+```
+
 ## Data accessors
 
-Extract the underlying numeric data from computed matrices.
+Extract the underlying numeric data from computed matrices. The raw backing array is
+reached as `PowerNetworkMatrices.get_data`, which is deliberately not exported because
+`PowerSystems.get_data` claims the same name.
 
 ```@autodocs
 Modules = [PowerNetworkMatrices]

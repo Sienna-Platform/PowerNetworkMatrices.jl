@@ -12,7 +12,8 @@ abstract type PowerNetworkMatrix{T} <: AbstractArray{T, 2} end
 Because it is an `AbstractArray{T,2}`, every concrete matrix supports `size`,
 `axes`, and `getindex`. Indexing is overloaded so rows and columns are addressed
 by *power-system identifiers* (bus numbers, arc tuples, branch names,
-[`PSY`](@extref PowerSystems.System) components) rather than integer positions —
+[`PowerSystems`](@extref PowerSystems.System) components) rather than integer
+positions —
 see the [overview hub](network_matrices_overview.md) for the accepted key types.
 Concrete types carry a `data` field (dense `Matrix` or
 [`SparseMatrixCSC`](@extref Julia SparseArrays.SparseMatrixCSC)), an `axes` tuple

@@ -25,7 +25,7 @@
 # quantities. The table below maps each industry term to the
 # `PowerNetworkMatrices` primitive that computes it:
 
-# | Industry term             | What it answers                                  | PNM primitive                                                          |
+# | Industry term             | What it answers                                  | `PowerNetworkMatrices` primitive                                       |
 # |:------------------------- |:------------------------------------------------ |:---------------------------------------------------------------------- |
 # | GSF / ISF                 | Δflow on `m` per 1 MW injection at bus `b`       | `PTDF[m, b]`                                                           |
 # | LSF                       | Same as GSF for loads (opposite sign)            | `-PTDF[m, b]`                                                          |
@@ -49,7 +49,8 @@
 # \mathrm{PSF}[m, c] \;=\; b_c \,\bigl(\mathrm{PTDF}[m, f] - \mathrm{PTDF}[m, t]\bigr),
 # ```
 #
-# where ``b_c`` is `PSY.get_series_susceptance` of the phase-shifting transformer.
+# where ``b_c`` is `PowerSystems.get_series_susceptance` of the phase-shifting
+# transformer.
 # The rest of this guide covers the flow-based distribution factors.
 
 # ## The unified DFAX formula
@@ -77,21 +78,27 @@
 # ## Setup
 
 # All subsequent sections build on this setup block. It loads the RTS-GMLC
-# system and constructs the three matrices the rest of the tutorial uses.
+# system and constructs the three matrices the rest of the tutorial uses:
+# [`PTDF`](@ref), [`LODF`](@ref), and [`VirtualMODF`](@ref).
 
-import PowerSystems as PSY
 using PowerNetworkMatrices
-import PowerNetworkMatrices as PNM
-import PowerSystemCaseBuilder as PSB
+import PowerSystems
+import PowerSystemCaseBuilder
 using DataFrames
+using Logging
 
-sys = PSB.build_system(PSB.PSISystems, "RTS_GMLC_DA_sys");
+sys = with_logger(NullLogger()) do
+    PowerSystemCaseBuilder.build_system(
+        PowerSystemCaseBuilder.PSISystems,
+        "RTS_GMLC_DA_sys",
+    )
+end
 
 ptdf = PTDF(sys);
 lodf = LODF(sys);
 vmodf = VirtualMODF(sys);
 
-# `VirtualMODF` is the most general object — it can compute post-modification
+# [`VirtualMODF`](@ref) is the most general object — it can compute post-modification
 # PTDF rows under any contingency. We also build `PTDF` and `LODF` up front
 # because the pre-contingency and single-element-outage sections below use
 # them directly (faster than going through Woodbury when those special cases
@@ -120,17 +127,18 @@ lsf = -gsf
 # subsystem, then dot the vector with the `PTDF` row:
 
 area1_gens = filter(
-    g -> PSY.get_name(PSY.get_area(PSY.get_bus(g))) == "1",
-    collect(PSY.get_available_components(PSY.Generator, sys)),
+    g -> PowerSystems.get_name(PowerSystems.get_area(PowerSystems.get_bus(g))) == "1",
+    collect(PowerSystems.get_available_components(PowerSystems.Generator, sys)),
 );
 
-total_pmax = sum(PSY.get_max_active_power, area1_gens);
+total_pmax = sum(PowerSystems.get_max_active_power, area1_gens);
 
 src_weights = Dict{Int, Float64}();
 for g in area1_gens
-    bn = PSY.get_number(PSY.get_bus(g))
-    src_weights[bn] = get(src_weights, bn, 0.0) +
-                      PSY.get_max_active_power(g) / total_pmax
+    bn = PowerSystems.get_number(PowerSystems.get_bus(g))
+    src_weights[bn] =
+        get(src_weights, bn, 0.0) +
+        PowerSystems.get_max_active_power(g) / total_pmax
 end
 
 gsf_area1 = sum(w * ptdf[m, bn] for (bn, w) in src_weights)
@@ -157,22 +165,23 @@ gsf_area1 = sum(w * ptdf[m, bn] for (bn, w) in src_weights)
 # ```
 
 # Build the sink vector from Area 2 loads, max-active-power weighted. We
-# filter to `PSY.PowerLoad` because the abstract `ElectricLoad` type also
+# filter to `PowerSystems.PowerLoad` because the abstract `ElectricLoad` type also
 # covers shunt admittance components (`FixedAdmittance`) that don't carry a
 # real-power weight:
 
 area2_loads = filter(
-    l -> PSY.get_name(PSY.get_area(PSY.get_bus(l))) == "2",
-    collect(PSY.get_available_components(PSY.PowerLoad, sys)),
+    l -> PowerSystems.get_name(PowerSystems.get_area(PowerSystems.get_bus(l))) == "2",
+    collect(PowerSystems.get_available_components(PowerSystems.PowerLoad, sys)),
 );
 
-total_load = sum(PSY.get_max_active_power, area2_loads);
+total_load = sum(PowerSystems.get_max_active_power, area2_loads);
 
 snk_weights = Dict{Int, Float64}();
 for l in area2_loads
-    bn = PSY.get_number(PSY.get_bus(l))
-    snk_weights[bn] = get(snk_weights, bn, 0.0) +
-                      PSY.get_max_active_power(l) / total_load
+    bn = PowerSystems.get_number(PowerSystems.get_bus(l))
+    snk_weights[bn] =
+        get(snk_weights, bn, 0.0) +
+        PowerSystems.get_max_active_power(l) / total_load
 end
 
 # The pre-contingency transfer DFAX for Area 1 → Area 2 on AB1 is then:
@@ -198,18 +207,23 @@ tdf_pre =
 # ```
 
 # This is the unified formula with ``C = \{c\}`` and the slack absorbing the
-# sink. `VirtualMODF` computes the same quantity through the Woodbury
+# sink. [`VirtualMODF`](@ref) computes the same quantity through the Woodbury
 # identity, which generalizes naturally to multi-element contingencies (see
-# the N-k section below). For a single outage the two routes agree:
+# the N-k section below). For a single outage the two routes agree. The row it
+# returns is a plain vector over the bus dimension, so [`get_bus_lookup`](@ref)
+# turns a bus number into the position to read, and
+# [`NetworkModification`](@ref) builds the contingency from the outaged arc:
 
 c = (113, 215);                       # contingency: AB2 outage
 otdf_closed = ptdf[m, b] + lodf[m, c] * ptdf[c, b]
 
-#
+# The [`VirtualMODF`](@ref) route builds the contingency with
+# [`NetworkModification`](@ref) and reads the bus entry through
+# [`get_bus_lookup`](@ref):
 
 ctg = NetworkModification(vmodf, c);
 row_c = vmodf[m, ctg];
-bus_lookup = PNM.get_bus_lookup(vmodf);
+bus_lookup = get_bus_lookup(vmodf);
 otdf_vmodf = row_c[bus_lookup[b]]
 
 #
@@ -248,7 +262,7 @@ significant = abs(flowgate_dfax) >= 0.05
 # `LODF[m, c]` when `c` is itself a set. The unified formula still applies,
 # and `VirtualMODF` is built to handle it directly. Build the multi-element
 # modification by merging the `arc_modifications` of each single-arc
-# `NetworkModification` into one combined object:
+# [`NetworkModification`](@ref) into one combined object:
 
 mod_ab2 = NetworkModification(vmodf, (113, 215));    # AB2 outage
 mod_ab3 = NetworkModification(vmodf, (123, 217));    # AB3 outage
@@ -284,8 +298,8 @@ flowgate_dfax_n2 =
 # DFAX section), three monitored arcs (the three parallel Area 1 → Area 2
 # paths), and three contingencies (each of the other two paths individually,
 # plus the N-2 double-outage from the previous section). Each contingency
-# carries the set of arc tuples it outages so that we can skip the
-# ill-defined case of monitoring an outaged element:
+# carries the set of arc tuples it outages, as a [`NetworkModification`](@ref), so that
+# we can skip the ill-defined case of monitoring an outaged element:
 
 monitored = [(107, 203), (113, 215), (123, 217)];   # AB1, AB2, AB3
 
