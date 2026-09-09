@@ -111,10 +111,8 @@ function compute_parallel_multiplier(
     for br in parallel_branch_set
         # `get_series_susceptance` (see BranchAdmittance.jl) is tap-aware for
         # two-winding transformers and dispatches PNM's three-winding winding wrapper.
-        # `_finite_series_susceptance` (common.jl) substitutes the zero-impedance epsilon,
-        # so a group of `r == x == 0` switches splits by count instead of returning
-        # `Inf / Inf`. The reduction's configured `minimum_retained_impedance` is out of
-        # reach here, but a share is a ratio and the default cancels for such a group.
+        # `nr`'s configured epsilon is out of reach here, but a share is a ratio, so the
+        # default cancels and a group of `r == x == 0` switches splits by count.
         b = _finite_series_susceptance(br, ZERO_IMPEDANCE_X_EPSILON)
         if br === branch
             b_branch = b
@@ -238,9 +236,7 @@ function get_impedance_averaged_rating(bp::AbstractBranchesParallel)
     # (a single bus pair) this equals the natural-units weighting; device base would mix bases
     # when the branches differ in base power. Requires the branches to be attached to a system.
     # Σᵢ (bᵢ/b_total)·rᵢ == (Σᵢ bᵢ·rᵢ)/b_total, so one pass and no stored per-member state.
-    # `_finite_series_susceptance` substitutes the zero-impedance epsilon so a member with
-    # `r == x == 0` contributes a finite weight instead of `Inf`; the weights are shares
-    # bᵢ/b_total, so the substituted constant cancels within a group of such members.
+    # Weights are shares bᵢ/b_total, so the substituted constant cancels.
     b_total = 0.0
     numerator = 0.0
     any_known = false

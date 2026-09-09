@@ -279,11 +279,9 @@ end
 end
 
 @testset "dc phase shift: parallel zero-impedance group between irreducible buses" begin
-    # Two r = x = 0 switches in parallel on arc (2, 3), both endpoints pinned so the
-    # zero-impedance reduction skips the merge and leaves them as a `BranchesParallel`.
-    # The raw `1/x` weight is `Inf` for each member, so a susceptance-weighted average
-    # reads `Inf·0/Inf = NaN`; the epsilon substitution `equivalent_branch` uses for Ybus
-    # assembly keeps every weight finite.
+    # Both endpoints pinned, so the zero-impedance reduction skips the merge and the two
+    # switches survive as a `BranchesParallel`. Each raw weight is `Inf`, so a susceptance
+    # -weighted average would read `Inf·0/Inf = NaN`.
     sys = _mk_zi_parallel_sys([(0.0, 0.0), (0.0, 0.0)])
     nr = get_network_reduction_data(Ybus(sys; irreducible_buses = [2, 3]))
     bp = PNM.get_parallel_branch_map(nr)[(2, 3)]
@@ -293,14 +291,12 @@ end
     @test PNM.arc_dc_phase_shift(nr, (2, 3)) === 0.0
     @test PNM.arc_dc_shift_injection(nr, (2, 3)) === 0.0
     @test isfinite(PNM._arc_dc_susceptance(nr, (2, 3)))
-    # Same `Inf / Inf` in the member flow split: two identical switches share the arc flow
-    # evenly, and neither carries a circulating component.
+    # Same `Inf / Inf` in the flow split: identical switches share evenly, none circulating.
     for br in bp
         @test PNM.compute_parallel_multiplier(bp, br) ≈ 0.5
         @test PNM.compute_parallel_circulating_flow(bp, nr, br) === 0.0
     end
-    # Both members substitute the same reactance, so the group carries twice one member's
-    # susceptance rather than `Inf`.
+    # Both members substitute the same reactance, so the group carries twice one member's.
     @test PNM._arc_dc_susceptance(nr, (2, 3)) ≈ 2 / PNM.ZERO_IMPEDANCE_X_EPSILON
 
     # A shifted member in the same degenerate group still yields a finite injection.
@@ -320,7 +316,7 @@ end
         Ybus(sys_shifted; irreducible_buses = [2, 3]),
     )
     bp_shifted = PNM.get_parallel_branch_map(nr_shifted)[(2, 3)]
-    # Weights: 1/ZERO_IMPEDANCE_X_EPSILON, 1/0.1, 1/0.2; only the last is shifted.
+    # Weights 1/ZERO_IMPEDANCE_X_EPSILON, 1/0.1, 1/0.2; only the last is shifted.
     b_zi = 1 / PNM.ZERO_IMPEDANCE_X_EPSILON
     expected_α = (5.0 * 0.15) / (b_zi + 10.0 + 5.0)
     @test PNM.get_series_phase_shift(bp_shifted, nr_shifted) ≈ expected_α
@@ -328,11 +324,9 @@ end
 end
 
 @testset "dc phase shift: single zero-impedance phase shifter" begin
-    # `PSY.TransformerCircuit` defaults `r = x = 0`, and the zero-impedance reduction
-    # excludes transformer arcs, so a shifted circuit with no reactance survives alone in
-    # `direct_branch_map` -- no parallel group and no pinning needed. Its raw `1/x` weight is
-    # `Inf` and its α is nonzero, so the injection skips the `iszero(α)` early return and
-    # reaches the susceptance. The epsilon substitution keeps it finite.
+    # `PSY.TransformerCircuit` defaults `r = x = 0` and ZIR excludes transformer arcs, so a
+    # shifted circuit survives alone in `direct_branch_map` — no pinning needed. Its α is
+    # nonzero, so the injection skips the `iszero(α)` return and reaches the susceptance.
     sys, buses = _mk_bus_system(3)
     pst_arc = Arc(; from = buses[2], to = buses[3])
     add_component!(sys, pst_arc)
@@ -363,10 +357,8 @@ end
     @test PNM._arc_dc_susceptance(nr, (2, 3)) ≈ b_zi
     @test PNM.arc_dc_shift_injection(nr, (2, 3)) ≈ b_zi * 0.15
 
-    # `arc_dc_shift_injection` documents that its `b_eq` matches `BA_Matrix` on every
-    # shifted arc. The raw `Inf` broke that at both ends: the injection was `Inf`, while BA
-    # routed the asymmetric off-diagonals to `_arc_component_susceptance` and its non-finite
-    # fallback zeroed the arc, giving it no DC coupling at all.
+    # `b_eq` must match `BA_Matrix` on every shifted arc. The raw `Inf` broke both ends: the
+    # injection was `Inf`, and BA's non-finite fallback zeroed the arc's DC coupling.
     ba = BA_Matrix(ybus)
     ix_arc = findfirst(==((2, 3)), PNM.get_arc_axis(nr))
     ix_from = PNM.get_bus_lookup(ybus)[2]

@@ -448,9 +448,6 @@ end
         PSY.TwoWindingTransformer(;
             name = "ZI_T",
             circuit = PSY.TransformerCircuit(;
-                # tap = 1.05 (not 1.0): `x = 0.0`, so the tap divides zero and the
-                # contribution stays exactly zero either way -- the non-unit tap only
-                # matters for the tapped, non-zero-x leg exercised below.
                 arc = zi_arc, tap = 1.05, α = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
@@ -467,16 +464,14 @@ end
     )
     PNM.add_branch!(chain, PSY.get_component(Line, sys, "L34"), :FromTo)
 
-    # The zero-impedance segment contributes exactly zero reactance, so the chain
-    # equivalent is the two lines alone: 1/(0.1 + 0.1).
+    # The zero-impedance segment contributes no reactance: the chain is the two lines alone.
     @test PNM._series_reactance(
         PSY.get_component(PSY.TwoWindingTransformer, sys, "ZI_T"), PSY.SU) == 0.0
     @test PNM._series_susceptance_raw(chain, PSY.SU) ≈ 1 / 0.2
     @test isfinite(PNM._series_susceptance_raw(chain, PSY.SU))
 
-    # `_series_reactance(::PSY.TransformerCircuit) = x * tap` is the reciprocal of the leaf
-    # susceptance `(1/x)/tap`; ZI_T above has x = 0.0, so it cannot catch a reciprocal slip
-    # (0 * tap == 0 regardless of tap). Exercise a tapped leg with non-zero x instead.
+    # ZI_T's x = 0.0 cannot catch a reciprocal slip, since 0 * tap == 0 either way. A tapped
+    # leg with non-zero x can.
     sys2, buses2 = _mk_bus_system(3)
     tap_line_arc = Arc(; from = buses2[1], to = buses2[2])
     add_component!(sys2, tap_line_arc)
@@ -502,16 +497,12 @@ end
         PSY.get_component(PSY.TwoWindingTransformer, sys2, "TAP_T"),
         :FromTo,
     )
-    # Reactance sums along the chain: the line contributes x = 0.1; the tapped leg
-    # contributes x * tap = 0.2 * 1.05 = 0.21. Total = 0.31, so the chain's series
-    # susceptance is 1 / 0.31.
+    # 0.1 + 0.2 * 1.05 = 0.31.
     @test PNM._series_reactance(
         PSY.get_component(PSY.TwoWindingTransformer, sys2, "TAP_T"), PSY.SU) ≈ 0.2 * 1.05
     @test PNM._series_susceptance_raw(tap_chain, PSY.SU) ≈ 1 / (0.1 + 0.2 * 1.05)
 
-    # A chain whose every segment is zero-impedance has no finite equivalent. That is
-    # genuinely degenerate, and the public accessor's non-finite guard is what makes it
-    # loud; here the raw layer is still allowed to report it.
+    # An all-zero chain is genuinely degenerate; the raw layer may still report `Inf`.
     PSY.set_x!(PSY.get_component(Line, sys, "L12"), 0.0 * PSY.SU)
     PSY.set_x!(PSY.get_component(Line, sys, "L34"), 0.0 * PSY.SU)
     all_zero = PNM.BranchesSeries((1, 4))

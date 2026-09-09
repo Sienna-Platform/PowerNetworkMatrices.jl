@@ -576,9 +576,8 @@ end
 end
 
 @testset "raw susceptance layer matches the public accessor on finite data" begin
-    # The raw layer is a pure extraction: every branch kind must agree with the public
-    # accessor wherever the stored reactance is non-zero. The line sits on arc (1, 2) and
-    # the transformer on arc (1, 3), so the two branches don't share an `Arc`.
+    # A pure extraction: every branch kind must agree with the public accessor wherever the
+    # stored reactance is non-zero.
     sys, buses = _mk_bus_system(3)
     arc = Arc(; from = buses[1], to = buses[2])
     add_component!(sys, arc)
@@ -603,7 +602,7 @@ end
     @test PNM._series_susceptance_raw(PSY.get_circuit(t), PSY.SU) ==
           PNM.get_series_susceptance(PSY.get_circuit(t), PSY.SU)
 
-    # The raw layer is the only one allowed to answer for a degenerate branch.
+    # Only the raw layer may answer for a degenerate branch.
     PSY.set_x!(line, 0.0 * PSY.SU)
     PSY.set_r!(line, 0.0 * PSY.SU)
     @test PNM._series_susceptance_raw(line, PSY.SU) == Inf

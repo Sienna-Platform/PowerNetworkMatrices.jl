@@ -48,7 +48,7 @@ function _three_winding_shunt_split(
 end
 
 # Kept out of line so the error body does not count against the caller's inlining budget.
-@noinline function _throw_non_finite_susceptance(segment, b::Float64)
+@noinline function _throw_non_finite_susceptance(segment::SeriesSegment, b::Float64)
     error(
         "Series susceptance of $(_susceptance_error_label(segment)) is $(b): the branch has r == x == 0. " *
         "Ybus assembly substitutes the reduction's minimum retained impedance for such a " *
@@ -57,7 +57,7 @@ end
     )
 end
 
-_susceptance_error_label(segment) = get_name(segment)
+_susceptance_error_label(segment::SeriesSegment) = get_name(segment)
 _susceptance_error_label(c::PSY.TransformerCircuit) =
     "transformer circuit on arc $(PSY.get_arc(c))"
 
@@ -115,9 +115,8 @@ function get_series_susceptance(c::PSY.TransformerCircuit, units::IS.AbstractUni
     return v
 end
 
-# The raw layer is the single home for the `1/x` arithmetic. It may return `Inf` for a
-# branch with `r == x == 0`; `get_series_susceptance` rejects that and
-# `_finite_series_susceptance` substitutes for it.
+# The single home for the `1/x` arithmetic. Returns `Inf` when `r == x == 0`:
+# `get_series_susceptance` rejects that, `_finite_series_susceptance` substitutes.
 _series_susceptance_raw(b::PSY.ACTransmission, units::IS.AbstractUnitSystem) =
     1 / PSY.get_x(b, units)
 _series_susceptance_raw(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem) =

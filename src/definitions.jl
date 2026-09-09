@@ -21,6 +21,10 @@ reduction-aware `(segment, nr)` form instead.
 """
 abstract type AbstractReductionAggregate <: PSY.ACTransmission end
 
+# `PSY.TransformerCircuit` is a `DeviceParameter`, not an `ACTransmission`, so anything
+# carrying a series impedance spans two unrelated supertypes.
+const SeriesSegment = Union{PSY.ACTransmission, PSY.TransformerCircuit}
+
 const KiB = 1024
 const MiB = KiB * KiB
 const GiB = MiB * KiB

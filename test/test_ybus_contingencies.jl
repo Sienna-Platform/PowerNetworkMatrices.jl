@@ -449,9 +449,8 @@ end
 end
 
 @testset "contingency: full outage of a zero-impedance direct branch is not a no-op" begin
-    # `arc_susceptances` comes from BA, which holds the substituted reactance, while
-    # `_direct_arc_ybus_delta` read the component and got `Inf`. The full-outage test then
-    # failed, and the delta was scaled by `delta_b / Inf`.
+    # `arc_susceptances` comes from BA (substituted) while `_direct_arc_ybus_delta` read the
+    # component (`Inf`), so the full-outage test failed and the delta scaled by `delta_b / Inf`.
     sys, buses = _mk_bus_system(3)
     zi_arc = Arc(; from = buses[2], to = buses[3])
     add_component!(sys, zi_arc)
@@ -486,9 +485,8 @@ end
 end
 
 @testset "contingency: full outage of a group holding a zero-impedance member" begin
-    # `_parallel_arc_ybus_delta` compared a finite BA-derived `delta_b` against a group
-    # susceptance summing an `Inf` member, so a legitimate full outage was rejected with
-    # an error about needing the tripped component's identity.
+    # A finite BA-derived `delta_b` compared against a group susceptance summing an `Inf`
+    # member, so a legitimate full outage was rejected as needing the tripped component.
     sys = _mk_zi_parallel_sys([(0.0, 0.0), (0.0, 0.1)])
     ybus = Ybus(sys; irreducible_buses = [2, 3])
     vptdf = VirtualPTDF(sys; irreducible_buses = [2, 3])

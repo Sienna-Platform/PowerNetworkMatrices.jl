@@ -81,16 +81,13 @@ function BA_Matrix(sys::PSY.System;
     )
 end
 
-# Phase-independent DC series susceptance for a phase-shifting-transformer arc, read from its
-# branch component(s) so the phase angle is ignored (`_finite_series_susceptance` is `1/(a x)`;
-# the shift is applied separately as an injection; see `arc_dc_shift_injection`). A phase shifter
-# is always a direct or parallel branch, so this finds it; returns `NaN` otherwise.
+# Phase-independent DC susceptance for a phase-shifting arc: read from components so α is
+# excluded, since the shift is applied separately as an injection (`arc_dc_shift_injection`).
+# `NaN` when the arc is in neither map.
 function _arc_component_susceptance(nr_data::NetworkReductionData, arc::Tuple{Int, Int})
-    # `_finite_series_susceptance` substitutes the zero-impedance epsilon, matching the
-    # reactance Ybus assembly already used for such a branch. Reading `1/x` raw gives `Inf`
-    # for an `r == x == 0` shifter, which the caller's non-finite fallback turns into zero
-    # DC coupling -- dropping the arc from BA while its shift injection still lands on both
-    # endpoints. That fallback is for the `NaN` not-found case below.
+    # Raw `1/x` is `Inf` for an `r == x == 0` shifter, which the caller's non-finite fallback
+    # would turn into zero DC coupling — dropping the arc from BA while its injection still
+    # lands on both endpoints. That fallback is for the `NaN` not-found case below.
     min_x_eps = _minimum_retained_impedance(nr_data)
     direct_map = get_direct_branch_map(nr_data)
     haskey(direct_map, arc) && return _finite_series_susceptance(direct_map[arc], min_x_eps)

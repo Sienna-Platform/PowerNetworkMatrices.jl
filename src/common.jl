@@ -414,12 +414,9 @@ function _oriented_member_phase_shift(
     return α
 end
 
-# `get_series_susceptance` reads the stored reactance, which is zero for a branch with
-# `r == x == 0`, so its susceptance is `Inf`. Every other consumer of such a branch
-# substitutes the reduction's `minimum_retained_impedance` (`equivalent_branch` for Ybus
-# assembly, `_series_admittance` for merge detection); the DC accessors below do the same, so
-# a susceptance weight is always finite. Zero-impedance branches normally merge away, but a
-# pair of them between two irreducible buses survives as a `BranchesParallel`.
+# The substituted susceptance for an `r == x == 0` branch, matching what `equivalent_branch`
+# uses in Ybus assembly. Such branches normally merge away, but a pair between two
+# irreducible buses survives as a `BranchesParallel`.
 _zero_impedance_susceptance(::PSY.ACTransmission, min_x_eps::Float64) = 1 / min_x_eps
 _zero_impedance_susceptance(t::PSY.TwoWindingTransformer, min_x_eps::Float64) =
     _zero_impedance_susceptance(PSY.get_circuit(t), min_x_eps)
@@ -433,15 +430,15 @@ _zero_impedance_susceptance(bp::AbstractBranchesParallel, min_x_eps::Float64) =
 _zero_impedance_susceptance(bs::BranchesSeries, min_x_eps::Float64) =
     1 / sum(inv(_finite_series_susceptance(seg, min_x_eps)) for seg in bs)
 
-# Kept as a guard on the raw layer rather than a parallel implementation of it, so every
-# non-degenerate branch keeps the single source of truth.
-function _finite_series_susceptance(segment, min_x_eps::Float64)
+# A guard on the raw layer, not a parallel implementation: non-degenerate branches keep one
+# source of truth.
+function _finite_series_susceptance(segment::SeriesSegment, min_x_eps::Float64)
     b = _series_susceptance_raw(segment, PSY.SU)
     isfinite(b) && return b
     return _zero_impedance_susceptance(segment, min_x_eps)
 end
 
-_finite_series_susceptance(segment, nr::NetworkReductionData) =
+_finite_series_susceptance(segment::SeriesSegment, nr::NetworkReductionData) =
     _finite_series_susceptance(segment, _minimum_retained_impedance(nr))
 
 """
@@ -458,7 +455,7 @@ substitutes here, but `Ybus`'s `equivalent_branch` substitutes only when both `r
 are zero, so such a branch has no DC coupling in `BA_Matrix` (susceptance `0.0`) while this
 returns the substituted value.
 """
-get_effective_series_susceptance(segment, nr::NetworkReductionData) =
+get_effective_series_susceptance(segment::SeriesSegment, nr::NetworkReductionData) =
     _finite_series_susceptance(segment, nr)
 
 """
@@ -482,9 +479,7 @@ function get_series_phase_shift(bp::AbstractBranchesParallel, nr::NetworkReducti
             b_alpha += b * α
         end
     end
-    # Short-circuit rather than divide when no member shifts: b_alpha is 0.0 in that case,
-    # but b_total can also be 0.0 (susceptances cancelling across the group), and 0.0/0.0
-    # is NaN.
+    # b_total can also be 0.0 when susceptances cancel across the group, and 0.0/0.0 is NaN.
     shifted || return 0.0
     return b_alpha / b_total
 end
@@ -567,8 +562,7 @@ function arc_dc_shift_injection(nr::NetworkReductionData, arc::Tuple{Int, Int})
     α = arc_dc_phase_shift(nr, arc)
     iszero(α) && return 0.0
     injection = _arc_dc_susceptance(nr, arc) * α
-    # A non-finite injection is added to the nodal balance at both endpoints, where it is
-    # untraceable. Fail here, naming the arc.
+    # A non-finite injection lands on both endpoints' nodal balance, where it is untraceable.
     if !isfinite(injection)
         error(
             "Non-finite DC phase-shift injection $(injection) on arc $(arc) " *
