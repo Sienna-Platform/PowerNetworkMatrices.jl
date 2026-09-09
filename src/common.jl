@@ -414,6 +414,36 @@ function _oriented_member_phase_shift(
     return α
 end
 
+# `get_series_susceptance` reads the stored reactance, which is zero for a branch with
+# `r == x == 0`, so its susceptance is `Inf`. Every other consumer of such a branch
+# substitutes the reduction's `minimum_retained_impedance` (`equivalent_branch` for Ybus
+# assembly, `_series_admittance` for merge detection); the DC accessors below do the same, so
+# a susceptance weight is always finite. Zero-impedance branches normally merge away, but a
+# pair of them between two irreducible buses survives as a `BranchesParallel`.
+_zero_impedance_susceptance(::PSY.ACTransmission, min_x_eps::Float64) = 1 / min_x_eps
+_zero_impedance_susceptance(t::PSY.TwoWindingTransformer, min_x_eps::Float64) =
+    _zero_impedance_susceptance(PSY.get_circuit(t), min_x_eps)
+_zero_impedance_susceptance(w::ThreeWindingTransformerCircuit, min_x_eps::Float64) =
+    _zero_impedance_susceptance(w.circuit, min_x_eps)
+# Only the susceptance form is tap-divided, matching `get_series_susceptance`.
+_zero_impedance_susceptance(c::PSY.TransformerCircuit, min_x_eps::Float64) =
+    (1 / min_x_eps) / PSY.get_tap(c)
+_zero_impedance_susceptance(bp::AbstractBranchesParallel, min_x_eps::Float64) =
+    sum(_finite_series_susceptance(br, min_x_eps) for br in bp)
+_zero_impedance_susceptance(bs::BranchesSeries, min_x_eps::Float64) =
+    1 / sum(inv(_finite_series_susceptance(seg, min_x_eps)) for seg in bs)
+
+# Kept as a guard on `get_series_susceptance` rather than a parallel implementation of it, so
+# every non-degenerate branch keeps the single source of truth.
+function _finite_series_susceptance(segment, min_x_eps::Float64)
+    b = get_series_susceptance(segment, PSY.SU)
+    isfinite(b) && return b
+    return _zero_impedance_susceptance(segment, min_x_eps)
+end
+
+_finite_series_susceptance(segment, nr::NetworkReductionData) =
+    _finite_series_susceptance(segment, _minimum_retained_impedance(nr))
+
 """
     get_series_phase_shift(bp::AbstractBranchesParallel, nr) -> Float64
 
@@ -422,13 +452,21 @@ Susceptance-weighted equivalent DC phase shift of a parallel group,
 lossy (unlike the single-π extraction in `get_equivalent_physical_branch_parameters`).
 """
 function get_series_phase_shift(bp::AbstractBranchesParallel, nr::NetworkReductionData)
+    min_x_eps = _minimum_retained_impedance(nr)
     b_total = 0.0
     b_alpha = 0.0
+    shifted = false
     for br in bp
-        b = get_series_susceptance(br, PSY.SU)
+        α = _oriented_member_phase_shift(br, bp, nr)
+        b = _finite_series_susceptance(br, min_x_eps)
         b_total += b
-        b_alpha += b * _oriented_member_phase_shift(br, bp, nr)
+        if !iszero(α)
+            shifted = true
+            b_alpha += b * α
+        end
     end
+    # Exactly zero, not a rounded weighted average, when no member shifts.
+    shifted || return 0.0
     return b_alpha / b_total
 end
 
@@ -509,7 +547,16 @@ every shifted arc (both use `get_series_susceptance` there).
 function arc_dc_shift_injection(nr::NetworkReductionData, arc::Tuple{Int, Int})
     α = arc_dc_phase_shift(nr, arc)
     iszero(α) && return 0.0
-    return _arc_dc_susceptance(nr, arc) * α
+    injection = _arc_dc_susceptance(nr, arc) * α
+    # A non-finite injection is added to the nodal balance at both endpoints, where it is
+    # untraceable. Fail here, naming the arc.
+    if !isfinite(injection)
+        error(
+            "Non-finite DC phase-shift injection $(injection) on arc $(arc) " *
+            "(α = $(α)). This is a bug in PowerNetworkMatrices.",
+        )
+    end
+    return injection
 end
 
 # b of the map entry owning `arc` (orientation-symmetric, so no reverse negation). Only
@@ -517,15 +564,16 @@ end
 # Susceptance is orientation-symmetric, so a reverse hit needs no sign change. An added Ward arc
 # is rejected rather than answered: it carries no series element the DC shift injection can use,
 # and this is only ever reached for a shifted arc, which is never Ward-added.
-_dc_entry_susceptance(br::PSY.ACTransmission) = get_series_susceptance(br, PSY.SU)
-_dc_entry_susceptance(br::PSY.GenericArcImpedance) = error(
+_dc_entry_susceptance(br::PSY.ACTransmission, min_x_eps::Float64) =
+    _finite_series_susceptance(br, min_x_eps)
+_dc_entry_susceptance(br::PSY.GenericArcImpedance, ::Float64) = error(
     "Arc backed by added Ward-equivalent impedance $(get_name(br)) has no series " *
     "susceptance for the DC phase-shift injection.",
 )
 
 function _arc_dc_susceptance(nr::NetworkReductionData, arc::Tuple{Int, Int})
     entry, _ = _resolve_arc_entry(nr, arc)
-    return _dc_entry_susceptance(entry)
+    return _dc_entry_susceptance(entry, _minimum_retained_impedance(nr))
 end
 
 """
@@ -549,7 +597,7 @@ function compute_parallel_circulating_flow(
         )
     end
     α_eq = get_series_phase_shift(bp, nr)
-    b = get_series_susceptance(branch, PSY.SU)
+    b = _finite_series_susceptance(branch, nr)
     return b * (α_eq - _oriented_member_phase_shift(branch, bp, nr))
 end
 

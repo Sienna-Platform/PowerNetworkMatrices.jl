@@ -97,10 +97,17 @@ Construct a BA_Matrix from a Ybus matrix.
 # shift is applied separately as an injection; see `arc_dc_shift_injection`). A phase shifter is
 # always a direct or parallel branch, so this finds it; returns `NaN` otherwise.
 function _arc_component_susceptance(nr_data::NetworkReductionData, arc::Tuple{Int, Int})
+    # `_finite_series_susceptance` substitutes the zero-impedance epsilon, matching the
+    # reactance Ybus assembly already used for such a branch. Reading `1/x` raw gives `Inf`
+    # for an `r == x == 0` shifter, which the caller's non-finite fallback turns into zero
+    # DC coupling -- dropping the arc from BA while its shift injection still lands on both
+    # endpoints. That fallback is for the `NaN` not-found case below.
+    min_x_eps = _minimum_retained_impedance(nr_data)
     direct_map = get_direct_branch_map(nr_data)
-    haskey(direct_map, arc) && return get_series_susceptance(direct_map[arc], PSY.SU)
+    haskey(direct_map, arc) && return _finite_series_susceptance(direct_map[arc], min_x_eps)
     parallel_map = get_parallel_branch_map(nr_data)
-    haskey(parallel_map, arc) && return get_series_susceptance(parallel_map[arc], PSY.SU)
+    haskey(parallel_map, arc) &&
+        return _finite_series_susceptance(parallel_map[arc], min_x_eps)
     return NaN
 end
 

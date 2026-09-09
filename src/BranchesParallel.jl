@@ -111,11 +111,16 @@ function compute_parallel_multiplier(
     for br in parallel_branch_set
         # `get_series_susceptance` (see BranchAdmittance.jl) is tap-aware for
         # two-winding transformers and dispatches PNM's three-winding winding wrapper.
+        # `_finite_series_susceptance` (common.jl) substitutes the zero-impedance epsilon,
+        # so a group of `r == x == 0` switches splits by count instead of returning
+        # `Inf / Inf`. The reduction's configured `minimum_retained_impedance` is out of
+        # reach here, but a share is a ratio and the default cancels for such a group.
+        b = _finite_series_susceptance(br, ZERO_IMPEDANCE_X_EPSILON)
         if br === branch
-            b_branch = get_series_susceptance(br, PSY.SU)
+            b_branch = b
             found = true
         end
-        b_total += get_series_susceptance(br, PSY.SU)
+        b_total += b
     end
     if !found
         error(
