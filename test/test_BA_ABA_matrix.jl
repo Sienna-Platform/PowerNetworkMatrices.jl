@@ -165,6 +165,9 @@ end
             PSB.PSITestSystems, "case10_radial_series_reductions"),
         "zi_parallel" => _mk_zi_parallel_sys([(0.0, 0.0), (0.0, 0.1)]),
     )
+    # Every arc can `continue` past the assertions below; without this counter the sweep
+    # could pass with zero assertions ever run.
+    checked = 0
     for (label, sys) in systems
         pins = label == "zi_parallel" ? [2, 3] : Int[]
         ybus = Ybus(sys; irreducible_buses = pins)
@@ -189,8 +192,10 @@ end
             x_eq = imag(1 / Y_ft)
             iszero(x_eq) && continue
             @test (1 / x_eq) ≈ b_component rtol = 1e-5
+            checked += 1
         end
     end
+    @test checked > 0
 end
 
 @testset "Test show for A, BA and ABA matrix" begin

@@ -81,21 +81,10 @@ function BA_Matrix(sys::PSY.System;
     )
 end
 
-"""
-    BA_Matrix(ybus::Ybus)
-
-Construct a BA_Matrix from a Ybus matrix.
-
-# Arguments
-- `ybus::Ybus`: The Ybus matrix from which to construct the BA matrix
-
-# Returns
-- `BA_Matrix`: The constructed BA matrix structure containing the transposed BA matrix
-"""
 # Phase-independent DC series susceptance for a phase-shifting-transformer arc, read from its
-# branch component(s) so the phase angle is ignored (`get_series_susceptance` is `1/(a x)`; the
-# shift is applied separately as an injection; see `arc_dc_shift_injection`). A phase shifter is
-# always a direct or parallel branch, so this finds it; returns `NaN` otherwise.
+# branch component(s) so the phase angle is ignored (`_finite_series_susceptance` is `1/(a x)`;
+# the shift is applied separately as an injection; see `arc_dc_shift_injection`). A phase shifter
+# is always a direct or parallel branch, so this finds it; returns `NaN` otherwise.
 function _arc_component_susceptance(nr_data::NetworkReductionData, arc::Tuple{Int, Int})
     # `_finite_series_susceptance` substitutes the zero-impedance epsilon, matching the
     # reactance Ybus assembly already used for such a branch. Reading `1/x` raw gives `Inf`
@@ -111,6 +100,17 @@ function _arc_component_susceptance(nr_data::NetworkReductionData, arc::Tuple{In
     return NaN
 end
 
+"""
+    BA_Matrix(ybus::Ybus)
+
+Construct a BA_Matrix from a Ybus matrix.
+
+# Arguments
+- `ybus::Ybus`: The Ybus matrix from which to construct the BA matrix
+
+# Returns
+- `BA_Matrix`: The constructed BA matrix structure containing the transposed BA matrix
+"""
 function BA_Matrix(ybus::Ybus)
     nr = get_network_reduction_data(ybus)
     bus_ax = get_bus_axis(ybus)

@@ -77,10 +77,12 @@ end
 # Pi-model directly.
 function _direct_arc_ybus_delta(
     tr::ThreeWindingTransformerCircuit,
-    ::NetworkReductionData,
+    nr::NetworkReductionData,
     ::Float64,
 )::NTuple{4, YBUS_ELTYPE}
-    return _negated_pi_model(ybus_branch_entries(tr))
+    return _negated_pi_model(
+        ybus_branch_entries(tr; min_x_eps = _minimum_retained_impedance(nr)),
+    )
 end
 
 # Parallel group: full outage negates the equivalent; a partial outage needs the tripped
@@ -383,7 +385,7 @@ function _classify_outage_component!(
         push!(direct_mods, ArcModification(arc_idx, -b_arc, dy11, dy12, dy21, dy22))
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
-        # `get_series_susceptance` divides a two-winding transformer's susceptance by
+        # `_finite_series_susceptance` divides a two-winding transformer's susceptance by
         # its winding tap and has a `ThreeWindingTransformerCircuit` method.
         b_circuit = _finite_series_susceptance(component, nr)
         dy11, dy12, dy21, dy22 =
@@ -567,7 +569,7 @@ function _classify_branch_modification(
         return [ArcModification(arc_idx, -b_arc, dy11, dy12, dy21, dy22)]
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
-        # `get_series_susceptance` is tap-aware for two-winding transformers and
+        # `_finite_series_susceptance` is tap-aware for two-winding transformers and
         # dispatches the winding wrapper — see the note in `_classify_outage_component!`.
         b_circuit = _finite_series_susceptance(branch, nr)
         dy11, dy12, dy21, dy22 =

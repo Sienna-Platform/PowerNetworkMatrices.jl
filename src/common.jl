@@ -448,11 +448,15 @@ _finite_series_susceptance(segment, nr::NetworkReductionData) =
     get_effective_series_susceptance(segment, nr::NetworkReductionData) -> Float64
 
 Series susceptance of `segment` as the assembled matrices see it: the stored `1/(tap*x)`,
-or the reduction's minimum retained impedance substituted when the branch has `r == x == 0`.
+or the reduction's minimum retained impedance substituted whenever `x == 0`.
 
-This is the value `Ybus` and `BA_Matrix` are built from, and the one a consumer wants for
-any calculation that must agree with them. `get_series_susceptance` returns the stored
-value instead, and throws rather than returning a non-finite result.
+This agrees with `Ybus` and `BA_Matrix` for any branch with `x != 0`. `get_series_susceptance`
+returns the stored value instead, and throws rather than returning a non-finite result.
+
+A purely resistive branch (`r > 0, x == 0`) is outside that agreement: this accessor still
+substitutes here, but `Ybus`'s `equivalent_branch` substitutes only when both `r` and `x`
+are zero, so such a branch has no DC coupling in `BA_Matrix` (susceptance `0.0`) while this
+returns the substituted value.
 """
 get_effective_series_susceptance(segment, nr::NetworkReductionData) =
     _finite_series_susceptance(segment, nr)
@@ -478,7 +482,9 @@ function get_series_phase_shift(bp::AbstractBranchesParallel, nr::NetworkReducti
             b_alpha += b * α
         end
     end
-    # Exactly zero, not a rounded weighted average, when no member shifts.
+    # Short-circuit rather than divide when no member shifts: b_alpha is 0.0 in that case,
+    # but b_total can also be 0.0 (susceptances cancelling across the group), and 0.0/0.0
+    # is NaN.
     shifted || return 0.0
     return b_alpha / b_total
 end
@@ -555,7 +561,7 @@ end
 `b_eq·α_eq` for the retained `arc` in system base -- the magnitude of the DC phase-shift
 injection pair (`+b·α` at the from bus, `−b·α` at the to bus) and of the arc-flow offset
 (`f = b·Δθ − b·α`). Zero for every non-shifted arc. `b_eq` matches `BA_Matrix`'s value on
-every shifted arc (both use `get_series_susceptance` there).
+every shifted arc (both use `_finite_series_susceptance` there).
 """
 function arc_dc_shift_injection(nr::NetworkReductionData, arc::Tuple{Int, Int})
     α = arc_dc_phase_shift(nr, arc)

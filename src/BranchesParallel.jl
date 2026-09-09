@@ -226,7 +226,7 @@ end
 Susceptance-weighted average of individual branch ratings,
 ``\\sum_i f_i \\cdot S_i`` with ``f_i = b_i / \\sum_k b_k``. Reflects how DC flow
 physically splits across a parallel group. Throws `ArgumentError` if the total
-series susceptance is zero or non-finite.
+series susceptance is zero.
 
 Members with no known rating are skipped (their susceptance still contributes to the
 weighting denominator); returns `nothing` only when no member has a known rating (see
@@ -238,11 +238,14 @@ function get_impedance_averaged_rating(bp::AbstractBranchesParallel)
     # (a single bus pair) this equals the natural-units weighting; device base would mix bases
     # when the branches differ in base power. Requires the branches to be attached to a system.
     # Σᵢ (bᵢ/b_total)·rᵢ == (Σᵢ bᵢ·rᵢ)/b_total, so one pass and no stored per-member state.
+    # `_finite_series_susceptance` substitutes the zero-impedance epsilon so a member with
+    # `r == x == 0` contributes a finite weight instead of `Inf`; the weights are shares
+    # bᵢ/b_total, so the substituted constant cancels within a group of such members.
     b_total = 0.0
     numerator = 0.0
     any_known = false
     for br in bp.branches
-        b = get_series_susceptance(br, PSY.SU)
+        b = _finite_series_susceptance(br, ZERO_IMPEDANCE_X_EPSILON)
         b_total += b
         r = get_equivalent_rating(br)
         if !isnothing(r)
@@ -250,10 +253,10 @@ function get_impedance_averaged_rating(bp::AbstractBranchesParallel)
             any_known = true
         end
     end
-    if !isfinite(b_total) || iszero(b_total)
+    if iszero(b_total)
         throw(
             ArgumentError(
-                "Cannot compute impedance-averaged rating: total series susceptance across the parallel group must be finite and non-zero.",
+                "Cannot compute impedance-averaged rating: total series susceptance across the parallel group must be non-zero.",
             ),
         )
     end
