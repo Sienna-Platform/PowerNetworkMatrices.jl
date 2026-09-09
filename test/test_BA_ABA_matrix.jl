@@ -156,6 +156,43 @@ end
     end
 end
 
+@testset "property: component susceptance agrees with the Ybus-derived value" begin
+    # The invariant `arc_dc_shift_injection` documents, checked across fixtures rather than
+    # asserted in prose. A component-side `Inf` where Ybus holds a substituted finite value
+    # is exactly the divergence this sweep exists to catch.
+    systems = Dict(
+        "case10_radial" => PSB.build_system(
+            PSB.PSITestSystems, "case10_radial_series_reductions"),
+        "zi_parallel" => _mk_zi_parallel_sys([(0.0, 0.0), (0.0, 0.1)]),
+    )
+    for (label, sys) in systems
+        pins = label == "zi_parallel" ? [2, 3] : Int[]
+        ybus = Ybus(sys; irreducible_buses = pins)
+        nr = get_network_reduction_data(ybus)
+        bus_lookup = PNM.get_bus_lookup(ybus)
+        direct_map = PNM.get_direct_branch_map(nr)
+        for arc in PNM.get_arc_axis(nr)
+            b_component = PNM._arc_component_susceptance(nr, arc)
+            isnan(b_component) && continue          # arc owned by no direct/parallel map
+            @test isfinite(b_component)
+            i = PNM.get_bus_index(arc[1], bus_lookup, nr)
+            j = PNM.get_bus_index(arc[2], bus_lookup, nr)
+            Y_ft = -1 * ybus.data[i, j]
+            Y_tf = -1 * ybus.data[j, i]
+            Y_ft != Y_tf && continue                # phase shifter: b is angle-independent
+            iszero(Y_ft) && continue                # cancelling parallel reactances
+            # A multi-member parallel group's DC susceptance sums each member's `1/x` and
+            # ignores resistance by convention, so it only reproduces the Ybus-derived AC
+            # value when every member is lossless. The exact-value identity is guaranteed
+            # only for a single direct branch, where `imag(1/Y_ft) == x` regardless of `r`.
+            haskey(direct_map, arc) || continue
+            x_eq = imag(1 / Y_ft)
+            iszero(x_eq) && continue
+            @test (1 / x_eq) ≈ b_component rtol = 1e-5
+        end
+    end
+end
+
 @testset "Test show for A, BA and ABA matrix" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
 

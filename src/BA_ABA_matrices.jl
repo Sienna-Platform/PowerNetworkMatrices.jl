@@ -131,7 +131,7 @@ function BA_Matrix(ybus::Ybus)
         # is_arc_in_series_map is false for them and they fall through to the general
         # Y_ft/Y_tf handling below, the same treatment any physical parallel group gets.
         if is_arc_in_series_map(nr_data, arc)
-            b = get_series_susceptance(get_mapped_series_branch(nr_data, arc), PSY.SU)
+            b = _finite_series_susceptance(get_mapped_series_branch(nr_data, arc), nr_data)
         else
             Y_ft = -1 * ybus.data[ix_from_bus, ix_to_bus]
             Y_tf = -1 * ybus.data[ix_to_bus, ix_from_bus]
