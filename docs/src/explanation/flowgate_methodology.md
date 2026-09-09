@@ -229,13 +229,13 @@ contingency registrations, so subsequent queries will simply recompute. Use
 
 ## Relationship to other matrix types
 
-| Matrix type           | Role in post-contingency analysis                                               |
-|:--------------------- |:------------------------------------------------------------------------------- |
-| `PTDF`                | Base-case sensitivities                                                         |
-| `VirtualLODF`         | Single-element line outage distribution factors (N-1)                           |
-| `VirtualMODF`         | Post-contingency PTDF rows via Woodbury; supports N-1 and multi-element outages |
-| `NetworkModification` | Contingency specification; keys the Woodbury and row caches in `VirtualMODF`    |
-| `ContingencySpec`     | Pairs a `PowerSystems.Outage` UUID with its resolved `NetworkModification`      |
+[`PTDF`](@ref) supplies the base-case sensitivities and [`VirtualLODF`](@ref) the
+single-element (N-1) redistribution factors; [`VirtualMODF`](@ref) is what extends
+both to multi-element outages, keyed by the [`NetworkModification`](@ref) and
+[`ContingencySpec`](@ref) types described in the
+[contingencies how-to](../how_to_guides/generated_contingencies.md). Axes, storage,
+and build cost for each matrix are tabulated in
+[Matrix overview & indexing](../reference/network_matrices_overview.md).
 
 ## Limitations
 

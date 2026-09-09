@@ -50,11 +50,9 @@ sensitivities, or to validate against a reference — pass a `tol::Float64`
 
 ## Matrix sizes and complexity
 
-A system with $N_b$ buses and $N_a$ arcs:
-
-| Operation         | Dimensions           | Complexity           | Notes                          |
-|:----------------- |:-------------------- |:-------------------- |:------------------------------ |
-| Incidence Matrix  | $N_a × N_b$ (sparse) | $O(N_a)$             | Simple topology scan           |
-| Admittance Matrix | $N_b × N_b$ (sparse) | $O(N_a)$             | Includes electrical parameters |
-| PTDF              | $N_a × N_b$ (dense)  | $O(N_b^3)$           | Requires matrix inversion      |
-| LODF              | $N_a × N_a$ (dense)  | $O(N_a \cdot N_b^2)$ | Derived from PTDF              |
+Dimensions, storage form, and build cost for every matrix type are tabulated in
+[Matrix overview & indexing](../reference/network_matrices_overview.md). The headline
+is the split that motivates this page: the structural matrices assemble in a single
+pass over the branches, while the dense sensitivity matrices require a factorization
+and a solve per arc — which is why [`PTDF`](@ref)/[`LODF`](@ref) dominate both the
+build time and the memory of a large study.
