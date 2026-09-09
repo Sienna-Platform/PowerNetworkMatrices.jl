@@ -316,7 +316,7 @@ function NetworkModification(mat::PowerNetworkMatrix, sys::PSY.System, outage::P
     for (arc_idx, tripped) in series_components_by_arc
         arc_tuple = series_arc_tuples[arc_idx]
         series_chain = nr.series_branch_map[arc_tuple]
-        delta_b = _compute_series_outage_delta_b(series_chain, tripped)
+        delta_b = _compute_series_outage_delta_b(series_chain, tripped, nr)
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
         push!(series_mods, ArcModification(arc_idx, delta_b, dy11, dy12, dy21, dy22))
     end
@@ -576,7 +576,7 @@ function _classify_branch_modification(
     elseif tag === :series
         arc_idx = arc_lookup[arc_tuple]
         series_chain = nr.series_branch_map[arc_tuple]
-        delta_b = _compute_series_outage_delta_b(series_chain, branch)
+        delta_b = _compute_series_outage_delta_b(series_chain, branch, nr)
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
         return [ArcModification(arc_idx, delta_b, dy11, dy12, dy21, dy22)]
     else

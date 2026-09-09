@@ -500,3 +500,40 @@ end
     @test isfinite(m.delta_y12)
     @test !iszero(m.delta_y12)
 end
+
+@testset "series outage delta is finite when a segment is zero-impedance" begin
+    sys, buses = _mk_bus_system(4)
+    for (f, t) in ((1, 2), (3, 4))
+        arc = Arc(; from = buses[f], to = buses[t])
+        add_component!(sys, arc)
+        _add_test_line!(sys, "L$(f)$(t)", arc, 0.0, 0.1)
+    end
+    zi_arc = Arc(; from = buses[2], to = buses[3])
+    add_component!(sys, zi_arc)
+    add_component!(
+        sys,
+        PSY.TwoWindingTransformer(;
+            name = "ZI_T",
+            circuit = PSY.TransformerCircuit(;
+                arc = zi_arc, tap = 1.0, α = 0.0, available = true,
+                active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
+                base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
+            ),
+            magnetizing_shunt = Complex(0.0, 0.0),
+        ),
+    )
+    ybus = Ybus(
+        sys;
+        network_reductions = PNM.NetworkReduction[
+            PNM.DegreeTwoReduction(; reduce_reactive_power_injectors = false),
+        ],
+    )
+    nr = get_network_reduction_data(ybus)
+    @test !isempty(PNM.get_series_branch_map(nr))
+    chain = first(values(PNM.get_series_branch_map(nr)))
+    tripped = PSY.get_component(Line, sys, "L12")
+
+    delta = PNM._compute_series_outage_delta_b(chain, tripped, nr)
+    @test isfinite(delta)
+    @test delta < 0.0
+end

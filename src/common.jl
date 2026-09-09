@@ -973,7 +973,7 @@ function _assert_not_phase_shifting(component::PSY.ACTransmission)
 end
 
 """
-    _segment_susceptance_after_outage(segment, tripped_set) -> Float64
+    _segment_susceptance_after_outage(segment, tripped_set, nr::NetworkReductionData) -> Float64
 
 Compute the remaining susceptance of a series chain segment after removing
 tripped components. Dispatches on segment type to handle both single branches
@@ -984,28 +984,30 @@ Returns 0.0 if the segment (or all branches in a parallel group) is fully trippe
 function _segment_susceptance_after_outage(
     segment::PSY.ACTransmission,
     tripped_set::Set{<:PSY.ACTransmission},
+    nr::NetworkReductionData,
 )::Float64
     if segment ∈ tripped_set
         return 0.0
     end
-    return get_series_susceptance(segment, PSY.SU)
+    return _finite_series_susceptance(segment, nr)
 end
 
 function _segment_susceptance_after_outage(
     segment::AbstractBranchesParallel,
     tripped_set::Set{<:PSY.ACTransmission},
+    nr::NetworkReductionData,
 )::Float64
     b_remaining = 0.0
     for branch in segment.branches
         if branch ∉ tripped_set
-            b_remaining += get_series_susceptance(branch, PSY.SU)
+            b_remaining += _finite_series_susceptance(branch, nr)
         end
     end
     return b_remaining
 end
 
 """
-    _compute_series_outage_delta_b(series_chain::BranchesSeries, component::PSY.ACTransmission) -> Float64
+    _compute_series_outage_delta_b(series_chain::BranchesSeries, component::PSY.ACTransmission, nr::NetworkReductionData) -> Float64
 
 Compute the change in equivalent arc susceptance when `component` is tripped
 from `series_chain`. Delegates to the vector version.
@@ -1013,12 +1015,13 @@ from `series_chain`. Delegates to the vector version.
 function _compute_series_outage_delta_b(
     series_chain::BranchesSeries,
     component::PSY.ACTransmission,
+    nr::NetworkReductionData,
 )::Float64
-    return _compute_series_outage_delta_b(series_chain, [component])
+    return _compute_series_outage_delta_b(series_chain, [component], nr)
 end
 
 """
-    _compute_series_outage_delta_b(series_chain::BranchesSeries, tripped::Vector{<:PSY.ACTransmission}) -> Float64
+    _compute_series_outage_delta_b(series_chain::BranchesSeries, tripped::Vector{<:PSY.ACTransmission}, nr::NetworkReductionData) -> Float64
 
 Compute the change in equivalent arc susceptance when multiple components are
 simultaneously tripped from a series chain.
@@ -1036,12 +1039,13 @@ If all segments are fully tripped, returns -b_eq (full arc outage).
 function _compute_series_outage_delta_b(
     series_chain::BranchesSeries,
     tripped::Vector{<:PSY.ACTransmission},
+    nr::NetworkReductionData,
 )::Float64
-    b_old = get_series_susceptance(series_chain, PSY.SU)
+    b_old = _finite_series_susceptance(series_chain, nr)
     tripped_set = Set{PSY.ACTransmission}(tripped)
     remaining_inv_sum = 0.0
     for segment in series_chain
-        b_seg = _segment_susceptance_after_outage(segment, tripped_set)
+        b_seg = _segment_susceptance_after_outage(segment, tripped_set, nr)
         if iszero(b_seg)
             return -b_old
         end
