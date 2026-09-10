@@ -102,7 +102,7 @@ function get_isolated_buses(M::Ybus)
 end
 
 """
-    get_default_reduction(sys::PSY.System) -> NetworkReductionData
+    get_default_reduction(sys::PowerSystems.System) -> NetworkReductionData
 
 Build a Y-bus matrix from the system and return its default network reduction data.
 
@@ -111,7 +111,7 @@ the resulting [`NetworkReductionData`](@ref), which contains the basic bus and b
 for the system without any reduction algorithms.
 
 # Arguments
-- `sys::PSY.System`: Power system to analyze
+- `sys::PowerSystems.System`: Power system to analyze
 
 # Returns
 - `NetworkReductionData`: Default network reduction data with basic system mappings
@@ -133,7 +133,7 @@ function get_default_reduction(sys::PSY.System)
 end
 
 """
-    get_reduction(ybus::Ybus, sys::PSY.System, reduction::RadialReduction) -> NetworkReductionData
+    get_reduction(ybus::Ybus, sys::PowerSystems.System, reduction::RadialReduction) -> NetworkReductionData
 
 Apply radial network reduction to a Y-bus matrix.
 
@@ -143,7 +143,7 @@ removed to reduce computational complexity.
 
 # Arguments
 - `ybus::Ybus`: Y-bus matrix to reduce
-- `sys::PSY.System`: Power system for validation
+- `sys::PowerSystems.System`: Power system for validation
 - `reduction::RadialReduction`: Radial reduction configuration
 
 # Returns
@@ -235,7 +235,7 @@ function _push_parallel_branch_dispatch!(
 end
 
 """
-    add_to_branch_maps!(nr::NetworkReductionData, arc::PSY.Arc, br::PSY.ACTransmission)
+    add_to_branch_maps!(nr::NetworkReductionData, arc::PowerSystems.Arc, br::PowerSystems.ACTransmission)
 
 Add an AC transmission branch to the appropriate branch mapping in NetworkReductionData.
 
@@ -245,8 +245,8 @@ reverse lookup dictionaries for efficient access.
 
 # Arguments
 - `nr::NetworkReductionData`: Network reduction data to modify
-- `arc::PSY.Arc`: Arc representing the branch connection
-- `br::PSY.ACTransmission`: AC transmission branch to add
+- `arc::PowerSystems.Arc`: Arc representing the branch connection
+- `br::PowerSystems.ACTransmission`: AC transmission branch to add
 
 # Implementation Details
 - If arc already has a direct branch, converts to parallel mapping
@@ -287,10 +287,10 @@ end
 """
     add_to_branch_maps!(
         nr::NetworkReductionData,
-        primary_star_arc::PSY.Arc,
-        secondary_star_arc::PSY.Arc,
-        tertiary_star_arc::PSY.Arc,
-        br::PSY.ThreeWindingTransformer
+        primary_star_arc::PowerSystems.Arc,
+        secondary_star_arc::PowerSystems.Arc,
+        tertiary_star_arc::PowerSystems.Arc,
+        br::PowerSystems.ThreeWindingTransformer
     )
 
 Add a three-winding transformer to the transformer mapping in NetworkReductionData.
@@ -300,13 +300,13 @@ connecting to a virtual star bus. Each available winding is mapped separately.
 
 # Arguments
 - `nr::NetworkReductionData`: Network reduction data to modify
-- `primary_star_arc::PSY.Arc`: Arc for primary winding
-- `secondary_star_arc::PSY.Arc`: Arc for secondary winding
-- `tertiary_star_arc::PSY.Arc`: Arc for tertiary winding
-- `br::PSY.ThreeWindingTransformer`: Three-winding transformer to add
+- `primary_star_arc::PowerSystems.Arc`: Arc for primary winding
+- `secondary_star_arc::PowerSystems.Arc`: Arc for secondary winding
+- `tertiary_star_arc::PowerSystems.Arc`: Arc for tertiary winding
+- `br::PowerSystems.ThreeWindingTransformer`: Three-winding transformer to add
 
 # Implementation Details
-- Only adds arcs for available windings (checked via `PSY.get_available_*`)
+- Only adds arcs for available windings (checked via `PowerSystems.get_available_*`)
 - Maintains `transformer3W_map` and `reverse_transformer3W_map`
 - Each winding is numbered (1=primary, 2=secondary, 3=tertiary)
 """
@@ -347,7 +347,7 @@ end
         y21::Vector{YBUS_ELTYPE},
         y22::Vector{YBUS_ELTYPE},
         branch_ix::Int,
-        br::PSY.ACTransmission
+        br::PowerSystems.ACTransmission
     )
 
 Add Y-bus matrix entries for an AC transmission branch to the admittance vectors.
@@ -363,7 +363,7 @@ and Y22 (to-bus self).
 - `y21::Vector{YBUS_ELTYPE}`: Vector for to-from mutual admittances
 - `y22::Vector{YBUS_ELTYPE}`: Vector for to-bus self admittances
 - `branch_ix::Int`: Index where to store the branch entries
-- `br::PSY.ACTransmission`: AC transmission branch
+- `br::PowerSystems.ACTransmission`: AC transmission branch
 
 # Implementation Details
 - Calls `ybus_branch_entries()` to compute Pi-model parameters
@@ -394,7 +394,7 @@ end
         nr::NetworkReductionData,
         fb::Vector{Int},
         tb::Vector{Int},
-        br::PSY.ACTransmission
+        br::PowerSystems.ACTransmission
     )
 
 Update indexing structures when adding an AC transmission branch to the Y-bus.
@@ -409,7 +409,7 @@ construction vectors.
 - `nr::NetworkReductionData`: Network reduction data to update
 - `fb::Vector{Int}`: Vector of from-bus indices
 - `tb::Vector{Int}`: Vector of to-bus indices
-- `br::PSY.ACTransmission`: AC transmission branch to add
+- `br::PowerSystems.ACTransmission`: AC transmission branch to add
 
 # Implementation Details
 - Calls `add_to_branch_maps!()` to update reduction mappings
@@ -867,7 +867,7 @@ end
 
 """
     Ybus(
-        sys::PSY.System;
+        sys::PowerSystems.System;
         make_arc_admittance_matrices::Bool = false,
         network_reductions::Vector{NetworkReduction} = NetworkReduction[],
         include_constant_impedance_loads::Bool = true,
@@ -882,7 +882,7 @@ between buses in the power system. Handles AC branches, transformers, shunt elem
 and network reductions while maintaining connectivity analysis.
 
 # Arguments
-- `sys::PSY.System`: Power system to build Y-bus from
+- `sys::PowerSystems.System`: Power system to build Y-bus from
 
 # Keyword arguments
 - `make_arc_admittance_matrices::Bool=false`: Whether to construct arc admittance matrices for power flow
@@ -1283,7 +1283,7 @@ end
 """
     build_reduced_ybus(
         ybus::Ybus,
-        sys::PSY.System,
+        sys::PowerSystems.System,
         network_reduction::NetworkReduction
     ) -> Ybus
 
@@ -1295,7 +1295,7 @@ and branches. The electrical behavior of the remaining network is preserved.
 
 # Arguments
 - `ybus::Ybus`: Original Y-bus matrix to reduce
-- `sys::PSY.System`: Power system for validation and data access
+- `sys::PowerSystems.System`: Power system for validation and data access
 - `network_reduction::NetworkReduction`: Reduction algorithm to apply
 
 # Returns
@@ -2206,7 +2206,7 @@ end
 
 """
     add_segment_to_ybus!(
-        segment::PSY.ACTransmission
+        segment::PowerSystems.ACTransmission
         y11::Vector{YBUS_ELTYPE},
         y12::Vector{YBUS_ELTYPE},
         y21::Vector{YBUS_ELTYPE},
@@ -2224,7 +2224,7 @@ admittance vectors, handling the proper orientation. Used when building equivale
 Y-bus entries for series chains of degree-two buses.
 
 # Arguments
-- `segment::Union{PSY.ACTransmission, Tuple{PSY.ThreeWindingTransformer, Int}}`: Branch segment to add
+- `segment::Union{PowerSystems.ACTransmission, Tuple{PowerSystems.ThreeWindingTransformer, Int}}`: Branch segment to add
 - `y11::Vector{YBUS_ELTYPE}`: Vector for from-bus self admittances
 - `y12::Vector{YBUS_ELTYPE}`: Vector for from-to mutual admittances
 - `y21::Vector{YBUS_ELTYPE}`: Vector for to-from mutual admittances
@@ -2527,9 +2527,9 @@ includes its slack bus. Returns the reference-bus key of the matching subnetwork
 validation succeeds.
 
 # Errors
-- Throws `IS.DataFormatError` if any study bus is not present in the system.
-- Throws `IS.DataFormatError` if study buses span multiple subnetworks.
-- Throws `IS.DataFormatError` if a partially reduced subnetwork excludes its slack bus.
+- Throws `InfrastructureSystems.DataFormatError` if any study bus is not present in the system.
+- Throws `InfrastructureSystems.DataFormatError` if study buses span multiple subnetworks.
+- Throws `InfrastructureSystems.DataFormatError` if a partially reduced subnetwork excludes its slack bus.
 """
 function _validate_study_buses(
     ybus::Ybus,

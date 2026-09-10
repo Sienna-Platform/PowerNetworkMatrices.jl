@@ -98,12 +98,12 @@ function get_reduction(
 end
 
 """
-    AdjacencyMatrix(sys::PSY.System; kwargs...)
+    AdjacencyMatrix(sys::PowerSystems.System; kwargs...)
 
 Construct an AdjacencyMatrix from a PowerSystems.System.
 
 # Arguments
-- `sys::PSY.System`: The power system from which to construct the adjacency matrix
+- `sys::PowerSystems.System`: The power system from which to construct the adjacency matrix
 
 # Keyword arguments
 - `network_reductions::Vector{NetworkReduction}=[]`: Network reduction algorithms to apply

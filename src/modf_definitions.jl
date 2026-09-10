@@ -100,7 +100,7 @@ end
 
 Canonical description of topology changes to a power network.
 Wraps arc susceptance changes, shunt admittance changes, and islanding status.
-No dependency on `PSY.System` after construction.
+No dependency on `PowerSystems.System` after construction.
 
 # Fields
 - `label::String`: Human-readable identifier for the modification.
@@ -170,7 +170,7 @@ Base.:(==)(a::NetworkModification, b::NetworkModification) =
 
 A resolved, self-contained contingency specification backed by a
 [`NetworkModification`](@ref). The UUID links back to the source
-`PSY.Outage` supplemental attribute for caching purposes.
+`PowerSystems.Outage` supplemental attribute for caching purposes.
 
 # Fields
 - `uuid::Base.UUID`: Unique identifier matching the source Outage supplemental attribute.

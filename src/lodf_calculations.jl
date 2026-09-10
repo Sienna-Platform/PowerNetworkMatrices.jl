@@ -250,14 +250,14 @@ function _lodf_from_system(
 end
 
 """
-    LODF(sys::PSY.System; linear_solver::String = _default_linear_solver(), tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE, network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
+    LODF(sys::PowerSystems.System; linear_solver::String = _default_linear_solver(), tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE, network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
 
 Construct a Line Outage Distribution Factor (LODF) matrix from a PowerSystems.System by computing
 the sensitivity of line flows to single line outages. This is the primary constructor for LODF
 analysis starting from system data.
 
 # Arguments
-- `sys::PSY.System`: The power system from which to construct the LODF matrix
+- `sys::PowerSystems.System`: The power system from which to construct the LODF matrix
 
 # Keyword Arguments
 - `linear_solver::String = _default_linear_solver()`:

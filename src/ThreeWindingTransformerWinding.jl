@@ -1,5 +1,5 @@
 """
-    ThreeWindingTransformerWinding{T<:PSY.ThreeWindingTransformer} <: PSY.ACTransmission
+    ThreeWindingTransformerWinding{T<:PowerSystems.ThreeWindingTransformer} <: PowerSystems.ACTransmission
 
 Internal object representing a single winding of a three-winding transformer. Do not export.
 

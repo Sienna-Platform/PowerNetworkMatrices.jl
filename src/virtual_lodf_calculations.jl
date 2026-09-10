@@ -263,8 +263,8 @@ Builds the Virtual LODF matrix from a system. The return is a VirtualLODF
 struct with an empty cache.
 
 # Arguments
-- `sys::PSY.System`:
-        PSY system for which the matrix is constructed
+- `sys::PowerSystems.System`:
+        The power system for which the matrix is constructed
 
 # Keyword Arguments
 - `dist_slack::Vector{Float64} = Float64[]`:

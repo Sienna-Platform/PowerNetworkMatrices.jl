@@ -32,7 +32,7 @@ specified connectivity algorithm.
 
 # Arguments
 - `M`: Matrix representation of the network (e.g., admittance or adjacency matrix)
-- `nodes::Vector{PSY.ACBus}`: AC buses in the network
+- `nodes::Vector{PowerSystems.ACBus}`: AC buses in the network
 - `bus_lookup::Dict{Int64, Int64}`: Mapping from bus numbers to matrix indices
 - `connectivity_method::Function`: Algorithm to use (default: `goderya_connectivity`)
 

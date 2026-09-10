@@ -57,7 +57,7 @@ get_bus_reduction_map(get_network_reduction_data(incidence))
 
 ptdf = PTDF(sys)
 
-# One column of the [`PTDF`](@ref) corresponds to one bus's influence on every branch:
+# One column of the [`PTDF`](@ref) corresponds to one bus's influence on every branch. See bus 103's influence on arc(103, 104):
 
 ptdf[(103, 104), 103]
 

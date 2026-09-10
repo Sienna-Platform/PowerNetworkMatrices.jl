@@ -495,7 +495,7 @@ function get_device_with_time_series(
 end
 
 """
-    _resolve_branch_arc(nr::NetworkReductionData, component::PSY.ACTransmission)
+    _resolve_branch_arc(nr::NetworkReductionData, component::PowerSystems.ACTransmission)
         -> Tuple{Symbol, Union{Tuple{Int, Int}, Nothing}}
 
 Classify a branch component by looking up which reverse map it belongs to in the
@@ -526,7 +526,7 @@ function _resolve_branch_arc(
 end
 
 """
-    _assert_not_phase_shifting(component::PSY.ACTransmission)
+    _assert_not_phase_shifting(component::PowerSystems.ACTransmission)
 
 No-op for non-PST branches. Throws `ErrorException` for `PhaseShiftingTransformer`.
 """
@@ -580,7 +580,7 @@ function _segment_susceptance_after_outage(
 end
 
 """
-    _compute_series_outage_delta_b(series_chain::BranchesSeries, component::PSY.ACTransmission) -> Float64
+    _compute_series_outage_delta_b(series_chain::BranchesSeries, component::PowerSystems.ACTransmission) -> Float64
 
 Compute the change in equivalent arc susceptance when `component` is tripped
 from `series_chain`. Delegates to the vector version.
@@ -593,7 +593,7 @@ function _compute_series_outage_delta_b(
 end
 
 """
-    _compute_series_outage_delta_b(series_chain::BranchesSeries, tripped::Vector{<:PSY.ACTransmission}) -> Float64
+    _compute_series_outage_delta_b(series_chain::BranchesSeries, tripped::Vector{<:PowerSystems.ACTransmission}) -> Float64
 
 Compute the change in equivalent arc susceptance when multiple components are
 simultaneously tripped from a series chain.

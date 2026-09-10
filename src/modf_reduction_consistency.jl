@@ -54,7 +54,7 @@ end
 """
     _collect_protected_buses(sys) -> Set{Int}
 
-Buses to protect so every `PSY.Outage`'s outaged and monitored components
+Buses to protect so every `PowerSystems.Outage`'s outaged and monitored components
 remain queryable as arcs after reduction. Computed from `sys` alone (no `Ybus`
 needed) so the result can be folded into `irreducible_buses` *before* the base
 `Ybus` (and its auto-applied zero-impedance reduction) is built — otherwise a

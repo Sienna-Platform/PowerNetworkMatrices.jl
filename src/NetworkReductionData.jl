@@ -113,10 +113,10 @@ network reduction algorithms.
 - `irreducible_buses::Set{Int}`: Buses that cannot be reduced
 - `bus_reduction_map::Dict{Int, Set{Int}}`: Maps retained buses to sets of eliminated buses
 - `reverse_bus_search_map::Dict{Int, Int}`: Maps eliminated buses to their parent buses
-- `direct_branch_map::Dict{Tuple{Int, Int}, PSY.ACTransmission}`: One-to-one branch mappings
-- `reverse_direct_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}}`: Reverse direct mappings
+- `direct_branch_map::Dict{Tuple{Int, Int}, PowerSystems.ACTransmission}`: One-to-one branch mappings
+- `reverse_direct_branch_map::Dict{PowerSystems.ACTransmission, Tuple{Int, Int}}`: Reverse direct mappings
 - `parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel}`: Parallel branch combinations (homogeneous `BranchesParallel{T}` or `MixedBranchesParallel`)
-- `reverse_parallel_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}}`: Reverse parallel mappings
+- `reverse_parallel_branch_map::Dict{PowerSystems.ACTransmission, Tuple{Int, Int}}`: Reverse parallel mappings
 - `series_branch_map::Dict{Tuple{Int, Int}, BranchesSeries}`: Series branch combinations
 - `reverse_series_branch_map::Dict{Any, Tuple{Int, Int}}`: Reverse series mappings
 - `transformer3W_map::Dict{Tuple{Int, Int}, ThreeWindingTransformerWinding}`: Three-winding transformer mappings
@@ -126,8 +126,8 @@ network reduction algorithms.
 - `merged_bus_pairs::Dict{Int, Int}`: Maps removed bus number to surviving bus number for zero-impedance branch bus merges; drives row/column summation in `_merge_ybus_buses!`
 - `removed_arc_to_surviving_bus::Dict{Tuple{Int, Int}, Int}`: Maps removed arcs to the connected surviving bus number (occurs for radial reduction or Ward reduction)
 - `boundary_bus_to_removed_arcs::Dict{Int, Set{Tuple{Int, Int}}}`: Maps boundary buses to the set of removed arcs connected to them
-- `added_admittance_map::Dict{Int, PSY.FixedAdmittance}`: Admittances added to buses during reduction
-- `added_arc_impedance_map::Dict{Tuple{Int, Int}, PSY.GenericArcImpedance}`: New arcs created during reduction
+- `added_admittance_map::Dict{Int, PowerSystems.FixedAdmittance}`: Admittances added to buses during reduction
+- `added_arc_impedance_map::Dict{Tuple{Int, Int}, PowerSystems.GenericArcImpedance}`: New arcs created during reduction
 - `all_branch_maps_by_type::BranchMapsByType`: Branch mappings organized by component type
 - `reductions::ReductionContainer`: Container tracking applied reduction algorithms
 - `name_to_arc_map::Dict{Type, DataStructures.SortedDict{String, Tuple{Tuple{Int, Int}, String}}}`: Lazily filled with the call to [`populate_branch_maps_by_type!`](@ref), maps string names to their corresponding arcs and the map where the arc can be found.

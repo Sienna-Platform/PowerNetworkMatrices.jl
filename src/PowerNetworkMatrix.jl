@@ -14,7 +14,7 @@ abstract type PowerNetworkMatrix{T} <: AbstractArray{T, 2} end
 Evaluates the map linking the system's buses and branches.
 
 # Arguments
-- `buses::AbstractVector{PSY.ACBus}`:
+- `buses::AbstractVector{PowerSystems.ACBus}`:
         system's buses
 """
 function make_ax_ref(buses::AbstractVector{PSY.ACBus})
@@ -61,10 +61,10 @@ function lookup_index(i, lookup::Dict)
 end
 
 """
-Gets the matrix index for a `PSY.Arc`, converting it to an arc tuple first.
+Gets the matrix index for a `PowerSystems.Arc`, converting it to an arc tuple first.
 
 # Arguments
-- `i::PSY.Arc`:
+- `i::PowerSystems.Arc`:
         Power System Arc object
 - `lookup::Dict`:
         Dictionary mapping arc tuples or bus numbers to matrix indices
@@ -74,10 +74,10 @@ function lookup_index(i::PSY.Arc, lookup::Dict)
 end
 
 """
-Gets the matrix index for a `PSY.ACBus`, converting it to a bus number first.
+Gets the matrix index for a `PowerSystems.ACBus`, converting it to a bus number first.
 
 # Arguments
-- `i::PSY.ACBus`:
+- `i::PowerSystems.ACBus`:
         Power System AC bus
 - `lookup::Dict`:
         Dictionary mapping arc tuples or bus numbers to matrix indices
@@ -330,7 +330,7 @@ if the matrix type does not track system origin.
 get_system_uuid(::PowerNetworkMatrix) = nothing
 
 """
-    _validate_system_uuid(mat::PowerNetworkMatrix, sys::PSY.System)
+    _validate_system_uuid(mat::PowerNetworkMatrix, sys::PowerSystems.System)
 
 Validate that the matrix was constructed from the same system. Throws an
 `ErrorException` if the matrix stores a system UUID that does not match

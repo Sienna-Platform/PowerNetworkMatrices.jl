@@ -46,13 +46,14 @@ get_arc_lookup(M::BA_Matrix) = M.lookup[2]
 stores_transpose(::BA_Matrix) = true
 
 """
-    BA_Matrix(sys::PSY.System; network_reductions::Vector{NetworkReduction} = Vector{NetworkReduction}(), kwargs...)
+    BA_Matrix(sys::PowerSystems.System; network_reductions::Vector{NetworkReduction} = Vector{NetworkReduction}(), kwargs...)
 
-Construct a `BA_Matrix` from a `PSY.System` by first building the underlying [`Ybus`](@ref) matrix
-and then computing the branch-bus incidence matrix weighted by branch susceptances.
+Construct a `BA_Matrix` from a `PowerSystems.System` by first building the underlying
+[`Ybus`](@ref) matrix and then computing the branch-bus incidence matrix weighted by branch
+susceptances.
 
 # Arguments
-- `sys::PSY.System`: The power system from which to construct the BA matrix
+- `sys::PowerSystems.System`: The power system from which to construct the BA matrix
 
 # Keyword Arguments
 - `network_reductions::Vector{NetworkReduction} = Vector{NetworkReduction}()`:
@@ -241,14 +242,14 @@ get_bus_axis(M::ABA_Matrix) = M.axes[1]
 get_bus_lookup(M::ABA_Matrix) = M.lookup[1]
 
 """
-    ABA_Matrix(sys::PSY.System; factorize::Bool = false, network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
+    ABA_Matrix(sys::PowerSystems.System; factorize::Bool = false, network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
 
-Construct an `ABA_Matrix` from a `PSY.System` by computing ``A^\\top B A``, where ``A`` is the
-incidence matrix and ``B`` the branch susceptance matrix. The resulting matrix is fundamental
-for DC power flow analysis and power system sensitivity studies.
+Construct an `ABA_Matrix` from a `PowerSystems.System` by computing ``A^\\top B A``, where
+``A`` is the incidence matrix and ``B`` the branch susceptance matrix. The resulting matrix
+is fundamental for DC power flow analysis and power system sensitivity studies.
 
 # Arguments
-- `sys::PSY.System`: The power system from which to construct the ABA matrix
+- `sys::PowerSystems.System`: The power system from which to construct the ABA matrix
 
 # Keyword Arguments
 - `factorize::Bool = false`:

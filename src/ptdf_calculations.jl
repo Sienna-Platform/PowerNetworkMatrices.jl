@@ -286,14 +286,14 @@ end
 end
 
 """
-    PTDF(sys::PSY.System; dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(), linear_solver = _default_linear_solver(), tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE, network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
+    PTDF(sys::PowerSystems.System; dist_slack::Dict{Int, Float64} = Dict{Int, Float64}(), linear_solver = _default_linear_solver(), tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE, network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
 
 Construct a Power Transfer Distribution Factor (PTDF) matrix from a PowerSystems.System by computing
 the sensitivity of transmission line flows to bus power injections. This is the primary constructor
 for PTDF analysis starting from system data.
 
 # Arguments
-- `sys::PSY.System`: The power system from which to construct the PTDF matrix
+- `sys::PowerSystems.System`: The power system from which to construct the PTDF matrix
 
 # Keyword Arguments
 - `dist_slack::Dict{Int, Float64} = Dict{Int, Float64}()`:

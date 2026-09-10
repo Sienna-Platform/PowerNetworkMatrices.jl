@@ -115,7 +115,7 @@ end
     get_post_modification_ptdf_row(vptdf, monitored_arc, sys, outage) -> Vector{Float64}
 
 Compute the post-contingency PTDF row for a monitored arc when the given
-`PSY.Outage` trips. Resolves the outage's associated branches through
+`PowerSystems.Outage` trips. Resolves the outage's associated branches through
 the system and builds the modification automatically.
 
 $(TYPEDSIGNATURES)

@@ -122,8 +122,8 @@ Builds the Virtual PTDF matrix from a system. The return is a VirtualPTDF
 struct with an empty cache.
 
 # Arguments
-- `sys::PSY.System`:
-        PSY system for which the matrix is constructed
+- `sys::PowerSystems.System`:
+        The power system for which the matrix is constructed
 
 # Keyword Arguments
 - `dist_slack::Dict{Int, Float64} = Dict{Int, Float64}()`:

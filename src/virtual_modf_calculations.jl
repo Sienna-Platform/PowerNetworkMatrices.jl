@@ -3,7 +3,7 @@ The Virtual Multiple Outage Distribution Factor (VirtualMODF) structure computes
 post-contingency PTDF rows lazily for registered contingencies using the
 Woodbury matrix identity (van Dijk et al. Eq. 29).
 
-Contingencies are resolved from PSY.Outage supplemental attributes at construction
+Contingencies are resolved from PowerSystems.Outage supplemental attributes at construction
 time. After registration, the System is not needed for queries.
 
 Caching is two-tiered:
@@ -252,7 +252,7 @@ Base.setindex!(::VirtualMODF, _, ::CartesianIndex) =
 # --- Constructor ---
 
 """
-    VirtualMODF(sys::PSY.System; kwargs...) -> VirtualMODF
+    VirtualMODF(sys::PowerSystems.System; kwargs...) -> VirtualMODF
 
 Build a VirtualMODF from a PowerSystems System. Automatically registers all
 Outage supplemental attributes found in the system.
@@ -266,7 +266,7 @@ survive every reduction step, including the zero-impedance reduction that is
 auto-applied during `Ybus` construction.
 
 # Arguments
-- `sys::PSY.System`: Power system to build from
+- `sys::PowerSystems.System`: Power system to build from
 
 # Keyword Arguments
 - `dist_slack::Vector{Float64}`: Distributed slack weights, one per bus and ordered
@@ -426,7 +426,7 @@ end
 Bulk-register all Outage supplemental attributes in the system.
 Called automatically by the VirtualMODF constructor.
 
-Uses `PSY.get_supplemental_attributes(PSY.Outage, sys)` which accepts
+Uses `PowerSystems.get_supplemental_attributes(PowerSystems.Outage, sys)` which accepts
 the abstract type and iterates over all concrete subtypes
 (PlannedOutage, UnplannedOutage).
 """
@@ -608,7 +608,7 @@ function Base.getindex(vmodf::VirtualMODF, monitored::Int, outage::PSY.Outage)
 end
 
 """
-Arc-tuple indexed version of getindex by PSY.Outage.
+Arc-tuple indexed version of getindex by PowerSystems.Outage.
 
 $(TYPEDSIGNATURES)
 """
@@ -637,7 +637,7 @@ end
 Clear all caches including contingency registrations. After calling this function,
 the [`VirtualMODF`](@ref) object is effectively empty and cannot be queried — it has
 no registered contingencies. To restore functionality, a new [`VirtualMODF`](@ref) must
-be constructed from a `PSY.System`.
+be constructed from a `PowerSystems.System`.
 
 Use [`clear_caches!`](@ref) instead to preserve contingency registrations while
 freeing computation cache memory.

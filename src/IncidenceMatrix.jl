@@ -88,13 +88,13 @@ function get_reduction(
 end
 
 """
-    IncidenceMatrix(sys::PSY.System; network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
+    IncidenceMatrix(sys::PowerSystems.System; network_reductions::Vector{NetworkReduction} = NetworkReduction[], kwargs...)
 
 Construct an IncidenceMatrix from a PowerSystems.System by extracting the network topology
 and creating the bus-branch connectivity matrix fundamental to power system analysis.
 
 # Arguments
-- `sys::PSY.System`: The power system from which to construct the incidence matrix
+- `sys::PowerSystems.System`: The power system from which to construct the incidence matrix
 
 # Keyword Arguments
 - `network_reductions::Vector{NetworkReduction} = NetworkReduction[]`: 

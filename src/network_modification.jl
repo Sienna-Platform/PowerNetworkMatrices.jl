@@ -175,9 +175,9 @@ end
 """
 $(TYPEDSIGNATURES)
 
-Construct a [`NetworkModification`](@ref) from a `PSY.ThreeWindingTransformer` component.
-Automatically decomposes the transformer into its three winding arcs and classifies
-each one. For a partial outage (single winding trip), use a
+Construct a [`NetworkModification`](@ref) from a `PowerSystems.ThreeWindingTransformer`
+component. Automatically decomposes the transformer into its three winding arcs and
+classifies each one. For a partial outage (single winding trip), use a
 `ThreeWindingTransformerWinding` instead.
 """
 function NetworkModification(
@@ -242,10 +242,10 @@ end
 """
 $(TYPEDSIGNATURES)
 
-Construct a [`NetworkModification`](@ref) from a `PSY.Outage` supplemental attribute.
-Resolves the outage's associated `ACTransmission` components through the system,
-classifies each by the matrix's network reduction maps, and builds the
-modification. Handles multi-component outages with series-chain grouping.
+Construct a [`NetworkModification`](@ref) from a `PowerSystems.Outage` supplemental
+attribute. Resolves the outage's associated `ACTransmission` components through the system,
+classifies each by the matrix's network reduction maps, and builds the modification.
+Handles multi-component outages with series-chain grouping.
 """
 function NetworkModification(
     mat::PowerNetworkMatrix,
@@ -510,7 +510,7 @@ function _classify_branch_modification(
 end
 
 """
-    _classify_branch_modification(nr, arc_lookup, arc_susceptances, branch::PSY.ThreeWindingTransformer) -> Vector{ArcModification}
+    _classify_branch_modification(nr, arc_lookup, arc_susceptances, branch::PowerSystems.ThreeWindingTransformer) -> Vector{ArcModification}
 
 Classify a `ThreeWindingTransformer` by decomposing it into its three winding arcs
 and classifying each one individually. Returns arc modifications for all windings
