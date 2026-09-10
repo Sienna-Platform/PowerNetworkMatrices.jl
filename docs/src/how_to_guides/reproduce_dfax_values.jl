@@ -93,10 +93,9 @@ sys = with_logger(NullLogger()) do
         "RTS_GMLC_DA_sys",
     )
 end
-
 ptdf, lodf, vmodf = with_logger(NullLogger()) do
     PTDF(sys), LODF(sys), VirtualMODF(sys)
-end
+end;
 
 # [`VirtualMODF`](@ref) is the most general object — it can compute post-modification
 # PTDF rows under any contingency. We also build `PTDF` and `LODF` up front

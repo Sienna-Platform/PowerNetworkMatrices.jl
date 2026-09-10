@@ -112,9 +112,7 @@ Filter = t -> t in (
 
 Read a matrix's structure: the identifier vectors for each dimension, the
 dictionaries mapping those identifiers to integer positions, and the reference
-(slack) buses held fixed when the matrix was built. See
-[Accessors: axes, lookups, and data](@ref) for which dimension each selects per
-matrix type.
+(slack) buses held fixed when the matrix was built.
 
 ```@autodocs
 Modules = [PowerNetworkMatrices]

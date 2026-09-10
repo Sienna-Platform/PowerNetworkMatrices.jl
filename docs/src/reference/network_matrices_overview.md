@@ -9,8 +9,7 @@ All matrix types are concrete subtypes of the abstract supertype
 they are `AbstractArray{T,2}` subtypes, they support the standard array interface
 (`size`, `axes`, `getindex`, iteration), but indexing is overloaded so that rows and
 columns are addressed by domain identifiers (bus numbers and arc tuples) rather than
-by raw integer positions. `LinearIndices` and `CartesianIndices` are intentionally
-disabled.
+by raw integer positions.
 
 ## Matrix taxonomy
 
@@ -169,35 +168,7 @@ ptdf[PowerSystems.get_name(branch), 1]
 ptdf[:, 1]                             # column for bus 1
 ````
 
-## Accessors: axes, lookups, and data
-
-The accessors below are exported and documented in full on the
-[Full public API](public.md), with one deliberate exception: **`get_data`** is not
-exported, because `PowerSystems.get_data` already claims that name and exporting it
-would make a bare `get_data` call ambiguous for anyone with both packages in scope.
-Reach it as `PowerNetworkMatrices.get_data`.
-
-### Data extraction
-
-  - **`PowerNetworkMatrices.get_data(mat)`** — the raw backing array (`mat.data`)
-    exactly as stored: a complex
-    [`SparseMatrixCSC`](@extref Julia SparseArrays.SparseMatrixCSC) for
-    [`Ybus`](@ref), the internally **transposed** dense matrix for
-    [`PTDF`](@ref)/[`LODF`](@ref).
-  - **[`get_ptdf_data`](@ref)** / **[`get_lodf_data`](@ref)** — the matrix in
-    standard (non-transposed) orientation, via a lazy `transpose` (not a copy). For
-    a [`VirtualLODF`](@ref), [`get_lodf_data`](@ref) instead returns the LRU cache
-    contents as a `Dict{Int, Vector{Float64}}` of already-computed rows.
-  - **[`get_partial_lodf_row`](@ref)** — the LODF row for a **partial** susceptance
-    change `delta_b` on one arc (full outage: `delta_b = -arc_susceptance`). The
-    entry point for partial outages that a plain [`VirtualLODF`](@ref) row (which
-    assumes a full outage) does not cover.
-
-````@example overview
-PowerNetworkMatrices.get_data(ybus)   # raw SparseMatrixCSC
-````
-
-### Axes and lookups
+## Axes and lookups
 
 [`get_axes`](@ref) returns `mat.axes` and [`get_lookup`](@ref) returns `mat.lookup`,
 each a 2-tuple ordered `(dimension 1, dimension 2)`. The axis vector lists
@@ -213,45 +184,9 @@ get_axes(ptdf)                        # (bus-number vector, arc-tuple vector)
 The dimension-specific accessors [`get_bus_axis`](@ref) / [`get_arc_axis`](@ref) /
 [`get_bus_lookup`](@ref) / [`get_arc_lookup`](@ref) select the correct dimension
 without the caller knowing which index (1 or 2) is the bus or arc dimension for a
-given matrix type. They are defined only for the dimensions a matrix actually has:
+given matrix type. They are defined only for the dimensions a matrix actually has.
 
-| Matrix                | `get_bus_axis`    | `get_arc_axis`    |
-|:--------------------- |:-----------------:|:-----------------:|
-| `IncidenceMatrix`     | `axes[2]`         | `axes[1]`         |
-| `AdjacencyMatrix`     | `axes[1]`         | — (both dims bus) |
-| `Ybus`                | `axes[1]`         | — (both dims bus) |
-| `ArcAdmittanceMatrix` | `axes[2]`         | `axes[1]`         |
-| `BA_Matrix`           | `axes[1]`         | `axes[2]`         |
-| `ABA_Matrix`          | `axes[1]`         | — (both dims bus) |
-| `PTDF`                | `axes[1]`         | `axes[2]`         |
-| `LODF`                | — (both dims arc) | `axes[1]`         |
-| `VirtualPTDF`         | `axes[1]`         | `axes[2]`         |
-| `VirtualLODF`         | — (both dims arc) | `axes[1]`         |
-| `VirtualMODF`         | `axes[2]`         | `axes[1]`         |
-
-### Reference buses, reduction data, and provenance
-
-  - **[`get_ref_bus`](@ref)** / **[`get_ref_bus_position`](@ref)** — the sorted
-    reference (slack) bus numbers, one per electrical island, and their integer
-    positions in the bus dimension. They identify the slack held fixed when the matrix
-    was built, which is what [`PTDF`](@ref) columns are measured against. Defined for
-    the distribution-factor, incidence, adjacency, BA/ABA, and arc-admittance
-    matrices.
-  - **[`get_network_reduction_data`](@ref)** — the [`NetworkReductionData`](@ref)
-    recording which buses and arcs were merged or eliminated and how they map back.
-    It is empty when no reduction was applied, and also on a [`PTDF`](@ref) loaded via
-    [`from_hdf5`](@ref), which does not persist it. This is the object the reduction
-    accessors (`get_bus_reduction_map`, `get_removed_buses`, `get_reductions`, …)
-    query.
-  - **[`get_system_uuid`](@ref)** — the UUID of the
-    [`System`](@extref PowerSystems.System) the matrix was built from, or `nothing`
-    for types that do not track origin. [`VirtualPTDF`](@ref) and
-    [`VirtualMODF`](@ref) store it; it backs the consistency check that a matrix and a
-    system passed together share a source.
-
-## Reference map
-
-This overview is the entry point. Detailed reference lives on the sibling pages:
+## See also
 
   - [How to Diagnose a Disconnected Network](@ref) — testing whether the network is
     connected and enumerating electrical islands.
