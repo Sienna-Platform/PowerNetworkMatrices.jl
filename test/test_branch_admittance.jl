@@ -599,8 +599,11 @@ end
     )
     add_component!(sys, t)
     @test PNM._series_susceptance_raw(t, PSY.SU) == PNM.get_series_susceptance(t, PSY.SU)
+    # A circuit is a delegation target, not a segment: the raw layer answers for it, the
+    # public accessor takes only the transformer.
     @test PNM._series_susceptance_raw(PSY.get_circuit(t), PSY.SU) ==
-          PNM.get_series_susceptance(PSY.get_circuit(t), PSY.SU)
+          PNM._series_susceptance_raw(t, PSY.SU)
+    @test_throws MethodError PNM.get_series_susceptance(PSY.get_circuit(t), PSY.SU)
 
     # Only the raw layer may answer for a degenerate branch.
     PSY.set_x!(line, 0.0 * PSY.SU)

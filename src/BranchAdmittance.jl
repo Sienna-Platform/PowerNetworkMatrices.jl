@@ -48,18 +48,14 @@ function _three_winding_shunt_split(
 end
 
 # Kept out of line so the error body does not count against the caller's inlining budget.
-@noinline function _throw_non_finite_susceptance(segment::SeriesSegment, b::Float64)
+@noinline function _throw_non_finite_susceptance(segment::PSY.ACTransmission, b::Float64)
     error(
-        "Series susceptance of $(_susceptance_error_label(segment)) is $(b): the branch has r == x == 0. " *
+        "Series susceptance of $(get_name(segment)) is $(b): the branch has r == x == 0. " *
         "Ybus assembly substitutes the reduction's minimum retained impedance for such a " *
         "branch, so a consumer that needs the value the matrices use should call " *
         "`get_effective_series_susceptance(segment, nr)` instead.",
     )
 end
-
-_susceptance_error_label(segment::SeriesSegment) = get_name(segment)
-_susceptance_error_label(c::PSY.TransformerCircuit) =
-    "transformer circuit on arc $(PSY.get_arc(c))"
 
 """
     get_series_susceptance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem)
@@ -94,24 +90,6 @@ the value the matrices actually use should call `get_effective_series_susceptanc
 function get_series_susceptance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem)
     v = _series_susceptance_raw(t, units)
     isfinite(v) || _throw_non_finite_susceptance(t, v)
-    return v
-end
-
-"""
-    get_series_susceptance(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem)
-
-Tap-divided series susceptance of a transformer circuit: `(1/x)/tap`. The
-`PSY.TwoWindingTransformer` method and the `ThreeWindingTransformerCircuit` wrapper
-both delegate here, since series `x` and `tap` live on the circuit at either arity.
-The wrapper delegates explicitly because it subtypes `PSY.ACTransmission`, not
-`PSY.TransformerCircuit`, and would otherwise reach the tap-free generic method above.
-
-Throws if the branch has `r == x == 0` (susceptance is non-finite). A consumer that needs
-the value the matrices actually use should call `get_effective_series_susceptance` instead.
-"""
-function get_series_susceptance(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem)
-    v = _series_susceptance_raw(c, units)
-    isfinite(v) || _throw_non_finite_susceptance(c, v)
     return v
 end
 

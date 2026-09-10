@@ -432,13 +432,13 @@ _zero_impedance_susceptance(bs::BranchesSeries, min_x_eps::Float64) =
 
 # A guard on the raw layer, not a parallel implementation: non-degenerate branches keep one
 # source of truth.
-function _finite_series_susceptance(segment::SeriesSegment, min_x_eps::Float64)
+function _finite_series_susceptance(segment::PSY.ACTransmission, min_x_eps::Float64)
     b = _series_susceptance_raw(segment, PSY.SU)
     isfinite(b) && return b
     return _zero_impedance_susceptance(segment, min_x_eps)
 end
 
-_finite_series_susceptance(segment::SeriesSegment, nr::NetworkReductionData) =
+_finite_series_susceptance(segment::PSY.ACTransmission, nr::NetworkReductionData) =
     _finite_series_susceptance(segment, _minimum_retained_impedance(nr))
 
 """
@@ -455,7 +455,7 @@ substitutes here, but `Ybus`'s `equivalent_branch` substitutes only when both `r
 are zero, so such a branch has no DC coupling in `BA_Matrix` (susceptance `0.0`) while this
 returns the substituted value.
 """
-get_effective_series_susceptance(segment::SeriesSegment, nr::NetworkReductionData) =
+get_effective_series_susceptance(segment::PSY.ACTransmission, nr::NetworkReductionData) =
     _finite_series_susceptance(segment, nr)
 
 """
