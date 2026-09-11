@@ -169,14 +169,14 @@ The from/to shunts carry the real `PSY.get_g` conductance. A caller wanting Powe
 end
 
 # A detached Ward equivalent's r/x are already system-base values, so they are read on the
-# device base (`PSY.DU`), which returns them unchanged — a detached component cannot resolve
+# device base (`PSY.CU`), which returns them unchanged — a detached component cannot resolve
 # the system base power. It carries no shunts.
 function equivalent_branch(
     b::PSY.GenericArcImpedance;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
-    r = PSY.get_r(b, PSY.DU)
-    x = PSY.get_x(b, PSY.DU)
+    r = PSY.get_r(b, PSY.CU)
+    x = PSY.get_x(b, PSY.CU)
     if iszero(r) && iszero(x)
         _warn_zero_impedance(b, min_x_eps)
         x = min_x_eps
@@ -413,7 +413,7 @@ end
 """
     branch_flow_limits(branch) -> NamedTuple
 
-Directional flow limits in MVA (device units, `PSY.DU`): `(from_to, to_from)`. For symmetric
+Directional flow limits in MVA (device units, `PSY.CU`): `(from_to, to_from)`. For symmetric
 branches both fields equal the branch's [`get_equivalent_rating`](@ref); `MonitoredLine`
 carries asymmetric limits and has its own method. Branches whose rating lives on a
 transformer circuit — and reduction groups containing them — may carry `nothing` in both
@@ -425,6 +425,6 @@ function branch_flow_limits(b::PSY.ACTransmission)
 end
 
 function branch_flow_limits(b::PSY.MonitoredLine)
-    fl = PSY.get_flow_limits(b, PSY.DU)
+    fl = PSY.get_flow_limits(b, PSY.CU)
     return (from_to = fl.from_to, to_from = fl.to_from)
 end

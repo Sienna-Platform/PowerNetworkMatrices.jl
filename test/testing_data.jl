@@ -505,7 +505,7 @@ function build_hvdc_with_single_bus_island()
     gen15 = ThermalStandard(;
         name = "Gen_15",
         available = true,
-        status = true,
+        status = OperationalStates.ONLINE,
         bus = bus15,
         active_power = 0.0, # Per-unitized by device base_power
         reactive_power = 0.0, # Per-unitized by device base_power
@@ -516,7 +516,6 @@ function build_hvdc_with_single_bus_island()
         operation_cost = ThermalGenerationCost(nothing),
         base_power = 30.0, # MVA
         time_limits = (up = 8.0, down = 8.0), # Hours
-        must_run = false,
         prime_mover_type = PrimeMovers.CC,
         fuel = ThermalFuels.NATURAL_GAS,
     )
@@ -612,7 +611,7 @@ function build_hvdc_with_small_island()
     gen17 = ThermalStandard(;
         name = "Bus17",
         available = true,
-        status = true,
+        status = OperationalStates.ONLINE,
         bus = bus17,
         active_power = 0.0, # Per-unitized by device base_power
         reactive_power = 0.0, # Per-unitized by device base_power
@@ -623,7 +622,6 @@ function build_hvdc_with_small_island()
         operation_cost = ThermalGenerationCost(nothing),
         base_power = 30.0, # MVA
         time_limits = (up = 8.0, down = 8.0), # Hours
-        must_run = false,
         prime_mover_type = PrimeMovers.CC,
         fuel = ThermalFuels.NATURAL_GAS,
     )
@@ -679,7 +677,7 @@ function _build_degree_two_chain_system(edges; load_bus::Int = 3)
     end
     PSY.add_component!(
         sys,
-        ThermalStandard(; name = "G1", available = true, status = true, bus = buses[1],
+        ThermalStandard(; name = "G1", available = true, status = OperationalStates.ONLINE, bus = buses[1],
             active_power = 1.0, reactive_power = 0.0, rating = 2.0,
             prime_mover_type =
             PSY.PrimeMovers.OT, fuel = PSY.ThermalFuels.OTHER,

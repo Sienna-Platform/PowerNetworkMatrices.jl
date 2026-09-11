@@ -107,7 +107,7 @@ end
 
     rating3 = PNM.get_equivalent_rating(PNM.ThreeWindingTransformerCircuit(trf, 3))
     # The circuit's own rating (device base); there is no parent-level rating to fall back to.
-    expected_rating3 = PSY.get_rating(PSY.get_tertiary_circuit(trf), PSY.DU)
+    expected_rating3 = PSY.get_rating(PSY.get_tertiary_circuit(trf), PSY.CU)
     @test rating3 == expected_rating3
 
     PSY.set_available!(PSY.get_secondary_circuit(trf), false)
@@ -451,7 +451,7 @@ end
     chain_a_ratings = Dict("L_1_10" => 8.0, "L_10_11" => 3.0, "L_11_3" => 5.0)
     chain_b_ratings = Dict("L_1_20" => 9.0, "L_20_21" => 4.0, "L_21_3" => 6.0)
     for (name, rating) in merge(chain_a_ratings, chain_b_ratings)
-        PSY.set_rating!(PSY.get_component(PSY.Line, sys, name), rating * PSY.DU)
+        PSY.set_rating!(PSY.get_component(PSY.Line, sys, name), rating * PSY.CU)
     end
 
     ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
