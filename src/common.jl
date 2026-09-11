@@ -414,6 +414,50 @@ function _oriented_member_phase_shift(
     return α
 end
 
+# The substituted susceptance for an `r == x == 0` branch, matching what `equivalent_branch`
+# uses in Ybus assembly. Such branches normally merge away, but a pair between two
+# irreducible buses survives as a `BranchesParallel`.
+_zero_impedance_susceptance(::PSY.ACTransmission, min_x_eps::Float64) = 1 / min_x_eps
+_zero_impedance_susceptance(t::PSY.TwoWindingTransformer, min_x_eps::Float64) =
+    _zero_impedance_susceptance(PSY.get_circuit(t), min_x_eps)
+_zero_impedance_susceptance(w::ThreeWindingTransformerCircuit, min_x_eps::Float64) =
+    _zero_impedance_susceptance(w.circuit, min_x_eps)
+# Only the susceptance form is tap-divided, matching `get_series_susceptance`.
+_zero_impedance_susceptance(c::PSY.TransformerCircuit, min_x_eps::Float64) =
+    (1 / min_x_eps) / PSY.get_tap(c)
+_zero_impedance_susceptance(bp::AbstractBranchesParallel, min_x_eps::Float64) =
+    sum(_finite_series_susceptance(br, min_x_eps) for br in bp)
+_zero_impedance_susceptance(bs::BranchesSeries, min_x_eps::Float64) =
+    1 / sum(inv(_finite_series_susceptance(seg, min_x_eps)) for seg in bs)
+
+# A guard on the raw layer, not a parallel implementation: non-degenerate branches keep one
+# source of truth.
+function _finite_series_susceptance(segment::PSY.ACTransmission, min_x_eps::Float64)
+    b = _series_susceptance_raw(segment, PSY.SU)
+    isfinite(b) && return b
+    return _zero_impedance_susceptance(segment, min_x_eps)
+end
+
+_finite_series_susceptance(segment::PSY.ACTransmission, nr::NetworkReductionData) =
+    _finite_series_susceptance(segment, _minimum_retained_impedance(nr))
+
+"""
+    get_effective_series_susceptance(segment, nr::NetworkReductionData) -> Float64
+
+Series susceptance of `segment` as the assembled matrices see it: the stored `1/(tap*x)`,
+or the reduction's minimum retained impedance substituted whenever `x == 0`.
+
+This agrees with `Ybus` and `BA_Matrix` for any branch with `x != 0`. `get_series_susceptance`
+returns the stored value instead, and throws rather than returning a non-finite result.
+
+A purely resistive branch (`r > 0, x == 0`) is outside that agreement: this accessor still
+substitutes here, but `Ybus`'s `equivalent_branch` substitutes only when both `r` and `x`
+are zero, so such a branch has no DC coupling in `BA_Matrix` (susceptance `0.0`) while this
+returns the substituted value.
+"""
+get_effective_series_susceptance(segment::PSY.ACTransmission, nr::NetworkReductionData) =
+    _finite_series_susceptance(segment, nr)
+
 """
     get_series_phase_shift(bp::AbstractBranchesParallel, nr) -> Float64
 
@@ -422,13 +466,21 @@ Susceptance-weighted equivalent DC phase shift of a parallel group,
 lossy (unlike the single-π extraction in `get_equivalent_physical_branch_parameters`).
 """
 function get_series_phase_shift(bp::AbstractBranchesParallel, nr::NetworkReductionData)
+    min_x_eps = _minimum_retained_impedance(nr)
     b_total = 0.0
     b_alpha = 0.0
+    shifted = false
     for br in bp
-        b = get_series_susceptance(br, PSY.SU)
+        α = _oriented_member_phase_shift(br, bp, nr)
+        b = _finite_series_susceptance(br, min_x_eps)
         b_total += b
-        b_alpha += b * _oriented_member_phase_shift(br, bp, nr)
+        if !iszero(α)
+            shifted = true
+            b_alpha += b * α
+        end
     end
+    # b_total can also be 0.0 when susceptances cancel across the group, and 0.0/0.0 is NaN.
+    shifted || return 0.0
     return b_alpha / b_total
 end
 
@@ -504,12 +556,20 @@ end
 `b_eq·α_eq` for the retained `arc` in system base -- the magnitude of the DC phase-shift
 injection pair (`+b·α` at the from bus, `−b·α` at the to bus) and of the arc-flow offset
 (`f = b·Δθ − b·α`). Zero for every non-shifted arc. `b_eq` matches `BA_Matrix`'s value on
-every shifted arc (both use `get_series_susceptance` there).
+every shifted arc (both use `_finite_series_susceptance` there).
 """
 function arc_dc_shift_injection(nr::NetworkReductionData, arc::Tuple{Int, Int})
     α = arc_dc_phase_shift(nr, arc)
     iszero(α) && return 0.0
-    return _arc_dc_susceptance(nr, arc) * α
+    injection = _arc_dc_susceptance(nr, arc) * α
+    # A non-finite injection lands on both endpoints' nodal balance, where it is untraceable.
+    if !isfinite(injection)
+        error(
+            "Non-finite DC phase-shift injection $(injection) on arc $(arc) " *
+            "(α = $(α)). This is a bug in PowerNetworkMatrices.",
+        )
+    end
+    return injection
 end
 
 # b of the map entry owning `arc` (orientation-symmetric, so no reverse negation). Only
@@ -517,15 +577,16 @@ end
 # Susceptance is orientation-symmetric, so a reverse hit needs no sign change. An added Ward arc
 # is rejected rather than answered: it carries no series element the DC shift injection can use,
 # and this is only ever reached for a shifted arc, which is never Ward-added.
-_dc_entry_susceptance(br::PSY.ACTransmission) = get_series_susceptance(br, PSY.SU)
-_dc_entry_susceptance(br::PSY.GenericArcImpedance) = error(
+_dc_entry_susceptance(br::PSY.ACTransmission, min_x_eps::Float64) =
+    _finite_series_susceptance(br, min_x_eps)
+_dc_entry_susceptance(br::PSY.GenericArcImpedance, ::Float64) = error(
     "Arc backed by added Ward-equivalent impedance $(get_name(br)) has no series " *
     "susceptance for the DC phase-shift injection.",
 )
 
 function _arc_dc_susceptance(nr::NetworkReductionData, arc::Tuple{Int, Int})
     entry, _ = _resolve_arc_entry(nr, arc)
-    return _dc_entry_susceptance(entry)
+    return _dc_entry_susceptance(entry, _minimum_retained_impedance(nr))
 end
 
 """
@@ -549,7 +610,7 @@ function compute_parallel_circulating_flow(
         )
     end
     α_eq = get_series_phase_shift(bp, nr)
-    b = get_series_susceptance(branch, PSY.SU)
+    b = _finite_series_susceptance(branch, nr)
     return b * (α_eq - _oriented_member_phase_shift(branch, bp, nr))
 end
 
@@ -925,7 +986,7 @@ function _assert_not_phase_shifting(component::PSY.ACTransmission)
 end
 
 """
-    _segment_susceptance_after_outage(segment, tripped_set) -> Float64
+    _segment_susceptance_after_outage(segment, tripped_set, nr::NetworkReductionData) -> Float64
 
 Compute the remaining susceptance of a series chain segment after removing
 tripped components. Dispatches on segment type to handle both single branches
@@ -936,28 +997,30 @@ Returns 0.0 if the segment (or all branches in a parallel group) is fully trippe
 function _segment_susceptance_after_outage(
     segment::PSY.ACTransmission,
     tripped_set::Set{<:PSY.ACTransmission},
+    nr::NetworkReductionData,
 )::Float64
     if segment ∈ tripped_set
         return 0.0
     end
-    return get_series_susceptance(segment, PSY.SU)
+    return _finite_series_susceptance(segment, nr)
 end
 
 function _segment_susceptance_after_outage(
     segment::AbstractBranchesParallel,
     tripped_set::Set{<:PSY.ACTransmission},
+    nr::NetworkReductionData,
 )::Float64
     b_remaining = 0.0
     for branch in segment.branches
         if branch ∉ tripped_set
-            b_remaining += get_series_susceptance(branch, PSY.SU)
+            b_remaining += _finite_series_susceptance(branch, nr)
         end
     end
     return b_remaining
 end
 
 """
-    _compute_series_outage_delta_b(series_chain::BranchesSeries, component::PSY.ACTransmission) -> Float64
+    _compute_series_outage_delta_b(series_chain::BranchesSeries, component::PSY.ACTransmission, nr::NetworkReductionData) -> Float64
 
 Compute the change in equivalent arc susceptance when `component` is tripped
 from `series_chain`. Delegates to the vector version.
@@ -965,12 +1028,13 @@ from `series_chain`. Delegates to the vector version.
 function _compute_series_outage_delta_b(
     series_chain::BranchesSeries,
     component::PSY.ACTransmission,
+    nr::NetworkReductionData,
 )::Float64
-    return _compute_series_outage_delta_b(series_chain, [component])
+    return _compute_series_outage_delta_b(series_chain, [component], nr)
 end
 
 """
-    _compute_series_outage_delta_b(series_chain::BranchesSeries, tripped::Vector{<:PSY.ACTransmission}) -> Float64
+    _compute_series_outage_delta_b(series_chain::BranchesSeries, tripped::Vector{<:PSY.ACTransmission}, nr::NetworkReductionData) -> Float64
 
 Compute the change in equivalent arc susceptance when multiple components are
 simultaneously tripped from a series chain.
@@ -988,12 +1052,13 @@ If all segments are fully tripped, returns -b_eq (full arc outage).
 function _compute_series_outage_delta_b(
     series_chain::BranchesSeries,
     tripped::Vector{<:PSY.ACTransmission},
+    nr::NetworkReductionData,
 )::Float64
-    b_old = get_series_susceptance(series_chain, PSY.SU)
+    b_old = _finite_series_susceptance(series_chain, nr)
     tripped_set = Set{PSY.ACTransmission}(tripped)
     remaining_inv_sum = 0.0
     for segment in series_chain
-        b_seg = _segment_susceptance_after_outage(segment, tripped_set)
+        b_seg = _segment_susceptance_after_outage(segment, tripped_set, nr)
         if iszero(b_seg)
             return -b_old
         end

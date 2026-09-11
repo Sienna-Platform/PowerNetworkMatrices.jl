@@ -447,3 +447,91 @@ end
     @test m.delta_y21 ≈ remaining_entries[3] - group_entries[3] atol = 1e-5
     @test m.delta_y22 ≈ remaining_entries[4] - group_entries[4] atol = 1e-5
 end
+
+@testset "contingency: full outage of a zero-impedance direct branch is not a no-op" begin
+    # `arc_susceptances` comes from BA (substituted) while `_direct_arc_ybus_delta` read the
+    # component (`Inf`), so the full-outage test failed and the delta scaled by `delta_b / Inf`.
+    sys, buses = _mk_bus_system(3)
+    zi_arc = Arc(; from = buses[2], to = buses[3])
+    add_component!(sys, zi_arc)
+    add_component!(
+        sys,
+        PSY.TwoWindingTransformer(;
+            name = "ZI_T",
+            circuit = PSY.TransformerCircuit(;
+                arc = zi_arc, tap = 1.0, α = 0.0, available = true,
+                active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
+                base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
+            ),
+            magnetizing_shunt = Complex(0.0, 0.0),
+        ),
+    )
+    for (f, t) in ((1, 2), (1, 3))
+        arc = Arc(; from = buses[f], to = buses[t])
+        add_component!(sys, arc)
+        _add_test_line!(sys, "L$(f)$(t)", arc, 0.0, 0.1)
+    end
+
+    vptdf = VirtualPTDF(sys)
+    mod = NetworkModification(vptdf, (2, 3))
+    @test length(mod.arc_modifications) == 1
+    m = mod.arc_modifications[1]
+    b_zi = 1 / PNM.ZERO_IMPEDANCE_X_EPSILON
+    @test m.delta_b ≈ -b_zi
+    # The defect: every delta entry was 0.0 or NaN, so the outage changed nothing.
+    @test isfinite(m.delta_y12)
+    @test !iszero(m.delta_y12)
+    @test abs(m.delta_y12) ≈ b_zi rtol = 1e-6
+end
+
+@testset "contingency: full outage of a group holding a zero-impedance member" begin
+    # A finite BA-derived `delta_b` compared against a group susceptance summing an `Inf`
+    # member, so a legitimate full outage was rejected as needing the tripped component.
+    sys = _mk_zi_parallel_sys([(0.0, 0.0), (0.0, 0.1)])
+    ybus = Ybus(sys; irreducible_buses = [2, 3])
+    vptdf = VirtualPTDF(sys; irreducible_buses = [2, 3])
+    nr = get_network_reduction_data(ybus)
+    @test haskey(PNM.get_parallel_branch_map(nr), (2, 3))
+
+    mod = NetworkModification(vptdf, (2, 3))
+    m = mod.arc_modifications[1]
+    @test isfinite(m.delta_y12)
+    @test !iszero(m.delta_y12)
+end
+
+@testset "series outage delta is finite when a segment is zero-impedance" begin
+    sys, buses = _mk_bus_system(4)
+    for (f, t) in ((1, 2), (3, 4))
+        arc = Arc(; from = buses[f], to = buses[t])
+        add_component!(sys, arc)
+        _add_test_line!(sys, "L$(f)$(t)", arc, 0.0, 0.1)
+    end
+    zi_arc = Arc(; from = buses[2], to = buses[3])
+    add_component!(sys, zi_arc)
+    add_component!(
+        sys,
+        PSY.TwoWindingTransformer(;
+            name = "ZI_T",
+            circuit = PSY.TransformerCircuit(;
+                arc = zi_arc, tap = 1.0, α = 0.0, available = true,
+                active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
+                base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
+            ),
+            magnetizing_shunt = Complex(0.0, 0.0),
+        ),
+    )
+    ybus = Ybus(
+        sys;
+        network_reductions = PNM.NetworkReduction[
+            PNM.DegreeTwoReduction(; reduce_reactive_power_injectors = false),
+        ],
+    )
+    nr = get_network_reduction_data(ybus)
+    @test !isempty(PNM.get_series_branch_map(nr))
+    chain = first(values(PNM.get_series_branch_map(nr)))
+    tripped = PSY.get_component(Line, sys, "L12")
+
+    delta = PNM._compute_series_outage_delta_b(chain, tripped, nr)
+    @test isfinite(delta)
+    @test delta < 0.0
+end

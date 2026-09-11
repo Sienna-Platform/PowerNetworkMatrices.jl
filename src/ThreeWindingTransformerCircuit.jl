@@ -79,14 +79,26 @@ follows `x`: a star-leg reactance can legitimately be negative, giving a negativ
 susceptance. `units` selects the reactance base, as in the sibling methods — unlike
 [`get_equivalent_x`](@ref), which is pinned to the system base because reduction
 aggregation must sum on a common base.
+
+Throws if the star-leg reactance is zero (susceptance is non-finite). A consumer that needs
+the value the matrices actually use should call `get_effective_series_susceptance` instead.
 """
-get_series_susceptance(
+function get_series_susceptance(
     segment::ThreeWindingTransformerCircuit,
     units::IS.AbstractUnitSystem,
-) = get_series_susceptance(segment.circuit, units)
+)
+    v = _series_susceptance_raw(segment, units)
+    isfinite(v) || _throw_non_finite_susceptance(segment, v)
+    return v
+end
+
+_series_susceptance_raw(
+    segment::ThreeWindingTransformerCircuit,
+    units::IS.AbstractUnitSystem,
+) = _series_susceptance_raw(segment.circuit, units)
 
 function get_series_phase_shift(tw::ThreeWindingTransformerCircuit)
-    return get_series_phase_shift(tw.circuit)
+    return _circuit_phase_shift(tw.circuit)
 end
 
 """

@@ -81,6 +81,22 @@ function BA_Matrix(sys::PSY.System;
     )
 end
 
+# Phase-independent DC susceptance for a phase-shifting arc: read from components so α is
+# excluded, since the shift is applied separately as an injection (`arc_dc_shift_injection`).
+# `NaN` when the arc is in neither map.
+function _arc_component_susceptance(nr_data::NetworkReductionData, arc::Tuple{Int, Int})
+    # Raw `1/x` is `Inf` for an `r == x == 0` shifter, which the caller's non-finite fallback
+    # would turn into zero DC coupling — dropping the arc from BA while its injection still
+    # lands on both endpoints. That fallback is for the `NaN` not-found case below.
+    min_x_eps = _minimum_retained_impedance(nr_data)
+    direct_map = get_direct_branch_map(nr_data)
+    haskey(direct_map, arc) && return _finite_series_susceptance(direct_map[arc], min_x_eps)
+    parallel_map = get_parallel_branch_map(nr_data)
+    haskey(parallel_map, arc) &&
+        return _finite_series_susceptance(parallel_map[arc], min_x_eps)
+    return NaN
+end
+
 """
     BA_Matrix(ybus::Ybus)
 
@@ -92,18 +108,6 @@ Construct a BA_Matrix from a Ybus matrix.
 # Returns
 - `BA_Matrix`: The constructed BA matrix structure containing the transposed BA matrix
 """
-# Phase-independent DC series susceptance for a phase-shifting-transformer arc, read from its
-# branch component(s) so the phase angle is ignored (`get_series_susceptance` is `1/(a x)`; the
-# shift is applied separately as an injection; see `arc_dc_shift_injection`). A phase shifter is
-# always a direct or parallel branch, so this finds it; returns `NaN` otherwise.
-function _arc_component_susceptance(nr_data::NetworkReductionData, arc::Tuple{Int, Int})
-    direct_map = get_direct_branch_map(nr_data)
-    haskey(direct_map, arc) && return get_series_susceptance(direct_map[arc], PSY.SU)
-    parallel_map = get_parallel_branch_map(nr_data)
-    haskey(parallel_map, arc) && return get_series_susceptance(parallel_map[arc], PSY.SU)
-    return NaN
-end
-
 function BA_Matrix(ybus::Ybus)
     nr = get_network_reduction_data(ybus)
     bus_ax = get_bus_axis(ybus)
@@ -124,7 +128,7 @@ function BA_Matrix(ybus::Ybus)
         # is_arc_in_series_map is false for them and they fall through to the general
         # Y_ft/Y_tf handling below, the same treatment any physical parallel group gets.
         if is_arc_in_series_map(nr_data, arc)
-            b = get_series_susceptance(get_mapped_series_branch(nr_data, arc), PSY.SU)
+            b = _finite_series_susceptance(get_mapped_series_branch(nr_data, arc), nr_data)
         else
             Y_ft = -1 * ybus.data[ix_from_bus, ix_to_bus]
             Y_tf = -1 * ybus.data[ix_to_bus, ix_from_bus]

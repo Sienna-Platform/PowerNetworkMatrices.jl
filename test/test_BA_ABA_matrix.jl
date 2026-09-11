@@ -156,6 +156,44 @@ end
     end
 end
 
+@testset "property: component susceptance agrees with the Ybus-derived value" begin
+    # Catches a component-side `Inf` where Ybus holds a substituted finite value.
+    systems = Dict(
+        "case10_radial" => PSB.build_system(
+            PSB.PSITestSystems, "case10_radial_series_reductions"),
+        "zi_parallel" => _mk_zi_parallel_sys([(0.0, 0.0), (0.0, 0.1)]),
+    )
+    # Every arc can `continue`, so without this the sweep could pass with no assertions run.
+    checked = 0
+    for (label, sys) in systems
+        pins = label == "zi_parallel" ? [2, 3] : Int[]
+        ybus = Ybus(sys; irreducible_buses = pins)
+        nr = get_network_reduction_data(ybus)
+        bus_lookup = PNM.get_bus_lookup(ybus)
+        direct_map = PNM.get_direct_branch_map(nr)
+        for arc in PNM.get_arc_axis(nr)
+            b_component = PNM._arc_component_susceptance(nr, arc)
+            isnan(b_component) && continue          # arc owned by no direct/parallel map
+            @test isfinite(b_component)
+            i = PNM.get_bus_index(arc[1], bus_lookup, nr)
+            j = PNM.get_bus_index(arc[2], bus_lookup, nr)
+            Y_ft = -1 * ybus.data[i, j]
+            Y_tf = -1 * ybus.data[j, i]
+            Y_ft != Y_tf && continue                # phase shifter: b is angle-independent
+            iszero(Y_ft) && continue                # cancelling parallel reactances
+            # A parallel group's DC susceptance sums `1/x` and ignores resistance, so it
+            # matches the AC value only when lossless. The identity is guaranteed only for a
+            # single direct branch, where `imag(1/Y_ft) == x` regardless of `r`.
+            haskey(direct_map, arc) || continue
+            x_eq = imag(1 / Y_ft)
+            iszero(x_eq) && continue
+            @test (1 / x_eq) ≈ b_component rtol = 1e-5
+            checked += 1
+        end
+    end
+    @test checked > 0
+end
+
 @testset "Test show for A, BA and ABA matrix" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
 

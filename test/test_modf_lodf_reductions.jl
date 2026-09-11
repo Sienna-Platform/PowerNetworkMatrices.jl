@@ -292,7 +292,7 @@ end
         arc_tuple, arc_idx = _find_non_islanding_arc(vmodf, nrd.series_branch_map)
         series_chain = nrd.series_branch_map[arc_tuple]
         segment = first(series_chain)
-        delta_b = PNM._compute_series_outage_delta_b(series_chain, segment)
+        delta_b = PNM._compute_series_outage_delta_b(series_chain, segment, nrd)
         verify_modf_lodf_identity(vmodf, vlodf, ptdf, arc_idx, delta_b)
     end
 end
@@ -324,7 +324,7 @@ end
         arc_tuple, arc_idx = _find_non_islanding_arc(vmodf, nrd.series_branch_map)
         series_chain = nrd.series_branch_map[arc_tuple]
         segment = first(series_chain)
-        delta_b = PNM._compute_series_outage_delta_b(series_chain, segment)
+        delta_b = PNM._compute_series_outage_delta_b(series_chain, segment, nrd)
         verify_modf_lodf_identity(vmodf, vlodf, ptdf, arc_idx, delta_b)
     end
 end
@@ -579,4 +579,18 @@ end
         modf_row = vmodf[m, empty_mod]            # pre-fix: throws LAPACK getri! error
         @test isapprox(modf_row, ptdf[m, :]; atol = 1e-6)
     end
+end
+
+@testset "virtual factor member weights are finite for a zero-impedance member" begin
+    sys = _mk_zi_parallel_sys([(0.0, 0.0), (0.0, 0.1)])
+    ybus = Ybus(sys; irreducible_buses = [2, 3])
+    nr = get_network_reduction_data(ybus)
+    ba = BA_Matrix(ybus)
+    arc_ax = PNM.get_arc_axis(nr)
+    weights = PNM._extract_branch_susceptances_by_arc(ba.data, arc_ax, nr)
+    ix = findfirst(==((2, 3)), arc_ax)
+    @test all(isfinite, weights[ix])
+    @test length(weights[ix]) == 2
+    # The zero-impedance member takes the substituted weight, the line its own.
+    @test sort(weights[ix]) ≈ sort([10.0, 1 / PNM.ZERO_IMPEDANCE_X_EPSILON])
 end

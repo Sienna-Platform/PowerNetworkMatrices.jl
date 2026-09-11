@@ -47,6 +47,16 @@ function _three_winding_shunt_split(
     )
 end
 
+# Kept out of line so the error body does not count against the caller's inlining budget.
+@noinline function _throw_non_finite_susceptance(segment::PSY.ACTransmission, b::Float64)
+    error(
+        "Series susceptance of $(get_name(segment)) is $(b): the branch has r == x == 0. " *
+        "Ybus assembly substitutes the reduction's minimum retained impedance for such a " *
+        "branch, so a consumer that needs the value the matrices use should call " *
+        "`get_effective_series_susceptance(segment, nr)` instead.",
+    )
+end
+
 """
     get_series_susceptance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem)
 
@@ -56,9 +66,15 @@ method (below) that additionally divides by the winding tap ratio
 (`PSY.get_tap(PSY.get_circuit(t))`). This is a deliberate asymmetry: only the susceptance
 form is tap-divided; Ybus/PTDF/LODF assembly needs the tap-divided value, while callers that
 need the untapped complex admittance should build it directly from `PSY.get_r`/`PSY.get_x`.
+
+Throws if the branch has `r == x == 0` (susceptance is non-finite). A consumer that needs
+the value the matrices actually use should call `get_effective_series_susceptance` instead.
 """
-get_series_susceptance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem) =
-    1 / PSY.get_x(b, units)
+function get_series_susceptance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem)
+    v = _series_susceptance_raw(b, units)
+    isfinite(v) || _throw_non_finite_susceptance(b, v)
+    return v
+end
 
 """
     get_series_susceptance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem)
@@ -67,20 +83,23 @@ Series susceptance of a `PSY.TwoWindingTransformer`: the generic `ACTransmission
 value (`1/x`) divided by the winding tap ratio `PSY.get_tap(PSY.get_circuit(t))`. A
 fixed-ratio transformer has `tap = 1.0`, so this is a no-op for it and matches the plain
 `ACTransmission` value.
-"""
-get_series_susceptance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem) =
-    get_series_susceptance(PSY.get_circuit(t), units)
 
+Throws if the branch has `r == x == 0` (susceptance is non-finite). A consumer that needs
+the value the matrices actually use should call `get_effective_series_susceptance` instead.
 """
-    get_series_susceptance(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem)
+function get_series_susceptance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem)
+    v = _series_susceptance_raw(t, units)
+    isfinite(v) || _throw_non_finite_susceptance(t, v)
+    return v
+end
 
-Tap-divided series susceptance of a transformer circuit: `(1/x)/tap`. The
-`PSY.TwoWindingTransformer` method and the `ThreeWindingTransformerCircuit` wrapper
-both delegate here, since series `x` and `tap` live on the circuit at either arity.
-The wrapper delegates explicitly because it subtypes `PSY.ACTransmission`, not
-`PSY.TransformerCircuit`, and would otherwise reach the tap-free generic method above.
-"""
-get_series_susceptance(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem) =
+# The single home for the `1/x` arithmetic. Returns `Inf` when `r == x == 0`:
+# `get_series_susceptance` rejects that, `_finite_series_susceptance` substitutes.
+_series_susceptance_raw(b::PSY.ACTransmission, units::IS.AbstractUnitSystem) =
+    1 / PSY.get_x(b, units)
+_series_susceptance_raw(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem) =
+    _series_susceptance_raw(PSY.get_circuit(t), units)
+_series_susceptance_raw(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem) =
     (1 / PSY.get_x(c, units)) / PSY.get_tap(c)
 
 """
@@ -95,12 +114,12 @@ function get_series_phase_shift(::PSY.ACTransmission)
     return 0.0
 end
 
-function get_series_phase_shift(c::PSY.TransformerCircuit)
-    return PSY.get_α(c)
-end
+# A circuit's series shift is its stored α. Internal: a circuit reaches the public accessor
+# through its transformer, or through `ThreeWindingTransformerCircuit` at three windings.
+_circuit_phase_shift(c::PSY.TransformerCircuit) = PSY.get_α(c)
 
 function get_series_phase_shift(t::PSY.TwoWindingTransformer)
-    return get_series_phase_shift(PSY.get_circuit(t))
+    return _circuit_phase_shift(PSY.get_circuit(t))
 end
 
 # Both π shunts in one pass: the explicit-units getters convert the whole from/to pair, so

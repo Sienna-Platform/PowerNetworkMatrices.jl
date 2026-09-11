@@ -39,6 +39,7 @@ export get_impedance_averaged_rating
 export equivalent_branch
 export arc_equivalent_branch
 export branch_admittance
+export get_effective_series_susceptance
 export reduced_arc_admittance
 export three_winding_arcs
 export branch_flow_limits
