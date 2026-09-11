@@ -365,7 +365,8 @@ function _build_two_composite_arcs_system()
     end
     PSY.add_component!(
         sys,
-        ThermalStandard(; name = "G1", available = true, status = PSY.OperationalStates.ONLINE, bus = buses[1],
+        ThermalStandard(; name = "G1", available = true,
+            status = PSY.OperationalStates.ONLINE, bus = buses[1],
             active_power = 1.0, reactive_power = 0.0, rating = 2.0,
             prime_mover_type =
             PSY.PrimeMovers.OT, fuel = PSY.ThermalFuels.OTHER,
