@@ -633,3 +633,46 @@ end
     nr = get_network_reduction_data(ybus)
     @test get_effective_series_susceptance(zi, nr) ≈ 1 / PNM.ZERO_IMPEDANCE_X_EPSILON
 end
+
+@testset "zero-impedance transformer substitutes through the tap" begin
+    # The substituted reactance is still tap-divided, so the component value keeps agreeing
+    # with BA. Existing tests cover tap and zero impedance separately, never together.
+    tap = 1.05
+    sys, buses = _mk_bus_system(3)
+    zi_arc = Arc(; from = buses[2], to = buses[3])
+    add_component!(sys, zi_arc)
+    add_component!(
+        sys,
+        PSY.TwoWindingTransformer(;
+            name = "ZI_TAP",
+            circuit = PSY.TransformerCircuit(;
+                arc = zi_arc, tap = tap, α = 0.0, available = true,
+                active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
+                base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
+            ),
+            magnetizing_shunt = Complex(0.0, 0.0),
+        ),
+    )
+    for (f, t) in ((1, 2), (1, 3))
+        arc = Arc(; from = buses[f], to = buses[t])
+        add_component!(sys, arc)
+        _add_test_line!(sys, "L$(f)$(t)", arc, 0.0, 0.1)
+    end
+
+    ybus = Ybus(sys)
+    nr = get_network_reduction_data(ybus)
+    tr = PSY.get_component(PSY.TwoWindingTransformer, sys, "ZI_TAP")
+    b_expected = (1 / PNM.ZERO_IMPEDANCE_X_EPSILON) / tap
+    @test get_effective_series_susceptance(tr, nr) ≈ b_expected
+
+    # Dropping the tap would give 1/ZERO_IMPEDANCE_X_EPSILON, off by the tap factor.
+    @test !isapprox(get_effective_series_susceptance(tr, nr),
+        1 / PNM.ZERO_IMPEDANCE_X_EPSILON)
+
+    # BA derives its susceptance from Ybus, so it is the independent oracle: for a symmetric
+    # arc `imag(1/Y_ft) == x * tap`, which is the reciprocal of the tap-divided value.
+    bus_lookup = PNM.get_bus_lookup(ybus)
+    i = PNM.get_bus_index(2, bus_lookup, nr)
+    ix = findfirst(==((2, 3)), PNM.get_arc_axis(nr))
+    @test BA_Matrix(ybus).data[i, ix] ≈ b_expected rtol = 1e-5
+end
