@@ -23,24 +23,24 @@ PrettyTables = "08abe8d2-0d0c-5749-adfa-8a2ac140af0d"
 # environment — without these the docs env resolves registry PowerSystems against IS4 and dies
 # precompiling with `UndefVarError: SystemUnitsSettings`. Mirrors test/Project.toml.
 [sources]
-InfrastructureSystems = {rev = "IS4", url = "https://github.com/NREL-Sienna/InfrastructureSystems.jl"}
-PowerFlowFileParser = {rev = "psy6", url = "https://github.com/NREL-Sienna/PowerFlowFileParser.jl"}
-PowerSystemCaseBuilder = {rev = "psy6", url = "https://github.com/NREL-Sienna/PowerSystemCaseBuilder.jl"}
-PowerSystems = {rev = "psy6", url = "https://github.com/NREL-Sienna/PowerSystems.jl"}
+InfrastructureSystems = {rev = "jd/openapi-1x-suite", url = "https://github.com/Sienna-Platform/InfrastructureSystems.jl.git"}
+PowerFlowFileParser = {rev = "jd/openapi-1x", url = "https://github.com/Sienna-Platform/PowerFlowFileParser.jl.git"}
+PowerSystemCaseBuilder = {rev = "jd/openapi-1x", url = "https://github.com/Sienna-Platform/PowerSystemCaseBuilder.jl.git"}
+PowerSystems = {rev = "jd/openapi-1x", url = "https://github.com/Sienna-Platform/PowerSystems.jl.git"}
 # PowerDynamics-/PowerInvestmentsOpenAPIModels are not imported here — they are deps of the
 # PowerOpenAPIModels umbrella, and [sources] are not inherited transitively, so this env must
-# pin them itself. rev must track PowerSystems' own pin (currently jd/market_components) or PSY
-# resolves against a stale OpenAPI tree.
-PowerCoreOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "main", subdir = "PowerCoreOpenAPIModels.jl"}
-InfrastructureTimeSeriesOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "main", subdir = "InfrastructureTimeSeriesOpenAPIModels.jl"}
-InfrastructureCoreOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "main", subdir = "InfrastructureCoreOpenAPIModels.jl"}
-PowerDynamicsOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "main", subdir = "PowerDynamicsOpenAPIModels.jl"}
-PowerInvestmentsOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "main", subdir = "PowerInvestmentsOpenAPIModels.jl"}
-PowerOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "main", subdir = "PowerOpenAPIModels.jl"}
-PowerOperationsOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "main", subdir = "PowerOperationsOpenAPIModels.jl"}
+# pin them itself.
+# Branch pins until the OpenAPI packages are registered and the psy6-line branches merge.
+PowerCoreOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "jd/openapi_deps_update", subdir = "PowerCoreOpenAPIModels.jl"}
+InfrastructureTimeSeriesOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "jd/openapi_deps_update", subdir = "InfrastructureTimeSeriesOpenAPIModels.jl"}
+InfrastructureCoreOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "jd/openapi_deps_update", subdir = "InfrastructureCoreOpenAPIModels.jl"}
+PowerDynamicsOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "jd/openapi_deps_update", subdir = "PowerDynamicsOpenAPIModels.jl"}
+PowerInvestmentsOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "jd/openapi_deps_update", subdir = "PowerInvestmentsOpenAPIModels.jl"}
+PowerOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "jd/openapi_deps_update", subdir = "PowerOpenAPIModels.jl"}
+PowerOperationsOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "jd/openapi_deps_update", subdir = "PowerOperationsOpenAPIModels.jl"}
 # PSCB's own [sources] pin for this is ignored once PSCB is a dependency rather than the root
 # project; the docs env needs its own pin so Pkg can resolve PSCB's unregistered parser dep.
-PowerTableDataParser = {url = "https://github.com/NLR-Sienna/PowerTableDataParser.jl.git", rev = "psy6"}
+PowerTableDataParser = {url = "https://github.com/NLR-Sienna/PowerTableDataParser.jl.git", rev = "jd/openapi-1x"}
 
 [compat]
 Documenter = "1"
