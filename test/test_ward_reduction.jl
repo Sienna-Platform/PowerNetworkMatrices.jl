@@ -138,7 +138,7 @@ end
     # impedance; read it back with device base (identity).
     ward_line_susceptance = PNM.get_series_susceptance(
         get_network_reduction_data(ptdf_2).added_arc_impedance_map[(101, 102)],
-        PSY.DU,
+        PSY.CU,
     )
     ward_multiplier =
         existing_line_susceptance / (existing_line_susceptance + ward_line_susceptance)

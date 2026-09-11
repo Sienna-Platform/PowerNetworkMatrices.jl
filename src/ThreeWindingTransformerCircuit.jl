@@ -110,7 +110,7 @@ The circuit's own rating (MVA, device base). May be `nothing` when unset, mirror
 `PSY.Line`'s rating is surfaced; there is no parent-level rating to fall back to.
 """
 get_equivalent_rating(tw::ThreeWindingTransformerCircuit) =
-    PSY.get_rating(tw.circuit, PSY.DU)
+    PSY.get_rating(tw.circuit, PSY.CU)
 
 """
     get_equivalent_emergency_rating(tw::ThreeWindingTransformerCircuit)

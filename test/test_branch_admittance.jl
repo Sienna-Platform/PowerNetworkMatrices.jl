@@ -17,7 +17,7 @@ end
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
     ml = first(PSY.get_components(PSY.MonitoredLine, sys))
     fl = PNM.branch_flow_limits(ml)
-    psy_fl = PSY.get_flow_limits(ml, PSY.DU)
+    psy_fl = PSY.get_flow_limits(ml, PSY.CU)
     @test fl.from_to == psy_fl.from_to
     @test fl.to_from == psy_fl.to_from
 end
@@ -78,7 +78,7 @@ end
 # Build a `ThreeWindingTransformer` into `sys`, wiring three terminal
 # buses to a hidden star bus. The circuit-resident star-leg series impedances are derived
 # from the pairwise data here (as PFFP does at parse) and stored per circuit on `bp`
-# (= system base here, so SU == DU keeps the hand-computed literals clean); the pairwise data
+# (= system base here, so SU == CU keeps the hand-computed literals clean); the pairwise data
 # stays on the parent. The magnetizing shunt and its location live on the parent transformer.
 # Each circuit carries its own arc, base power, base voltages, and rating. Returns the
 # attached transformer.
@@ -260,11 +260,11 @@ end
     @test PNM.get_series_susceptance(tw3, PSY.SU) ≈ 10000.0 / 1.05
 
     # (d) `units` selects the reactance base, matching the `TwoWindingTransformer` and
-    # generic `ACTransmission` methods. It was previously accepted and ignored, so a DU
+    # generic `ACTransmission` methods. It was previously accepted and ignored, so a CU
     # request silently returned the SU value.
     circuit3 = PSY.get_circuits(t)[3]
-    @test PNM.get_series_susceptance(tw3, PSY.DU) ≈
-          (1 / PSY.get_x(circuit3, PSY.DU)) / tap3
+    @test PNM.get_series_susceptance(tw3, PSY.CU) ≈
+          (1 / PSY.get_x(circuit3, PSY.CU)) / tap3
 end
 
 @testset "branch_admittance applies the winding tap for all 3W windings" begin
@@ -362,7 +362,7 @@ end
     )
     PSY.add_component!(sys, t)
 
-    # circuit base_power (100.0) == system base, so DU == SU here.
+    # circuit base_power (100.0) == system base, so CU == SU here.
     @test PNM.get_series_susceptance(t, PSY.SU) ≈ 1 / 0.1
     PSY.set_tap!(PSY.get_circuit(t), 1.05)
     @test PNM.get_series_susceptance(t, PSY.SU) ≈ (1 / 0.1) / 1.05

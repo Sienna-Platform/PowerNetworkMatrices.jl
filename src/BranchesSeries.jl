@@ -217,7 +217,7 @@ _series_member_rating(branch::PSY.ACTransmission) = get_equivalent_rating(branch
 Return the rating for PSY.ACTransmission branches.
 """
 function get_equivalent_rating(bs::PSY.ACTransmission)
-    return PSY.get_rating(bs, PSY.DU)
+    return PSY.get_rating(bs, PSY.CU)
 end
 
 """
@@ -227,7 +227,7 @@ A `TwoWindingTransformer` has no parent rating (there is no `get_rating(::TwoWin
 the rating lives on its single winding and may be `nothing`. Mirrors `branch_flow_limits`.
 """
 function get_equivalent_rating(bs::PSY.TwoWindingTransformer)
-    return PSY.get_rating(PSY.get_circuit(bs), PSY.DU)
+    return PSY.get_rating(PSY.get_circuit(bs), PSY.CU)
 end
 
 """
@@ -237,7 +237,7 @@ Rating is assumed to be max_flow for GenericArcImpedance.
 """
 function get_equivalent_rating(bs::PSY.GenericArcImpedance)
     # Detached synthetic ward equivalent: read the stored value with device base.
-    return PSY.get_max_flow(bs, PSY.DU)
+    return PSY.get_max_flow(bs, PSY.CU)
 end
 
 """
@@ -259,12 +259,12 @@ end
 Return the emergency rating for PSY.ACTransmission branches.
 """
 function get_equivalent_emergency_rating(branch::PSY.ACTransmission)
-    if isnothing(PSY.get_rating_b(branch, PSY.DU))
+    if isnothing(PSY.get_rating_b(branch, PSY.CU))
         @debug "Branch $(get_name(branch)) has no 'rating_b' defined. Post-contingency limit is going to be set using normal-operation rating.
             \n Consider including post-contingency limits using set_rating_b!()."
-        return PSY.get_rating(branch, PSY.DU)
+        return PSY.get_rating(branch, PSY.CU)
     end
-    return PSY.get_rating_b(branch, PSY.DU)
+    return PSY.get_rating_b(branch, PSY.CU)
 end
 
 """
@@ -276,11 +276,11 @@ end
 """
 function get_equivalent_emergency_rating(branch::PSY.TwoWindingTransformer)
     w = PSY.get_circuit(branch)
-    if isnothing(PSY.get_rating_b(w, PSY.DU))
+    if isnothing(PSY.get_rating_b(w, PSY.CU))
         @debug "Winding of $(PSY.get_name(branch)) has no 'rating_b' defined; using normal-operation rating."
-        return PSY.get_rating(w, PSY.DU)
+        return PSY.get_rating(w, PSY.CU)
     end
-    return PSY.get_rating_b(w, PSY.DU)
+    return PSY.get_rating_b(w, PSY.CU)
 end
 
 """
@@ -290,7 +290,7 @@ Return the emergency rating for PSY.GenericArcImpedance.
 """
 function get_equivalent_emergency_rating(branch::PSY.GenericArcImpedance)
     @debug "GenericArcImpedance $(get_name(branch)) has no emergency rating. Using max_flow as a proxy instead."
-    return PSY.get_max_flow(branch, PSY.DU)
+    return PSY.get_max_flow(branch, PSY.CU)
 end
 
 # Indexed only when EVERY segment is: a chain missing one is not a valid representation of
