@@ -98,7 +98,7 @@ _series_susceptance_raw(
 ) = _series_susceptance_raw(segment.circuit, units)
 
 function get_series_phase_shift(tw::ThreeWindingTransformerCircuit)
-    return get_series_phase_shift(tw.circuit)
+    return _circuit_phase_shift(tw.circuit)
 end
 
 """

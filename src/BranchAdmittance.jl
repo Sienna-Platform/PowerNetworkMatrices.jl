@@ -114,12 +114,12 @@ function get_series_phase_shift(::PSY.ACTransmission)
     return 0.0
 end
 
-function get_series_phase_shift(c::PSY.TransformerCircuit)
-    return PSY.get_α(c)
-end
+# A circuit's series shift is its stored α. Internal: a circuit reaches the public accessor
+# through its transformer, or through `ThreeWindingTransformerCircuit` at three windings.
+_circuit_phase_shift(c::PSY.TransformerCircuit) = PSY.get_α(c)
 
 function get_series_phase_shift(t::PSY.TwoWindingTransformer)
-    return get_series_phase_shift(PSY.get_circuit(t))
+    return _circuit_phase_shift(PSY.get_circuit(t))
 end
 
 # Both π shunts in one pass: the explicit-units getters convert the whole from/to pair, so

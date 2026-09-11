@@ -6,7 +6,10 @@
     (line, _, pst1, _) = _mk_detached_pst_fixture()
     @test iszero(PNM.get_series_phase_shift(line))
     @test PNM.get_series_phase_shift(pst1) ≈ 0.15
-    @test PNM.get_series_phase_shift(PSY.get_circuit(pst1)) ≈ 0.15
+    # A circuit is a delegation target, not a segment: it reaches the public accessor
+    # through its transformer.
+    @test PNM._circuit_phase_shift(PSY.get_circuit(pst1)) ≈ 0.15
+    @test_throws MethodError PNM.get_series_phase_shift(PSY.get_circuit(pst1))
 end
 
 @testset "dc phase shift: 3W winding accessor" begin
