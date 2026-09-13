@@ -20,7 +20,11 @@ function assign_reference_buses!(
         return deepcopy(subnetworks)
     end
     bus_groups = Dict{Int, Set{Int}}()
-    for (bus_key, subnetwork_buses) in subnetworks
+    # Iterate a snapshot of the keys: the loop `pop!`s from `subnetworks`, and mutating a
+    # Dict while iterating it is undefined -- it silently skipped entries under a Julia
+    # version change, leaving subnetworks unassigned.
+    for bus_key in collect(keys(subnetworks))
+        subnetwork_buses = subnetworks[bus_key]
         ref_bus = intersect(ref_buses, subnetwork_buses)
         if length(ref_bus) == 1
             bus_groups[first(ref_bus)] = pop!(subnetworks, bus_key)

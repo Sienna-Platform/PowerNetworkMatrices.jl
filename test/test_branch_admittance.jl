@@ -210,12 +210,17 @@ end
         "pti_case14_with_pst3w_sys";
         force_build = true,
     )
-    t = first(
+    # Both 3W transformers in this fixture are phase-shifting, and component iteration
+    # order is not stable across Julia versions, so pick by name rather than by whichever
+    # comes first: the taps asserted below are this transformer's (1.0/1.0/1.05), not the
+    # other's (0.95/0.9/1.0).
+    t = only(
         Iterators.filter(
-            PSY.is_phase_shifting,
+            t -> PSY.get_name(t) == "BUS 109-BUS 104-BUS 107-i_1",
             PSY.get_components(PSY.ThreeWindingTransformer, sys),
         ),
     )
+    @test PSY.is_phase_shifting(t)
     windings = PSY.get_circuits(t)
     winding_number = findfirst(w -> !iszero(PSY.get_α(w)), windings)
     @test winding_number !== nothing

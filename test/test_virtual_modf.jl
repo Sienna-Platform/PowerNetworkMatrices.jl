@@ -728,13 +728,19 @@ end
         return ctg
     end
 
-    # arc 9 -> islanding bridge (pinv branch, infinite amplification);
-    # arcs [1, 19] -> near-singular W (||W_inv||_2 ~ 190), with tau large enough
+    # (7, 8) -> islanding bridge (pinv branch, infinite amplification);
+    # [(4, 5), (2, 4)] -> near-singular W (||W_inv||_2 ~ 190), with tau large enough
     # to actually drop entries so the bound is exercised rather than vacuous.
-    for (arcs, uid, tau) in (([9], 1, 1e-3), ([1, 19], 2, 5e-2))
+    # Named by endpoints, not by position: the arc axis follows component iteration
+    # order, which is not stable across Julia versions, so fixed indices silently
+    # select different branches and the near-critical precondition stops holding.
+    for (arc_ids, uid, tau) in ((((7, 8),), 1, 1e-3), ((((4, 5), (2, 4))), 2, 5e-2))
         vexact = VirtualMODF(sys; tol = eps())
         vtau = VirtualMODF(sys; tol = tau)
-        n_arcs = length(PNM.get_arc_axis(vexact))
+        arc_axis = PNM.get_arc_axis(vexact)
+        n_arcs = length(arc_axis)
+        arcs = [findfirst(==(a), arc_axis) for a in arc_ids]
+        @test !any(isnothing, arcs)
 
         ce = _register_ctg!(vexact, arcs, uid)
         ct = _register_ctg!(vtau, arcs, uid)
