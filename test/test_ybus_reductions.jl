@@ -334,6 +334,31 @@ end
     @test length(PNM.get_bus_axis(ybus)) == 14 - 2
 end
 
+@testset "ZeroImpedanceBranchReduction: zero-impedance cycle drops its closing arc" begin
+    # Line3 (2-3), Line6 (3-4) and Line4 (2-4) form a zero-impedance triangle. Whichever
+    # arc the map iteration reaches last has both endpoints already in one merged group:
+    # it is a self-loop, not a skipped merge, so it must still land in removed_arcs or it
+    # survives in the subnetwork arc axis on a bus that is no longer on the bus axis.
+    for pinned in (Set{Int}(), Set([4]))
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+        for name in ("Line3", "Line6", "Line4")
+            line = get_component(Line, sys, name)
+            set_r!(line, 0.0)
+            set_x!(line, 0.0)
+        end
+        ybus = Ybus(sys; irreducible_buses = pinned)
+        nrd = get_network_reduction_data(ybus)
+        bus_ax = Set(PNM.get_bus_axis(ybus))
+        @test Set([(2, 3), (3, 4), (2, 4)]) ⊆ PNM.get_removed_arcs(nrd)
+        for (_, arcs) in ybus.arc_subnetwork_axis, arc in arcs
+            @test arc ∉ ((2, 3), (3, 4), (2, 4))
+        end
+        for arc in PNM.get_arc_axis(nrd), bus in arc
+            @test bus ∈ bus_ax
+        end
+    end
+end
+
 @testset "ZeroImpedanceBranchReduction: transformer arcs are excluded" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     t = get_component(Transformer2W, sys, "Trans4")  # from=7, to=8
