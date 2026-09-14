@@ -521,7 +521,7 @@ function build_hvdc_with_single_bus_island()
     )
     add_component!(sys, gen15)
     bus14 = get_component(ACBus, sys, "Bus 14")
-    hvdc1 = TwoTerminalHVDCLine(;
+    hvdc1 = TwoTerminalGenericHVDCLine(;
         name = "Line18",
         available = true,
         active_power_flow = 0.0,
@@ -627,7 +627,7 @@ function build_hvdc_with_small_island()
     )
     add_component!(sys, gen17)
     bus14 = get_component(ACBus, sys, "Bus 14")
-    hvdc1 = TwoTerminalHVDCLine(;
+    hvdc1 = TwoTerminalGenericHVDCLine(;
         name = "Line18",
         available = true,
         active_power_flow = 0.0,
