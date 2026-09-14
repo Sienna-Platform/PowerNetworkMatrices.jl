@@ -96,6 +96,8 @@ function get_reduction(
             from_irred = from_root ∈ user_irreducible
             to_irred = to_root ∈ user_irreducible
             if from_root == to_root
+                # Both endpoints are already in one merged group, so this arc is a self-loop.
+                push!(nr.removed_arcs, arc_key)
                 continue
             elseif from_irred && to_irred
                 @warn "Zero-impedance branch between two irreducible bus groups $from_no and $to_no; skipping merge."
