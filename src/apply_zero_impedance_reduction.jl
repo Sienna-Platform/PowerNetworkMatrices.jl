@@ -69,16 +69,6 @@ function _is_zero_impedance_arc(
     )
 end
 
-function _find_reduction_root(bus_number, reverse_bus_search_map)
-    root = bus_number
-    while haskey(reverse_bus_search_map, root)
-        next_root = reverse_bus_search_map[root]
-        next_root == root && break
-        root = next_root
-    end
-    return root
-end
-
 function get_reduction(
     ybus::Ybus,
     sys::PSY.System,
@@ -101,8 +91,8 @@ function get_reduction(
             _is_zero_impedance_arc(
                 br, susceptance_threshold, min_x_eps, resistance_tolerance) || continue
             from_no, to_no = arc_key
-            from_root = _find_reduction_root(from_no, nr.reverse_bus_search_map)
-            to_root = _find_reduction_root(to_no, nr.reverse_bus_search_map)
+            from_root = get(nr.reverse_bus_search_map, from_no, from_no)
+            to_root = get(nr.reverse_bus_search_map, to_no, to_no)
             from_irred = from_root ∈ user_irreducible
             to_irred = to_root ∈ user_irreducible
             if from_root == to_root
