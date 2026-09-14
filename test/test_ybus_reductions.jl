@@ -334,6 +334,31 @@ end
     @test length(PNM.get_bus_axis(ybus)) == 14 - 2
 end
 
+@testset "ZeroImpedanceBranchReduction: zero-impedance cycle drops its closing arc" begin
+    # Line3 (2-3), Line6 (3-4) and Line4 (2-4) form a zero-impedance triangle. Whichever
+    # arc the map iteration reaches last has both endpoints already in one merged group:
+    # it is a self-loop, not a skipped merge, so it must still land in removed_arcs or it
+    # survives in the subnetwork arc axis on a bus that is no longer on the bus axis.
+    for pinned in (Set{Int}(), Set([4]))
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+        for name in ("Line3", "Line6", "Line4")
+            line = get_component(Line, sys, name)
+            set_r!(line, 0.0)
+            set_x!(line, 0.0)
+        end
+        ybus = Ybus(sys; irreducible_buses = pinned)
+        nrd = get_network_reduction_data(ybus)
+        bus_ax = Set(PNM.get_bus_axis(ybus))
+        @test Set([(2, 3), (3, 4), (2, 4)]) ⊆ PNM.get_removed_arcs(nrd)
+        for (_, arcs) in ybus.arc_subnetwork_axis, arc in arcs
+            @test arc ∉ ((2, 3), (3, 4), (2, 4))
+        end
+        for arc in PNM.get_arc_axis(nrd), bus in arc
+            @test bus ∈ bus_ax
+        end
+    end
+end
+
 @testset "ZeroImpedanceBranchReduction: transformer arcs are excluded" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     t = get_component(Transformer2W, sys, "Trans4")  # from=7, to=8
@@ -391,6 +416,40 @@ end
     @test 113 ∉ keys(nrd_skip.reverse_bus_search_map)
     @test 112 ∈ PNM.get_bus_axis(ybus_skip)
     @test 113 ∈ PNM.get_bus_axis(ybus_skip)
+end
+
+@testset "ZeroImpedanceBranchReduction: pinned bus survives a chained merge" begin
+    # Zero-impedance chain 2 -> 3 -> 4 (Line3, Line6). Bus 4 is pinned, so whichever
+    # arc the map iteration reaches first, the merged group must collapse onto bus 4.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    for name in ("Line3", "Line6")
+        line = get_component(Line, sys, name)
+        set_r!(line, 0.0)
+        set_x!(line, 0.0)
+    end
+    ybus = Ybus(sys; irreducible_buses = Set([4]))
+    nrd = get_network_reduction_data(ybus)
+    @test 4 ∈ PNM.get_bus_axis(ybus)
+    @test 4 ∉ keys(nrd.reverse_bus_search_map)
+    @test get(nrd.reverse_bus_search_map, 2, nothing) == 4
+    @test get(nrd.reverse_bus_search_map, 3, nothing) == 4
+    @test get(nrd.bus_reduction_map, 4, nothing) == Set([2, 3])
+
+    # Both ends of the chain pinned: the collision only appears once bus 3 resolves to
+    # bus 2, so the skip must be decided on the resolved roots, not the raw arc numbers.
+    sys2 = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    for name in ("Line3", "Line6")
+        line = get_component(Line, sys2, name)
+        set_r!(line, 0.0)
+        set_x!(line, 0.0)
+    end
+    ybus2 = Ybus(sys2; irreducible_buses = Set([2, 4]))
+    nrd2 = get_network_reduction_data(ybus2)
+    @test 2 ∈ PNM.get_bus_axis(ybus2)
+    @test 4 ∈ PNM.get_bus_axis(ybus2)
+    @test 3 ∉ PNM.get_bus_axis(ybus2)
+    @test 2 ∉ keys(nrd2.reverse_bus_search_map)
+    @test 4 ∉ keys(nrd2.reverse_bus_search_map)
 end
 
 @testset "ZeroImpedanceBranchReduction: custom susceptance_threshold" begin
