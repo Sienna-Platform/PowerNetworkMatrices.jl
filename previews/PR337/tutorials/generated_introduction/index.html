@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Introduction · PowerNetworkMatrices.jl</title><meta name="title" content="Introduction · PowerNetworkMatrices.jl"/><meta property="og:title" content="Introduction · PowerNetworkMatrices.jl"/><meta property="twitter:title" content="Introduction · PowerNetworkMatrices.jl"/><meta name="description" content="Documentation for PowerNetworkMatrices.jl."/><meta property="og:description" content="Documentation for PowerNetworkMatrices.jl."/><meta property="twitter:description" content="Documentation for PowerNetworkMatrices.jl."/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><a class="docs-logo" href="../../"><img src="../../assets/logo.png" alt="PowerNetworkMatrices.jl logo"/></a><div class="docs-package-name"><span class="docs-autofit"><a href="../../">PowerNetworkMatrices.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Welcome Page</a></li><li><span class="tocitem">Tutorials</span><ul><li class="is-active"><a class="tocitem" href>Introduction</a><ul class="internal"><li><a class="tocitem" href="#Step-1-—-Load-the-network"><span>Step 1 — Load the network</span></a></li><li><a class="tocitem" href="#Step-2-—-Determine-important-lines-with-the-PTDF"><span>Step 2 — Determine important lines with the PTDF</span></a></li><li><a class="tocitem" href="#Step-3-—-Determine-post-contingency-power-flow-with-the-LODF"><span>Step 3 — Determine post-contingency power flow with the LODF</span></a></li><li><a class="tocitem" href="#Step-4-—-Reduce-the-network-to-repeat-the-analysis-cheaply"><span>Step 4 — Reduce the network to repeat the analysis cheaply</span></a></li><li><a class="tocitem" href="#Where-to-go-next"><span>Where to go next</span></a></li></ul></li><li><a class="tocitem" href="../generated_analysis_at_scale/">Analysis at Scale</a></li></ul></li><li><span class="tocitem">How-To Guides</span><ul><li><a class="tocitem" href="../../how_to_guides/generated_build_multiple_matrices/">Build Multiple Matrices</a></li><li><a class="tocitem" href="../../how_to_guides/generated_choose_linear_solver/">Choose a Linear Solver</a></li><li><a class="tocitem" href="../../how_to_guides/generated_reproduce_dfax_values/">Reproduce Industry DFAX Values</a></li><li><a class="tocitem" href="../../how_to_guides/generated_contingencies/">Define and Apply Contingencies</a></li><li><a class="tocitem" href="../../how_to_guides/generated_diagnose_connectivity/">Diagnose Network Connectivity</a></li></ul></li><li><span class="tocitem">Reference</span><ul><li><a class="tocitem" href="../../reference/network_matrices_overview/">Matrix Overview and Indexing</a></li><li><a class="tocitem" href="../../reference/matrix_types/">Matrix Types</a></li><li><a class="tocitem" href="../../reference/public/">Public API</a></li><li><a class="tocitem" href="../../reference/internals/">Internals</a></li></ul></li><li><span class="tocitem">Explanation</span><ul><li><a class="tocitem" href="../../explanation/dc_power_flow_approximation/">DC Power Flow Approximation</a></li><li><a class="tocitem" href="../../explanation/computational_considerations/">Computational Considerations</a></li><li><a class="tocitem" href="../../explanation/network_reduction_theory/">Network Reduction Theory</a></li><li><a class="tocitem" href="../../explanation/flowgate_methodology/">Flowgate Methodology</a></li><li><a class="tocitem" href="../../explanation/concurrency/">Concurrency and the KLU Lock</a></li><li><a class="tocitem" href="../../explanation/equivalent_branches/">Equivalent Representation of Reduced Branches</a></li><li><a class="tocitem" href="../../explanation/slack_conventions/">Slack Distribution and Reference-Bus Conventions</a></li></ul></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Tutorials</a></li><li class="is-active"><a href>Introduction</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Introduction</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/Sienna-Platform/PowerNetworkMatrices.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/Sienna-Platform/PowerNetworkMatrices.jl/blob/main/docs/src/tutorials/introduction.jl" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="Introduction"><a class="docs-heading-anchor" href="#Introduction">Introduction</a><a id="Introduction-1"></a><a class="docs-heading-anchor-permalink" href="#Introduction" title="Permalink"></a></h1><p><em>To follow along, you can download this tutorial as a <a href="https://sienna-platform.github.io/PowerNetworkMatrices.jl/previews/PR337/tutorials/introduction.jl">Julia script (.jl)</a> or <a href="https://sienna-platform.github.io/PowerNetworkMatrices.jl/previews/PR337/tutorials/generated_introduction.ipynb">Jupyter notebook (.ipynb)</a>.</em></p><p>This tutorial uses a <a href="../../reference/public/#PowerNetworkMatrices.PTDF"><code>PTDF</code></a> to examine current power flow, a <a href="../../reference/public/#PowerNetworkMatrices.LODF"><code>LODF</code></a> to examine how a tripped line&#39;s power redirects, and network reductions to make the analysis faster to repeat. Together this will answer:</p><blockquote><p>If a key transmission line trips, which other lines are most at risk of overloading?</p></blockquote><pre><code class="language-julia hljs">using PowerNetworkMatrices
+import PowerNetworkMatrices as PNM
+import PowerSystemCaseBuilder as PSB
+using Logging</code></pre><div class="admonition is-info" id="Note-da3a086a28e37f45"><header class="admonition-header">Note<a class="admonition-anchor" href="#Note-da3a086a28e37f45" title="Permalink"></a></header><div class="admonition-body"><p><code>PowerSystemCaseBuilder.jl</code> only supplies the ready-made example systems used throughout this documentation. To build a <a href="https://sienna-platform.github.io/PowerSystems.jl/stable/reference/public/#PowerSystems.System"><code>System</code></a> from your own data, see the <a href="https://sienna-platform.github.io/PowerSystems.jl/stable">PowerSystems.jl documentation</a>.</p></div></div><h2 id="Step-1-—-Load-the-network"><a class="docs-heading-anchor" href="#Step-1-—-Load-the-network">Step 1 — Load the network</a><a id="Step-1-—-Load-the-network-1"></a><a class="docs-heading-anchor-permalink" href="#Step-1-—-Load-the-network" title="Permalink"></a></h2><p>Network matrices are built from a <a href="https://sienna-platform.github.io/PowerSystems.jl/stable/reference/public/#PowerSystems.System"><code>PowerSystems.System</code></a>.</p><pre><code class="language-julia hljs">sys = with_logger(NullLogger()) do
+    PSB.build_system(PSB.PSSEParsingTestSystems, &quot;psse_14_network_reduction_test_system&quot;);
+end</code></pre><table>
+  <thead>
+    <tr class = "title">
+      <td colspan = "2" style = "font-size: x-large; font-weight: bold; text-align: center;">System</td>
+    </tr>
+    <tr class = "columnLabelRow">
+      <th style = "font-weight: bold; text-align: left;">Property</th>
+      <th style = "font-weight: bold; text-align: left;">Value</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">Name</td>
+      <td style = "text-align: left;"></td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">Description</td>
+      <td style = "text-align: left;"></td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">System Units Base</td>
+      <td style = "text-align: left;">SYSTEM_BASE</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">Base Power</td>
+      <td style = "text-align: left;">100.0</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">Base Frequency</td>
+      <td style = "text-align: left;">60.0</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">Num Components</td>
+      <td style = "text-align: left;">103</td>
+    </tr>
+  </tbody>
+</table>
+
+<table>
+  <thead>
+    <tr class = "title">
+      <td colspan = "2" style = "font-size: x-large; font-weight: bold; text-align: center;">Static Components</td>
+    </tr>
+    <tr class = "columnLabelRow">
+      <th style = "font-weight: bold; text-align: left;">Type</th>
+      <th style = "font-weight: bold; text-align: left;">Count</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ACBus</td>
+      <td style = "text-align: left;">20</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">Arc</td>
+      <td style = "text-align: left;">28</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">Area</td>
+      <td style = "text-align: left;">1</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">DiscreteControlledACBranch</td>
+      <td style = "text-align: left;">2</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">FACTSControlDevice</td>
+      <td style = "text-align: left;">1</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">FixedAdmittance</td>
+      <td style = "text-align: left;">4</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">Line</td>
+      <td style = "text-align: left;">17</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">LoadZone</td>
+      <td style = "text-align: left;">1</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">PhaseShiftingTransformer</td>
+      <td style = "text-align: left;">1</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">StandardLoad</td>
+      <td style = "text-align: left;">13</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">SwitchedAdmittance</td>
+      <td style = "text-align: left;">2</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">TapTransformer</td>
+      <td style = "text-align: left;">1</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ThermalStandard</td>
+      <td style = "text-align: left;">7</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">Transformer2W</td>
+      <td style = "text-align: left;">1</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">Transformer3W</td>
+      <td style = "text-align: left;">2</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">TwoTerminalLCCLine</td>
+      <td style = "text-align: left;">1</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">TwoTerminalVSCLine</td>
+      <td style = "text-align: left;">1</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>We will focus on the line between buses <code>103</code> and <code>104</code>.</p><h2 id="Step-2-—-Determine-important-lines-with-the-PTDF"><a class="docs-heading-anchor" href="#Step-2-—-Determine-important-lines-with-the-PTDF">Step 2 — Determine important lines with the PTDF</a><a id="Step-2-—-Determine-important-lines-with-the-PTDF-1"></a><a class="docs-heading-anchor-permalink" href="#Step-2-—-Determine-important-lines-with-the-PTDF" title="Permalink"></a></h2><p>A <a href="../../reference/public/#PowerNetworkMatrices.PTDF"><code>PTDF</code></a> (Power Transfer Distribution Factor) matrix is indexed by an <strong>arc tuple</strong> <code>(from_bus, to_bus)</code> and a <strong>bus number</strong>, answering what proportion of power injected at a given bus flows through a given branch (when withdrawn at the reference bus). One column of the <a href="../../reference/public/#PowerNetworkMatrices.PTDF"><code>PTDF</code></a> corresponds to one bus&#39;s influence on every branch.</p><pre><code class="language-julia hljs">ptdf = PTDF(sys)
+ptdf[(103, 104), 103]</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">0.7110286823280983</code></pre><p>Compare a bus that barely touches this line:</p><pre><code class="language-julia hljs">ptdf[(103, 104), 102]</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">0.011214160544562514</code></pre><p>Since power is withdrawn at reference buses, power injected at a reference bus does not flow.</p><pre><code class="language-julia hljs">ref_buses = PNM.get_ref_bus(ptdf)
+@assert ptdf[(103, 104), only(ref_buses)] == 0.0
+@assert ptdf[(102, 103), only(ref_buses)] == 0.0</code></pre><h2 id="Step-3-—-Determine-post-contingency-power-flow-with-the-LODF"><a class="docs-heading-anchor" href="#Step-3-—-Determine-post-contingency-power-flow-with-the-LODF">Step 3 — Determine post-contingency power flow with the LODF</a><a id="Step-3-—-Determine-post-contingency-power-flow-with-the-LODF-1"></a><a class="docs-heading-anchor-permalink" href="#Step-3-—-Determine-post-contingency-power-flow-with-the-LODF" title="Permalink"></a></h2><p>The <a href="../../reference/public/#PowerNetworkMatrices.LODF"><code>LODF</code></a> (Line Outage Distribution Factor) is indexed by two arc tuples, the <strong>monitored</strong> arc and the <strong>outaged</strong> arc, answering how flow is redistributed in an outage.</p><pre><code class="language-julia hljs">lodf = LODF(sys)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">LODF{Tuple{Vector{Tuple{Int64, Int64}}, Vector{Tuple{Int64, Int64}}}, Tuple{Dict{Tuple{Int64, Int64}, Int64}, Dict{Tuple{Int64, Int64}, Int64}}, Matrix{Float64}}
+    Dimension 1, [(107, 108), (118, 104), (103, 116), (117, 118), (103, 104), (106, 112), (109, 110), (115, 102), (109, 114), (110, 111)  …  (101, 115), (106, 111), (102, 104), (101, 117), (114, 1002), (104, 1001), (110, 1002), (107, 1001), (109, 1001), (112, 1002)]
+    Dimension 2, [(107, 108), (118, 104), (103, 116), (117, 118), (103, 104), (106, 112), (109, 110), (115, 102), (109, 114), (110, 111)  …  (101, 115), (106, 111), (102, 104), (101, 117), (114, 1002), (104, 1001), (110, 1002), (107, 1001), (109, 1001), (112, 1002)]
+Note!! The data shown below corresponds to the transposed matrix.
+And data with size (23, 23):
+ -1.0   0.0           0.0   0.0          …   0.0           0.0
+  0.0  -1.0           0.0  -1.0              1.50354e-15   0.0
+  0.0   1.25915e-16  -1.0   1.25915e-16      0.0           4.93038e-32
+  0.0  -1.0           0.0  -1.0              1.50354e-15   0.0
+  0.0   0.648991      0.0   0.648991         0.0           4.07945e-16
+  0.0   5.61517e-15   0.0   5.61517e-15  …  -0.435807     -1.0
+  0.0   1.27801e-16   0.0   1.27801e-16      0.00791199    0.00338395
+  0.0   1.0           0.0   1.0              3.75885e-16   0.0
+  0.0   2.61309e-15   0.0   2.61309e-15      0.543973      0.474848
+  0.0  -1.77444e-15   0.0  -1.77444e-15      0.118837     -0.878786
+  ⋮                                      ⋱                
+  0.0   1.44863e-14   0.0   1.44863e-14     -0.118837      0.878786
+  0.0   0.957447      0.0   0.957447     …   3.37028e-16   0.0
+  0.0  -1.0           0.0  -1.0              1.50354e-15   0.0
+  0.0   2.22472e-15   0.0   2.22472e-15      0.543973      0.474848
+  0.0  -2.05657e-14   0.0  -2.05657e-14      1.0           0.194563
+  0.0  -1.9325e-14    0.0  -1.9325e-14      -0.0685839     0.531925
+  0.0   1.58255e-16   0.0   1.58255e-16  …   2.56708e-18   4.99459e-19
+  0.0  -4.0748e-15    0.0  -4.0748e-15      -1.0          -0.194563
+  0.0   1.7306e-14    0.0   1.7306e-14      -0.435807     -1.0</code></pre><p>We can filter for monitored arcs that absorb flow past a given threshold.</p><pre><code class="language-julia hljs">outaged = (103, 104)
+monitored = [(arc, lodf[arc, outaged]) for arc in lodf.axes[1] if arc != outaged]
+filter!(pair -&gt; abs(pair[2]) &gt; 0.05, monitored)
+sort!(monitored; by = pair -&gt; -abs(pair[2]))
+monitored</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">7-element Vector{Tuple{Tuple{Int64, Int64}, Float64}}:
+ ((102, 103), -1.0000000000000002)
+ ((115, 102), -0.648991266979575)
+ ((101, 115), -0.648991266979575)
+ ((117, 118), 0.6489912669795743)
+ ((101, 117), 0.6489912669795743)
+ ((118, 104), 0.6489912669795742)
+ ((102, 104), 0.3510087330204253)</code></pre><p>Branch <code>(102, 103)</code> inherits the entire flow of the outaged line, a factor of <code>-1.0</code>, because it is the series partner on the far side of bus <code>103</code>. The two parallel paths <code>101–115–102</code> and <code>101–117–118–104</code> each absorb roughly <code>65%</code>, and branch <code>(102, 104)</code> takes the remaining <code>35%</code>. Every other branch is unaffected.</p><p>A negative factor means the redistributed flow runs <em>against</em> the monitored branch&#39;s <code>(from, to)</code> orientation. Individual factors can also be read directly.</p><pre><code class="language-julia hljs">lodf[(102, 103), (103, 104)]</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">-1.0000000000000002</code></pre><h2 id="Step-4-—-Reduce-the-network-to-repeat-the-analysis-cheaply"><a class="docs-heading-anchor" href="#Step-4-—-Reduce-the-network-to-repeat-the-analysis-cheaply">Step 4 — Reduce the network to repeat the analysis cheaply</a><a id="Step-4-—-Reduce-the-network-to-repeat-the-analysis-cheaply-1"></a><a class="docs-heading-anchor-permalink" href="#Step-4-—-Reduce-the-network-to-repeat-the-analysis-cheaply" title="Permalink"></a></h2><p>Reliability studies are rerun across every credible outage and every operating point, so the matrices should be as small as possible. Networks typically contain buses that do not affect a study of this kind: dead-end (radial) buses and pass-through (degree-two) buses. PNM can reduce them away, shrinking the matrices while leaving the surviving sensitivities unchanged.</p><p>Reductions are supplied to any constructor through the <code>network_reductions</code> keyword. Here we combine <a href="../../reference/public/#PowerNetworkMatrices.RadialReduction"><code>RadialReduction</code></a>, which drops dangling buses, with <a href="../../reference/public/#PowerNetworkMatrices.DegreeTwoReduction"><code>DegreeTwoReduction</code></a>, which fuses pass-through chains.</p><pre><code class="language-julia hljs">reductions = NetworkReduction[RadialReduction(), DegreeTwoReduction()]
+ptdf_reduced = PTDF(sys; network_reductions = reductions)
+size(ptdf_reduced), size(ptdf)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">((12, 17), (18, 23))</code></pre><p>The reduced matrix has fewer branch rows and fewer bus columns, but the sensitivity from Step 2 is unchanged.</p><pre><code class="language-julia hljs">ptdf_reduced[(103, 104), 103], ptdf[(103, 104), 103]</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(0.7110286823280985, 0.7110286823280983)</code></pre><p>The same holds for the <a href="../../reference/public/#PowerNetworkMatrices.LODF"><code>LODF</code></a> screen.</p><pre><code class="language-julia hljs">lodf_reduced = LODF(sys; network_reductions = reductions)
+lodf_reduced[(102, 103), (103, 104)], lodf[(102, 103), (103, 104)]</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(-0.9999999999999992, -1.0000000000000002)</code></pre><p>A reduction therefore gives a smaller and faster pair of matrices that answer identically for every element that survives it.</p><div class="admonition is-warning" id="Warning-a8c633bcf000b38d"><header class="admonition-header">Warning<a class="admonition-anchor" href="#Warning-a8c633bcf000b38d" title="Permalink"></a></header><div class="admonition-body"><p>When screening a <em>reduced</em> network against ratings, a degree-two merge fuses several branches into one equivalent arc whose limit is an aggregate. Use <a href="../../reference/public/#PowerNetworkMatrices.get_single_element_contingency_rating-Tuple{PowerNetworkMatrices.AbstractBranchesParallel}"><code>get_single_element_contingency_rating</code></a> and the related aggregated-rating accessors rather than a single branch&#39;s <code>PSY.get_rating</code>.</p></div></div><p>Note that every lookup above used an <strong>arc tuple</strong> rather than a branch name. Arc tuples are an unambiguous identifier and they survive reductions, whereas named branches may be merged away, so they are the recommended identifier to use in code that runs both before and after a reduction.</p><h2 id="Where-to-go-next"><a class="docs-heading-anchor" href="#Where-to-go-next">Where to go next</a><a id="Where-to-go-next-1"></a><a class="docs-heading-anchor-permalink" href="#Where-to-go-next" title="Permalink"></a></h2><ul><li><a href="../generated_analysis_at_scale/#Analysis-at-Scale">Analysis at Scale</a> — the second tutorial: screening <em>many</em> contingencies on a large network with the memory-light virtual matrices and cache control.</li><li><a href="../../reference/network_matrices_overview/#Matrix-overview-and-indexing">Matrix overview &amp; indexing</a> — the reference for every matrix type, its axes, indexing, and accessors.</li><li><a href="../../explanation/dc_power_flow_approximation/#The-DC-Power-Flow-Approximation">The DC Power Flow Approximation</a> — the theory behind these sensitivities.</li><li><a href="../../how_to_guides/generated_contingencies/#How-to-Define-and-Apply-Contingencies">How to Define and Apply Contingencies</a> — post-contingency factors beyond the single-outage <a href="../../reference/public/#PowerNetworkMatrices.LODF"><code>LODF</code></a>.</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../../">« Welcome Page</a><a class="docs-footer-nextpage" href="../generated_analysis_at_scale/">Analysis at Scale »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Wednesday 29 July 2026 20:54">Wednesday 29 July 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

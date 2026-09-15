@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>VirtualLODF matrix · PowerNetworkMatrices.jl</title><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.045/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.13.24/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><a class="docs-logo" href="../../"><img src="../../assets/logo.png" alt="PowerNetworkMatrices.jl logo"/></a><div class="docs-package-name"><span class="docs-autofit"><a href="../../">PowerNetworkMatrices.jl</a></span></div><form class="docs-search" action="../../search/"><input class="docs-search-query" id="documenter-search-query" name="q" type="text" placeholder="Search docs"/></form><ul class="docs-menu"><li><a class="tocitem" href="../../">Welcome Page</a></li><li><a class="tocitem" href="../../quick_start_guide/">Quick Start Guide</a></li><li><span class="tocitem">Tutorials</span><ul><li><a class="tocitem" href="../tutorial_Incidence_BA_ABA_matrices/">Incidence, BA and ABA matrices</a></li><li><a class="tocitem" href="../tutorial_PTDF_matrix/">PTDF matrix</a></li><li><a class="tocitem" href="../tutorial_VirtualPTDF_matrix/">VirtualPTDF matrix</a></li><li><a class="tocitem" href="../tutorial_LODF_matrix/">LODF matrix</a></li><li class="is-active"><a class="tocitem" href>VirtualLODF matrix</a><ul class="internal"><li><a class="tocitem" href="#How-the-VirtualLODF-works"><span>How the <code>VirtualLODF</code> works</span></a></li><li><a class="tocitem" href="#Initialize-VirtualLODF-and-compute/access-row/element"><span>Initialize <code>VirtualLODF</code> and compute/access row/element</span></a></li><li><a class="tocitem" href="#&quot;Sparse&quot;-VirtualPTDF"><span>&quot;Sparse&quot; <code>VirtualPTDF</code></span></a></li></ul></li></ul></li><li><a class="tocitem" href="../../api/public/">Public API Reference</a></li><li><a class="tocitem" href="../../api/internal/">Internal API Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Tutorials</a></li><li class="is-active"><a href>VirtualLODF matrix</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>VirtualLODF matrix</a></li></ul></nav><div class="docs-right"><a class="docs-edit-link" href="https://github.com/NREL-Sienna/PowerNetworkMatrices.jl/blob/main/docs/src/tutorials/tutorial_VirtualLODF_matrix.md" title="Edit on GitHub"><span class="docs-icon fab"></span><span class="docs-label is-hidden-touch">Edit on GitHub</span></a><a class="docs-settings-button fas fa-cog" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-sidebar-button fa fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a></div></header><article class="content" id="documenter-page"><h1 id="VirtualLODF"><a class="docs-heading-anchor" href="#VirtualLODF">VirtualLODF</a><a id="VirtualLODF-1"></a><a class="docs-heading-anchor-permalink" href="#VirtualLODF" title="Permalink"></a></h1><p>The <code>VirtualLODF</code> structure follows the same philosofy as the <code>VirtualPTDF</code>: it contains rows of the original <code>LODF</code> matrix, evaluated and cached on demand.</p><p>Refer to the different arguments of the <code>VirtualLODF</code> methods by looking at the &quot;Public API Reference&quot; page.</p><h2 id="How-the-VirtualLODF-works"><a class="docs-heading-anchor" href="#How-the-VirtualLODF-works">How the <code>VirtualLODF</code> works</a><a id="How-the-VirtualLODF-works-1"></a><a class="docs-heading-anchor-permalink" href="#How-the-VirtualLODF-works" title="Permalink"></a></h2><p>The <code>VirtualLODF</code> structure retains many of the similarities of the <code>VirtualPTDF</code>. However, its computation is more complex and requires some additional data.</p><p>Starting from the system data, the <code>IncidenceMatrix</code>, <code>BA_Matrix</code> and <code>ABA_Matrix</code> (with relative LU factorization matrices) are evaluated. The <code>ABA_Matrix</code> and <code>BA_Matrix</code> are used for the computation of the diagonal elements of the <code>PTDF</code> matrix, and this vector is stored in the <code>VirtualLODF</code> structure together with the other structures mentioned above.</p><p>Once the <code>VirtualLODF</code> is initialized, each row of the matrix can be evaluated separately and on user request. The algorithmic procedure is the following:</p><ol><li>Define the <code>VirtualPTDF</code> structure</li><li>Call any element of the matrix to define and store the relative row as well as showing the selected element</li></ol><p>Regarding point 2, if the row has been stored previosly then the desired element is just loaded from the cache and shown.</p><p>The flowchart below shows how the <code>VirtualLODF</code> is structured and how it works. Examples will be presented in the following sections.</p><img src="../../assets/VirtualLODF_scheme.png"/><h2 id="Initialize-VirtualLODF-and-compute/access-row/element"><a class="docs-heading-anchor" href="#Initialize-VirtualLODF-and-compute/access-row/element">Initialize <code>VirtualLODF</code> and compute/access row/element</a><a id="Initialize-VirtualLODF-and-compute/access-row/element-1"></a><a class="docs-heading-anchor-permalink" href="#Initialize-VirtualLODF-and-compute/access-row/element" title="Permalink"></a></h2><p>As for the <code>LODF</code> matrix, at first the <code>System</code> data must be loaded. The &quot;RTS-GMLC&quot; systems is considered as example:</p><pre><code class="language-julia-repl hljs" style="display:block;">julia&gt; using PowerNetworkMatrices</code><code class="nohighlight hljs ansi" style="display:block;"></code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; using PowerSystemCaseBuilder</code><code class="nohighlight hljs ansi" style="display:block;"></code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; const PNM = PowerNetworkMatrices;</code><code class="nohighlight hljs ansi" style="display:block;"></code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; const PSB = PowerSystemCaseBuilder;</code><code class="nohighlight hljs ansi" style="display:block;"></code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; sys = PSB.build_system(PSB.PSISystems, &quot;RTS_GMLC_DA_sys&quot;);</code><code class="nohighlight hljs ansi" style="display:block;">┌ Info: Building new system RTS_GMLC_DA_sys from raw data
+└   sys_descriptor.raw_data = &quot;/home/runner/.julia/artifacts/5098f357bad765bfefcff58f080818863ca776bd/RTS-GMLC-0.2.2&quot;
+[ Info: Parsing csv data in branch.csv ...
+[ Info: Successfully parsed branch.csv
+[ Info: Parsing csv data in bus.csv ...
+[ Info: Successfully parsed bus.csv
+[ Info: Parsing csv data in dc_branch.csv ...
+[ Info: Successfully parsed dc_branch.csv
+[ Info: Parsing csv data in gen.csv ...
+[ Info: Successfully parsed gen.csv
+[ Info: Parsing csv data in reserves.csv ...
+[ Info: Successfully parsed reserves.csv
+[ Info: Parsing csv data in simulation_objects.csv ...
+[ Info: Successfully parsed simulation_objects.csv
+[ Info: Parsing csv data in storage.csv ...
+[ Info: Successfully parsed storage.csv
+[ Info: Parsing csv data in timeseries_pointers.csv ...
+[ Info: Successfully parsed timeseries_pointers.csv
+[ Info: Unit System changed to InfrastructureSystems.UnitSystemModule.UnitSystem.DEVICE_BASE = 1
+┌ Warning: Missing PowerSystems.InputCategoryModule.InputCategory.LOAD = 5 data.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:212
+┌ Warning: User-defined column name Startup Ramp Rate MW/min is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Shutdown Ramp Rate MW/min is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Status at Start is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Time at Status is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Cold is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Warm is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Hot is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Must Run is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: Missing PowerSystems.InputCategoryModule.InputCategory.LOAD = 5 data.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:212
+[ Info: Adding contributing generators for Spin_Up_R1 by category
+┌ Warning: User-defined column name Startup Ramp Rate MW/min is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Shutdown Ramp Rate MW/min is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Status at Start is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Time at Status is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Cold is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Warm is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Hot is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Must Run is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+[ Info: Adding contributing generators for Spin_Up_R2 by category
+┌ Warning: User-defined column name Startup Ramp Rate MW/min is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Shutdown Ramp Rate MW/min is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Status at Start is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Time at Status is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Cold is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Warm is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Hot is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Must Run is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+[ Info: Adding contributing generators for Spin_Up_R3 by category
+┌ Warning: User-defined column name Startup Ramp Rate MW/min is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Shutdown Ramp Rate MW/min is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Status at Start is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Time at Status is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Cold is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Warm is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Hot is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Must Run is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+[ Info: Adding contributing generators for Flex_Up by category
+┌ Warning: User-defined column name Startup Ramp Rate MW/min is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Shutdown Ramp Rate MW/min is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Status at Start is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Time at Status is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Cold is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Warm is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Hot is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Must Run is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+[ Info: Adding contributing generators for Flex_Down by category
+┌ Warning: User-defined column name Startup Ramp Rate MW/min is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Shutdown Ramp Rate MW/min is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Status at Start is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Time at Status is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Cold is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Warm is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Hot is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Must Run is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+[ Info: Adding contributing generators for Reg_Up by category
+┌ Warning: User-defined column name Startup Ramp Rate MW/min is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Shutdown Ramp Rate MW/min is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Status at Start is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Time at Status is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Cold is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Warm is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Hot is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Must Run is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+[ Info: Adding contributing generators for Reg_Down by category
+┌ Warning: User-defined column name Startup Ramp Rate MW/min is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Shutdown Ramp Rate MW/min is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Status at Start is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Time at Status is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Cold is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Warm is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Start Cost Hot is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+┌ Warning: User-defined column name Must Run is not in dataframe.
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/power_system_table_data.jl:1413
+[ Info: Serialized time series data to /home/runner/.julia/packages/PowerSystemCaseBuilder/N0hHk/data/serialized_system/ForecastOnly/RTS_GMLC_DA_sys_time_series_storage.h5.
+[ Info: Serialized System to /home/runner/.julia/packages/PowerSystemCaseBuilder/N0hHk/data/serialized_system/ForecastOnly/RTS_GMLC_DA_sys.json
+[ Info: Serialized System metadata to /home/runner/.julia/packages/PowerSystemCaseBuilder/N0hHk/data/serialized_system/ForecastOnly/RTS_GMLC_DA_sys_metadata.json</code></pre><p>At this point the <code>VirtualLODF</code> is initialized with the following simple command:</p><pre><code class="language-julia-repl hljs" style="display:block;">julia&gt; v_lodf = VirtualLODF(sys);</code><code class="nohighlight hljs ansi" style="display:block;"></code></pre><p>Now, an element of the matrix can be computed by calling the branch name and bus number:</p><pre><code class="language-julia-repl hljs" style="display:block;">julia&gt; el_C31_2_105 = v_lodf[&quot;C31-2&quot;, &quot;A3&quot;]</code><code class="nohighlight hljs ansi" style="display:block;">-0.0043345153204109605</code></pre><p>This element represent the portion flowing on line &quot;A3&quot; now diverted on line &quot;C31-2&quot; as a consequence of its outage.</p><p>Alternatively, the number of the branch and bus (corresponding to the number of the PTDF row and column) can be used. In this case the row and column numbers are mapped by the dictonaries contained in the <code>lookup</code> field. </p><pre><code class="language-julia-repl hljs" style="display:block;">julia&gt; row_number = v_lodf.lookup[1][&quot;C31-2&quot;]</code><code class="nohighlight hljs ansi" style="display:block;">112</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; col_number = v_lodf.lookup[2][&quot;A3&quot;]</code><code class="nohighlight hljs ansi" style="display:block;">3</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; el_C31_2_105_bis = v_lodf[row_number, col_number]</code><code class="nohighlight hljs ansi" style="display:block;">-0.0043345153204109605</code></pre><p><strong>NOTE</strong>: this example was made for the sake of completeness and considering the actual branch names is recommended.</p><p>As previosly mentioned, in order to evaluate a single element of the <code>VirtualLODF</code>, the entire row related to the selected branch must be considered. For this reason it is cached for later calls. This is evident by looking at the following example:</p><pre><code class="language-julia-repl hljs" style="display:block;">julia&gt; sys_2k = PSB.build_system(PSB.PSYTestSystems, &quot;tamu_ACTIVSg2000_sys&quot;);</code><code class="nohighlight hljs ansi" style="display:block;">┌ Info: Building new system tamu_ACTIVSg2000_sys from raw data
+└   sys_descriptor.raw_data = &quot;/home/runner/.julia/artifacts/2b7013812a985ce5884696ce276ca17b2719a57a/PowerSystemsTestData-2.0&quot;
+[ Info: The PSS(R)E parser currently supports buses, loads, shunts, generators, branches, transformers, and dc lines
+[ Info: The PSS(R)E parser currently supports buses, loads, shunts, generators, branches, transformers, and dc lines
+[ Info: Parsing PSS(R)E Bus data into a PowerModels Dict...
+[ Info: Parsing PSS(R)E Load data into a PowerModels Dict...
+[ Info: Parsing PSS(R)E Shunt data into a PowerModels Dict...
+[ Info: Switched shunt converted to fixed shunt, with default value gs=0.0
+[ Info: Parsing PSS(R)E Generator data into a PowerModels Dict...
+[ Info: Parsing PSS(R)E Branch data into a PowerModels Dict...
+[ Info: Parsing PSS(R)E Transformer data into a PowerModels Dict...
+[ Info: Parsing PSS(R)E Two-Terminal and VSC DC line data into a PowerModels Dict...
+┌ Warning: This PSS(R)E parser currently doesn&#39;t support Storage data parsing...
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/pm_io/psse.jl:985
+┌ Warning: This PSS(R)E parser currently doesn&#39;t support Switch data parsing...
+└ @ PowerSystems ~/.julia/packages/PowerSystems/gPCXS/src/parsers/pm_io/psse.jl:991
+[ Info: angmin and angmax values are 0, widening these values on branch 2243 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 1881 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 1907 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 2923 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 599 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 2491 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 228 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 2590 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 2579 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 1880 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 2562 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 1106 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 2366 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 3196 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 1783 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 928 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 859 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 1863 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 561 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 1825 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 2631 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 2714 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 3157 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 815 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 981 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 1429 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 39 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 2713 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 112 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 3153 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 1665 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 590 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 17 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 333 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 550 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 341 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 664 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 912 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 1598 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 2509 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 598 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 14 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 613 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 1052 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 2334 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 510 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 2166 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 2585 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 2127 to +/- 60.0 deg.
+[ Info: angmin and angmax values are 0, widening these values on branch 197 to +/- 60.0 deg.
+[ Info: reversing the orientation of branch 36 (1071, 1019) to be consistent with other parallel branches
+[ Info: no active generators found at bus 6144, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 8070, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 6273, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 4096, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 4098, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 4138, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 2084, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 5089, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 5023, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 1049, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 2005, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 3044, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 8060, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 6271, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 1081, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 5107, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 8033, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 2104, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 7121, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 2095, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 3043, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 2006, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 2056, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 8115, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 8047, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 6272, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 8036, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 5035, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 6007, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 6259, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 7122, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 7284, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 3133, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 4137, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 1076, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 4163, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 8152, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 1059, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 8061, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 8051, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 1057, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 8034, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 1062, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 5066, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 1048, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 1077, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 6052, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 8147, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 7034, updating to bus type from 2 to 1
+[ Info: no active generators found at bus 7025, updating to bus type from 2 to 1
+[ Info: the voltage setpoint on generator 306 does not match the value at bus 6166
+[ Info: the voltage setpoint on generator 407 does not match the value at bus 7166
+[ Info: the voltage setpoint on generator 1 does not match the value at bus 1004
+[ Info: the voltage setpoint on generator 54 does not match the value at bus 2076
+[ Info: the voltage setpoint on generator 519 does not match the value at bus 8050
+[ Info: the voltage setpoint on generator 101 does not match the value at bus 3095
+[ Info: the voltage setpoint on generator 371 does not match the value at bus 7063
+[ Info: the voltage setpoint on generator 41 does not match the value at bus 2004
+[ Info: the voltage setpoint on generator 464 does not match the value at bus 7361
+[ Info: the voltage setpoint on generator 65 does not match the value at bus 2104
+[ Info: the voltage setpoint on generator 475 does not match the value at bus 7379
+[ Info: the voltage setpoint on generator 447 does not match the value at bus 7325
+[ Info: the voltage setpoint on generator 335 does not match the value at bus 6297
+[ Info: the voltage setpoint on generator 362 does not match the value at bus 7025
+[ Info: the voltage setpoint on generator 505 does not match the value at bus 7428
+[ Info: the voltage setpoint on generator 491 does not match the value at bus 7422
+[ Info: the voltage setpoint on generator 326 does not match the value at bus 6268
+[ Info: the voltage setpoint on generator 543 does not match the value at bus 8158
+[ Info: the voltage setpoint on generator 299 does not match the value at bus 6145
+[ Info: the voltage setpoint on generator 168 does not match the value at bus 4181
+[ Info: the voltage setpoint on generator 159 does not match the value at bus 4138
+[ Info: the voltage setpoint on generator 403 does not match the value at bus 7162
+[ Info: the voltage setpoint on generator 228 does not match the value at bus 5325
+[ Info: the voltage setpoint on generator 332 does not match the value at bus 6274
+[ Info: the voltage setpoint on generator 190 does not match the value at bus 5041
+[ Info: the voltage setpoint on generator 227 does not match the value at bus 5324
+[ Info: the voltage setpoint on generator 270 does not match the value at bus 6049
+[ Info: the voltage setpoint on generator 536 does not match the value at bus 8130
+[ Info: the voltage setpoint on generator 476 does not match the value at bus 7389
+[ Info: the voltage setpoint on generator 223 does not match the value at bus 5303
+[ Info: the voltage setpoint on generator 453 does not match the value at bus 7350
+[ Info: the voltage setpoint on generator 531 does not match the value at bus 8099
+[ Info: the voltage setpoint on generator 88 does not match the value at bus 3060
+[ Info: the voltage setpoint on generator 467 does not match the value at bus 7371
+[ Info: the voltage setpoint on generator 297 does not match the value at bus 6111
+[ Info: the voltage setpoint on generator 26 does not match the value at bus 1072
+[ Info: the voltage setpoint on generator 289 does not match the value at bus 6087
+[ Info: the voltage setpoint on generator 250 does not match the value at bus 5418
+[ Info: the voltage setpoint on generator 77 does not match the value at bus 3020
+[ Info: the voltage setpoint on generator 230 does not match the value at bus 5342
+[ Info: the voltage setpoint on generator 449 does not match the value at bus 7329
+[ Info: the voltage setpoint on generator 394 does not match the value at bus 7135
+[ Info: the voltage setpoint on generator 258 does not match the value at bus 5444
+[ Info: the voltage setpoint on generator 328 does not match the value at bus 6270
+[ Info: the voltage setpoint on generator 204 does not match the value at bus 5167
+[ Info: the voltage setpoint on generator 387 does not match the value at bus 7113
+[ Info: the voltage setpoint on generator 23 does not match the value at bus 1063
+[ Info: the voltage setpoint on generator 160 does not match the value at bus 4142
+[ Info: the voltage setpoint on generator 416 does not match the value at bus 7193
+[ Info: the voltage setpoint on generator 450 does not match the value at bus 7334
+┌ Info: Constructing System from Power Models
+│   data[&quot;name&quot;] = &quot;activsg2000&quot;
+└   data[&quot;source_type&quot;] = &quot;pti&quot;
+[ Info: Reading bus data
+[ Info: Reading Load data in PowerModels dict to populate System ...
+[ Info: Reading LoadZones data in PowerModels dict to populate System ...
+[ Info: Reading generator data
+[ Info: Reading branch data
+[ Info: Reading branch data
+[ Info: Reading DC Line data
+[ Info: Reading storage data
+[ Info: Serialized System to /home/runner/.julia/packages/PowerSystemCaseBuilder/N0hHk/data/serialized_system/NoArgs/tamu_ACTIVSg2000_sys.json
+[ Info: Serialized System metadata to /home/runner/.julia/packages/PowerSystemCaseBuilder/N0hHk/data/serialized_system/NoArgs/tamu_ACTIVSg2000_sys_metadata.json</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; v_lodf_2k = VirtualLODF(sys_2k);
+       
+       # evaluate PTDF row related to branch &quot;ODESSA 2 0  -1001-ODESSA 3 0  -1064-i_1&quot;</code><code class="nohighlight hljs ansi" style="display:block;"></code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; @time v_lodf_2k[&quot;ODESSA 2 0  -1001-ODESSA 3 0  -1064-i_1&quot;,
+                       &quot;BRYAN 1 1   -8159-BRYAN 1 0   -8158-i_1&quot;]
+       
+       # call same element after the row has been stored</code><code class="nohighlight hljs ansi" style="display:block;">  0.000115 seconds (16 allocations: 107.484 KiB)
+1.921713916731812e-5</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; @time v_lodf_2k[&quot;ODESSA 2 0  -1001-ODESSA 3 0  -1064-i_1&quot;,
+                       &quot;BRYAN 1 1   -8159-BRYAN 1 0   -8158-i_1&quot;]</code><code class="nohighlight hljs ansi" style="display:block;">  0.000006 seconds (1 allocation: 16 bytes)
+1.921713916731812e-5</code></pre><h2 id="&quot;Sparse&quot;-VirtualPTDF"><a class="docs-heading-anchor" href="#&quot;Sparse&quot;-VirtualPTDF">&quot;Sparse&quot; <code>VirtualPTDF</code></a><a id="&quot;Sparse&quot;-VirtualPTDF-1"></a><a class="docs-heading-anchor-permalink" href="#&quot;Sparse&quot;-VirtualPTDF" title="Permalink"></a></h2><p>Sparsification of each row can be achieved in the same fashion as for the <code>LODF</code> matrix, by removing those elements whose absolute values is below a certain threshold.</p><p>As for the example show for the <code>LODF</code> matrix, here to a very high values of 0.4 is considered for the <code>tol</code> field. Again, this value is considered just for the sake of this example.</p><pre><code class="language-julia-repl hljs" style="display:block;">julia&gt; # smaller system for the next examples
+       sys_2 = PSB.build_system(PSB.PSITestSystems, &quot;c_sys5&quot;);</code><code class="nohighlight hljs ansi" style="display:block;">[ Info: Loaded time series from storage file existing=/home/runner/.julia/packages/PowerSystemCaseBuilder/N0hHk/data/serialized_system/ForecastOnly/c_sys5_time_series_storage.h5 new=/tmp/jl_kUqq2P compression=InfrastructureSystems.CompressionSettings(false, InfrastructureSystems.CompressionTypesModule.CompressionTypes.DEFLATE = 1, 3, true)</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; v_lodf_dense = VirtualLODF(sys_2);</code><code class="nohighlight hljs ansi" style="display:block;"></code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; v_lodf_sparse = VirtualLODF(sys_2, tol=0.4);</code><code class="nohighlight hljs ansi" style="display:block;"></code></pre><p>Let&#39;s now evaluate the same row as before and compare the results:</p><pre><code class="language-julia-repl hljs" style="display:block;">julia&gt; original_row = [v_lodf_dense[&quot;1&quot;, j] for j in v_lodf_dense.axes[2]]</code><code class="nohighlight hljs ansi" style="display:block;">6-element Vector{Float64}:
+ -1.0
+  0.3447946513849092
+  0.30707070707070555
+ -0.9999999999999991
+ -1.0000000000000002
+ -0.307070707070707</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; sparse_row = [v_lodf_sparse[&quot;1&quot;, j] for j in v_lodf_sparse.axes[2]]</code><code class="nohighlight hljs ansi" style="display:block;">6-element Vector{Float64}:
+ -1.0
+  0.0
+  0.0
+ -0.9999999999999991
+ -1.0000000000000002
+  0.0</code></pre></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../tutorial_LODF_matrix/">« LODF matrix</a><a class="docs-footer-nextpage" href="../../api/public/">Public API Reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 0.27.25 on <span class="colophon-date" title="Monday 22 January 2024 19:05">Monday 22 January 2024</span>. Using Julia version 1.10.0.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
