@@ -29,7 +29,7 @@ MKLPardisoExt = "Pardiso"
 
 [sources]
 InfrastructureSystems = {url = "https://github.com/Sienna-Platform/InfrastructureSystems.jl.git", rev = "IS4"}
-PowerSystems = {url = "https://github.com/Sienna-Platform/PowerSystems.jl.git", rev = "jd/openapi-1x"}
+PowerSystems = {url = "https://github.com/Sienna-Platform/PowerSystems.jl.git", rev = "psy6"}
 # PSY's own [sources] pins for these are ignored once PSY is a dependency rather than the
 # root project, so PNM needs its own pins for every unregistered OpenAPI package PSY depends
 # on. A `[sources]` entry is only honored when the package is also in `[deps]` — an `[extras]`
