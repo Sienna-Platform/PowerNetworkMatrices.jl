@@ -93,7 +93,12 @@ function get_reduction(ybus::Ybus, sys::PSY.System, reduction::ZeroImpedanceBran
             to_no = get(nr.reverse_bus_search_map, arc_key[2], arc_key[2])
             from_irred = from_no ∈ user_irreducible
             to_irred = to_no ∈ user_irreducible
-            if from_irred && to_irred
+            if from_no == to_no
+                # Both endpoints already resolve into the same merged group: the arc is a
+                # self-loop, not a skipped merge, so it still has to be dropped.
+                push!(nr.removed_arcs, arc_key)
+                continue
+            elseif from_irred && to_irred
                 @warn "Zero-impedance branch between two irreducible buses $from_no and $to_no; skipping merge."
                 continue
             elseif to_irred
