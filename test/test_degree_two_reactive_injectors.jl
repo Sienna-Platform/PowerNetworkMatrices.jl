@@ -42,7 +42,7 @@ function _build_reactive_only_degree2_system()
         gen = ThermalStandard(;
             name = name,
             available = true,
-            status = true,
+            status = OperationalStates.ONLINE,
             bus = bus,
             active_power = 0.0,
             reactive_power = 0.0,
@@ -53,7 +53,6 @@ function _build_reactive_only_degree2_system()
             operation_cost = ThermalGenerationCost(nothing),
             base_power = 100.0,
             time_limits = (up = 1.0, down = 1.0),
-            must_run = false,
             prime_mover_type = PrimeMovers.CC,
             fuel = ThermalFuels.NATURAL_GAS,
         )

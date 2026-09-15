@@ -591,12 +591,16 @@ end
 
     Y = Ybus(sys)
     nr = get_network_reduction_data(Y)
-    # The whole zero-impedance cluster collapses to a single surviving bus.
+    # The whole zero-impedance cluster collapses to a single surviving bus. Which member
+    # survives follows component iteration order and is not stable across Julia versions,
+    # so assert the invariant -- exactly one of the three is left, and all three map to it
+    # (the stub is merged, not stranded) -- rather than naming the survivor.
+    cluster = (901, 902, 903)
     surv = PNM.get_mapped_bus_number(nr, 901)
-    @test PNM.get_mapped_bus_number(nr, 902) == surv
-    @test PNM.get_mapped_bus_number(nr, 903) == surv
-    @test 901 ∉ PNM.get_bus_axis(Y)
-    @test 902 ∉ PNM.get_bus_axis(Y)   # the stub is merged, not stranded
+    @test surv in cluster
+    @test all(PNM.get_mapped_bus_number(nr, b) == surv for b in cluster)
+    @test count(in(PNM.get_bus_axis(Y)), cluster) == 1
+    @test surv in PNM.get_bus_axis(Y)
     # The ABA must be non-singular: a KLU PTDF builds without a singular solve.
     ptdf = PTDF(sys; linear_solver = "KLU")
     @test all(isfinite, ptdf.data)
