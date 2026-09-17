@@ -3,11 +3,7 @@
     ybus = Ybus(sys)
     vptdf = VirtualPTDF(sys)
 
-    for branch in get_components(
-        x -> !(typeof(x) <: DiscreteControlledACBranch),
-        ACTransmission,
-        sys,
-    )
+    for branch in get_components(ACTransmission, sys)
         mod_new = NetworkModification(vptdf, branch)
         result_new = apply_ybus_modification(ybus, mod_new)
 
@@ -333,11 +329,7 @@ end
     vptdf = VirtualPTDF(sys)
     nr = PNM.get_network_reduction_data(vptdf)
 
-    for branch in get_components(
-        x -> !(typeof(x) <: DiscreteControlledACBranch),
-        ACTransmission,
-        sys,
-    )
+    for branch in get_components(ACTransmission, sys)
         mod = NetworkModification(vptdf, branch)
         for arc_mod in mod.arc_modifications
             # ΔY fields should be nonzero for a real outage

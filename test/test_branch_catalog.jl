@@ -17,11 +17,12 @@
         end
 
         # The invariant is "indexed unless absorbed": a radial reduction absorbs a branch
-        # outright, taking both endpoints off the bus axis and leaving no reduction entry.
+        # outright, taking both endpoints off the bus axis and leaving no reduction entry,
+        # and a zero-impedance reduction absorbs one by merging its endpoints into a single
+        # bus. Either way the arc lands in `removed_arcs` and the catalog owes no entry.
         removed_arcs = PNM.get_removed_arcs(nrd)
         for branch in PSY.get_available_components(PSY.ACTransmission, sys)
             branch isa PSY.ThreeWindingTransformer && continue
-            branch isa PSY.DiscreteControlledACBranch && continue
             T = string(typeof(branch))
             name = PSY.get_name(branch)
             arc = PNM.get_arc_tuple(branch)

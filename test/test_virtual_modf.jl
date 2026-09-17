@@ -235,7 +235,7 @@ end
 @testset "Compare MODF entries with and without degree-2 reduction" begin
     sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
     valid_outage_branches = get_available_components(
-        x -> !(typeof(x) <: Union{ThreeWindingTransformer, DiscreteControlledACBranch}),
+        x -> !(typeof(x) <: ThreeWindingTransformer),
         ACTransmission,
         sys,
     )
