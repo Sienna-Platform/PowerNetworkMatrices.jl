@@ -4,7 +4,7 @@
     vptdf = VirtualPTDF(sys)
 
     for branch in get_components(
-        x -> !(typeof(x) <: DiscreteControlledACBranch || _is_phase_shifting_2w(x)),
+        x -> !(typeof(x) <: DiscreteControlledACBranch),
         ACTransmission,
         sys,
     )
@@ -223,15 +223,16 @@ end
         -PNM.get_series_susceptance(line, PSY.SU),
     )
 
-    # Tripping the phase-shifting member is rejected loudly.
-    err = try
-        NetworkModification(vptdf, pst)
-        nothing
-    catch ex
-        ex
-    end
-    @test err isa ErrorException
-    @test occursin("phase-shifting", err.msg)
+    # Tripping the phase-shifting member drops that member's susceptance and its share of
+    # the group's DC shift injection.
+    mod_pst = NetworkModification(vptdf, pst)
+    @test length(mod_pst.arc_modifications) == 1
+    b_pst = PNM.get_series_susceptance(pst, PSY.SU)
+    @test isapprox(mod_pst.arc_modifications[1].delta_b, -b_pst)
+    @test isapprox(
+        mod_pst.arc_modifications[1].delta_shift_injection,
+        -b_pst * PSY.get_α(PSY.get_circuit(pst)),
+    )
 end
 
 @testset "parallel member outage resolves by identity, not susceptance value" begin
@@ -333,7 +334,7 @@ end
     nr = PNM.get_network_reduction_data(vptdf)
 
     for branch in get_components(
-        x -> !(typeof(x) <: DiscreteControlledACBranch || _is_phase_shifting_2w(x)),
+        x -> !(typeof(x) <: DiscreteControlledACBranch),
         ACTransmission,
         sys,
     )

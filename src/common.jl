@@ -414,6 +414,19 @@ function _oriented_member_phase_shift(
     return α
 end
 
+# `b·α` of one parallel-group member in the group's arc frame: the member's share of the
+# group's DC shift injection. Injections add across members, so this is exactly what the
+# group loses when the member trips.
+function _member_shift_injection(
+    bp::AbstractBranchesParallel,
+    nr::NetworkReductionData,
+    br::PSY.ACTransmission,
+)
+    α = _oriented_member_phase_shift(br, bp, nr)
+    iszero(α) && return 0.0
+    return _finite_series_susceptance(br, nr) * α
+end
+
 # The substituted susceptance for an `r == x == 0` branch, matching what `equivalent_branch`
 # uses in Ybus assembly. Such branches normally merge away, but a pair between two
 # irreducible buses survives as a `BranchesParallel`.
@@ -970,22 +983,6 @@ function _resolve_branch_arc(
 end
 
 """
-    _assert_not_phase_shifting(component::PSY.ACTransmission)
-
-Throws `ErrorException` when `component` is phase shifting; no-op otherwise. Phase shifting
-is a per-circuit data property surfaced by `_is_phase_shifting`, not a distinct type.
-"""
-function _assert_not_phase_shifting(component::PSY.ACTransmission)
-    if _is_phase_shifting(component)
-        error(
-            "Contingencies on phase-shifting transformers are not supported. " *
-            "Component: $(get_name(component)).",
-        )
-    end
-    return nothing
-end
-
-"""
     _segment_susceptance_after_outage(segment, tripped_set, nr::NetworkReductionData) -> Float64
 
 Compute the remaining susceptance of a series chain segment after removing
@@ -1066,4 +1063,58 @@ function _compute_series_outage_delta_b(
     end
     b_new = 1.0 / remaining_inv_sum
     return b_new - b_old
+end
+
+# Equivalent DC phase shift of one chain segment once `tripped_set` is out, in the segment's
+# own arc frame. A single-branch segment only reaches here when it survives (a tripped one
+# zeroes the chain's susceptance first).
+_segment_phase_shift_after_outage(
+    segment::PSY.ACTransmission,
+    ::Set{<:PSY.ACTransmission},
+    nr::NetworkReductionData,
+) = _segment_phase_shift(segment, nr)
+
+function _segment_phase_shift_after_outage(
+    segment::AbstractBranchesParallel,
+    tripped_set::Set{<:PSY.ACTransmission},
+    nr::NetworkReductionData,
+)
+    b_total = 0.0
+    b_alpha = 0.0
+    for br in segment.branches
+        br ∈ tripped_set && continue
+        b = _finite_series_susceptance(br, nr)
+        b_total += b
+        b_alpha += b * _oriented_member_phase_shift(br, segment, nr)
+    end
+    return b_alpha / b_total
+end
+
+"""
+    _compute_series_outage_delta_shift_injection(series_chain, tripped, nr) -> Float64
+
+Change in the chain's DC shift injection `b_eq·α_eq` when `tripped` trip. The arc opens and
+loses its whole injection when any segment loses all of its susceptance; otherwise the
+surviving members define the new equivalent susceptance and angle.
+"""
+function _compute_series_outage_delta_shift_injection(
+    series_chain::BranchesSeries,
+    tripped::Vector{<:PSY.ACTransmission},
+    nr::NetworkReductionData,
+)::Float64
+    injection_old =
+        _finite_series_susceptance(series_chain, nr) *
+        get_series_phase_shift(series_chain, nr)
+    tripped_set = Set{PSY.ACTransmission}(tripped)
+    orientations = get_segment_orientations(series_chain)
+    remaining_inv_sum = 0.0
+    alpha_new = 0.0
+    for (ix, segment) in enumerate(series_chain)
+        b_seg = _segment_susceptance_after_outage(segment, tripped_set, nr)
+        iszero(b_seg) && return -injection_old
+        remaining_inv_sum += 1.0 / b_seg
+        α_seg = _segment_phase_shift_after_outage(segment, tripped_set, nr)
+        alpha_new += orientations[ix] == :ToFrom ? -α_seg : α_seg
+    end
+    return alpha_new / remaining_inv_sum - injection_old
 end

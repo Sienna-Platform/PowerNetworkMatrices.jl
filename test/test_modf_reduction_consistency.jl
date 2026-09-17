@@ -23,10 +23,9 @@ function _rts_reduced_away_arcs()
     return sys, full, reduced_away
 end
 
-# First non-phase-shifter branch whose reduction-mapped arc is in `arcs`.
+# First branch whose reduction-mapped arc is in `arcs`.
 function _branch_on_arcs(sys, nrd, arcs)
     for br in PSY.get_components(PSY.ACTransmission, sys)
-        _is_phase_shifting_2w(br) && continue
         if PNM.get_arc_tuple(br, nrd) in arcs
             return br
         end
@@ -145,7 +144,6 @@ end
     @test monitored !== nothing
     outaged = nothing
     for br in PSY.get_components(PSY.ACTransmission, sys)
-        _is_phase_shifting_2w(br) && continue
         br === monitored && continue
         outaged = br
         break
@@ -315,7 +313,6 @@ end
 
     candidate = PSY.ACTransmission[target]
     for br in PSY.get_components(PSY.ACTransmission, sys)
-        _is_phase_shifting_2w(br) && continue
         br === target && continue
         push!(candidate, br)
         length(candidate) >= 8 && break
