@@ -18,6 +18,8 @@
     m2 = NetworkModification("y", [ArcModification(3, -1.0, 0.0, z, z, z, z)])
     m3 = NetworkModification("z", [ArcModification(3, -1.0, -0.2, z, z, z, z)])
     @test m1 != m2
+    # `m1` and `m2` differ only in `delta_shift_injection`; the numeric hashes are
+    # deterministic, so this fails exactly when that field is dropped from `Base.hash`.
     @test hash(m1) != hash(m2)
     @test m1 == m3
     @test hash(m1) == hash(m3)

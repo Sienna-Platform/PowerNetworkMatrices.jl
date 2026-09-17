@@ -1114,7 +1114,11 @@ function _compute_series_outage_delta_shift_injection(
         iszero(b_seg) && return -injection_old
         remaining_inv_sum += 1.0 / b_seg
         α_seg = _segment_phase_shift_after_outage(segment, tripped_set, nr)
-        alpha_new += orientations[ix] == :ToFrom ? -α_seg : α_seg
+        if orientations[ix] == :ToFrom
+            alpha_new -= α_seg
+        else
+            alpha_new += α_seg
+        end
     end
     return alpha_new / remaining_inv_sum - injection_old
 end
