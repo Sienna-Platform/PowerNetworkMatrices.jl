@@ -1,10 +1,5 @@
 using SparseArrays
 
-# Phase shifting is a per-winding data property, not a type; this predicate is the
-# data-driven way to detect a phase-shifting two-winding transformer.
-_is_phase_shifting_2w(x) =
-    x isa PSY.TwoWindingTransformer && PSY.is_phase_shifting(x)
-
 include(joinpath(DATA_DIR, "psy_data", "data_5bus_pu.jl"))
 include(joinpath(DATA_DIR, "psy_data", "data_14bus_pu.jl"))
 

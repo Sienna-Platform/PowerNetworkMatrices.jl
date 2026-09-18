@@ -235,10 +235,7 @@ end
 @testset "Compare MODF entries with and without degree-2 reduction" begin
     sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
     valid_outage_branches = get_available_components(
-        x -> !(
-            typeof(x) <: Union{ThreeWindingTransformer, DiscreteControlledACBranch} ||
-            _is_phase_shifting_2w(x)
-        ),
+        x -> !(typeof(x) <: ThreeWindingTransformer),
         ACTransmission,
         sys,
     )
@@ -352,7 +349,6 @@ end
 @testset "test delta b positive for registered outages" begin
     sys = PSB.build_system(PSB.PSITestSystems, "test_RTS_GMLC_sys")
     for branch in get_components(ACTransmission, sys)
-        _is_phase_shifting_2w(branch) && continue
         outage = GeometricDistributionForcedOutage(;
             mean_time_to_recovery = 0.0,
             outage_transition_probability = 0.0,

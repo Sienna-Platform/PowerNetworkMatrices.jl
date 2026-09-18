@@ -185,7 +185,17 @@ function NetworkModification(mat::PowerNetworkMatrix, arc::Tuple{Int, Int})
     dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc, -b)
     return NetworkModification(
         "outage_$(arc[1])_$(arc[2])",
-        [ArcModification(arc_idx, -b, dy11, dy12, dy21, dy22)],
+        [
+            ArcModification(
+                arc_idx,
+                -b,
+                -arc_dc_shift_injection(nr, arc),
+                dy11,
+                dy12,
+                dy21,
+                dy22,
+            ),
+        ],
     )
 end
 
@@ -318,8 +328,13 @@ function NetworkModification(mat::PowerNetworkMatrix, sys::PSY.System, outage::P
         arc_tuple = series_arc_tuples[arc_idx]
         series_chain = nr.series_branch_map[arc_tuple]
         delta_b = _compute_series_outage_delta_b(series_chain, tripped, nr)
+        delta_shift =
+            _compute_series_outage_delta_shift_injection(series_chain, tripped, nr)
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
-        push!(series_mods, ArcModification(arc_idx, delta_b, dy11, dy12, dy21, dy22))
+        push!(
+            series_mods,
+            ArcModification(arc_idx, delta_b, delta_shift, dy11, dy12, dy21, dy22),
+        )
     end
 
     mods = vcat(direct_mods, parallel_mods, series_mods)
@@ -357,10 +372,6 @@ Classify a single outage component via multiple dispatch. ACTransmission branche
 classified into direct/parallel/series arc modifications. Shunt components produce
 diagonal admittance changes. Unsupported component types are silently ignored.
 """
-# Phase-shifting transformers are unsupported for contingency classification. The guard is
-# data-driven (`_assert_not_phase_shifting` tests `PSY.is_phase_shifting`) and lives at the
-# top of the generic `ACTransmission` method below, which also handles all non-phase-shifting
-# two-winding transformers.
 function _classify_outage_component!(
     nr::NetworkReductionData,
     arc_lookup::Dict,
@@ -374,20 +385,28 @@ function _classify_outage_component!(
     ::Vector{ShuntModification},
     component_names::Vector{String},
 )
-    _assert_not_phase_shifting(component)
     tag, arc_tuple = _resolve_branch_arc(nr, component)
 
     if tag === :direct
         arc_idx = arc_lookup[arc_tuple]
         b_arc = arc_susceptances[arc_idx]
+        delta_shift = -arc_dc_shift_injection(nr, arc_tuple)
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc, component)
-        push!(direct_mods, ArcModification(arc_idx, -b_arc, dy11, dy12, dy21, dy22))
+        push!(
+            direct_mods,
+            ArcModification(arc_idx, -b_arc, delta_shift, dy11, dy12, dy21, dy22),
+        )
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
         b_circuit = _finite_series_susceptance(component, nr)
+        delta_shift =
+            -_member_shift_injection(nr.parallel_branch_map[arc_tuple], nr, component)
         dy11, dy12, dy21, dy22 =
             _compute_arc_ybus_delta(nr, arc_tuple, -b_circuit, component)
-        push!(parallel_mods, ArcModification(arc_idx, -b_circuit, dy11, dy12, dy21, dy22))
+        push!(
+            parallel_mods,
+            ArcModification(arc_idx, -b_circuit, delta_shift, dy11, dy12, dy21, dy22),
+        )
     elseif tag === :series
         arc_idx = arc_lookup[arc_tuple]
         if !haskey(series_components_by_arc, arc_idx)
@@ -477,7 +496,6 @@ function _classify_outage_component!(
     shunt_mods::Vector{ShuntModification},
     component_names::Vector{String},
 )
-    _assert_not_phase_shifting(component)
     # An unavailable parent transformer is already out of service, so it cannot be
     # outaged; skip it regardless of the per-winding availability flags. This mirrors
     # the parent-then-winding gating used when building the Ybus.
@@ -513,9 +531,6 @@ Classify a single branch component into the appropriate arc modification using
 the network reduction reverse maps. For single-branch modifications only;
 use `_classify_outage_component!` for multi-component outages with series grouping.
 """
-# Phase-shifting transformers are unsupported here too; the data-driven guard
-# (`_assert_not_phase_shifting`) sits at the top of the generic `ACTransmission` method
-# below rather than in a type-specific method.
 
 """
     _classify_branch_modification(nr, arc_lookup, arc_susceptances, branch::PSY.ThreeWindingTransformer) -> Vector{ArcModification}
@@ -530,7 +545,6 @@ function _classify_branch_modification(
     arc_susceptances::Vector{Float64},
     branch::PSY.ThreeWindingTransformer,
 )::Vector{ArcModification}
-    _assert_not_phase_shifting(branch)
     # An unavailable parent transformer is already out of service and produces no
     # modifications, irrespective of the per-winding availability flags.
     if !PSY.get_available(branch)
@@ -556,26 +570,30 @@ function _classify_branch_modification(
     arc_susceptances::Vector{Float64},
     branch::PSY.ACTransmission,
 )::Vector{ArcModification}
-    _assert_not_phase_shifting(branch)
     tag, arc_tuple = _resolve_branch_arc(nr, branch)
 
     if tag === :direct
         arc_idx = arc_lookup[arc_tuple]
         b_arc = arc_susceptances[arc_idx]
+        delta_shift = -arc_dc_shift_injection(nr, arc_tuple)
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc, branch)
-        return [ArcModification(arc_idx, -b_arc, dy11, dy12, dy21, dy22)]
+        return [ArcModification(arc_idx, -b_arc, delta_shift, dy11, dy12, dy21, dy22)]
     elseif tag === :parallel
         arc_idx = arc_lookup[arc_tuple]
         b_circuit = _finite_series_susceptance(branch, nr)
+        delta_shift =
+            -_member_shift_injection(nr.parallel_branch_map[arc_tuple], nr, branch)
         dy11, dy12, dy21, dy22 =
             _compute_arc_ybus_delta(nr, arc_tuple, -b_circuit, branch)
-        return [ArcModification(arc_idx, -b_circuit, dy11, dy12, dy21, dy22)]
+        return [ArcModification(arc_idx, -b_circuit, delta_shift, dy11, dy12, dy21, dy22)]
     elseif tag === :series
         arc_idx = arc_lookup[arc_tuple]
         series_chain = nr.series_branch_map[arc_tuple]
         delta_b = _compute_series_outage_delta_b(series_chain, branch, nr)
+        delta_shift =
+            _compute_series_outage_delta_shift_injection(series_chain, [branch], nr)
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
-        return [ArcModification(arc_idx, delta_b, dy11, dy12, dy21, dy22)]
+        return [ArcModification(arc_idx, delta_b, delta_shift, dy11, dy12, dy21, dy22)]
     else
         @info "Branch $(get_name(branch)) not found in any reduction map. " *
               "The component may have been eliminated by a radial reduction."
