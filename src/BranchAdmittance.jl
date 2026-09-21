@@ -325,7 +325,7 @@ end
 # `PRIMARY_WINDING`/`SECONDARY_WINDING`/`TERTIARY_WINDING` = 1/2/3, matching
 # `PSY.get_circuits` order), so the enum
 # value doubles as the map key and the 3W circuit index.
-_winding_index(category::PSY.WindingCategoryModule.WindingCategory) = category.value
+_winding_index(category::PSY.WindingCategory.Value) = Int(category)
 
 """
     build_impedance_correction_factors!(nr::NetworkReductionData, sys::PSY.System)
