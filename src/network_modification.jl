@@ -46,7 +46,7 @@ function _member_outage_ybus_delta(
             "$(get_name(bp)); cannot compute its outage delta.",
         )
     end
-    entries = ybus_branch_entries(component)
+    entries = ybus_branch_entries(component, nr)
     if get_arc_tuple(component, nr) != get_arc_tuple(bp, nr)
         entries = (entries[4], entries[3], entries[2], entries[1])
     end
@@ -62,7 +62,7 @@ function _direct_arc_ybus_delta(
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
     b_arc = _finite_series_susceptance(br, nr)
-    entries = ybus_branch_entries(br; min_x_eps = _minimum_retained_impedance(nr))
+    entries = ybus_branch_entries(br, nr; min_x_eps = _minimum_retained_impedance(nr))
     if _is_full_outage(delta_b, b_arc)
         return _negated_pi_model(entries)
     end
@@ -80,7 +80,7 @@ function _direct_arc_ybus_delta(
     ::Float64,
 )::NTuple{4, YBUS_ELTYPE}
     return _negated_pi_model(
-        ybus_branch_entries(tr; min_x_eps = _minimum_retained_impedance(nr)),
+        ybus_branch_entries(tr, nr; min_x_eps = _minimum_retained_impedance(nr)),
     )
 end
 

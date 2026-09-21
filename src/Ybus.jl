@@ -322,7 +322,8 @@ end
         y21::Vector{YBUS_ELTYPE},
         y22::Vector{YBUS_ELTYPE},
         branch_ix::Int,
-        br::PSY.ACTransmission
+        br::PSY.ACTransmission,
+        nr::NetworkReductionData
     )
 
 Add Y-bus matrix entries for an AC transmission branch to the admittance vectors.
@@ -339,6 +340,7 @@ and Y22 (to-bus self).
 - `y22::Vector{YBUS_ELTYPE}`: Vector for to-bus self admittances
 - `branch_ix::Int`: Index where to store the branch entries
 - `br::PSY.ACTransmission`: AC transmission branch
+- `nr::NetworkReductionData`: Reduction data, for the cached impedance corrections
 
 # Implementation Details
 - Calls `ybus_branch_entries()` to compute Pi-model parameters
@@ -351,10 +353,11 @@ function add_branch_entries_to_ybus!(
     y21::Vector{YBUS_ELTYPE},
     y22::Vector{YBUS_ELTYPE},
     branch_ix::Int,
-    br::PSY.ACTransmission;
+    br::PSY.ACTransmission,
+    nr::NetworkReductionData;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
-    Y11, Y12, Y21, Y22 = ybus_branch_entries(br; min_x_eps = min_x_eps)
+    Y11, Y12, Y21, Y22 = ybus_branch_entries(br, nr; min_x_eps = min_x_eps)
     y11[branch_ix] = Y11
     y12[branch_ix] = Y12
     y21[branch_ix] = Y21
@@ -415,7 +418,28 @@ function ybus_branch_entries(
     br::PSY.ACTransmission;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
-    adm = branch_admittance(br; min_x_eps = min_x_eps)
+    return _equivalent_to_ybus(br, equivalent_branch(br; min_x_eps = min_x_eps))
+end
+
+# The `nr` overload carries two things the bare one cannot: uniform orientation handling for
+# callers iterating heterogeneous segments (single branches and parallel groups), and the
+# impedance corrections cached on the reduction data. Prefer it wherever `nr` is in scope —
+# the bare method builds an *uncorrected* π-model.
+function ybus_branch_entries(
+    br::PSY.ACTransmission,
+    nr::NetworkReductionData;
+    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+)
+    eb = apply_impedance_correction(
+        equivalent_branch(br; min_x_eps = min_x_eps),
+        br,
+        nr,
+    )
+    return _equivalent_to_ybus(br, eb)
+end
+
+function _equivalent_to_ybus(br::PSY.ACTransmission, eb::EquivalentBranch)
+    adm = _to_admittance(eb)
     Y11, Y12, Y21, Y22 = _pi_to_ybus(adm)
     if !isfinite(Y11) || !isfinite(complex(adm.g, adm.b))
         error(
@@ -424,16 +448,6 @@ function ybus_branch_entries(
         )
     end
     return (Y11, Y12, Y21, Y22)
-end
-
-# A single branch has unambiguous orientation; this `nr` overload lets callers iterating
-# heterogeneous segments (single branches and parallel groups) pass `nr` uniformly.
-function ybus_branch_entries(
-    br::PSY.ACTransmission,
-    ::NetworkReductionData;
-    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
-)
-    return ybus_branch_entries(br; min_x_eps = min_x_eps)
 end
 
 function ybus_branch_entries(
@@ -483,7 +497,7 @@ function _ybus!(
 )
     add_branch_entries_to_indexing_maps!(num_bus, branch_ix, nr, fb, tb, br)
     add_branch_entries_to_ybus!(
-        y11, y12, y21, y22, branch_ix, br;
+        y11, y12, y21, y22, branch_ix, br, nr;
         min_x_eps = _minimum_retained_impedance(nr),
     )
     return
@@ -511,7 +525,8 @@ function _ybus!(
         fb[offset_ix + ix + n_entries] = term_ix
         tb[offset_ix + ix + n_entries] = star_ix
         (Y11, Y12, Y21, Y22) = ybus_branch_entries(
-            ThreeWindingTransformerCircuit(br, circuit, i);
+            ThreeWindingTransformerCircuit(br, circuit, i),
+            nr;
             min_x_eps = min_x_eps,
         )
         y11[offset_ix + ix + n_entries] = Y11
@@ -805,6 +820,7 @@ function Ybus(
     for (ix, b) in enumerate(bus_ax)
         bus_lookup[b] = ix
     end
+    build_impedance_correction_factors!(nr, sys)
     branches = _get_ybus_two_terminal_ac_branches(sys)
     transformer_3W =
         _get_filtered_components(PSY.ThreeWindingTransformer, sys, PSY.get_available)
@@ -2198,7 +2214,7 @@ function add_segment_to_ybus!(
     segment_orientation::Symbol,
     nr::NetworkReductionData,
 )
-    (Y11, Y12, Y21, Y22) = ybus_branch_entries(segment)
+    (Y11, Y12, Y21, Y22) = ybus_branch_entries(segment, nr)
     push!(fb, ix)
     push!(tb, ix + 1)
     if segment_orientation == :FromTo
