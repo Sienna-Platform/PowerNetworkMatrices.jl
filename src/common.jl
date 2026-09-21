@@ -454,6 +454,32 @@ end
 _finite_series_susceptance(segment::PSY.ACTransmission, nr::NetworkReductionData) =
     _finite_series_susceptance(segment, _minimum_retained_impedance(nr))
 
+# DC susceptance of a symmetric (non-phase-shifting) arc from its Ybus off-diagonal: the
+# reciprocal of the equivalent series reactance. The one rule `BA_Matrix` and the outage
+# deltas share, so a full-outage `delta_b` read from BA matches the arc's own susceptance —
+# including any impedance correction, which the component reactance does not carry.
+function _symmetric_arc_dc_susceptance(Y_ft::Complex)
+    # Cancelling parallel reactances -> no DC coupling.
+    iszero(Y_ft) && return 0.0
+    # A zero net reactance (e.g. line + series capacitor) gives no usable DC coupling.
+    x_eq = imag(1 / Y_ft)
+    iszero(x_eq) && return 0.0
+    return 1 / x_eq
+end
+
+# The susceptance `BA_Matrix` assigns to an arc, from the same 2x2 it reads off Ybus. A
+# phase-shifting arc (asymmetric off-diagonals) takes the phase-independent component value.
+function _ba_arc_susceptance(
+    entries::NTuple{4, <:Complex},
+    segment::PSY.ACTransmission,
+    nr::NetworkReductionData,
+)
+    Y_ft = -entries[2]
+    Y_tf = -entries[3]
+    Y_ft != Y_tf && return _finite_series_susceptance(segment, nr)
+    return _symmetric_arc_dc_susceptance(Y_ft)
+end
+
 """
     get_effective_series_susceptance(segment, nr::NetworkReductionData) -> Float64
 
@@ -466,7 +492,9 @@ returns the stored value instead, and throws rather than returning a non-finite 
 A purely resistive branch (`r > 0, x == 0`) is outside that agreement: this accessor still
 substitutes here, but `Ybus`'s `equivalent_branch` substitutes only when both `r` and `x`
 are zero, so such a branch has no DC coupling in `BA_Matrix` (susceptance `0.0`) while this
-returns the substituted value.
+returns the substituted value. So is a transformer with an active impedance correction:
+this returns the uncorrected component value, while `BA_Matrix` takes the corrected
+Ybus-derived value for a symmetric arc (`_ba_arc_susceptance`).
 """
 get_effective_series_susceptance(segment::PSY.ACTransmission, nr::NetworkReductionData) =
     _finite_series_susceptance(segment, nr)
@@ -809,7 +837,8 @@ function has_single_pi_equivalent(bs::BranchesSeries, nr::NetworkReductionData)
     return true
 end
 
-_arc_equivalents(br::PSY.ACTransmission, ::NetworkReductionData) = [equivalent_branch(br)]
+_arc_equivalents(br::PSY.ACTransmission, nr::NetworkReductionData) =
+    [equivalent_branch(br, nr)]
 
 _arc_equivalents(bp::AbstractBranchesParallel, nr::NetworkReductionData) =
     get_equivalent.(equivalent_partitions(bp, nr))
@@ -873,6 +902,7 @@ system base. Total on every mapped arc -- including lossy shifted parallel group
 """
 # Resistance is orientation-symmetric. Single branches (direct and added-Ward alike) take their
 # own equivalent; aggregates go through the shifted-group-aware combination.
+# Deliberately the uncorrected value: the DC model does not apply impedance correction.
 _dc_entry_resistance(br::PSY.ACTransmission, ::NetworkReductionData) =
     get_equivalent_r(equivalent_branch(br))
 _dc_entry_resistance(group::AbstractReductionAggregate, nr::NetworkReductionData) =

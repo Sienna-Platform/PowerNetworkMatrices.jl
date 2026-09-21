@@ -133,6 +133,7 @@ network reduction algorithms.
 - `added_admittance_map::Dict{Int, PSY.FixedAdmittance}`: Admittances added to buses during reduction
 - `added_arc_impedance_map::Dict{Tuple{Int, Int}, PSY.GenericArcImpedance}`: New arcs created during reduction
 - `reductions::ReductionContainer`: Container tracking applied reduction algorithms
+- `impedance_correction_factors::Dict{Tuple{Int, Int}, Float64}`: Series-impedance multipliers from `PSY.ImpedanceCorrectionData`, keyed by `(transformer id, winding)` where the winding is the `PSY.WindingCategory` code (`0` for a two-winding transformer). Built once by [`build_impedance_correction_factors!`](@ref); empty when the system defines no correction tables
 """
 @kwdef mutable struct NetworkReductionData <:
                       IS.InfrastructureMatrices.AbstractInfrastructureNetworkReductionData
@@ -161,6 +162,8 @@ network reduction algorithms.
     added_arc_impedance_map::Dict{Tuple{Int, Int}, PSY.GenericArcImpedance} =
         Dict{Tuple{Int, Int}, PSY.GenericArcImpedance}()
     reductions::ReductionContainer = ReductionContainer()
+    impedance_correction_factors::Dict{Tuple{Int, Int}, Float64} =
+        Dict{Tuple{Int, Int}, Float64}()
 end
 
 function get_name(device::T) where {T <: PSY.ACTransmission}

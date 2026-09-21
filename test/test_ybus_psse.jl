@@ -85,7 +85,7 @@ end
         if col_bus ∈ keys(nr.reverse_bus_search_map)
             col_bus = nr.reverse_bus_search_map[col_bus]
         end
-        @test isapprox(Ybus_pnm[row_bus, col_bus], val, atol = 1e-3)
+        @test isapprox(Ybus_pnm[row_bus, col_bus], val, rtol = 2 * eps(Float32), atol = 0.0)
     end
 end
 
@@ -118,7 +118,7 @@ end
         if col_bus ∈ keys(nr.reverse_bus_search_map)
             col_bus = nr.reverse_bus_search_map[col_bus]
         end
-        @test isapprox(Ybus_pnm[row_bus, col_bus], val, atol = 2e-3)
+        @test isapprox(Ybus_pnm[row_bus, col_bus], val, rtol = 4 * eps(Float32), atol = 0.0)
     end
 end
 
@@ -212,7 +212,7 @@ end
         if col_bus ∈ keys(nr.reverse_bus_search_map)
             col_bus = nr.reverse_bus_search_map[col_bus]
         end
-        @test isapprox(Ybus_pnm[row_bus, col_bus], val; atol = 1e-1)
+        @test isapprox(Ybus_pnm[row_bus, col_bus], val; rtol = 9 * eps(Float32), atol = 0.0)
     end
 end
 
@@ -248,6 +248,124 @@ end
         if col_bus ∈ keys(nr.reverse_bus_search_map)
             col_bus = nr.reverse_bus_search_map[col_bus]
         end
-        @test isapprox(Ybus_pnm[row_bus, col_bus], val; atol = 1e-5)
+        @test isapprox(Ybus_pnm[row_bus, col_bus], val; rtol = 2 * eps(Float32), atol = 0.0)
     end
+end
+
+@testset "psse_modified_14bus_off_nominal_icd" begin
+    # Three transformers have off-nominal settings that activate their ICTs:
+    #   BUS 109-BUS 104-i_1  (TapTransformer):          WINDV1=0.95, table 4 → F=1.030
+    #   BUS 110-BUS 109-i_1  (PhaseShiftingTransformer): ANG1=12.2°,  table 3 → F=1.082
+    #   BUS 113-BUS 110-BUS 114-i_1 winding 1 (PST3W):  ANG1=10.0°,  table 9 → F=1.100
+    sys = build_system(PSSEParsingTestSystems, "psse_modified_14bus_off_nominal_icd")
+    Ybus_pnm = Ybus(sys)
+    nr = get_network_reduction_data(Ybus_pnm)
+
+    Ybus_psse, b_ix_psse, row_buses, col_buses, y_values, reduced_bus_pairs_psse =
+        parse_psse_ybus(
+            joinpath(TEST_DATA_DIR, "modified_14bus_system_off_nominal_icd_ymatrix.txt"),
+        )
+    for x in reduced_bus_pairs_psse
+        _test_psse_reduction_row(x, nr.reverse_bus_search_map)
+    end
+
+    psse_ref_bus_numbers = [101, 108]
+    psse_skip_indices = indexin(psse_ref_bus_numbers, Ybus_pnm.axes[1])
+    n_psse_excluded_elements = nnz(Ybus_pnm.data[psse_skip_indices, :])
+    @test nnz(Ybus_pnm.data) == length(filter(!iszero, y_values)) + n_psse_excluded_elements
+
+    psse_to_pnm_star_bus = Dict(1100001 => 1002, 1100002 => 1001)
+    for (row_bus, col_bus, val) in zip(row_buses, col_buses, y_values)
+        row_bus = get(psse_to_pnm_star_bus, row_bus, row_bus)
+        col_bus = get(psse_to_pnm_star_bus, col_bus, col_bus)
+        if row_bus ∈ keys(nr.reverse_bus_search_map)
+            row_bus = nr.reverse_bus_search_map[row_bus]
+        end
+        if col_bus ∈ keys(nr.reverse_bus_search_map)
+            col_bus = nr.reverse_bus_search_map[col_bus]
+        end
+        @test isapprox(Ybus_pnm[row_bus, col_bus], val; rtol = 2 * eps(Float32), atol = 0.0)
+    end
+end
+
+@testset "psse_modified_14bus_nominal_icd" begin
+    sys = build_system(PSSEParsingTestSystems, "psse_modified_14bus_nominal_icd")
+    Ybus_pnm = Ybus(sys)
+    nr = get_network_reduction_data(Ybus_pnm)
+
+    Ybus_psse, b_ix_psse, row_buses, col_buses, y_values, reduced_bus_pairs_psse =
+        parse_psse_ybus(joinpath(TEST_DATA_DIR, "modified_14bus_system_no_icd.txt"))
+    for x in reduced_bus_pairs_psse
+        _test_psse_reduction_row(x, nr.reverse_bus_search_map)
+    end
+
+    # PSS/E excluded rows for both type-3 buses it saw (101 and 108); count those
+    # PNM entries to reconcile the NNZ check.
+    psse_ref_bus_numbers = [101, 108]
+    psse_skip_indices = indexin(psse_ref_bus_numbers, Ybus_pnm.axes[1])
+    n_psse_excluded_elements = nnz(Ybus_pnm.data[psse_skip_indices, :])
+    @test nnz(Ybus_pnm.data) == length(filter(!iszero, y_values)) + n_psse_excluded_elements
+
+    # PSS/E numbers its switch star-buses as 1100001/1100002; PNM assigns 1002/1001.
+    # Adjacency-derived mapping: PSS/E 1100001 ↔ {114,112,110} = PNM 1002;
+    #                            PSS/E 1100002 ↔ {107,104,109} = PNM 1001.
+    psse_to_pnm_star_bus = Dict(1100001 => 1002, 1100002 => 1001)
+    for (row_bus, col_bus, val) in zip(row_buses, col_buses, y_values)
+        row_bus = get(psse_to_pnm_star_bus, row_bus, row_bus)
+        col_bus = get(psse_to_pnm_star_bus, col_bus, col_bus)
+        if row_bus ∈ keys(nr.reverse_bus_search_map)
+            row_bus = nr.reverse_bus_search_map[row_bus]
+        end
+        if col_bus ∈ keys(nr.reverse_bus_search_map)
+            col_bus = nr.reverse_bus_search_map[col_bus]
+        end
+        @test isapprox(Ybus_pnm[row_bus, col_bus], val; rtol = 2 * eps(Float32), atol = 0.0)
+    end
+end
+
+@testset "psse_modified_14bus_icd_dc_warning" begin
+    # DC matrices warn while any correction factor is active, and stay quiet when every
+    # table evaluates to 1.0 at the operating point.
+    sys = build_system(PSSEParsingTestSystems, "psse_modified_14bus_off_nominal_icd")
+    records, _ = Test.collect_test_logs(; min_level = Logging.Warn) do
+        BA_Matrix(sys)
+    end
+    @test count(
+        r -> r.level == Logging.Warn && occursin("impedance correction", r.message),
+        records,
+    ) == 1
+
+    sys_nominal = build_system(PSSEParsingTestSystems, "psse_modified_14bus_nominal_icd")
+    records, _ = Test.collect_test_logs(; min_level = Logging.Warn) do
+        BA_Matrix(sys_nominal)
+    end
+    @test !any(r -> occursin("impedance correction", r.message), records)
+end
+
+@testset "impedance correction table keying" begin
+    # A 2W table applies whatever winding it is tagged with; PSY does not validate the tag.
+    sys = deepcopy(build_system(PSITestSystems, "c_sys14"))
+    tr = first(get_components(TwoWindingTransformer, sys))
+    curve = IS.PiecewiseLinearData([(x = 0.5, y = 1.5), (x = 1.5, y = 1.5)])
+    ict = ImpedanceCorrectionData(;
+        table_number = 1,
+        impedance_correction_curve = curve,
+        transformer_winding = WindingCategory.PRIMARY_WINDING,
+        transformer_control_mode = ImpedanceCorrectionTransformerControlMode.TAP_RATIO,
+    )
+    add_supplemental_attribute!(sys, tr, ict)
+    nr = get_network_reduction_data(Ybus(sys))
+    @test PNM._impedance_correction_factor(tr, nr) == 1.5
+
+    # A 3W table must name one of the three windings.
+    sys3 = build_system(PSSEParsingTestSystems, "psse_modified_14bus_nominal_icd")
+    tr3 = first(get_components(ThreeWindingTransformer, sys3))
+    bad = ImpedanceCorrectionData(;
+        table_number = 99,
+        impedance_correction_curve = curve,
+        transformer_winding = WindingCategory.TR2W_WINDING,
+        transformer_control_mode = ImpedanceCorrectionTransformerControlMode.TAP_RATIO,
+    )
+    add_supplemental_attribute!(sys3, tr3, bad)
+    @test_throws ErrorException Ybus(sys3)
 end
