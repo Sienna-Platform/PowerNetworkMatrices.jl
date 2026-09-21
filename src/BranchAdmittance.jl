@@ -9,7 +9,7 @@
 # the from side, SECONDARY on the to side, SPLIT the full value on both sides.
 function _magnetizing_shunt_split(
     y_shunt::ComplexF64,
-    location::PSY.TwoWindingTransformerShuntLocation,
+    location::PSY.TwoWindingTransformerShuntLocation.Value,
 )
     g, b = real(y_shunt), imag(y_shunt)
     if location == PSY.TwoWindingTransformerShuntLocation.PRIMARY
@@ -31,7 +31,7 @@ end
 # the star-node (to) side. Circuits 2 and 3 carry no shunt.
 function _three_winding_shunt_split(
     y_shunt::ComplexF64,
-    location::PSY.ThreeWindingTransformerShuntLocation,
+    location::PSY.ThreeWindingTransformerShuntLocation.Value,
     winding_number::Int,
 )
     winding_number == 1 || return (g_fr = 0.0, b_fr = 0.0, g_to = 0.0, b_to = 0.0)
