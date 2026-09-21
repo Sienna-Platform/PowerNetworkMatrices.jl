@@ -410,7 +410,7 @@ function add_branch_entries_to_indexing_maps!(
 end
 
 """Ybus 2x2 for any single branch — line, Ward equivalent, or transformer circuit of either
-arity. The π-model comes from [`branch_admittance`](@ref), the single source of truth;
+arity. The π-model comes from [`equivalent_branch`](@ref), the single source of truth;
 `min_x_eps` substitutes for `x` when `r == x == 0`. Aggregates (parallel groups, series
 chains) have their own methods below: for those Ybus is the primitive and the π-model is
 derived from it, not the reverse."""
@@ -421,21 +421,16 @@ function ybus_branch_entries(
     return _equivalent_to_ybus(br, equivalent_branch(br; min_x_eps = min_x_eps))
 end
 
-# The `nr` overload carries two things the bare one cannot: uniform orientation handling for
-# callers iterating heterogeneous segments (single branches and parallel groups), and the
-# impedance corrections cached on the reduction data. Prefer it wherever `nr` is in scope —
-# the bare method builds an *uncorrected* π-model.
+# The corrected form: `equivalent_branch(br, nr)` applies the impedance correction cached on
+# the reduction data, and the shared `nr` signature lets callers iterating heterogeneous
+# segments (single branches and aggregates) dispatch uniformly. Prefer it wherever `nr` is in
+# scope — the bare method builds an *uncorrected* π-model.
 function ybus_branch_entries(
     br::PSY.ACTransmission,
     nr::NetworkReductionData;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
-    eb = apply_impedance_correction(
-        equivalent_branch(br; min_x_eps = min_x_eps),
-        br,
-        nr,
-    )
-    return _equivalent_to_ybus(br, eb)
+    return _equivalent_to_ybus(br, equivalent_branch(br, nr; min_x_eps = min_x_eps))
 end
 
 function _equivalent_to_ybus(br::PSY.ACTransmission, eb::EquivalentBranch)
@@ -1807,7 +1802,7 @@ function _apply_added_components!(
     end
     for (bus_tuple, admittance) in nr.added_arc_impedance_map
         bus_from, bus_to = bus_tuple
-        Y11, Y12, Y21, Y22 = ybus_branch_entries(admittance)
+        Y11, Y12, Y21, Y22 = ybus_branch_entries(admittance, nr)
         data[bus_lookup[bus_from], bus_lookup[bus_from]] += Y11
         data[bus_lookup[bus_from], bus_lookup[bus_to]] += Y12
         data[bus_lookup[bus_to], bus_lookup[bus_from]] += Y21

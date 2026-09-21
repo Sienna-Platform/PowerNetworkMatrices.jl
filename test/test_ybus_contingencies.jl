@@ -528,3 +528,22 @@ end
     @test isfinite(delta)
     @test delta < 0.0
 end
+
+@testset "Outage deltas of impedance-corrected transformers" begin
+    # A full outage must cancel the corrected π-model exactly. BA holds the corrected
+    # susceptance for a symmetric arc, so the full/partial classification has to read the same
+    # value; the component reactance is off by the correction factor and scaled a full outage
+    # to 1/factor of the transformer.
+    sys = build_system(PSSEParsingTestSystems, "psse_modified_14bus_off_nominal_icd")
+    vptdf = VirtualPTDF(sys)
+    nr = PNM.get_network_reduction_data(vptdf)
+    n_corrected = 0
+    for (arc, br) in nr.direct_branch_map
+        mod = NetworkModification(vptdf, arc)
+        arc_mod = only(mod.arc_modifications)
+        _, Y12, _, _ = PNM.ybus_branch_entries(br, nr)
+        @test isapprox(arc_mod.delta_y12, PNM.YBUS_ELTYPE(-Y12); rtol = 1e-5)
+        n_corrected += !isone(PNM._impedance_correction_factor(br, nr))
+    end
+    @test n_corrected >= 1
+end

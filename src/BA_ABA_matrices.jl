@@ -97,6 +97,19 @@ function _arc_component_susceptance(nr_data::NetworkReductionData, arc::Tuple{In
     return NaN
 end
 
+# The DC model reads phase-shifting arcs and standalone series chains from component
+# reactances, which impedance correction does not touch; every other arc inherits the
+# correction through Ybus. Warn about the mixed result until it is validated against PSS/E.
+function _warn_impedance_correction_in_dc(nr::NetworkReductionData)
+    any(!isone, values(nr.impedance_correction_factors)) || return
+    corrected = Set(k[1] for (k, v) in nr.impedance_correction_factors if !isone(v))
+    @warn "$(length(corrected)) transformer(s) carry an active impedance correction. " *
+          "DC susceptances of phase-shifting transformers and series-reduced chains use " *
+          "the uncorrected reactance; the DC model has not been validated against PSS/E " *
+          "with impedance correction tables." maxlog = 1
+    return
+end
+
 """
     BA_Matrix(ybus::Ybus)
 
@@ -110,6 +123,7 @@ Construct a BA_Matrix from a Ybus matrix.
 """
 function BA_Matrix(ybus::Ybus)
     nr = get_network_reduction_data(ybus)
+    _warn_impedance_correction_in_dc(nr)
     bus_ax = get_bus_axis(ybus)
     bus_lookup = get_bus_lookup(ybus)
     arc_ax = get_arc_axis(nr)
@@ -138,18 +152,8 @@ function BA_Matrix(ybus::Ybus)
                 # component susceptance instead.
                 b = _arc_component_susceptance(nr_data, arc)
                 isfinite(b) || (b = 0.0)
-            elseif iszero(Y_ft)
-                # Cancelling parallel reactances -> no DC coupling.
-                b = 0.0
             else
-                # Symmetric branch: imag(1/Y_ft) is the equivalent series reactance; a zero net
-                # reactance (e.g. line + series capacitor) gives no usable DC coupling.
-                x_eq = imag(1 / Y_ft)
-                if iszero(x_eq)
-                    b = 0.0
-                else
-                    b = 1 / x_eq
-                end
+                b = _symmetric_arc_dc_susceptance(Y_ft)
             end
         end
         BA_I[2 * ix_arc - 1] = ix_from_bus

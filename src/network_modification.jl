@@ -1,6 +1,9 @@
 # `delta_b` removes the arc's entire series susceptance (a full outage).
+# `delta_b` comes through the `ComplexF32` Ybus, so the two sides agree only to Float32
+# precision; `sqrt(eps(Float32))` sits well above that noise and well below any real partial
+# outage ratio (an identical double circuit is 0.5).
 _is_full_outage(delta_b::Float64, b_arc::Float64) =
-    isapprox(delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
+    isapprox(delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = sqrt(eps(Float32)))
 
 # Negated Pi-model entries: the delta that cancels the arc's contribution (full outage).
 function _negated_pi_model(entries::NTuple{4, <:Complex})::NTuple{4, YBUS_ELTYPE}
@@ -54,15 +57,16 @@ function _member_outage_ybus_delta(
 end
 
 # Direct arc: full outage negates the Pi-model; otherwise scale it by `delta_b / b_arc`.
-# `b_arc` must be the substituted value: `delta_b` comes from BA, which already substituted.
-# Raw values here make the two sides disagree and scale a full outage to zero.
+# `b_arc` must be what BA holds for the arc: `delta_b` comes from BA, which already
+# substituted `min_x_eps` and, for a symmetric arc, read the corrected Ybus entry. Component
+# values here make the two sides disagree and scale a full outage instead of negating it.
 function _direct_arc_ybus_delta(
     br::PSY.ACTransmission,
     nr::NetworkReductionData,
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
-    b_arc = _finite_series_susceptance(br, nr)
     entries = ybus_branch_entries(br, nr; min_x_eps = _minimum_retained_impedance(nr))
+    b_arc = _ba_arc_susceptance(entries, br, nr)
     if _is_full_outage(delta_b, b_arc)
         return _negated_pi_model(entries)
     end
@@ -92,14 +96,15 @@ function _parallel_arc_ybus_delta(
     nr::NetworkReductionData,
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
-    if _is_full_outage(delta_b, _finite_series_susceptance(bp, nr))
-        return _negated_pi_model(ybus_branch_entries(bp, nr))
+    entries = ybus_branch_entries(bp, nr)
+    b_arc = _ba_arc_susceptance(entries, bp, nr)
+    if _is_full_outage(delta_b, b_arc)
+        return _negated_pi_model(entries)
     end
     error(
         "Partial outage on parallel group $(get_name(bp)) requires the tripped " *
         "component's identity; construct the modification from the branch component " *
-        "instead of the arc tuple. Δb=$(delta_b), group b=" *
-        "$(_finite_series_susceptance(bp, nr)).",
+        "instead of the arc tuple. Δb=$(delta_b), group b=$(b_arc).",
     )
 end
 

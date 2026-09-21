@@ -322,7 +322,8 @@ function _evaluate_correction_table(
 end
 
 # `WindingCategory` encodes the winding position directly (`TR2W_WINDING = 0`, then
-# `PRIMARY`/`SECONDARY`/`TERTIARY` = 1/2/3, matching `PSY.get_circuits` order), so the enum
+# `PRIMARY_WINDING`/`SECONDARY_WINDING`/`TERTIARY_WINDING` = 1/2/3, matching
+# `PSY.get_circuits` order), so the enum
 # value doubles as the map key and the 3W circuit index.
 _winding_index(category::PSY.WindingCategoryModule.WindingCategory) = category.value
 
@@ -336,19 +337,25 @@ Evaluated once per `Ybus` build rather than per branch: resolving a component's 
 attributes queries the association store, which is far too costly for the assembly loop.
 """
 function build_impedance_correction_factors!(nr::NetworkReductionData, sys::PSY.System)
+    # In-memory type check; the pair queries below each round-trip the association store.
+    isempty(PSY.get_supplemental_attributes(PSY.ImpedanceCorrectionData, sys)) && return
     factors = nr.impedance_correction_factors
+    # A 2W transformer has one circuit, so its table's winding tag carries no information and
+    # is not validated by PSY; key on the 2W code regardless of the tag.
     for pair in PSY.get_component_supplemental_attribute_pairs(
         PSY.TwoWindingTransformer,
         PSY.ImpedanceCorrectionData,
         sys,
     )
         transformer = pair.component
-        ict = pair.supplemental_attribute
         factors[(
             IS.get_id(transformer),
-            _winding_index(PSY.get_transformer_winding(ict)),
+            _winding_index(PSY.WindingCategory.TR2W_WINDING),
         )] =
-            _evaluate_correction_table(PSY.get_circuit(transformer), ict)
+            _evaluate_correction_table(
+                PSY.get_circuit(transformer),
+                pair.supplemental_attribute,
+            )
     end
     for pair in PSY.get_component_supplemental_attribute_pairs(
         PSY.ThreeWindingTransformer,
@@ -358,6 +365,14 @@ function build_impedance_correction_factors!(nr::NetworkReductionData, sys::PSY.
         transformer = pair.component
         ict = pair.supplemental_attribute
         winding = _winding_index(PSY.get_transformer_winding(ict))
+        if !(winding in 1:3)
+            error(
+                "ImpedanceCorrectionData table $(PSY.get_table_number(ict)) on " *
+                "ThreeWindingTransformer $(PSY.get_name(transformer)) is tagged " *
+                "$(PSY.get_transformer_winding(ict)); expected PRIMARY_, SECONDARY_ or " *
+                "TERTIARY_WINDING.",
+            )
+        end
         factors[(IS.get_id(transformer), winding)] =
             _evaluate_correction_table(PSY.get_circuits(transformer)[winding], ict)
     end
@@ -382,18 +397,21 @@ _impedance_correction_factor(w::ThreeWindingTransformerCircuit, nr::NetworkReduc
     )
 
 """
-Scale `eb`'s series impedance by the impedance correction `nr` holds for `br`, if any.
+    equivalent_branch(b, nr::NetworkReductionData; min_x_eps) -> EquivalentBranch
 
-Correction belongs on the impedance rather than the admittance so that it composes with the
-tap, shift and shunt terms exactly as PSS/E defines it, and so every consumer of the π-model
-— Ybus assembly, reduction aggregates and contingency deltas — sees one corrected branch.
+The π-model of any arc entry as the assembled matrices see it: [`equivalent_branch`](@ref) of
+a single branch with the impedance correction `nr` caches for it applied to the series
+impedance, or the reduction-aware equivalent of an aggregate. The `nr`-less method is the
+uncorrected component value. Correction scales the impedance rather than the admittance so
+it composes with the tap, shift and shunt terms as PSS/E defines it.
 """
-function apply_impedance_correction(
-    eb::EquivalentBranch,
-    br::PSY.ACTransmission,
-    nr::NetworkReductionData,
+function equivalent_branch(
+    b::PSY.ACTransmission,
+    nr::NetworkReductionData;
+    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
-    factor = _impedance_correction_factor(br, nr)
+    eb = equivalent_branch(b; min_x_eps = min_x_eps)
+    factor = _impedance_correction_factor(b, nr)
     isone(factor) && return eb
     return EquivalentBranch(
         get_equivalent_r(eb) * factor,
@@ -405,6 +423,14 @@ function apply_impedance_correction(
         get_equivalent_tap(eb),
         get_equivalent_shift(eb),
     )
+end
+
+function equivalent_branch(
+    group::AbstractReductionAggregate,
+    nr::NetworkReductionData;
+    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+)
+    return get_equivalent_physical_branch_parameters(group, nr)
 end
 
 """
@@ -446,13 +472,6 @@ function _reverse_equivalent_branch(eb::EquivalentBranch)
     )
 end
 
-# Single branches (direct and added-Ward alike) carry their own equivalent; aggregates go through
-# the reduction-aware recovery, which throws when no single π exists.
-_single_arc_equivalent(br::PSY.ACTransmission, ::NetworkReductionData) =
-    equivalent_branch(br)
-_single_arc_equivalent(group::AbstractReductionAggregate, nr::NetworkReductionData) =
-    get_equivalent_physical_branch_parameters(group, nr)
-
 """
     arc_equivalent_branch(nr::NetworkReductionData, arc::Tuple{Int, Int}) -> EquivalentBranch
 
@@ -472,7 +491,7 @@ needs more than one π branch. Use [`arc_equivalent_branches`](@ref) for the tot
 """
 function arc_equivalent_branch(nr::NetworkReductionData, arc::Tuple{Int, Int})
     entry, reversed = _resolve_arc_entry(nr, arc)
-    equivalent = _single_arc_equivalent(entry, nr)
+    equivalent = equivalent_branch(entry, nr)
     if reversed
         return _reverse_equivalent_branch(equivalent)
     end

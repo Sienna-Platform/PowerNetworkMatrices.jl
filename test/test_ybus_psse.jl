@@ -322,3 +322,50 @@ end
         @test isapprox(Ybus_pnm[row_bus, col_bus], val; rtol = 2 * eps(Float32), atol = 0.0)
     end
 end
+
+@testset "psse_modified_14bus_icd_dc_warning" begin
+    # DC matrices warn while any correction factor is active, and stay quiet when every
+    # table evaluates to 1.0 at the operating point.
+    sys = build_system(PSSEParsingTestSystems, "psse_modified_14bus_off_nominal_icd")
+    records, _ = Test.collect_test_logs(; min_level = Logging.Warn) do
+        BA_Matrix(sys)
+    end
+    @test count(
+        r -> r.level == Logging.Warn && occursin("impedance correction", r.message),
+        records,
+    ) == 1
+
+    sys_nominal = build_system(PSSEParsingTestSystems, "psse_modified_14bus_nominal_icd")
+    records, _ = Test.collect_test_logs(; min_level = Logging.Warn) do
+        BA_Matrix(sys_nominal)
+    end
+    @test !any(r -> occursin("impedance correction", r.message), records)
+end
+
+@testset "impedance correction table keying" begin
+    # A 2W table applies whatever winding it is tagged with; PSY does not validate the tag.
+    sys = deepcopy(build_system(PSITestSystems, "c_sys14"))
+    tr = first(get_components(TwoWindingTransformer, sys))
+    curve = IS.PiecewiseLinearData([(x = 0.5, y = 1.5), (x = 1.5, y = 1.5)])
+    ict = ImpedanceCorrectionData(;
+        table_number = 1,
+        impedance_correction_curve = curve,
+        transformer_winding = WindingCategory.PRIMARY_WINDING,
+        transformer_control_mode = ImpedanceCorrectionTransformerControlMode.TAP_RATIO,
+    )
+    add_supplemental_attribute!(sys, tr, ict)
+    nr = get_network_reduction_data(Ybus(sys))
+    @test PNM._impedance_correction_factor(tr, nr) == 1.5
+
+    # A 3W table must name one of the three windings.
+    sys3 = build_system(PSSEParsingTestSystems, "psse_modified_14bus_nominal_icd")
+    tr3 = first(get_components(ThreeWindingTransformer, sys3))
+    bad = ImpedanceCorrectionData(;
+        table_number = 99,
+        impedance_correction_curve = curve,
+        transformer_winding = WindingCategory.TR2W_WINDING,
+        transformer_control_mode = ImpedanceCorrectionTransformerControlMode.TAP_RATIO,
+    )
+    add_supplemental_attribute!(sys3, tr3, bad)
+    @test_throws ErrorException Ybus(sys3)
+end
