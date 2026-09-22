@@ -22,6 +22,54 @@ end
     @test fl.to_from == psy_fl.to_from
 end
 
+@testset "branch_flow_limits on a reduction aggregate" begin
+    # Aggregates subtype `PSY.ACTransmission`, so a group used to fall into the blanket method
+    # and report its equivalent rating in both directions — widening the asymmetric member's
+    # reverse limit from 120.0 to the group total.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
+    buses = collect(PSY.get_components(PSY.ACBus, sys))
+    arc = PSY.Arc(; from = buses[1], to = buses[2])
+    plain = PSY.Line(;
+        name = "bfl_line",
+        available = true,
+        active_power_flow = 0.0,
+        reactive_power_flow = 0.0,
+        arc = arc,
+        r = 0.1,
+        x = 0.2,
+        b = (from = 0.01, to = 0.01),
+        g = (from = 0.0, to = 0.0),
+        rating = 100.0,
+        angle_limits = (min = -pi / 2, max = pi / 2),
+    )
+    monitored = PSY.MonitoredLine(;
+        name = "bfl_monitored",
+        available = true,
+        active_power_flow = 0.0,
+        reactive_power_flow = 0.0,
+        arc = arc,
+        r = 0.1,
+        x = 0.2,
+        b = (from = 0.01, to = 0.01),
+        g = (from = 0.0, to = 0.0),
+        flow_limits = (from_to = 200.0, to_from = 120.0),
+        rating = 200.0,
+        angle_limits = (min = -pi / 2, max = pi / 2),
+    )
+
+    symmetric = PNM.BranchesParallel([plain, deepcopy(plain)])
+    @test PNM.branch_flow_limits(symmetric).from_to == 200.0
+    @test PNM.branch_flow_limits(symmetric).to_from == 200.0
+
+    group = PNM.MixedBranchesParallel(PSY.ACTransmission[plain, monitored])
+    @test_throws ErrorException PNM.branch_flow_limits(group)
+
+    chain = PNM.BranchesSeries(PNM.get_arc_tuple(plain))
+    PNM.add_branch!(chain, plain, :FromTo)
+    PNM.add_branch!(chain, monitored, :FromTo)
+    @test_throws ErrorException PNM.branch_flow_limits(chain)
+end
+
 @testset "reduced arc admittance uses PNM series equivalent, not original branch" begin
     # `case10_radial_series_reductions` is purpose-built to produce series arcs under the
     # radial + degree-two reduction, exercising the same NetworkReductionData the build path

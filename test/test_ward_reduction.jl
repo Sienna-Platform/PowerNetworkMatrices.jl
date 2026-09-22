@@ -333,3 +333,19 @@ end
     @test Set(keys(PNM.get_bus_reduction_map(nrd))) == sset
     @test length(nums) > length(study)
 end
+
+@testset "Ward: added arcs answer get_effective_series_susceptance" begin
+    # An added Ward arc is a detached `PSY.GenericArcImpedance`, so reading its reactance on
+    # the system base throws "Component  is not attached to a system" from inside the public
+    # accessor. Its r/x are already system-base values, which `PSY.CU` returns unchanged.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    ybus = Ybus(sys; network_reductions = NetworkReduction[WardReduction([1, 2, 3, 4, 5])])
+    nr = get_network_reduction_data(ybus)
+    added = nr.added_arc_impedance_map
+    @test !isempty(added)
+    for (arc, component) in added
+        b = PNM.get_effective_series_susceptance(component, nr)
+        @test isfinite(b)
+        @test b ≈ 1 / PSY.get_x(component, PSY.CU)
+    end
+end

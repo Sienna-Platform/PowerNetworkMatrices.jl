@@ -97,6 +97,11 @@ end
 # `get_series_susceptance` rejects that, `_finite_series_susceptance` substitutes.
 _series_susceptance_raw(b::PSY.ACTransmission, units::IS.AbstractUnitSystem) =
     1 / PSY.get_x(b, units)
+# A Ward equivalent is detached, so it cannot resolve the system base and any other unit
+# system throws. Its r/x are already system-base values, which `PSY.CU` returns unchanged —
+# the same reading `equivalent_branch` takes for this type.
+_series_susceptance_raw(b::PSY.GenericArcImpedance, ::IS.AbstractUnitSystem) =
+    1 / PSY.get_x(b, PSY.CU)
 _series_susceptance_raw(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem) =
     _series_susceptance_raw(PSY.get_circuit(t), units)
 _series_susceptance_raw(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem) =
@@ -579,6 +584,9 @@ branches both fields equal the branch's [`get_equivalent_rating`](@ref); `Monito
 carries asymmetric limits and has its own method. Branches whose rating lives on a
 transformer circuit — and reduction groups containing them — may carry `nothing` in both
 fields when no rating is known; `Line`/`MonitoredLine` limits are always `Float64`.
+
+A reduction aggregate answers with its equivalent rating in both directions, and throws when
+any member carries asymmetric limits.
 """
 function branch_flow_limits(b::PSY.ACTransmission)
     r = get_equivalent_rating(b)
@@ -588,4 +596,32 @@ end
 function branch_flow_limits(b::PSY.MonitoredLine)
     fl = PSY.get_flow_limits(b, PSY.CU)
     return (from_to = fl.from_to, to_from = fl.to_from)
+end
+
+_has_asymmetric_flow_limits(::PSY.ACTransmission) = false
+
+function _has_asymmetric_flow_limits(b::PSY.MonitoredLine)
+    fl = PSY.get_flow_limits(b, PSY.CU)
+    return fl.from_to != fl.to_from
+end
+
+_has_asymmetric_flow_limits(seg::AbstractReductionAggregate) =
+    any(_has_asymmetric_flow_limits, seg)
+
+# Aggregates subtype `PSY.ACTransmission`, so without this arm a reduction group takes the
+# blanket method and reports its equivalent rating in both directions — right only while every
+# member is symmetric, and wrong silently otherwise. Orienting an asymmetric member against the
+# group's arc frame needs the `NetworkReductionData` (see `_subset_two_port`), which this
+# accessor does not take, so such a group is rejected rather than guessed at.
+function branch_flow_limits(seg::AbstractReductionAggregate)
+    if _has_asymmetric_flow_limits(seg)
+        error(
+            "Reduction aggregate $(get_name(seg)) holds a member with asymmetric flow " *
+            "limits, so its directional limits depend on each member's orientation in the " *
+            "group's arc frame, which this accessor cannot resolve. Read the members' own " *
+            "branch_flow_limits and orient them with get_arc_tuple(member, nr).",
+        )
+    end
+    r = get_equivalent_rating(seg)
+    return (from_to = r, to_from = r)
 end
