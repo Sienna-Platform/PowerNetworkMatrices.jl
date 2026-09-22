@@ -1625,29 +1625,38 @@ function _apply_bus_reductions!(nr::NetworkReductionData, nr_new::NetworkReducti
     return bus_numbers_to_remove
 end
 
+_dropped_entry_label(br::PSY.ACTransmission) = "branch $(get_name(br))"
+_dropped_entry_label(bp::AbstractBranchesParallel) =
+    "parallel group $(get_name(bp)) with $(length(bp)) branch(es)"
+
+# Collect phase of a branch-map remap: pop every entry whose arc touches a merged bus,
+# drop the ones that collapse to a self-loop, and return the survivors keyed by their new
+# arc. Collecting before re-inserting keeps the apply phase from revisiting its own writes.
+function _collect_remapped_entries!(
+    branch_map::Dict{Tuple{Int, Int}, V},
+    merged_bus_pairs::Dict{Int, Int},
+) where {V}
+    collected = Pair{Tuple{Int, Int}, V}[]
+    for arc in collect(keys(branch_map))
+        new_from = get(merged_bus_pairs, arc[1], arc[1])
+        new_to = get(merged_bus_pairs, arc[2], arc[2])
+        (new_from == arc[1] && new_to == arc[2]) && continue
+        val = pop!(branch_map, arc)
+        if new_from == new_to
+            @debug "Bus merge collapsed $(_dropped_entry_label(val)) (arc $arc) into a self-loop; dropping."
+            continue
+        end
+        push!(collected, (new_from, new_to) => val)
+    end
+    return collected
+end
+
 function _remap_merged_bus_in_branch_maps!(
     nr::NetworkReductionData,
     merged_bus_pairs::Dict{Int, Int},
 )
-    # Both maps use a two-phase collect-then-apply loop. The collect phase pops every
-    # entry whose arc touches a removed bus and records the resolved new arc alongside the
-    # value. The apply phase re-inserts with map-specific collision handling. Using two
-    # phases avoids visiting entries that were just inserted during the apply phase.
-
     # --- direct_branch_map: collision → parallel-group promotion ---
-    arcs_to_insert = Pair{Tuple{Int, Int}, PSY.ACTransmission}[]
-    for arc in collect(keys(nr.direct_branch_map))
-        new_from = get(merged_bus_pairs, arc[1], arc[1])
-        new_to = get(merged_bus_pairs, arc[2], arc[2])
-        (new_from == arc[1] && new_to == arc[2]) && continue
-        val = pop!(nr.direct_branch_map, arc)
-        new_arc = (new_from, new_to)
-        if new_arc[1] == new_arc[2]
-            @debug "Bus merge collapsed direct branch $(get_name(val)) (arc $arc) into a self-loop; dropping."
-            continue
-        end
-        push!(arcs_to_insert, new_arc => val)
-    end
+    arcs_to_insert = _collect_remapped_entries!(nr.direct_branch_map, merged_bus_pairs)
     for (new_arc, val) in arcs_to_insert
         reverse_new_arc = (new_arc[2], new_arc[1])
         if haskey(nr.direct_branch_map, new_arc)
@@ -1677,19 +1686,8 @@ function _remap_merged_bus_in_branch_maps!(
     end
 
     # --- parallel_branch_map: collision → merge both groups into one ---
-    parallel_to_insert = Pair{Tuple{Int, Int}, AbstractBranchesParallel}[]
-    for arc in collect(keys(nr.parallel_branch_map))
-        new_from = get(merged_bus_pairs, arc[1], arc[1])
-        new_to = get(merged_bus_pairs, arc[2], arc[2])
-        (new_from == arc[1] && new_to == arc[2]) && continue
-        val = pop!(nr.parallel_branch_map, arc)
-        new_arc = (new_from, new_to)
-        if new_arc[1] == new_arc[2]
-            @debug "Bus merge collapsed parallel group at arc $arc into a self-loop; dropping $(length(val)) branch(es)."
-            continue
-        end
-        push!(parallel_to_insert, new_arc => val)
-    end
+    parallel_to_insert =
+        _collect_remapped_entries!(nr.parallel_branch_map, merged_bus_pairs)
     for (new_arc, val) in parallel_to_insert
         # A re-keyed group keeps its `arc_key`, but `get_arc_tuple(bp, nr)` resolves that through
         # the bus map this remap just changed — so any cached two-port is now in a stale frame.
