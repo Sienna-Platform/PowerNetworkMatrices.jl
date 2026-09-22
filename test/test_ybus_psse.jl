@@ -370,9 +370,12 @@ end
     @test_throws ErrorException Ybus(sys3)
 end
 
-@testset "impedance correction is not split across PNM accessors" begin
-    # Regression: the corrected model was reachable only through the `nr`-taking overloads,
-    # so a caller recomputing a flow from the `nr`-less ones disagreed with the stamped Ybus.
+@testset "impedance correction: the nr contract" begin
+    # The contract this pins: `equivalent_branch(b)` is the component's OWN pi-model and is
+    # uncorrected by design, and it is the only accessor with that meaning. Every
+    # admittance- and Ybus-facing accessor takes `nr`, is corrected, and agrees with what
+    # `Ybus` actually stamped. The `nr`-less `ybus_branch_entries(b)` and
+    # `branch_admittance(b)` used to break the second half of that silently.
     sys = deepcopy(build_system(PSITestSystems, "c_sys14"))
     tr = first(get_components(TwoWindingTransformer, sys))
     add_supplemental_attribute!(
@@ -395,28 +398,34 @@ end
     # The transformer is the sole entry on its arc, so the Ybus entries are its own.
     @test PNM.get_direct_branch_map(nr)[arc] === tr
 
-    # The fixture is non-trivial: the correction moves the series impedance.
-    uncorrected = PNM.equivalent_branch(tr)
-    corrected = PNM.equivalent_branch(tr, nr)
+    # The fixture is non-trivial: the correction factor is not 1.0, so corrected and
+    # uncorrected are distinguishable at all.
     @test PNM._impedance_correction_factor(tr, nr) == 1.5
-    @test PNM.get_equivalent_x(corrected) ≈ 1.5 * PNM.get_equivalent_x(uncorrected)
-    @test !isapprox(
-        PNM.get_equivalent_x(corrected),
-        PNM.get_equivalent_x(uncorrected),
-    )
 
-    # Every reduction-aware accessor reports the corrected model...
+    # `equivalent_branch(b)` is the component's own value and stays uncorrected. That is the
+    # designed meaning of the method, not an oversight: it is what the leaf reads off the
+    # component before any reduction context exists, and Ward calls it on a detached
+    # `GenericArcImpedance` for which no `nr` can exist.
+    own = PNM.equivalent_branch(tr)
+    corrected = PNM.equivalent_branch(tr, nr)
+    @test PNM.get_equivalent_x(corrected) ≈ 1.5 * PNM.get_equivalent_x(own)
+    @test !isapprox(PNM.get_equivalent_x(corrected), PNM.get_equivalent_x(own))
+
+    # Every `nr`-taking accessor reports the corrected model...
     entries = PNM.ybus_branch_entries(tr, nr)
     @test PNM.get_equivalent_x(arc_equivalent_branch(nr, arc)) ≈
           PNM.get_equivalent_x(corrected)
+    y_corrected =
+        1 / (PNM.get_equivalent_r(corrected) + im * PNM.get_equivalent_x(corrected))
     adm = branch_admittance(tr, nr)
-    @test complex(adm.g, adm.b) ≈
-          1 / (PNM.get_equivalent_r(corrected) + im * PNM.get_equivalent_x(corrected))
+    @test complex(adm.g, adm.b) ≈ y_corrected
 
     # ...and it is what the matrix carries.
     @test isapprox(ybus[arc[1], arc[2]], entries[2]; rtol = 4 * eps(Float32))
     @test isapprox(ybus[arc[2], arc[1]], entries[3]; rtol = 4 * eps(Float32))
 
-    # No `nr`-less route to a single branch's Ybus entries remains.
+    # No admittance-returning accessor skips the correction any more: there is no `nr`-less
+    # route to a single branch's Ybus entries or to its admittance.
     @test_throws MethodError PNM.ybus_branch_entries(tr)
+    @test_throws MethodError PNM.branch_admittance(tr)
 end

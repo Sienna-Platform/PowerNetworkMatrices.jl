@@ -4,7 +4,7 @@
 @testset "branch_admittance primitives" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     line = first(PSY.get_components(PSY.Line, sys))
-    a = PNM.branch_admittance(line)
+    a = PNM.branch_admittance(line, PNM.NetworkReductionData())
     r, x = PSY.get_r(line, PSY.SU), PSY.get_x(line, PSY.SU)
     y = inv(complex(r, x))
     @test a.g ≈ real(y)
@@ -104,13 +104,13 @@ end
     # differ from any single constituent branch's own admittance. This is the whole point of
     # leveraging the reduction-aware equivalent rather than a single branch's value. Compare
     # against a plain `Line` member — PNM wrapper members (nested parallel/series segments,
-    # 3W windings) resolve through their own `branch_admittance` methods, not the single-arg
-    # physical-branch form.
+    # 3W windings) resolve through their own `branch_admittance` methods, not the
+    # physical-branch one.
     members = collect(chain)
     @test length(members) >= 2
     line_members = filter(m -> m isa PSY.Line, members)
     if !isempty(line_members)
-        member_b = PNM.branch_admittance(line_members[1]).b
+        member_b = PNM.branch_admittance(line_members[1], nr).b
         @test !isapprox(resolved.b, member_b; rtol = 1e-3)
     end
 
@@ -225,7 +225,7 @@ end
     )
 
     w = PNM.ThreeWindingTransformerCircuit(transformer3w, 1)
-    adm = PNM.branch_admittance(w)
+    adm = PNM.branch_admittance(w, PNM.NetworkReductionData())
 
     r = PNM.get_equivalent_r(w)
     x = PNM.get_equivalent_x(w)
@@ -250,7 +250,7 @@ end
     @test arcs[2].arc == PSY.get_arc(circuits[2])
     @test arcs[3].arc == PSY.get_arc(circuits[3])
     # Circuit admittance computed from the decomposition matches the standalone helper.
-    @test PNM.branch_admittance(arcs[1].circuit).b ≈ adm.b
+    @test PNM.branch_admittance(arcs[1].circuit, PNM.NetworkReductionData()).b ≈ adm.b
 end
 
 @testset "PST-3W winding series susceptance (pinned behavior)" begin
@@ -342,7 +342,7 @@ end
     winding1 = PSY.get_circuits(t3w)[1]
     PSY.set_tap!(winding1, 1.05)
     w1 = PNM.ThreeWindingTransformerCircuit(t3w, 1)
-    adm = PNM.branch_admittance(w1)
+    adm = PNM.branch_admittance(w1, PNM.NetworkReductionData())
     @test adm.tap == 1.05
     @test adm.tap != 1.0
 end
@@ -502,7 +502,7 @@ end
         @test isapprox(Y12, -Y_t; atol = 1e-12)
         @test isapprox(Y21, -Y_t; atol = 1e-12)
 
-        adm = PNM.branch_admittance(t)
+        adm = PNM.branch_admittance(t, PNM.NetworkReductionData())
         @test adm.g_fr == (fr ? real(y_shunt) : 0.0)
         @test adm.b_fr == (fr ? imag(y_shunt) : 0.0)
         @test adm.g_to == (to ? real(y_shunt) : 0.0)
@@ -554,7 +554,7 @@ end
         @test isapprox(Y11, Y_t + (fr ? y_shunt : 0.0 + 0.0im); atol = 1e-12)
         @test isapprox(Y22, Y_t + (to ? y_shunt : 0.0 + 0.0im); atol = 1e-12)
 
-        adm = PNM.branch_admittance(w1)
+        adm = PNM.branch_admittance(w1, PNM.NetworkReductionData())
         @test adm.g_fr == (fr ? real(y_shunt) : 0.0)
         @test adm.b_fr == (fr ? imag(y_shunt) : 0.0)
         @test adm.g_to == (to ? real(y_shunt) : 0.0)
@@ -568,7 +568,7 @@ end
                 PNM.ybus_branch_entries(wc, PNM.NetworkReductionData())
             @test isapprox(c11, Y_t; atol = 1e-12)
             @test isapprox(c22, Y_t; atol = 1e-12)
-            cadm = PNM.branch_admittance(wc)
+            cadm = PNM.branch_admittance(wc, PNM.NetworkReductionData())
             @test cadm.g_fr == 0.0 && cadm.b_fr == 0.0
             @test cadm.g_to == 0.0 && cadm.b_to == 0.0
         end
@@ -625,7 +625,7 @@ end
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     line = first(PSY.get_components(PSY.Line, sys))
     eb = PNM.equivalent_branch(line)
-    adm = PNM.branch_admittance(line)
+    adm = PNM.branch_admittance(line, PNM.NetworkReductionData())
     ys = inv(complex(PNM.get_equivalent_r(eb), PNM.get_equivalent_x(eb)))
     @test adm.g == real(ys)
     @test adm.b == imag(ys)

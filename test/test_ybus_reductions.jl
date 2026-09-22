@@ -333,7 +333,14 @@ end
     @test PNM.get_equivalent_r(eb) ≈ 0.0 atol = 1e-12
     @test PNM.get_equivalent_x(eb) ≈ min_x_eps atol = 1e-12
 
-    adm = PNM.branch_admittance(t; min_x_eps = min_x_eps)
+    nrd_configured = PNM.NetworkReductionData(;
+        reductions = PNM.ReductionContainer(;
+            zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+                minimum_retained_impedance = min_x_eps,
+            ),
+        ),
+    )
+    adm = PNM.branch_admittance(t, nrd_configured)
     @test isfinite(adm.g)
     @test isfinite(adm.b)
     @test adm.b ≈ -1.0 / min_x_eps atol = 1e-6
