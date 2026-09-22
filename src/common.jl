@@ -476,26 +476,29 @@ function _symmetric_arc_dc_susceptance(Y_ft::Complex)
     return 1 / x_eq
 end
 
-# The susceptance `BA_Matrix` assigns to `segment`'s arc. `BA_Matrix` reads the summed Ybus
-# off-diagonal, which carries every branch on the bus pair — an anti-parallel twin is a
-# separate arc key but lands in the same Ybus entry — so the two-port is accumulated over
-# every forward-map entry on the pair, in `segment`'s frame. Taking the segment's own
-# two-port instead makes the outage deltas and BA disagree on exactly such a pair. A
-# phase-shifting arc (asymmetric off-diagonals) takes the phase-independent component value,
-# matching `_arc_component_susceptance`.
+# The susceptance `BA_Matrix` assigns to one arc key, and the reference a full-outage
+# `delta_b` on that key is measured against. It is the entry's OWN two-port, never the summed
+# Ybus off-diagonal: an anti-parallel twin holds a separate arc key on the same bus pair, so
+# the Ybus entry carries both twins and reading it gives each of the two columns the pair's
+# total. A phase-shifting arc (asymmetric off-diagonals) takes the phase-independent
+# component value, since α is applied separately as an injection.
 function _ba_arc_susceptance(segment::PSY.ACTransmission, nr::NetworkReductionData)
-    arc = get_arc_tuple(segment, nr)
-    entries = _get_branch_map_entries(
-        get_direct_branch_map(nr),
-        get_parallel_branch_map(nr),
-        arc,
-    )
-    _, Y12, Y21, _ = _subset_two_port((entry for (_, entry, _) in entries), arc, nr)
+    _, Y12, Y21, _ = ybus_branch_entries(segment, nr)
     Y_ft = -Y12
     Y_tf = -Y21
     Y_ft != Y_tf && return _finite_series_susceptance(segment, nr)
     return _symmetric_arc_dc_susceptance(Y_ft)
 end
+
+# A chain that stands alone on its arc takes its equivalent susceptance from components, which
+# has lower DC error than its Kron-reduced two-port. Sibling chains sharing an endpoint pair
+# are grouped into a `BranchesParallel` instead and take the blanket method, the same
+# treatment any physical parallel group gets.
+_ba_arc_susceptance(segment::BranchesSeries, nr::NetworkReductionData) =
+    _finite_series_susceptance(segment, nr)
+
+_ba_arc_susceptance(nr::NetworkReductionData, arc::Tuple{Int, Int}) =
+    _ba_arc_susceptance(first(_resolve_arc_entry(nr, arc)), nr)
 
 """
     get_effective_series_susceptance(segment, nr::NetworkReductionData) -> Float64
@@ -616,7 +619,7 @@ Equivalent DC phase-shift angle α of the retained `arc`, resolved through which
 reduction map owns it and oriented to match `arc` (a reverse-keyed hit negates). Total on
 every mapped arc -- added Ward-equivalent arcs shift by 0.0. Throws if `arc` is in no map.
 This is the α that `BA_Matrix` deliberately excludes from its susceptances
-(`_arc_component_susceptance`); the DC solver applies it as the injection
+(`_ba_arc_susceptance`); the DC solver applies it as the injection
 [`arc_dc_shift_injection`](@ref).
 """
 function arc_dc_phase_shift(nr::NetworkReductionData, arc::Tuple{Int, Int})

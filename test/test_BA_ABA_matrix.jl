@@ -172,8 +172,8 @@ end
         bus_lookup = PNM.get_bus_lookup(ybus)
         direct_map = PNM.get_direct_branch_map(nr)
         for arc in PNM.get_arc_axis(nr)
-            b_component = PNM._arc_component_susceptance(nr, arc)
-            isnan(b_component) && continue          # arc owned by no direct/parallel map
+            entry = first(PNM._resolve_arc_entry(nr, arc))
+            b_component = PNM._finite_series_susceptance(entry, nr)
             @test isfinite(b_component)
             i = PNM.get_bus_index(arc[1], bus_lookup, nr)
             j = PNM.get_bus_index(arc[2], bus_lookup, nr)
@@ -214,7 +214,7 @@ end
     end
 end
 
-@testset "BA: an unresolvable phase-shifting arc errors instead of dropping out" begin
+@testset "BA: an unresolvable arc errors instead of dropping out" begin
     # A not-found lookup used to yield `NaN`, which the caller turned into `b = 0.0` — a real
     # electrical statement (r > 0, x = 0 branches legitimately have zero DC coupling) and so
     # indistinguishable from the arc silently leaving the DC network.
@@ -223,5 +223,5 @@ end
     absent = (typemax(Int) - 1, typemax(Int))
     @test !haskey(PNM.get_direct_branch_map(nr), absent)
     @test !haskey(PNM.get_parallel_branch_map(nr), absent)
-    @test_throws ErrorException PNM._arc_component_susceptance(nr, absent)
+    @test_throws ErrorException PNM._ba_arc_susceptance(nr, absent)
 end

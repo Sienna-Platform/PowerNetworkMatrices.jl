@@ -81,25 +81,6 @@ function BA_Matrix(sys::PSY.System;
     )
 end
 
-# Phase-independent DC susceptance for a phase-shifting arc: read from components so α is
-# excluded, since the shift is applied separately as an injection (`arc_dc_shift_injection`).
-function _arc_component_susceptance(nr_data::NetworkReductionData, arc::Tuple{Int, Int})
-    # `_finite_series_susceptance` substitutes the reduction's minimum retained impedance for an
-    # `r == x == 0` shifter, whose raw `1/x` is `Inf`, so every value returned here is finite.
-    min_x_eps = _minimum_retained_impedance(nr_data)
-    direct_map = get_direct_branch_map(nr_data)
-    haskey(direct_map, arc) && return _finite_series_susceptance(direct_map[arc], min_x_eps)
-    parallel_map = get_parallel_branch_map(nr_data)
-    haskey(parallel_map, arc) &&
-        return _finite_series_susceptance(parallel_map[arc], min_x_eps)
-    # A zero susceptance is a real electrical statement (r > 0, x = 0), so answering one for an
-    # unresolvable arc would delete the arc from the DC network with no trace.
-    return error(
-        "Phase-shifting arc $(arc) is in neither the direct nor the parallel branch map, so " *
-        "BA_Matrix has no component susceptance to assign it.",
-    )
-end
-
 # The DC model reads phase-shifting arcs and standalone series chains from component
 # reactances, which impedance correction does not touch; every other arc inherits the
 # correction through Ybus. Warn about the mixed result until it is validated against PSS/E.
@@ -139,25 +120,11 @@ function BA_Matrix(ybus::Ybus)
     for (ix_arc, arc) in enumerate(arc_ax)
         ix_from_bus = get_bus_index(arc[1], bus_lookup, nr)
         ix_to_bus = get_bus_index(arc[2], bus_lookup, nr)
-        # A chain that stands alone in series_branch_map takes its equivalent susceptance from
-        # components, which has lower DC error than the summed Ybus entry. Sibling chains
-        # sharing an endpoint pair are grouped into parallel_branch_map instead, so
-        # is_arc_in_series_map is false for them and they fall through to the general
-        # Y_ft/Y_tf handling below, the same treatment any physical parallel group gets.
-        if is_arc_in_series_map(nr_data, arc)
-            b = _finite_series_susceptance(get_mapped_series_branch(nr_data, arc), nr_data)
-        else
-            Y_ft = -1 * ybus.data[ix_from_bus, ix_to_bus]
-            Y_tf = -1 * ybus.data[ix_to_bus, ix_from_bus]
-            if Y_ft != Y_tf
-                # Asymmetric off-diagonals => a phase-shifting transformer. The Ybus-derived
-                # susceptance would fold its angle α into b, so take the phase-independent
-                # component susceptance instead.
-                b = _arc_component_susceptance(nr_data, arc)
-            else
-                b = _symmetric_arc_dc_susceptance(Y_ft)
-            end
-        end
+        # Resolved from the arc's own branch-map entry, not from `ybus.data` at the bus pair:
+        # an anti-parallel twin is a separate arc key on the same pair, so the Ybus
+        # off-diagonal carries both and reading it gave each of the two columns the pair's
+        # total, which `ABA = Aᵀ·BA` then summed a second time.
+        b = _ba_arc_susceptance(nr_data, arc)
         # Stamped into BA it would spread through every downstream factorization, untraceable.
         # A legitimately zero susceptance is finite and reaches here unaffected.
         if !isfinite(b)

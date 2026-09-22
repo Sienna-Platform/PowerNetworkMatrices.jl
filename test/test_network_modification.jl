@@ -381,7 +381,7 @@ end
     end
 end
 
-@testset "NetworkModification: arc susceptance sums every branch on the bus pair" begin
+@testset "NetworkModification: arc susceptance is the key's own, not the bus pair's" begin
     sys = build_antiparallel_chain_segment_system()
     y = Ybus(sys)
     nr = PNM.get_network_reduction_data(y)
@@ -395,13 +395,14 @@ end
     for arc in pair_arcs
         ix = PNM.get_arc_lookup(vptdf)[arc]
         entry = PNM.get_direct_branch_map(nr)[arc]
-        # The helper's contract is what BA holds for the arc, and BA reads the summed Ybus
-        # off-diagonal, which carries the anti-parallel twin too.
+        # One BA column is one arc key's own participation in the DC network. Reading the
+        # summed Ybus off-diagonal gave both twins the pair total, which ABA counted twice.
         @test isapprox(
             PNM._ba_arc_susceptance(entry, nr),
             ba.data[bus_lookup[arc[1]], ix];
             rtol = 1e-5,
         )
+        @test isapprox(PNM._ba_arc_susceptance(entry, nr), 1 / PSY.get_x(entry, PSY.SU))
 
         # With the two sides agreeing, a full-arc outage negates the π-model rather than
         # scaling it by the ratio of the pair total to one twin.
@@ -503,20 +504,22 @@ end
     pair_arcs = [a for a in PNM.get_arc_axis(nr) if Set(a) == Set([1, 2])]
     @test length(pair_arcs) == 2
 
+    # Each member alone is asymmetric; the pair read in one shared frame is symmetric only
+    # because `_subset_two_port` transposes the anti-frame twin. Flipping that transpose
+    # leaves the sum asymmetric, and nothing else in the suite notices.
+    entries = [PNM.get_direct_branch_map(nr)[a] for a in pair_arcs]
+    _, pair_Y12, pair_Y21, _ = PNM._subset_two_port(entries, first(pair_arcs), nr)
+    @test isapprox(pair_Y12, pair_Y21)
+
     for arc in pair_arcs
         entry = PNM.get_direct_branch_map(nr)[arc]
         _, own_Y12, own_Y21, _ = PNM.ybus_branch_entries(entry, nr)
-        # Each member alone is asymmetric, so reading a member in the wrong frame changes
-        # whether the pair looks like a phase shifter, and with it which susceptance rule
-        # applies. Reading only the member's own two-port picks the component value (5.0);
-        # summing the two in one frame gives the tap- and angle-aware value BA holds.
         @test own_Y12 != own_Y21
-        @test !isapprox(
+        # A shifter's own column takes the phase-independent component value, and it is that
+        # key's alone: summing the pair here gave both keys the pair total.
+        @test isapprox(
+            PNM._ba_arc_susceptance(entry, nr),
             PNM._finite_series_susceptance(entry, nr),
-            ba.data[
-                bus_lookup[arc[1]],
-                PNM.get_arc_lookup(vptdf)[arc],
-            ],
         )
         @test isapprox(
             PNM._ba_arc_susceptance(entry, nr),
