@@ -58,13 +58,16 @@ function check_arc_validity(arc::PSY.Arc, name::String)
     return
 end
 
-function get_arc_tuple(arc::PSY.Arc, nr::NetworkReductionData)
+function _remap_pair(nr::NetworkReductionData, bus_pair::Tuple{Int, Int})
     reverse_bus_search_map = get_reverse_bus_search_map(nr)
-    arc_tuple_original = get_arc_tuple(arc)
     return (
-        get(reverse_bus_search_map, arc_tuple_original[1], arc_tuple_original[1]),
-        get(reverse_bus_search_map, arc_tuple_original[2], arc_tuple_original[2]),
+        get(reverse_bus_search_map, bus_pair[1], bus_pair[1]),
+        get(reverse_bus_search_map, bus_pair[2], bus_pair[2]),
     )
+end
+
+function get_arc_tuple(arc::PSY.Arc, nr::NetworkReductionData)
+    return _remap_pair(nr, get_arc_tuple(arc))
 end
 
 function get_arc_tuple(br::PSY.ACTransmission, nr::NetworkReductionData)
@@ -74,11 +77,7 @@ end
 # Canonical orientation is the stored `arc_key` (set at construction), remapped through `nr`;
 # anti-parallel members may exist post-merge, so do not rely on member order.
 function get_arc_tuple(br::AbstractReductionAggregate, nr::NetworkReductionData)
-    reverse_bus_search_map = get_reverse_bus_search_map(nr)
-    return (
-        get(reverse_bus_search_map, br.arc_key[1], br.arc_key[1]),
-        get(reverse_bus_search_map, br.arc_key[2], br.arc_key[2]),
-    )
+    return _remap_pair(nr, get_arc_tuple(br))
 end
 
 function get_arc_tuple(br::AbstractReductionAggregate)
