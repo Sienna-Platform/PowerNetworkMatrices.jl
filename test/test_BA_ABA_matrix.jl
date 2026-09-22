@@ -225,3 +225,56 @@ end
     @test !haskey(PNM.get_parallel_branch_map(nr), absent)
     @test_throws ErrorException PNM._ba_arc_susceptance(nr, absent)
 end
+
+@testset "BA/ABA: an anti-parallel pair is counted once per arc key" begin
+    # Both twins hold their own key in `direct_branch_map` and both survive to BA when no
+    # reduction folds bus 10 away. Reading `ybus.data` at the bus pair gave each of the two
+    # columns the pair total, and `ABA = Aᵀ·BA` then summed it a second time.
+    sys = build_antiparallel_chain_segment_system()
+    # (from, to, x), exactly as the fixture writes them.
+    edges = [
+        (1, 2, 0.05), (2, 3, 0.06), (3, 4, 0.07), (4, 1, 0.08), (2, 4, 0.09),
+        (1, 10, 0.10), (10, 3, 0.11), (3, 10, 0.17),
+    ]
+    ybus = Ybus(sys)
+    nr = get_network_reduction_data(ybus)
+    ba = BA_Matrix(ybus)
+    aba = ABA_Matrix(ybus)
+    bus_lookup, arc_lookup = PNM.get_lookup(ba)
+
+    @test length([a for a in PNM.get_arc_axis(nr) if Set(a) == Set([10, 3])]) == 2
+    for (f, t, x) in edges
+        @test ba.data[bus_lookup[f], arc_lookup[(f, t)]] ≈ 1 / x
+        @test ba.data[bus_lookup[t], arc_lookup[(f, t)]] ≈ -1 / x
+    end
+
+    # Independent oracle: B' assembled straight from the fixture's reactances.
+    bus_ax = PNM.get_bus_axis(ba)
+    ix = Dict(b => i for (i, b) in enumerate(bus_ax))
+    B = zeros(length(bus_ax), length(bus_ax))
+    for (f, t, x) in edges
+        B[ix[f], ix[f]] += 1 / x
+        B[ix[t], ix[t]] += 1 / x
+        B[ix[f], ix[t]] -= 1 / x
+        B[ix[t], ix[f]] -= 1 / x
+    end
+    @test aba[10, 3] ≈ -(1 / 0.11 + 1 / 0.17)
+    ref_bus = only(PNM.get_ref_bus(aba))
+    non_ref = [b for b in bus_ax if b != ref_bus]
+    for p in non_ref, q in non_ref
+        @test aba[p, q] ≈ B[ix[p], ix[q]]
+    end
+
+    # DC sensitivities off the same oracle: θ = B'⁻¹ p with the reference angle pinned to 0.
+    X = zeros(length(bus_ax), length(bus_ax))
+    keep = [ix[b] for b in non_ref]
+    X[keep, keep] = inv(B[keep, keep])
+    ptdf = PTDF(sys)
+    for (f, t, x) in edges, n in bus_ax
+        @test isapprox(
+            getindex(ptdf, (f, t), n),
+            (X[ix[f], ix[n]] - X[ix[t], ix[n]]) / x;
+            atol = 1e-8,
+        )
+    end
+end
