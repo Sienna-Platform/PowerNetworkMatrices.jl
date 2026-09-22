@@ -2,8 +2,14 @@
 # `delta_b` comes through the `ComplexF32` Ybus, so the two sides agree only to Float32
 # precision; `sqrt(eps(Float32))` sits well above that noise and well below any real partial
 # outage ratio (an identical double circuit is 0.5).
+# Magnitudes, because the two sides carry different sign conventions: every `delta_b` read
+# off `_get_arc_susceptances` is `-|b|` (`_extract_arc_susceptances` takes `abs` of the BA
+# column, and the whole Woodbury layer works in that space), while `_ba_arc_susceptance` and
+# the chain arithmetic are signed. They agree until an arc has net negative reactance — a 3W
+# star leg, a series-compensated line — and then a signed test calls a full outage partial
+# and `delta_b / b_arc` comes out at `+1`, doubling on the AC side what the DC side removed.
 _is_full_outage(delta_b::Float64, b_arc::Float64) =
-    isapprox(delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = sqrt(eps(Float32)))
+    isapprox(abs(delta_b), abs(b_arc); atol = YBUS_DELTA_TOL, rtol = sqrt(eps(Float32)))
 
 # Negated Pi-model entries: the delta that cancels the arc's contribution (full outage).
 function _negated_pi_model(entries::NTuple{4, <:Complex})::NTuple{4, YBUS_ELTYPE}
@@ -88,14 +94,17 @@ _member_outage_delta_b(
 # An aggregate member is representable on the group arc only when it opens entirely, since
 # `_member_outage_ybus_delta` can only negate a member's whole Pi-model. Subtypes that can
 # answer refine this; the rest say so rather than reporting the whole member as lost.
-_member_outage_delta_b(
+function _member_outage_delta_b(
     member::AbstractReductionAggregate,
     branch::PSY.ACTransmission,
     ::NetworkReductionData,
-)::Float64 = error(
-    "Tripping $(typeof(branch)) $(get_name(branch)) leaves $(get_name(member)) partly in " *
-    "service, and a partial Pi-model delta is not supported on the composite arc it sits on.",
-)
+)::Float64
+    return error(
+        "Tripping $(typeof(branch)) $(get_name(branch)) leaves $(get_name(member)) partly " *
+        "in service, and a partial Pi-model delta is not supported on the composite arc " *
+        "it sits on.",
+    )
+end
 
 # A chain opens when any segment loses all of its susceptance, which is what tripping a
 # single-branch segment does. The same limit `_series_arc_ybus_delta` enforces on a chain
@@ -130,20 +139,20 @@ function _direct_arc_ybus_delta(
     if _is_full_outage(delta_b, b_arc)
         return _negated_pi_model(entries)
     end
-    return _scaled_pi_model(entries, delta_b / b_arc)
+    # `delta_b` is a magnitude-space change, so the fraction is taken against `|b_arc|`.
+    return _scaled_pi_model(entries, delta_b / abs(b_arc))
 end
 
 # A circuit is in service or out, so only a full outage is meaningful on a star-leg arc and
 # the whole Pi-model is cancelled rather than scaled. The Δb still has to say so: scaling the
 # DC side by a partial Δb while cancelling the entire AC side describes two different
-# contingencies. `_get_arc_susceptances` reports magnitudes and a star leg's susceptance is
-# routinely negative, so the comparison is on `|b|`.
+# contingencies.
 function _direct_arc_ybus_delta(
     tr::ThreeWindingTransformerCircuit,
     nr::NetworkReductionData,
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
-    b_arc = abs(_ba_arc_susceptance(tr, nr))
+    b_arc = _ba_arc_susceptance(tr, nr)
     if !_is_full_outage(delta_b, b_arc)
         error(
             "Partial Ybus delta is not supported on the three-winding transformer " *

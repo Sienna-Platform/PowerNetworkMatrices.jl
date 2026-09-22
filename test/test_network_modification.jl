@@ -450,12 +450,184 @@ end
 
     # A branch nested below the group is not a group member, and the shift injection says so
     # instead of answering with a sign-flipped angle.
-    err = try
-        PNM._member_shift_injection(bp, nr, leaf)
-        nothing
-    catch e
-        e
+    @test_throws ErrorException PNM._member_shift_injection(bp, nr, leaf)
+    @test_throws "L_1_10" PNM._member_shift_injection(bp, nr, leaf)
+end
+
+# Two identical phase shifters on the same bus pair, one written each way. Their individual
+# two-ports are asymmetric, but the pair's summed off-diagonals are equal, so the pair is
+# symmetric only when each member is read in the shared arc frame.
+function _mk_antiparallel_identical_pst_system(; alpha = 0.15, x = 0.2, tap = 1.0)
+    sys, buses = _mk_bus_system(3)
+    function _add_pst!(name, from, to)
+        arc = Arc(; from = buses[from], to = buses[to])
+        add_component!(sys, arc)
+        add_component!(
+            sys,
+            PSY.TwoWindingTransformer(;
+                name = name,
+                circuit = PSY.TransformerCircuit(;
+                    arc = arc, tap = tap, α = alpha, available = true,
+                    active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
+                    base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = x,
+                ),
+                magnetizing_shunt = Complex(0.0, 0.0),
+            ),
+        )
+        return nothing
     end
-    @test err isa ErrorException
-    @test occursin("L_1_10", err.msg)
+    _add_pst!("PST_A", 1, 2)
+    _add_pst!("PST_B", 2, 1)
+    arc = Arc(; from = buses[2], to = buses[3])
+    add_component!(sys, arc)
+    add_component!(
+        sys,
+        Line(;
+            name = "L23", available = true, active_power_flow = 0.0,
+            reactive_power_flow = 0.0, arc = arc, r = 0.0, x = 0.1,
+            b = (from = 0.0, to = 0.0), rating = 1.0,
+            angle_limits = (min = -1.5, max = 1.5),
+        ),
+    )
+    return sys
+end
+
+@testset "NetworkModification: anti-parallel pair is summed in the shared arc frame" begin
+    sys = _mk_antiparallel_identical_pst_system()
+    y = Ybus(sys)
+    nr = PNM.get_network_reduction_data(y)
+    ba = BA_Matrix(y)
+    bus_lookup = PNM.get_bus_lookup(ba)
+    vptdf = VirtualPTDF(sys)
+
+    pair_arcs = [a for a in PNM.get_arc_axis(nr) if Set(a) == Set([1, 2])]
+    @test length(pair_arcs) == 2
+
+    for arc in pair_arcs
+        entry = PNM.get_direct_branch_map(nr)[arc]
+        _, own_Y12, own_Y21, _ = PNM.ybus_branch_entries(entry, nr)
+        # Each member alone is asymmetric, so reading a member in the wrong frame changes
+        # whether the pair looks like a phase shifter, and with it which susceptance rule
+        # applies. Reading only the member's own two-port picks the component value (5.0);
+        # summing the two in one frame gives the tap- and angle-aware value BA holds.
+        @test own_Y12 != own_Y21
+        @test !isapprox(
+            PNM._finite_series_susceptance(entry, nr),
+            ba.data[
+                bus_lookup[arc[1]],
+                PNM.get_arc_lookup(vptdf)[arc],
+            ],
+        )
+        @test isapprox(
+            PNM._ba_arc_susceptance(entry, nr),
+            ba.data[bus_lookup[arc[1]], PNM.get_arc_lookup(vptdf)[arc]];
+            rtol = 1e-5,
+        )
+
+        mod = NetworkModification(vptdf, arc)
+        am = only(mod.arc_modifications)
+        Y11, Y12, Y21, Y22 = PNM.ybus_branch_entries(entry, nr)
+        @test am.delta_y11 ≈ PNM.YBUS_ELTYPE(-Y11)
+        @test am.delta_y12 ≈ PNM.YBUS_ELTYPE(-Y12)
+        @test am.delta_y21 ≈ PNM.YBUS_ELTYPE(-Y21)
+        @test am.delta_y22 ≈ PNM.YBUS_ELTYPE(-Y22)
+    end
+end
+
+@testset "NetworkModification: full outage of a negative-susceptance arc negates its Pi-model" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    line = PSY.get_component(Line, sys, "Line10")
+    PSY.set_r!(line, 0.0 * PSY.SU)
+    PSY.set_x!(line, -0.1 * PSY.SU)
+    vptdf = VirtualPTDF(sys)
+    nr = PNM.get_network_reduction_data(vptdf)
+    arc = PNM.get_arc_tuple(line, nr)
+
+    # `_extract_arc_susceptances` takes the magnitude of the BA column, so every Δb reaching
+    # the outage handlers is `-|b|` while the arc's own susceptance keeps its sign. The two
+    # conventions only differ on an arc with net negative reactance, which is what makes
+    # this fixture bite.
+    b_arc = PNM._ba_arc_susceptance(line, nr)
+    @test b_arc < 0
+    @test PNM._get_arc_susceptances(vptdf)[PNM.get_arc_lookup(vptdf)[arc]] ≈ abs(b_arc)
+
+    mod = NetworkModification(vptdf, line)
+    am = only(mod.arc_modifications)
+    @test am.delta_b ≈ -abs(b_arc)
+    Y11, Y12, Y21, Y22 = PNM.ybus_branch_entries(line, nr)
+    @test am.delta_y11 ≈ PNM.YBUS_ELTYPE(-Y11)
+    @test am.delta_y12 ≈ PNM.YBUS_ELTYPE(-Y12)
+    @test am.delta_y21 ≈ PNM.YBUS_ELTYPE(-Y21)
+    @test am.delta_y22 ≈ PNM.YBUS_ELTYPE(-Y22)
+
+    # The Ybus the outage leaves behind has no trace of the branch. Scaling by `delta_b /
+    # b_arc` on a signed `b_arc` returns `+1`, which doubles the branch instead.
+    modified = apply_ybus_modification(Ybus(sys), mod)
+    bus_lookup = PNM.get_bus_lookup(vptdf)
+    f = bus_lookup[arc[1]]
+    t = bus_lookup[arc[2]]
+    @test abs(modified[f, t]) < 1e-5
+end
+
+# `build_two_parallel_degree_two_chains` with chain A's second segment replaced by a phase
+# shifter, so exactly one of the two sibling chains carries an angle.
+function _mk_shifted_grouped_chain_system(; alpha = 0.15, pst_x = 0.2)
+    sys = _build_degree_two_chain_system([
+        (1, 2, 0.0, 0.05, 0.0, 0.0), (2, 3, 0.0, 0.06, 0.0, 0.0),
+        (3, 4, 0.0, 0.07, 0.0, 0.0), (4, 1, 0.0, 0.08, 0.0, 0.0),
+        (2, 4, 0.0, 0.09, 0.0, 0.0),
+        (1, 10, 0.0, 0.10, 0.0, 0.0),
+        (1, 20, 0.0, 0.20, 0.0, 0.0), (20, 3, 0.0, 0.21, 0.0, 0.0),
+    ])
+    arc = Arc(;
+        from = PSY.get_component(ACBus, sys, "Bus 10"),
+        to = PSY.get_component(ACBus, sys, "Bus 3"),
+    )
+    add_component!(sys, arc)
+    add_component!(
+        sys,
+        PSY.TwoWindingTransformer(;
+            name = "PST_10_3",
+            circuit = PSY.TransformerCircuit(;
+                arc = arc, tap = 1.0, α = alpha, available = true,
+                active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
+                base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = pst_x,
+            ),
+            magnetizing_shunt = Complex(0.0, 0.0),
+        ),
+    )
+    return sys
+end
+
+@testset "NetworkModification: grouped chain loses its share of the arc shift injection" begin
+    sys = _mk_shifted_grouped_chain_system()
+    reductions = NetworkReduction[
+        DegreeTwoReduction(; reduce_reactive_power_injectors = false),
+    ]
+    vptdf = VirtualPTDF(sys; network_reductions = reductions)
+    nr = PNM.get_network_reduction_data(vptdf)
+    bp = PNM.get_parallel_branch_map(nr)[(1, 3)]
+    @test length(bp) == 2
+
+    # Only one sibling is shifted, so the whole arc injection is that chain's share. This is
+    # the independent oracle: `arc_dc_shift_injection` reaches it through the group's
+    # susceptance-weighted equivalent angle, `_member_shift_injection` through the member's
+    # own `b·α`, and the two must agree.
+    arc_injection = PNM.arc_dc_shift_injection(nr, (1, 3))
+    @test arc_injection ≈ 0.5
+    @test !iszero(arc_injection)
+
+    shifted = PSY.get_component(PSY.TwoWindingTransformer, sys, "PST_10_3")
+    unshifted = PSY.get_component(Line, sys, "L_1_20")
+
+    for leaf in (PSY.get_component(Line, sys, "L_1_10"), shifted)
+        am = only(NetworkModification(vptdf, leaf).arc_modifications)
+        @test am.delta_shift_injection ≈ -arc_injection
+        @test am.delta_b ≈ -1 / (1 / 10.0 + 1 / 5.0)
+    end
+
+    # Tripping the unshifted sibling leaves the arc's whole injection in place.
+    am = only(NetworkModification(vptdf, unshifted).arc_modifications)
+    @test iszero(am.delta_shift_injection)
+    @test am.delta_b ≈ -1 / (1 / 5.0 + 1 / (1 / 0.21))
 end

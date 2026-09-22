@@ -159,14 +159,12 @@ end
         # A winding is in service or out. A partial Δb has no meaning on a star-leg arc, and
         # silently cancelling the whole Pi-model would have the DC and AC sides describing
         # two different contingencies.
-        err = try
-            PNM._compute_arc_ybus_delta(nr, arc, -0.5 * b_arc)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ErrorException
-        @test occursin("Partial", err.msg)
-        @test occursin(PNM.get_name(winding), err.msg)
+        @test_throws ErrorException PNM._compute_arc_ybus_delta(nr, arc, -0.5 * b_arc)
+        @test_throws "Partial" PNM._compute_arc_ybus_delta(nr, arc, -0.5 * b_arc)
+        @test_throws PNM.get_name(winding) PNM._compute_arc_ybus_delta(
+            nr,
+            arc,
+            -0.5 * b_arc,
+        )
     end
 end
