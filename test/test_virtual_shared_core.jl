@@ -63,3 +63,38 @@
         end
     end
 end
+
+@testset "VirtualFactorCore: concurrent first access publishes a complete vector" begin
+    # The lazy fields are published by a sequentially-consistent store to their
+    # readiness flag, so a reader either waits or sees the finished vector. Before
+    # that, the fast path tested `!isempty`, which `resize!` satisfies while the
+    # contents are still uninitialized (`UndefRefError` for the vector-of-vectors).
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    core = PNM.get_core(VirtualPTDF(Ybus(sys)))
+    reference_diag = PNM._get_PTDF_A_diag(
+        core.K,
+        core.BA,
+        core.A,
+        PNM._ref_bus_positions(core),
+    )
+
+    n_tasks = 8
+    diags = Vector{Vector{Float64}}(undef, n_tasks)
+    susceptances = Vector{Vector{Vector{Float64}}}(undef, n_tasks)
+    tasks = map(1:n_tasks) do i
+        Threads.@spawn begin
+            diags[i] = PNM.get_PTDF_A_diag(core)
+            susceptances[i] = PNM.get_branch_susceptances_by_arc(core)
+        end
+    end
+    foreach(wait, tasks)
+
+    for i in 1:n_tasks
+        @test diags[i] === core.PTDF_A_diag
+        @test susceptances[i] === core.branch_susceptances_by_arc
+        @test isapprox(diags[i], reference_diag; atol = 1e-12)
+        @test all(w -> all(isfinite, w), susceptances[i])
+    end
+    @test length(core.PTDF_A_diag) == length(PNM.get_arc_axis(core))
+    @test length(core.branch_susceptances_by_arc) == length(PNM.get_arc_axis(core))
+end

@@ -41,8 +41,18 @@ single-scratch model.
 - `system_uuid::Union{Base.UUID, Nothing}`: originating system UUID.
 - `PTDF_A_diag::Vector{Float64}`: raw `H[e,e]`; empty until first
   `get_PTDF_A_diag(core)`.
+- `PTDF_A_diag_ready::Threads.Atomic{Bool}`: publication flag for `PTDF_A_diag`.
 - `branch_susceptances_by_arc::Vector{Vector{Float64}}`: per-branch susceptances;
   empty until first `get_branch_susceptances_by_arc(core)`.
+- `branch_susceptances_ready::Threads.Atomic{Bool}`: publication flag for
+  `branch_susceptances_by_arc`.
+
+# Publication of the lazy fields
+Both lazy vectors are filled in place under `solver_lock` and published by a
+sequentially-consistent store to their `Threads.Atomic{Bool}` flag, which is the
+only thing the lock-free fast path tests. Reading emptiness instead would let a
+reader observe the vector between `resize!` and the copy — uninitialized
+`Float64`s, or undefined references for the `Vector{Vector{Float64}}`.
 """
 struct VirtualFactorCore{Ax, L <: NTuple{2, Dict}, K}
     K::K
@@ -61,7 +71,9 @@ struct VirtualFactorCore{Ax, L <: NTuple{2, Dict}, K}
     solver_lock::ReentrantLock
     system_uuid::Union{Base.UUID, Nothing}
     PTDF_A_diag::Vector{Float64}
+    PTDF_A_diag_ready::Threads.Atomic{Bool}
     branch_susceptances_by_arc::Vector{Vector{Float64}}
+    branch_susceptances_ready::Threads.Atomic{Bool}
 end
 
 # --- Accessors (the wrappers forward to these) ---
@@ -110,22 +122,24 @@ end
 Return the raw diagonal `H[e, e]` of `PTDF · A`, computing it (one solve per
 arc) on first access and caching it on the core. Subsequent calls — including
 from other wrappers sharing this core — return the cached vector.
+
+The lock-free fast path tests `PTDF_A_diag_ready`, never the vector's length: the
+flag is stored only after the vector is fully populated, so a concurrent reader
+sees either "not ready" or the complete value.
 """
 function get_PTDF_A_diag(c::VirtualFactorCore)
-    diag = c.PTDF_A_diag
-    !isempty(diag) && return diag
+    c.PTDF_A_diag_ready[] && return c.PTDF_A_diag
     @lock c.solver_lock begin
-        diag = c.PTDF_A_diag
-        !isempty(diag) && return diag
+        c.PTDF_A_diag_ready[] && return c.PTDF_A_diag
         n_arcs = length(c.axes[1])
         @info "Computing PTDF_A_diag on first access ($n_arcs arcs)."
         t0 = time_ns()
         new_diag = _get_PTDF_A_diag(c.K, c.BA, c.A, _ref_bus_positions(c))
-        resize!(diag, length(new_diag))
-        copyto!(diag, new_diag)
+        append!(c.PTDF_A_diag, new_diag)
         elapsed = (time_ns() - t0) / 1e9
         @info "Computed PTDF_A_diag in $(round(elapsed; digits = 2)) s (cached)."
-        return diag
+        c.PTDF_A_diag_ready[] = true
+        return c.PTDF_A_diag
     end
 end
 
@@ -136,17 +150,15 @@ Return the per-branch susceptances for each arc, computing them on first access
 and caching them on the core.
 """
 function get_branch_susceptances_by_arc(c::VirtualFactorCore)
-    bs = c.branch_susceptances_by_arc
-    !isempty(bs) && return bs
+    c.branch_susceptances_ready[] && return c.branch_susceptances_by_arc
     @lock c.solver_lock begin
-        bs = c.branch_susceptances_by_arc
-        !isempty(bs) && return bs
+        c.branch_susceptances_ready[] && return c.branch_susceptances_by_arc
         new_bs = _extract_branch_susceptances_by_arc(
             c.BA, c.axes[1], get_network_reduction_data(c),
         )
-        resize!(bs, length(new_bs))
-        copyto!(bs, new_bs)
-        return bs
+        append!(c.branch_susceptances_by_arc, new_bs)
+        c.branch_susceptances_ready[] = true
+        return c.branch_susceptances_by_arc
     end
 end
 
@@ -212,6 +224,8 @@ function VirtualFactorCore(
         ReentrantLock(),
         system_uuid,
         Float64[],
+        Threads.Atomic{Bool}(false),
         Vector{Vector{Float64}}(),
+        Threads.Atomic{Bool}(false),
     )
 end
