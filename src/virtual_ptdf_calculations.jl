@@ -217,18 +217,11 @@ function VirtualPTDF(
         dist_slack_vector = redistribute_dist_slack(dist_slack, core)
     end
 
-    if isempty(persistent_arcs)
-        empty_cache =
-            RowCache(max_cache_size * MiB, Set{Int}(), length(bus_ax) * sizeof(Float64))
-    else
-        init_persistent_dict = Set{Int}(look_up[1][k] for k in persistent_arcs)
-        empty_cache =
-            RowCache(
-                max_cache_size * MiB,
-                init_persistent_dict,
-                length(bus_ax) * sizeof(Float64),
-            )
-    end
+    empty_cache = RowCache(
+        max_cache_size * MiB,
+        Set{Int}(look_up[1][k] for k in persistent_arcs),
+        length(bus_ax) * sizeof(Float64),
+    )
 
     if !isempty(dist_slack_vector)
         dist_slack_normalized = dist_slack_vector / sum(dist_slack_vector)

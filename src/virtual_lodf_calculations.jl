@@ -200,18 +200,11 @@ function VirtualLODF(
     end
 
     bus_ax = core.axes[2]
-    if isempty(persistent_arcs)
-        empty_cache =
-            RowCache(max_cache_size * MiB, Set{Int}(), length(bus_ax) * sizeof(Float64))
-    else
-        init_persistent_dict = Set{Int}(look_up[1][k] for k in persistent_arcs)
-        empty_cache =
-            RowCache(
-                max_cache_size * MiB,
-                init_persistent_dict,
-                length(bus_ax) * sizeof(Float64),
-            )
-    end
+    empty_cache = RowCache(
+        max_cache_size * MiB,
+        Set{Int}(look_up[1][k] for k in persistent_arcs),
+        length(bus_ax) * sizeof(Float64),
+    )
 
     return VirtualLODF(
         core,
