@@ -427,14 +427,25 @@ function add_branch_entries_to_indexing_maps!(
     return
 end
 
-"""Ybus 2x2 for any single branch — line, Ward equivalent, or transformer circuit of either
-arity — exactly as the assembled matrices carry it. The π-model comes from
-[`equivalent_branch`](@ref), the single source of truth: `nr` supplies both the impedance
-correction and the zero-impedance substitute reactance, so there is no `nr`-less form. A
-caller recomputing a flow from solved voltages must reach the *same* admittance that was
-stamped, and an overload that silently dropped the correction made that a numeric split
-rather than an error. Aggregates (parallel groups, series chains) have their own methods
-below: for those Ybus is the primitive and the π-model is derived from it, not the reverse."""
+"""Ybus 2x2 for any single branch on its own terms — line, Ward equivalent, or transformer
+circuit of either arity. The π-model comes from [`equivalent_branch`](@ref), the single
+source of truth, and this method carries that one's meaning: no impedance correction, and
+`min_x_eps` rather than a reduction's configured substitute reactance.
+
+Use the `nr` form below wherever an `nr` is available. A caller recomputing a flow from
+solved voltages must reach the *same* admittance that was stamped, and mixing the two forms
+over one network is a numeric split rather than an error."""
+function ybus_branch_entries(
+    br::PSY.ACTransmission;
+    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+)
+    return _equivalent_to_ybus(br, equivalent_branch(br; min_x_eps = min_x_eps))
+end
+
+"""Ybus 2x2 for any single branch exactly as the assembled matrices carry it: `nr` supplies
+both the impedance correction and the zero-impedance substitute reactance. Aggregates
+(parallel groups, series chains) have their own methods below — for those Ybus is the
+primitive and the π-model is derived from it, not the reverse."""
 function ybus_branch_entries(br::PSY.ACTransmission, nr::NetworkReductionData)
     return _equivalent_to_ybus(br, equivalent_branch(br, nr))
 end

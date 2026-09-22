@@ -59,6 +59,7 @@ struct BranchCatalog
 end
 
 get_network_reduction_data(c::BranchCatalog) = c.network_reduction_data
+get_arc_table(c::BranchCatalog) = c.arcs
 get_all_branch_maps_by_type(c::BranchCatalog) = c.maps_by_type
 get_name_to_arc_maps(c::BranchCatalog) = c.name_to_arc
 get_component_to_reduction_name_map(c::BranchCatalog) = c.component_to_entry_name

@@ -26,6 +26,7 @@ for main_path in main_paths
                     "*.superpowers*",
                     "*docs/superpowers*",
                     "*.claude/plans*",
+                    "*.claude/drafts*",
                 ],
                 # always_use_return = true. # Disabled since it throws a lot of false positives
             )

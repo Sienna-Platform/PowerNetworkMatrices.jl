@@ -166,10 +166,10 @@ tap, shift)`. This is PNM's single source of truth for branch electrical paramet
 derived from it, and [`arc_equivalent_branch`](@ref) resolves any arc to one.
 
 This method is the component's **own** π-model: no impedance correction, and `min_x_eps`
-rather than a reduction's configured substitute reactance. That is deliberate, and it is
-the only π-model accessor with that meaning — `equivalent_branch(b, nr)`,
-`branch_admittance` and `ybus_branch_entries` all take `nr` and all report what the AC
-matrices carry. (The DC side is a separate contract, and a mixed one: phase-shifting arcs
+rather than a reduction's configured substitute reactance. `branch_admittance(b)` and
+`ybus_branch_entries(b)` are the admittance and Ybus views of exactly this, for consumers
+holding a branch with no reduction in play. The `nr` forms of all three report what the AC
+matrices carry instead, and the two families must not be mixed over one network. (The DC side is a separate contract, and a mixed one: phase-shifting arcs
 and standalone series chains read component reactances, which the correction does not touch,
 while every other arc inherits it through Ybus. It warns when a correction is active, see
 `_warn_impedance_correction_in_dc`.)
@@ -266,6 +266,25 @@ function _circuit_equivalent_branch(
         sh.g_fr, sh.b_fr, sh.g_to, sh.b_to,
         PSY.get_tap(circuit), PSY.get_α(circuit),
     )
+end
+
+"""
+    branch_admittance(b; min_x_eps) -> NamedTuple
+
+π-model admittance `(g, b, g_fr, b_fr, g_to, b_to, tap, shift)` of a branch on its own terms,
+where `g + im*b == 1 / (r + im*x)` is the series admittance. The admittance-form view of
+[`equivalent_branch`](@ref) and carries that method's meaning exactly: no impedance
+correction, and `min_x_eps` rather than a reduction's configured substitute reactance.
+
+Use `branch_admittance(b, nr)` whenever an `nr` is available. This form is for consumers
+holding a branch with no reduction in play, and it must never be mixed with the corrected
+form for the same network.
+"""
+function branch_admittance(
+    b::PSY.ACTransmission;
+    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+)
+    return _to_admittance(equivalent_branch(b; min_x_eps = min_x_eps))
 end
 
 function _to_admittance(eb::EquivalentBranch)
@@ -435,9 +454,10 @@ assembled matrices carry it, where `g + im*b == 1 / (r + im*x)` is the series ad
 The admittance-form view of [`equivalent_branch`](@ref); see it for the shunt and unit
 conventions, and for what `nr` contributes.
 
-There is no `nr`-less form: an admittance that skipped `nr`'s impedance correction did not
-match what was stamped, and mutating the Ybus with it was a live bug rather than a
-hypothetical one.
+Prefer this form wherever an `nr` is in hand: an admittance that skips `nr`'s impedance
+correction does not match what was stamped, and mutating the Ybus with one was a live bug
+rather than a hypothetical one. The `nr`-less method below is the component's own π-model,
+for callers that genuinely have no reduction.
 """
 function branch_admittance(b::PSY.ACTransmission, nr::NetworkReductionData)
     return _to_admittance(equivalent_branch(b, nr))
