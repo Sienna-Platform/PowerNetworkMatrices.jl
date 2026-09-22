@@ -397,20 +397,18 @@ _impedance_correction_factor(w::ThreeWindingTransformerCircuit, nr::NetworkReduc
     )
 
 """
-    equivalent_branch(b, nr::NetworkReductionData; min_x_eps) -> EquivalentBranch
+    equivalent_branch(b, nr::NetworkReductionData) -> EquivalentBranch
 
 The π-model of any arc entry as the assembled matrices see it: [`equivalent_branch`](@ref) of
 a single branch with the impedance correction `nr` caches for it applied to the series
 impedance, or the reduction-aware equivalent of an aggregate. The `nr`-less method is the
-uncorrected component value. Correction scales the impedance rather than the admittance so
-it composes with the tap, shift and shunt terms as PSS/E defines it.
+uncorrected component value on the default epsilon; here the zero-impedance substitute is
+the reduction's configured `minimum_retained_impedance`. Correction scales the impedance
+rather than the admittance so it composes with the tap, shift and shunt terms as PSS/E
+defines it.
 """
-function equivalent_branch(
-    b::PSY.ACTransmission,
-    nr::NetworkReductionData;
-    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
-)
-    eb = equivalent_branch(b; min_x_eps = min_x_eps)
+function equivalent_branch(b::PSY.ACTransmission, nr::NetworkReductionData)
+    eb = equivalent_branch(b; min_x_eps = _minimum_retained_impedance(nr))
     factor = _impedance_correction_factor(b, nr)
     isone(factor) && return eb
     return EquivalentBranch(
@@ -425,11 +423,7 @@ function equivalent_branch(
     )
 end
 
-function equivalent_branch(
-    group::AbstractReductionAggregate,
-    nr::NetworkReductionData;
-    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
-)
+function equivalent_branch(group::AbstractReductionAggregate, nr::NetworkReductionData)
     return get_equivalent_physical_branch_parameters(group, nr)
 end
 

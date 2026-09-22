@@ -194,12 +194,18 @@ arc_provenance(c::BranchCatalog, arc::ARC_ENTRY) =
     arc_provenance(get_reduction_entry(c, arc))
 
 """
-    _branch_multiplier(provenance, entry, branch_name, arc) -> Float64
+    _branch_multiplier(provenance, entry, branch_name, arc, nr) -> Float64
 
 Factor scaling a per-arc matrix entry to the named branch's share of it, dispatched on how
 the arc came to exist. Backs [`get_branch_multiplier`](@ref).
 """
-_branch_multiplier(::DirectArc, ::PSY.ACTransmission, ::AbstractString, ::ARC_ENTRY) = 1.0
+_branch_multiplier(
+    ::DirectArc,
+    ::PSY.ACTransmission,
+    ::AbstractString,
+    ::ARC_ENTRY,
+    ::NetworkReductionData,
+) = 1.0
 
 # Backed by no component, so nothing shares it.
 _branch_multiplier(
@@ -207,6 +213,7 @@ _branch_multiplier(
     ::PSY.GenericArcImpedance,
     ::AbstractString,
     ::ARC_ENTRY,
+    ::NetworkReductionData,
 ) = 1.0
 
 # A member carries its susceptance-fraction share of the group flow.
@@ -215,10 +222,11 @@ function _branch_multiplier(
     group::AbstractBranchesParallel,
     branch_name::AbstractString,
     arc::ARC_ENTRY,
+    nr::NetworkReductionData,
 )
     for member in group
         get_name(member) == branch_name || continue
-        return compute_parallel_multiplier(group, member)
+        return compute_parallel_multiplier(group, member, nr)
     end
     return error(
         "Branch $branch_name is indexed on arc $(arc) but no member of the group there " *
@@ -233,6 +241,7 @@ _branch_multiplier(
     ::BranchesSeries,
     branch_name::AbstractString,
     arc::ARC_ENTRY,
+    ::NetworkReductionData,
 ) = error(
     "Branch $branch_name is a segment of the series chain on arc $(arc). A chain's flow " *
     "does not decompose into per-segment shares of one matrix row, so it has no " *

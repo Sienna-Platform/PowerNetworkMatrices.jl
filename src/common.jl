@@ -500,6 +500,28 @@ get_effective_series_susceptance(segment::PSY.ACTransmission, nr::NetworkReducti
     _finite_series_susceptance(segment, nr)
 
 """
+    compute_parallel_multiplier(bp::AbstractBranchesParallel, branch, nr) -> Float64
+
+Susceptance fraction of one member of a parallel group, taking the substitute reactance for a
+zero-impedance member from `nr`'s configured `minimum_retained_impedance` — the value the
+matrices the share scales were assembled with.
+"""
+compute_parallel_multiplier(
+    bp::AbstractBranchesParallel,
+    branch::Union{PSY.ACTransmission, String},
+    nr::NetworkReductionData,
+) = _parallel_multiplier(bp, branch, _minimum_retained_impedance(nr))
+
+"""
+    get_impedance_averaged_rating(bp::AbstractBranchesParallel, nr) -> Union{Nothing, Float64}
+
+`get_impedance_averaged_rating` with the susceptance weights taken on `nr`'s configured
+`minimum_retained_impedance`, which a group mixing zero-impedance and finite members needs.
+"""
+get_impedance_averaged_rating(bp::AbstractBranchesParallel, nr::NetworkReductionData) =
+    _impedance_averaged_rating(bp, _minimum_retained_impedance(nr))
+
+"""
     get_series_phase_shift(bp::AbstractBranchesParallel, nr) -> Float64
 
 Susceptance-weighted equivalent DC phase shift of a parallel group,

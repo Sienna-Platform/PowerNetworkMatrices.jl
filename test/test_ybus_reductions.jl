@@ -350,6 +350,62 @@ end
     @test 8 ∈ PNM.get_bus_axis(ybus)
 end
 
+@testset "configured minimum_retained_impedance reaches parallel-group members" begin
+    # An aggregate resolves its members through `ybus_branch_entries(member, nr)`, which must
+    # take the substitute reactance from the reduction spec. Stamping the default instead put
+    # the AC Ybus three orders of magnitude away from the DC susceptance built from the same
+    # group, silently and only for members inside an aggregate.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    t = get_component(TwoWindingTransformer, sys, "Trans4")
+    set_r!(t, 0.0 * PSY.SU)
+    set_x!(t, 0.0 * PSY.SU)
+    arc = PSY.get_arc(t)
+    sibling = PSY.TwoWindingTransformer(;
+        name = "Trans4_parallel",
+        circuit = PSY.TransformerCircuit(;
+            arc = arc, tap = 1.0, α = 0.0, available = true,
+            active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
+            base_power = 100.0,
+            base_voltage_primary = PSY.get_base_voltage(PSY.get_from(arc)),
+            r = 0.01, x = 0.1,
+        ),
+        magnetizing_shunt = Complex(0.0, 0.0),
+    )
+    PSY.add_component!(sys, sibling)
+
+    min_x_eps = 1e-3
+    ybus = Ybus(
+        sys;
+        network_reductions = PNM.NetworkReduction[PNM.ZeroImpedanceBranchReduction(;
+            minimum_retained_impedance = min_x_eps,
+        )],
+    )
+    nrd = PNM.get_network_reduction_data(ybus)
+    bp = PNM.get_parallel_branch_map(nrd)[PNM.get_arc_tuple(t, nrd)]
+
+    sibling_entries = PNM.ybus_branch_entries(sibling)
+    configured = PNM.ybus_branch_entries(t; min_x_eps = min_x_eps) .+ sibling_entries
+    unconfigured = PNM.ybus_branch_entries(t) .+ sibling_entries
+    entries = PNM.ybus_branch_entries(bp, nrd)
+    @test all(isapprox.(entries, configured; rtol = 1e-12))
+    @test !isapprox(entries[2], unconfigured[2]; rtol = 1e-3)
+    # The DC side reads the same spec, so the two models agree on the group.
+    @test PNM.get_effective_series_susceptance(bp, nrd) ≈
+          PNM._zero_impedance_susceptance(bp, min_x_eps) rtol = 1e-12
+
+    # The name-indexed share scales those same matrix entries, so it reads the same spec.
+    # The group is mixed, so the epsilon does not cancel out of the ratio.
+    @test_throws ErrorException PNM.compute_parallel_multiplier(bp, t)
+    @test_throws ErrorException PNM.get_impedance_averaged_rating(bp)
+    b_t = PNM._finite_series_susceptance(t, min_x_eps)
+    b_sibling = PNM._finite_series_susceptance(sibling, min_x_eps)
+    share = PNM.compute_parallel_multiplier(bp, t, nrd)
+    @test share ≈ b_t / (b_t + b_sibling) rtol = 1e-12
+    # The 1e-6 default would hand the degenerate member a 0.99999 share.
+    @test share < 0.995
+    @test isfinite(PNM.get_impedance_averaged_rating(bp, nrd))
+end
+
 @testset "ZeroImpedanceBranchReduction: degenerate 3WT merge promotes windings to a parallel group" begin
     # A NON-winding zero-impedance branch between two REAL terminal buses of the same
     # three-winding transformer gets ZIR-merged. Both winding arcs then remap to the same

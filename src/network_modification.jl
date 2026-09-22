@@ -65,7 +65,7 @@ function _direct_arc_ybus_delta(
     nr::NetworkReductionData,
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
-    entries = ybus_branch_entries(br, nr; min_x_eps = _minimum_retained_impedance(nr))
+    entries = ybus_branch_entries(br, nr)
     b_arc = _ba_arc_susceptance(entries, br, nr)
     if _is_full_outage(delta_b, b_arc)
         return _negated_pi_model(entries)
@@ -83,9 +83,7 @@ function _direct_arc_ybus_delta(
     nr::NetworkReductionData,
     ::Float64,
 )::NTuple{4, YBUS_ELTYPE}
-    return _negated_pi_model(
-        ybus_branch_entries(tr, nr; min_x_eps = _minimum_retained_impedance(nr)),
-    )
+    return _negated_pi_model(ybus_branch_entries(tr, nr))
 end
 
 # Parallel group: full outage negates the equivalent; a partial outage needs the tripped

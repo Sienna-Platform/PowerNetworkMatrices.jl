@@ -405,6 +405,12 @@ function get_branch_multiplier(A::T, branch_name::String) where {T <: PowerNetwo
     end
     (_, arc_tuple) = only(candidates)
     entry = get_reduction_entry(catalog, arc_tuple)
-    multiplier = _branch_multiplier(arc_provenance(entry), entry, branch_name, arc_tuple)
+    multiplier = _branch_multiplier(
+        arc_provenance(entry),
+        entry,
+        branch_name,
+        arc_tuple,
+        get_network_reduction_data(catalog),
+    )
     return multiplier, arc_tuple
 end

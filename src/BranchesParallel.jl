@@ -95,25 +95,35 @@ act of adding a circuit to it. The arc stem is injective by construction.
 get_name(bp::AbstractBranchesParallel) =
     "$(bp.arc_key[1])_$(bp.arc_key[2])_double_circuit"
 
-"""
-    compute_parallel_multiplier(parallel_branch_set, branch) -> Float64
+# Shares are ratios, so the substitute reactance cancels when *every* member is degenerate
+# (`b = (1/eps)/tap` scales uniformly) and never enters when none is. It survives only in a
+# mixed group, where it sets the degenerate member's share outright — and only the reduction
+# carries the configured value, so there is no honest share to return without it.
+function _require_epsilon_independent(bp::AbstractBranchesParallel)
+    degenerate = count(br -> !isfinite(_series_susceptance_raw(br, PSY.SU)), bp)
+    if !iszero(degenerate) && degenerate != length(bp)
+        error(
+            "Parallel group $(get_name(bp)) mixes $(degenerate) zero-impedance member(s) " *
+            "with $(length(bp) - degenerate) finite one(s), so the susceptance shares " *
+            "follow the reduction's minimum retained impedance. Pass the " *
+            "NetworkReductionData.",
+        )
+    end
+    return
+end
 
-Susceptance fraction `b_branch / b_total` of one member of a parallel group. The member is
-resolved by object identity; passing a component that is not in the group is an error.
-"""
-function compute_parallel_multiplier(
+# `get_series_susceptance` (see BranchAdmittance.jl) is tap-aware for two-winding
+# transformers and dispatches PNM's three-winding winding wrapper.
+function _parallel_multiplier(
     parallel_branch_set::AbstractBranchesParallel,
     branch::PSY.ACTransmission,
+    min_x_eps::Float64,
 )
     b_total = 0.0
     b_branch = 0.0
     found = false
     for br in parallel_branch_set
-        # `get_series_susceptance` (see BranchAdmittance.jl) is tap-aware for
-        # two-winding transformers and dispatches PNM's three-winding winding wrapper.
-        # `nr`'s configured epsilon is out of reach here, but a share is a ratio, so the
-        # default cancels and a group of `r == x == 0` switches splits by count.
-        b = _finite_series_susceptance(br, ZERO_IMPEDANCE_X_EPSILON)
+        b = _finite_series_susceptance(br, min_x_eps)
         if br === branch
             b_branch = b
             found = true
@@ -132,9 +142,10 @@ end
 # Name-based lookup kept for callers that only hold a name (PTDF row API, PowerFlows).
 # PSY names are unique per concrete type only, so a name may match several members of a
 # mixed group; it must resolve to exactly one.
-function compute_parallel_multiplier(
+function _parallel_multiplier(
     parallel_branch_set::AbstractBranchesParallel,
     branch_name::String,
+    min_x_eps::Float64,
 )
     matches = PSY.ACTransmission[]
     for br in parallel_branch_set
@@ -148,7 +159,23 @@ function compute_parallel_multiplier(
             "group $(get_name(parallel_branch_set)); resolve by component identity.",
         )
     end
-    return compute_parallel_multiplier(parallel_branch_set, first(matches))
+    return _parallel_multiplier(parallel_branch_set, first(matches), min_x_eps)
+end
+
+"""
+    compute_parallel_multiplier(parallel_branch_set, branch) -> Float64
+
+Susceptance fraction `b_branch / b_total` of one member of a parallel group, by component
+identity or by name. Passing a component that is not in the group is an error, and so is a
+group mixing zero-impedance members with finite ones — those shares are only defined against
+the reduction's configured substitute reactance, so use the `NetworkReductionData` method.
+"""
+function compute_parallel_multiplier(
+    parallel_branch_set::AbstractBranchesParallel,
+    branch::Union{PSY.ACTransmission, String},
+)
+    _require_epsilon_independent(parallel_branch_set)
+    return _parallel_multiplier(parallel_branch_set, branch, ZERO_IMPEDANCE_X_EPSILON)
 end
 
 function get_series_susceptance(
@@ -231,17 +258,21 @@ weighting denominator); returns `nothing` only when no member has a known rating
 [`get_sum_of_max_rating`](@ref)).
 """
 function get_impedance_averaged_rating(bp::AbstractBranchesParallel)
-    # The susceptance weights must share a consistent impedance base across the group, so use
-    # system base (SU) like the sibling `compute_parallel_multiplier`. Within a parallel group
-    # (a single bus pair) this equals the natural-units weighting; device base would mix bases
-    # when the branches differ in base power. Requires the branches to be attached to a system.
-    # Σᵢ (bᵢ/b_total)·rᵢ == (Σᵢ bᵢ·rᵢ)/b_total, so one pass and no stored per-member state.
-    # Weights are shares bᵢ/b_total, so the substituted constant cancels.
+    _require_epsilon_independent(bp)
+    return _impedance_averaged_rating(bp, ZERO_IMPEDANCE_X_EPSILON)
+end
+
+# The susceptance weights must share a consistent impedance base across the group, so use
+# system base (SU) like the sibling `compute_parallel_multiplier`. Within a parallel group
+# (a single bus pair) this equals the natural-units weighting; device base would mix bases
+# when the branches differ in base power. Requires the branches to be attached to a system.
+# Σᵢ (bᵢ/b_total)·rᵢ == (Σᵢ bᵢ·rᵢ)/b_total, so one pass and no stored per-member state.
+function _impedance_averaged_rating(bp::AbstractBranchesParallel, min_x_eps::Float64)
     b_total = 0.0
     numerator = 0.0
     any_known = false
     for br in bp.branches
-        b = _finite_series_susceptance(br, ZERO_IMPEDANCE_X_EPSILON)
+        b = _finite_series_susceptance(br, min_x_eps)
         b_total += b
         r = get_equivalent_rating(br)
         if !isnothing(r)

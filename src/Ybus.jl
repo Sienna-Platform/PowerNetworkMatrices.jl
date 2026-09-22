@@ -353,10 +353,9 @@ function add_branch_entries_to_ybus!(
     y22::Vector{YBUS_ELTYPE},
     branch_ix::Int,
     br::PSY.ACTransmission,
-    nr::NetworkReductionData;
-    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+    nr::NetworkReductionData,
 )
-    Y11, Y12, Y21, Y22 = ybus_branch_entries(br, nr; min_x_eps = min_x_eps)
+    Y11, Y12, Y21, Y22 = ybus_branch_entries(br, nr)
     y11[branch_ix] = Y11
     y12[branch_ix] = Y12
     y21[branch_ix] = Y21
@@ -421,15 +420,13 @@ function ybus_branch_entries(
 end
 
 # The corrected form: `equivalent_branch(br, nr)` applies the impedance correction cached on
-# the reduction data, and the shared `nr` signature lets callers iterating heterogeneous
-# segments (single branches and aggregates) dispatch uniformly. Prefer it wherever `nr` is in
-# scope — the bare method builds an *uncorrected* π-model.
-function ybus_branch_entries(
-    br::PSY.ACTransmission,
-    nr::NetworkReductionData;
-    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
-)
-    return _equivalent_to_ybus(br, equivalent_branch(br, nr; min_x_eps = min_x_eps))
+# the reduction data and takes the zero-impedance substitute from the reduction's configured
+# `minimum_retained_impedance`, and the shared `nr` signature lets callers iterating
+# heterogeneous segments (single branches and aggregates) dispatch uniformly. Prefer it
+# wherever `nr` is in scope — the bare method builds an *uncorrected* π-model on the default
+# epsilon.
+function ybus_branch_entries(br::PSY.ACTransmission, nr::NetworkReductionData)
+    return _equivalent_to_ybus(br, equivalent_branch(br, nr))
 end
 
 function _equivalent_to_ybus(br::PSY.ACTransmission, eb::EquivalentBranch)
@@ -446,19 +443,14 @@ end
 
 function ybus_branch_entries(
     parallel_br::AbstractBranchesParallel,
-    nr::NetworkReductionData;
-    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+    nr::NetworkReductionData,
 )
     # Pass the group itself, not `collect(parallel_br)`: collecting allocates a vector per
     # call on the Ybus assembly path and buys nothing.
     return _subset_two_port(parallel_br, get_arc_tuple(parallel_br, nr), nr)
 end
 
-function ybus_branch_entries(
-    br::BranchesSeries,
-    nr::NetworkReductionData;
-    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
-)
+function ybus_branch_entries(br::BranchesSeries, nr::NetworkReductionData)
     ybus_chain = _build_chain_ybus(br, nr)
     ybus_reduced = _reduce_internal_nodes(ybus_chain)
     return ybus_reduced[1, 1], ybus_reduced[1, 2], ybus_reduced[2, 1], ybus_reduced[2, 2]
@@ -489,10 +481,7 @@ function _ybus!(
     nr::NetworkReductionData,
 )
     add_branch_entries_to_indexing_maps!(num_bus, branch_ix, nr, fb, tb, br)
-    add_branch_entries_to_ybus!(
-        y11, y12, y21, y22, branch_ix, br, nr;
-        min_x_eps = _minimum_retained_impedance(nr),
-    )
+    add_branch_entries_to_ybus!(y11, y12, y21, y22, branch_ix, br, nr)
     return
 end
 
@@ -510,18 +499,14 @@ function _ybus!(
     nr::NetworkReductionData,
 )
     add_to_branch_maps!(nr, br)
-    min_x_eps = _minimum_retained_impedance(nr)
     n_entries = 0
     for (i, circuit) in enumerate(PSY.get_circuits(br))
         PSY.get_available(circuit) || continue
         term_ix, star_ix = get_bus_indices(PSY.get_arc(circuit), num_bus, nr)
         fb[offset_ix + ix + n_entries] = term_ix
         tb[offset_ix + ix + n_entries] = star_ix
-        (Y11, Y12, Y21, Y22) = ybus_branch_entries(
-            ThreeWindingTransformerCircuit(br, circuit, i),
-            nr;
-            min_x_eps = min_x_eps,
-        )
+        (Y11, Y12, Y21, Y22) =
+            ybus_branch_entries(ThreeWindingTransformerCircuit(br, circuit, i), nr)
         y11[offset_ix + ix + n_entries] = Y11
         y12[offset_ix + ix + n_entries] = Y12
         y21[offset_ix + ix + n_entries] = Y21
