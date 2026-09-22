@@ -66,7 +66,7 @@ function _direct_arc_ybus_delta(
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
     entries = ybus_branch_entries(br, nr)
-    b_arc = _ba_arc_susceptance(entries, br, nr)
+    b_arc = _ba_arc_susceptance(br, nr)
     if _is_full_outage(delta_b, b_arc)
         return _negated_pi_model(entries)
     end
@@ -95,7 +95,7 @@ function _parallel_arc_ybus_delta(
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
     entries = ybus_branch_entries(bp, nr)
-    b_arc = _ba_arc_susceptance(entries, bp, nr)
+    b_arc = _ba_arc_susceptance(bp, nr)
     if _is_full_outage(delta_b, b_arc)
         return _negated_pi_model(entries)
     end

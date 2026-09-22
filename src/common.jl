@@ -467,15 +467,23 @@ function _symmetric_arc_dc_susceptance(Y_ft::Complex)
     return 1 / x_eq
 end
 
-# The susceptance `BA_Matrix` assigns to an arc, from the same 2x2 it reads off Ybus. A
-# phase-shifting arc (asymmetric off-diagonals) takes the phase-independent component value.
-function _ba_arc_susceptance(
-    entries::NTuple{4, <:Complex},
-    segment::PSY.ACTransmission,
-    nr::NetworkReductionData,
-)
-    Y_ft = -entries[2]
-    Y_tf = -entries[3]
+# The susceptance `BA_Matrix` assigns to `segment`'s arc. `BA_Matrix` reads the summed Ybus
+# off-diagonal, which carries every branch on the bus pair — an anti-parallel twin is a
+# separate arc key but lands in the same Ybus entry — so the two-port is accumulated over
+# every forward-map entry on the pair, in `segment`'s frame. Taking the segment's own
+# two-port instead makes the outage deltas and BA disagree on exactly such a pair. A
+# phase-shifting arc (asymmetric off-diagonals) takes the phase-independent component value,
+# matching `_arc_component_susceptance`.
+function _ba_arc_susceptance(segment::PSY.ACTransmission, nr::NetworkReductionData)
+    arc = get_arc_tuple(segment, nr)
+    entries = _get_branch_map_entries(
+        get_direct_branch_map(nr),
+        get_parallel_branch_map(nr),
+        arc,
+    )
+    _, Y12, Y21, _ = _subset_two_port((entry for (_, entry, _) in entries), arc, nr)
+    Y_ft = -Y12
+    Y_tf = -Y21
     Y_ft != Y_tf && return _finite_series_susceptance(segment, nr)
     return _symmetric_arc_dc_susceptance(Y_ft)
 end

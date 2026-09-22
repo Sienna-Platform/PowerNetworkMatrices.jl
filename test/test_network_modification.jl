@@ -380,3 +380,37 @@ end
         end
     end
 end
+
+@testset "NetworkModification: arc susceptance sums every branch on the bus pair" begin
+    sys = build_antiparallel_chain_segment_system()
+    y = Ybus(sys)
+    nr = PNM.get_network_reduction_data(y)
+    ba = BA_Matrix(y)
+    bus_lookup = PNM.get_bus_lookup(ba)
+    vptdf = VirtualPTDF(sys)
+
+    pair_arcs = [a for a in PNM.get_arc_axis(nr) if Set(a) == Set([10, 3])]
+    @test length(pair_arcs) == 2
+
+    for arc in pair_arcs
+        ix = PNM.get_arc_lookup(vptdf)[arc]
+        entry = PNM.get_direct_branch_map(nr)[arc]
+        # The helper's contract is what BA holds for the arc, and BA reads the summed Ybus
+        # off-diagonal, which carries the anti-parallel twin too.
+        @test isapprox(
+            PNM._ba_arc_susceptance(entry, nr),
+            ba.data[bus_lookup[arc[1]], ix];
+            rtol = 1e-5,
+        )
+
+        # With the two sides agreeing, a full-arc outage negates the π-model rather than
+        # scaling it by the ratio of the pair total to one twin.
+        mod = NetworkModification(vptdf, arc)
+        am = only(mod.arc_modifications)
+        Y11, Y12, Y21, Y22 = PNM.ybus_branch_entries(entry, nr)
+        @test am.delta_y11 ≈ PNM.YBUS_ELTYPE(-Y11)
+        @test am.delta_y12 ≈ PNM.YBUS_ELTYPE(-Y12)
+        @test am.delta_y21 ≈ PNM.YBUS_ELTYPE(-Y21)
+        @test am.delta_y22 ≈ PNM.YBUS_ELTYPE(-Y22)
+    end
+end
