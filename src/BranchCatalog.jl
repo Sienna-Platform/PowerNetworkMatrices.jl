@@ -64,7 +64,6 @@ struct BranchCatalog
 end
 
 get_network_reduction_data(c::BranchCatalog) = c.network_reduction_data
-get_arc_table(c::BranchCatalog) = c.arcs
 get_all_branch_maps_by_type(c::BranchCatalog) = c.maps_by_type
 get_name_to_arc_maps(c::BranchCatalog) = c.name_to_arc
 get_component_to_reduction_name_map(c::BranchCatalog) = c.component_to_entry_name
@@ -72,19 +71,10 @@ get_component_name_index(c::BranchCatalog) = c.component_name_index
 
 """
     get_reduction_entry(c::BranchCatalog, arc) -> PSY.ACTransmission
-    get_reduction_entry(c::BranchCatalog, ::Type{T}, name) -> PSY.ACTransmission
 
 The entry occupying `arc` -- a single branch, or the aggregate a reduction folded onto it.
 """
 get_reduction_entry(c::BranchCatalog, arc::ARC_ENTRY) = get_entry(c.arcs[arc])
-
-function get_reduction_entry(
-    c::BranchCatalog,
-    ::Type{T},
-    name::AbstractString,
-) where {T <: PSY.ACTransmission}
-    return get_reduction_entry(c, get_name_to_arc_map(c, T)[name])
-end
 
 """
 Every physical branch at the leaves of the entry on `arc`, precomputed at build time.

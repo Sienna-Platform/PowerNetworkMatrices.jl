@@ -17,15 +17,6 @@ end
 
 Base.length(::BranchMapsByType) = length(_BRANCH_MAPS_BY_TYPE_FIELDS)
 
-function Base.getindex(b::BranchMapsByType, key::String)
-    return getfield(b, Symbol(key))
-end
-
-# `BranchCatalog` tags each entry with its map of origin as a `Symbol`.
-function Base.getindex(b::BranchMapsByType, key::Symbol)
-    return getfield(b, key)
-end
-
 function Base.isempty(b::BranchMapsByType)
     for f in _BRANCH_MAPS_BY_TYPE_FIELDS
         isempty(getfield(b, f)) || return false
@@ -45,67 +36,6 @@ function Base.:(==)(a::BranchMapsByType, b::BranchMapsByType)
         getfield(a, f) == getfield(b, f) || return false
     end
     return true
-end
-
-# Typed accessors for BranchMapsByType — function barriers that recover concrete types.
-function get_typed_direct_branch_map(
-    b::BranchMapsByType,
-    ::Type{T},
-) where {T <: PSY.ACTransmission}
-    return b.direct_branch_map[T]::Dict{Tuple{Int, Int}, T}
-end
-
-# `ThreeWindingTransformerCircuit` is non-parametric (one concrete parent type), so the
-# per-type bucket is keyed by the parent transformer type and holds the wrapper. `T`
-# (a concrete `PSY.ThreeWindingTransformer` subtype) selects that bucket.
-function get_typed_direct_branch_map(
-    b::BranchMapsByType,
-    ::Type{T},
-) where {T <: PSY.ThreeWindingTransformer}
-    return b.direct_branch_map[T]::Dict{Tuple{Int, Int}, ThreeWindingTransformerCircuit}
-end
-
-function get_typed_reverse_direct_branch_map(
-    b::BranchMapsByType,
-    ::Type{T},
-) where {T <: PSY.ACTransmission}
-    return b.reverse_direct_branch_map[T]::Dict{T, Tuple{Int, Int}}
-end
-
-function get_typed_reverse_direct_branch_map(
-    b::BranchMapsByType,
-    ::Type{T},
-) where {T <: PSY.ThreeWindingTransformer}
-    return b.reverse_direct_branch_map[T]::Dict{
-        ThreeWindingTransformerCircuit,
-        Tuple{Int, Int},
-    }
-end
-
-# Per-type bucket is widened to `AbstractBranchesParallel` so that a
-# `MixedBranchesParallel` group is reachable under each of its underlying
-# branch types (e.g. both `parallel_branch_map[Line]` and
-# `parallel_branch_map[MonitoredLine]` see the same group). Pure
-# `BranchesParallel{T}` groups remain assignment-compatible.
-function get_typed_parallel_branch_map(
-    b::BranchMapsByType,
-    ::Type{T},
-) where {T <: PSY.ACTransmission}
-    return b.parallel_branch_map[T]::Dict{Tuple{Int, Int}, AbstractBranchesParallel}
-end
-
-function get_typed_reverse_parallel_branch_map(
-    b::BranchMapsByType,
-    ::Type{T},
-) where {T <: PSY.ACTransmission}
-    return b.reverse_parallel_branch_map[T]::Dict{T, Tuple{Int, Int}}
-end
-
-function get_typed_series_branch_map(
-    b::BranchMapsByType,
-    ::Type{T},
-) where {T <: PSY.ACTransmission}
-    return b.series_branch_map[T]::Dict{Tuple{Int, Int}, BranchesSeries}
 end
 
 """
