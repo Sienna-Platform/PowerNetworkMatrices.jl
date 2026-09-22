@@ -386,9 +386,8 @@ function get_branch_multiplier(A::T, branch_name::String) where {T <: PowerNetwo
     index = get_component_name_index(catalog)
     if !haskey(index, branch_name)
         error(
-            "Branch $branch_name resolves to no indexed branch. It may be absent from the " *
-            "system, absorbed into a series chain, a member of a grouped chain (not " *
-            "name-resolvable by design), or excluded by the catalog's filter predicate.",
+            "Branch $branch_name resolves to no indexed branch: absent, absorbed into a " *
+            "series or grouped chain, or excluded by the catalog filter.",
         )
     end
     candidates = index[branch_name]

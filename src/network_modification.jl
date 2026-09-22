@@ -1,16 +1,7 @@
-# `delta_b` removes the arc's entire series susceptance (a full outage).
-# `delta_b` comes through the `ComplexF32` Ybus, so the two sides agree only to Float32
-# precision; `sqrt(eps(Float32))` sits well above that noise and well below any real partial
-# outage ratio (an identical double circuit is 0.5).
-# Magnitudes, because the two sides carry different sign conventions: every `delta_b` read
-# off `_get_arc_susceptances` is `-|b|` (`_extract_arc_susceptances` takes `abs` of the BA
-# column, and the Woodbury layer uses that convention throughout), while
-# `_ba_arc_susceptance` and the chain arithmetic are signed. They agree until an arc has net
-# negative reactance — a 3W star leg, a series-compensated line — and then a signed test
-# calls a full outage partial and `delta_b / b_arc` comes out at `+1`, doubling on the AC
-# side what the DC side removed. Whether the magnitude convention is the right one for a
-# negative-susceptance arc is unresolved: the MODF Woodbury update disagrees with a direct
-# oracle on such arcs.
+# Compared as magnitudes: delta_b from _get_arc_susceptances is -|b|, but _ba_arc_susceptance
+# is signed, so a signed test calls a full outage of a negative-reactance arc (3W star leg,
+# series compensation) partial. Unresolved whether -|b| is right there: MODF disagrees with
+# a direct oracle on such arcs.
 _is_full_outage(delta_b::Float64, b_arc::Float64) =
     isapprox(abs(delta_b), abs(b_arc); atol = YBUS_DELTA_TOL, rtol = sqrt(eps(Float32)))
 
@@ -68,17 +59,15 @@ end
 """
     _outaged_group_member(bp, branch) -> PSY.ACTransmission
 
-The member of `bp` that leaves service when `branch` trips: `branch` itself when it is a
-direct member, otherwise the aggregate member it sits at the leaves of. Sibling degree-two
-chains collapse into a `BranchesParallel{BranchesSeries}`, so a physical branch on such an
-arc is a leaf of a chain rather than a member of the group, and the chain is what trips.
+The member of bp carrying branch: branch itself, or the grouped degree-two chain whose
+leaves include it.
 """
 function _outaged_group_member(
     bp::AbstractBranchesParallel,
     branch::PSY.ACTransmission,
 )::PSY.ACTransmission
     for member in bp
-        any(leaf === branch for leaf in leaf_components(member)) && return member
+        _has_leaf(member, branch) && return member
     end
     return error(
         "$(typeof(branch)) $(get_name(branch)) is filed on the arc of parallel group " *
@@ -138,7 +127,7 @@ function _direct_arc_ybus_delta(
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
     entries = ybus_branch_entries(br, nr)
-    b_arc = _ba_arc_susceptance(br, nr)
+    b_arc = _ba_arc_susceptance(entries, br, nr)
     if _is_full_outage(delta_b, b_arc)
         return _negated_pi_model(entries)
     end
@@ -146,16 +135,15 @@ function _direct_arc_ybus_delta(
     return _scaled_pi_model(entries, delta_b / abs(b_arc))
 end
 
-# A circuit is in service or out, so only a full outage is meaningful on a star-leg arc and
-# the whole Pi-model is cancelled rather than scaled. The Δb still has to say so: scaling the
-# DC side by a partial Δb while cancelling the entire AC side describes two different
-# contingencies.
+# A circuit is in or out: cancel the whole Pi-model, and reject a partial Δb so DC and AC
+# describe one contingency.
 function _direct_arc_ybus_delta(
     tr::ThreeWindingTransformerCircuit,
     nr::NetworkReductionData,
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
-    b_arc = _ba_arc_susceptance(tr, nr)
+    entries = ybus_branch_entries(tr, nr)
+    b_arc = _ba_arc_susceptance(entries, tr, nr)
     if !_is_full_outage(delta_b, b_arc)
         error(
             "Partial Ybus delta is not supported on the three-winding transformer " *
@@ -163,7 +151,7 @@ function _direct_arc_ybus_delta(
             "either in service or out. Δb=$(delta_b), arc b=$(b_arc).",
         )
     end
-    return _negated_pi_model(ybus_branch_entries(tr, nr))
+    return _negated_pi_model(entries)
 end
 
 # Parallel group: full outage negates the equivalent; a partial outage needs the tripped
@@ -175,7 +163,7 @@ function _parallel_arc_ybus_delta(
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
     entries = ybus_branch_entries(bp, nr)
-    b_arc = _ba_arc_susceptance(bp, nr)
+    b_arc = _ba_arc_susceptance(entries, bp, nr)
     if _is_full_outage(delta_b, b_arc)
         return _negated_pi_model(entries)
     end
@@ -452,13 +440,6 @@ end
 _is_three_winding_transformer(::Any) = false
 _is_three_winding_transformer(::PSY.ThreeWindingTransformer) = true
 
-"""
-    _parallel_arc_modification(nr, arc_lookup, arc_tuple, branch) -> ArcModification
-
-Arc modification for tripping `branch` off the parallel group on `arc_tuple`. The unit that
-trips is the group member carrying `branch`, which is `branch` itself unless a grouped
-degree-two chain sits between the two.
-"""
 function _parallel_arc_modification(
     nr::NetworkReductionData,
     arc_lookup::Dict,

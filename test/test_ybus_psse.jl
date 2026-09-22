@@ -371,11 +371,8 @@ end
 end
 
 @testset "impedance correction: the nr contract" begin
-    # The contract this pins: `equivalent_branch(b)` is the component's OWN pi-model and is
-    # uncorrected by design, and it is the only accessor with that meaning. Every
-    # admittance- and Ybus-facing accessor takes `nr`, is corrected, and agrees with what
-    # `Ybus` actually stamped. The `nr`-less `ybus_branch_entries(b)` and
-    # `branch_admittance(b)` used to break the second half of that silently.
+    # The nr-less accessors are the component's own uncorrected model; every nr-taking
+    # accessor is corrected and matches the stamped Ybus.
     sys = deepcopy(build_system(PSITestSystems, "c_sys14"))
     tr = first(get_components(TwoWindingTransformer, sys))
     add_supplemental_attribute!(
@@ -402,10 +399,6 @@ end
     # uncorrected are distinguishable at all.
     @test PNM._impedance_correction_factor(tr, nr) == 1.5
 
-    # `equivalent_branch(b)` is the component's own value and stays uncorrected. That is the
-    # designed meaning of the method, not an oversight: it is what the leaf reads off the
-    # component before any reduction context exists, and Ward calls it on a detached
-    # `GenericArcImpedance` for which no `nr` can exist.
     own = PNM.equivalent_branch(tr)
     corrected = PNM.equivalent_branch(tr, nr)
     @test PNM.get_equivalent_x(corrected) ≈ 1.5 * PNM.get_equivalent_x(own)
@@ -424,10 +417,7 @@ end
     @test isapprox(ybus[arc[1], arc[2]], entries[2]; rtol = 4 * eps(Float32))
     @test isapprox(ybus[arc[2], arc[1]], entries[3]; rtol = 4 * eps(Float32))
 
-    # The `nr`-less forms exist for consumers holding a branch with no reduction, and carry
-    # `equivalent_branch(b)`'s meaning exactly: the component's own, uncorrected model. The
-    # invariant worth pinning is not that they are absent but that they are distinguishable
-    # -- mixing a corrected and an uncorrected admittance over one network is the bug.
+    # The two models must stay distinguishable.
     own_entries = PNM.ybus_branch_entries(tr)
     @test all(isapprox.(own_entries, PNM._equivalent_to_ybus(tr, own)))
     @test !isapprox(own_entries[2], entries[2])

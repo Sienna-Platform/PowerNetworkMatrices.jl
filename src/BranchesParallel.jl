@@ -70,6 +70,12 @@ function add_branch!(mbp::MixedBranchesParallel, branch::PSY.ACTransmission)
     return
 end
 
+# Only a direct member shares the arc (what `_branch_multiplier` resolves). A leaf inside a
+# grouped chain does not, and `BranchesSeries` takes the blanket `false`.
+_entry_carries(entry::PSY.ACTransmission, member::PSY.ACTransmission) = entry === member
+_entry_carries(group::AbstractBranchesParallel, member::PSY.ACTransmission) =
+    any(m === member for m in group)
+
 # The blanket `_is_phase_shifting(::PSY.ACTransmission) = false` in definitions.jl would
 # silently answer for groups; a group shifts when any member does.
 function _is_phase_shifting(bp::AbstractBranchesParallel)
@@ -95,25 +101,20 @@ act of adding a circuit to it. The arc stem is injective by construction.
 get_name(bp::AbstractBranchesParallel) =
     "$(bp.arc_key[1])_$(bp.arc_key[2])_double_circuit"
 
-# Shares are ratios, so the substitute reactance cancels when *every* member is degenerate
-# (`b = (1/eps)/tap` scales uniformly) and never enters when none is. It survives only in a
-# mixed group, where it sets the degenerate member's share outright — and only the reduction
-# carries the configured value, so there is no honest share to return without it.
+# The substitute reactance cancels in a ratio unless the group mixes degenerate and finite
+# members; then only the reduction's configured value gives a defined share.
 function _require_epsilon_independent(bp::AbstractBranchesParallel)
     degenerate = count(br -> !isfinite(_series_susceptance_raw(br, PSY.SU)), bp)
     if !iszero(degenerate) && degenerate != length(bp)
         error(
-            "Parallel group $(get_name(bp)) mixes $(degenerate) zero-impedance member(s) " *
-            "with $(length(bp) - degenerate) finite one(s), so the susceptance shares " *
-            "follow the reduction's minimum retained impedance. Pass the " *
-            "NetworkReductionData.",
+            "Parallel group $(get_name(bp)) mixes $(degenerate) zero-impedance and " *
+            "$(length(bp) - degenerate) finite member(s); shares depend on the " *
+            "reduction's minimum retained impedance. Pass the NetworkReductionData.",
         )
     end
     return
 end
 
-# `get_series_susceptance` (see BranchAdmittance.jl) is tap-aware for two-winding
-# transformers and dispatches PNM's three-winding winding wrapper.
 function _parallel_multiplier(
     parallel_branch_set::AbstractBranchesParallel,
     branch::PSY.ACTransmission,
@@ -124,7 +125,7 @@ function _parallel_multiplier(
     found = false
     for br in parallel_branch_set
         b = _finite_series_susceptance(br, min_x_eps)
-        if br === branch
+        if _entry_carries(br, branch)
             b_branch = b
             found = true
         end
@@ -166,9 +167,8 @@ end
     compute_parallel_multiplier(parallel_branch_set, branch) -> Float64
 
 Susceptance fraction `b_branch / b_total` of one member of a parallel group, by component
-identity or by name. Passing a component that is not in the group is an error, and so is a
-group mixing zero-impedance members with finite ones — those shares are only defined against
-the reduction's configured substitute reactance, so use the `NetworkReductionData` method.
+identity or by name. Passing a component that is not in the group is an error. Errors on a
+group mixing zero-impedance and finite members; use the `nr` method.
 """
 function compute_parallel_multiplier(
     parallel_branch_set::AbstractBranchesParallel,
@@ -234,10 +234,8 @@ end
 N-1 rating for the parallel group: the surviving capacity after the largest-rated
 circuit trips, ``\\sum_i S_i - \\max_i S_i``. For a group of one branch this is zero.
 
-Unlike its sibling aggregators this one cannot skip a member with no known rating: the
-largest circuit is unidentifiable while any rating is missing, and aggregating over the known
-subset alone reports the survivors' capacity as the whole group's — exactly `0.0` for a pair
-with one known rating. Returns `nothing` when any member's rating is unknown.
+Unlike its sibling aggregators, a member with no known rating is not skipped: the largest
+circuit is then unidentifiable. Returns `nothing` when any member's rating is unknown.
 """
 function get_single_element_contingency_rating(bp::AbstractBranchesParallel)
     isempty(bp.branches) && return nothing
@@ -258,9 +256,8 @@ end
 Susceptance-weighted average of individual branch ratings,
 ``\\sum_i f_i \\cdot S_i`` with ``f_i = b_i / \\sum_k b_k``. Reflects how DC flow
 physically splits across a parallel group. Throws `ArgumentError` if the total
-series susceptance is zero, and errors on a group mixing zero-impedance members with finite
-ones — those weights follow the reduction's configured substitute reactance, so use the
-`NetworkReductionData` method for such a group.
+series susceptance is zero. Errors on a group mixing zero-impedance and finite members;
+use the `nr` method.
 
 Members with no known rating are skipped (their susceptance still contributes to the
 weighting denominator); returns `nothing` only when no member has a known rating (see

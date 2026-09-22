@@ -7,8 +7,7 @@ _is_transformer(::PSY.TwoWindingTransformer) = true
 # transformer arcs and must be excluded from zero-impedance bus merging like any transformer.
 _is_transformer(::ThreeWindingTransformerCircuit) = true
 _is_transformer(::PSY.ACTransmission) = false
-# Aggregates subtype `PSY.ACTransmission`, so the blanket above would answer `false` for a
-# group or chain holding a transformer. Recursive, so a nested aggregate resolves too.
+# Without this, aggregates hit the blanket `false`; recursive for nesting.
 _is_transformer(seg::AbstractReductionAggregate) = any(_is_transformer, seg)
 
 # Series admittance `Y_l = 1 / (r + x im)` from a branch's `(r, x)`, with the

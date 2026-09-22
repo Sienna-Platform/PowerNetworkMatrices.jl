@@ -395,8 +395,7 @@ end
     for arc in pair_arcs
         ix = PNM.get_arc_lookup(vptdf)[arc]
         entry = PNM.get_direct_branch_map(nr)[arc]
-        # One BA column is one arc key's own participation in the DC network. Reading the
-        # summed Ybus off-diagonal gave both twins the pair total, which ABA counted twice.
+        # One BA column is one arc key's own participation in the DC network.
         @test isapprox(
             PNM._ba_arc_susceptance(entry, nr),
             ba.data[bus_lookup[arc[1]], ix];
@@ -453,6 +452,27 @@ end
     # instead of answering with a sign-flipped angle.
     @test_throws ErrorException PNM._member_shift_injection(bp, nr, leaf)
     @test_throws "L_1_10" PNM._member_shift_injection(bp, nr, leaf)
+end
+
+@testset "NetworkModification: series-chain member opens on any leaf trip" begin
+    # Same sibling-chain fixture as above, exercised through `_member_susceptance_after_outage`
+    # directly: a chain nested inside a `BranchesParallel{BranchesSeries}` group opens the
+    # instant any one of its leaves trips, unlike a non-chain aggregate's all-or-none rule.
+    sys = build_two_parallel_degree_two_chains()
+    reductions = NetworkReduction[
+        DegreeTwoReduction(; reduce_reactive_power_injectors = false),
+    ]
+    vptdf = VirtualPTDF(sys; network_reductions = reductions)
+    nr = PNM.get_network_reduction_data(vptdf)
+    bp = PNM.get_parallel_branch_map(nr)[(1, 3)]
+    chain = first(bp)
+    leaf = first(PNM.leaf_components(chain))
+
+    @test PNM._member_susceptance_after_outage(chain, Set{PSY.ACTransmission}(), nr) ≈
+          PNM._finite_series_susceptance(chain, nr)
+    @test iszero(
+        PNM._member_susceptance_after_outage(chain, Set{PSY.ACTransmission}([leaf]), nr),
+    )
 end
 
 @testset "NetworkModification: nested aggregate member requires an all-or-none trip" begin
@@ -543,7 +563,7 @@ end
         _, own_Y12, own_Y21, _ = PNM.ybus_branch_entries(entry, nr)
         @test own_Y12 != own_Y21
         # A shifter's own column takes the phase-independent component value, and it is that
-        # key's alone: summing the pair here gave both keys the pair total.
+        # key's alone.
         @test isapprox(
             PNM._ba_arc_susceptance(entry, nr),
             PNM._finite_series_susceptance(entry, nr),
@@ -564,7 +584,7 @@ end
     end
 end
 
-@testset "NetworkModification: full outage of a negative-susceptance arc negates its Pi-model" begin
+@testset "NetworkModification: negative-susceptance full outage" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     line = PSY.get_component(Line, sys, "Line10")
     PSY.set_r!(line, 0.0 * PSY.SU)
@@ -573,10 +593,6 @@ end
     nr = PNM.get_network_reduction_data(vptdf)
     arc = PNM.get_arc_tuple(line, nr)
 
-    # `_extract_arc_susceptances` takes the magnitude of the BA column, so every Δb reaching
-    # the outage handlers is `-|b|` while the arc's own susceptance keeps its sign. The two
-    # conventions only differ on an arc with net negative reactance, which is what makes
-    # this fixture bite.
     b_arc = PNM._ba_arc_susceptance(line, nr)
     @test b_arc < 0
     @test PNM._get_arc_susceptances(vptdf)[PNM.get_arc_lookup(vptdf)[arc]] ≈ abs(b_arc)

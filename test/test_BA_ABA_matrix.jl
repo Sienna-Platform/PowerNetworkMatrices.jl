@@ -215,9 +215,7 @@ end
 end
 
 @testset "BA: an unresolvable arc errors instead of dropping out" begin
-    # A not-found lookup used to yield `NaN`, which the caller turned into `b = 0.0` — a real
-    # electrical statement (r > 0, x = 0 branches legitimately have zero DC coupling) and so
-    # indistinguishable from the arc silently leaving the DC network.
+    # b = 0.0 is a legitimate value (r > 0, x = 0), so a miss must throw.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     nr = get_network_reduction_data(Ybus(sys))
     absent = (typemax(Int) - 1, typemax(Int))
@@ -227,9 +225,7 @@ end
 end
 
 @testset "BA/ABA: an anti-parallel pair is counted once per arc key" begin
-    # Both twins hold their own key in `direct_branch_map` and both survive to BA when no
-    # reduction folds bus 10 away. Reading `ybus.data` at the bus pair gave each of the two
-    # columns the pair total, and `ABA = Aᵀ·BA` then summed it a second time.
+    # Both twins keep their own key and survive to BA.
     sys = build_antiparallel_chain_segment_system()
     # (from, to, x), exactly as the fixture writes them.
     edges = [

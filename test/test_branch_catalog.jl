@@ -269,8 +269,6 @@ end
 end
 
 @testset "BranchCatalog hands every caller its own empty map" begin
-    # A miss used to answer with one process-wide `const` container, so a single consumer
-    # write was visible from every catalog in the session.
     nrd = PNM.NetworkReductionData()
     first_catalog, second_catalog = PNM.BranchCatalog(nrd), PNM.BranchCatalog(nrd)
 
@@ -290,10 +288,8 @@ end
 end
 
 @testset "BranchCatalog name index names only arcs the catalog holds" begin
-    # `MixedBranchesParallel` matches on `all`, so filtering out `Line` rejects the group
-    # while the transformer member still passes. The name index took the member's verdict
-    # and pointed at an arc with no row, which `get_branch_multiplier` reached as a bare
-    # `KeyError` from `get_reduction_entry`, at optimization-build time.
+    # A filtered-out MixedBranchesParallel must not leave its passing member indexed to a
+    # missing row.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     line = first(PSY.get_components(PSY.Line, sys))
     xfmr = first(PSY.get_components(PSY.TwoWindingTransformer, sys))

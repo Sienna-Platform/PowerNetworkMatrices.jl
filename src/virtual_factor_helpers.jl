@@ -1,9 +1,3 @@
-# Shared low-level helpers for the virtual matrices and their factorization core.
-#
-# These functions are intentionally defined early in the module load order
-# (before `virtual_factor_core.jl` and the `Virtual{PTDF,LODF,MODF}` wrappers)
-# so the core constructor and the wrappers can all call them.
-
 # --- Factorization creation (solver dispatch) ---
 
 function _create_factorization(
@@ -49,11 +43,8 @@ end
 """
     _solve_ba_column!(K, work_ba_col, BA, bus_to_valid_idx, col)
 
-Scatter the non-zeros of `BA[:, col]` into `work_ba_col` at non-reference-bus
-positions and solve in place. Iterates only the column's non-zeros (typically two
-per arc) instead of scanning the full bus axis. Returns the solved buffer: KLU
-mutates and returns `work_ba_col`, other backends may return a fresh vector, so
-callers must capture the return value.
+Scatter BA[:, col]'s non-zeros into work_ba_col and solve. Capture the return: only KLU
+solves in place.
 """
 function _solve_ba_column!(
     K,
@@ -81,21 +72,24 @@ For arc j, the susceptance is the absolute value of the first nonzero in BA colu
 BA columns always have the structure [+b, -b] (from-bus and to-bus entries),
 so both nonzeros have the same magnitude.
 """
+# BA columns always have the structure [+b, -b] (from-bus and to-bus entries), so the first
+# nonzero's magnitude is the arc's susceptance.
+function _ba_column_susceptance(
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    nzv::Vector{Float64},
+    j::Int,
+)::Float64
+    rng = nzrange(BA, j)
+    isempty(rng) && return 0.0
+    return abs(nzv[first(rng)])
+end
+
 function _extract_arc_susceptances(
     BA::SparseArrays.SparseMatrixCSC{Float64, Int},
 )::Vector{Float64}
     n_arcs = size(BA, 2)
-    b = Vector{Float64}(undef, n_arcs)
     nzv = SparseArrays.nonzeros(BA)
-    for j in 1:n_arcs
-        rng = nzrange(BA, j)
-        if isempty(rng)
-            b[j] = 0.0
-        else
-            b[j] = abs(nzv[first(rng)])
-        end
-    end
-    return b
+    return Float64[_ba_column_susceptance(BA, nzv, j) for j in 1:n_arcs]
 end
 
 """
@@ -119,12 +113,6 @@ function _extract_branch_susceptances_by_arc(
 
     for j in 1:n_arcs
         arc = arc_ax[j]
-        rng = nzrange(BA, j)
-        if isempty(rng)
-            arc_b = 0.0
-        else
-            arc_b = abs(nzv[first(rng)])
-        end
 
         if haskey(nr_data.parallel_branch_map, arc)
             bp = nr_data.parallel_branch_map[arc]
@@ -137,7 +125,7 @@ function _extract_branch_susceptances_by_arc(
                 _finite_series_susceptance(segment, nr_data) for segment in bs
             ]
         else
-            result[j] = [arc_b]
+            result[j] = [_ba_column_susceptance(BA, nzv, j)]
         end
     end
 
@@ -211,4 +199,34 @@ function _get_PTDF_A_diag(
         @inbounds diag_[i] = v_f - v_t
     end
     return diag_
+end
+
+# Scatter a valid-bus solve `lin_solve` (optionally divided) back into full-bus-space `dest`,
+# zeroing the reference-bus entries first.
+function _gather_to_buses!(
+    dest::AbstractVector{Float64},
+    valid_ix::Vector{Int},
+    lin_solve,
+    divisor::Float64 = 1.0,
+)
+    fill!(dest, 0.0)
+    @inbounds for i in eachindex(valid_ix)
+        dest[valid_ix[i]] = lin_solve[i] / divisor
+    end
+    return dest
+end
+
+# Shared by VirtualPTDF and VirtualLODF: `persistent_arcs` names are resolved to row indices
+# through `look_up[1]`.
+function _persistent_row_cache(
+    max_cache_size::Int,
+    look_up,
+    persistent_arcs::Vector{Tuple{Int, Int}},
+    n_bus::Int,
+)
+    return RowCache(
+        max_cache_size * MiB,
+        Set{Int}(look_up[1][k] for k in persistent_arcs),
+        n_bus * sizeof(Float64),
+    )
 end

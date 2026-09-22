@@ -564,13 +564,7 @@ end
 end
 
 @testset "MODF empty modification returns base PTDF row (Woodbury M=0)" begin
-    # A contingency whose branch was eliminated by the zero-impedance reduction
-    # resolves to no arc modifications (M = 0), so the Woodbury W matrix is 0×0.
-    # Regression: `inv` on that 0×0 matrix raised
-    # `ArgumentError: invalid argument #6 to LAPACK call` (LAPACK getri!). The empty
-    # modification must instead return the unmodified base PTDF row. Outage registration
-    # now rejects this case (`_validate_transmission_survived`); the modification here is
-    # hand-built, so it still reaches the kernel.
+    # Hand-built empty modification must return the base PTDF row.
     sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
     reductions = NetworkReduction[]
     ptdf = PTDF(sys; network_reductions = reductions)

@@ -246,10 +246,7 @@ end
     @test PNM._validate_transmission_survived(sys, line_outage, real_mod) === nothing
 end
 
-# First branch the reduction behind `nrd` leaves on no arc at all. A degree-two branch
-# still resolves through the series map, so an absent arc key is not enough. Errors rather
-# than returning a `nothing` sentinel: no such branch means the fixture stopped exercising
-# the case, which is a broken test, not a result to branch on.
+# First branch the reduction leaves on no map; series-map membership counts as surviving.
 function _branch_off_every_map(sys, nrd)
     for br in PSY.get_components(PSY.ACTransmission, sys)
         tag, _ = PNM._resolve_branch_arc(nrd, br)
@@ -261,10 +258,8 @@ function _branch_off_every_map(sys, nrd)
     )
 end
 
-@testset "VirtualMODF: an outage on an out-of-service branch is a no-op, not an error" begin
-    # No reductions at all. The branch is simply `available = false`, so it never entered the
-    # Ybus; outaging it removes nothing and the base-case row is the correct answer. This must
-    # not be confused with a branch a reduction ate, which cannot be represented at all.
+@testset "VirtualMODF: out-of-service outage is a no-op" begin
+    # available = false: never entered Ybus, so a no-op.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     line = PSY.get_component(PSY.ACTransmission, sys, "1")
     PSY.set_available!(line, false)
@@ -297,9 +292,7 @@ end
     sys = PSB.build_system(PSB.PSITestSystems, "test_RTS_GMLC_sys")
     reductions = NetworkReduction[RadialReduction(), DegreeTwoReduction()]
 
-    # A VirtualPTDF core knows nothing about outages, so its reduction peels branches
-    # away with no protection. Wrapping that core cannot replay the protection, so it
-    # must refuse instead of serving base-case rows for every query of the contingency.
+    # A reduced-before-outages core cannot protect the branch.
     vptdf = VirtualPTDF(sys; network_reductions = reductions)
     target = _branch_off_every_map(sys, get_network_reduction_data(vptdf))
     PSY.add_supplemental_attribute!(sys, target, _fixed_outage())

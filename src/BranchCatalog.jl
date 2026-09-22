@@ -22,8 +22,7 @@ get_entry(e::ArcEntry) = e.entry
 get_name(e::ArcEntry) = e.name
 get_leaves(e::ArcEntry) = e.leaves
 
-# The arc alone: concrete and isbits, 16 bytes. Consumers navigate back to the entry via
-# `get_reduction_entry`; the arc is the whole identity.
+# The arc is the whole identity; `get_reduction_entry` recovers the entry.
 const ARC_ENTRY = Tuple{Int, Int}
 const ARC_TABLE = Dict{ARC_ENTRY, ArcEntry}
 const NAME_TO_ARC = Dict{DataType, DataStructures.SortedDict{String, ARC_ENTRY}}
@@ -81,9 +80,7 @@ get_arc_leaves(c::BranchCatalog, arc::ARC_ENTRY) = get_leaves(c.arcs[arc])
 Entries for branch type `T`. An absent `T` yields an empty map: a type is legitimately
 missing when every branch of it was absorbed by a reduction.
 
-The miss allocates a fresh map rather than handing back a shared one: these containers are
-mutable, and a consumer writing into a shared empty would be writing into every catalog in
-the process.
+A miss returns a fresh map; a shared empty would be mutable across every catalog.
 """
 get_name_to_arc_map(c::BranchCatalog, ::Type{T}) where {T <: PSY.ACTransmission} =
     get(() -> DataStructures.SortedDict{String, ARC_ENTRY}(), c.name_to_arc, T)
@@ -404,15 +401,6 @@ end
 _name_candidates(index::COMPONENT_NAME_INDEX, name::String) =
     get!(() -> Tuple{DataType, ARC_ENTRY}[], index, name)
 
-# Whether `member` is one of the entry's own members, which is the only relationship
-# `_branch_multiplier` can resolve a bare name through. A leaf one level deeper -- a branch
-# inside a chain a parallel grouping absorbed -- carries no share of the arc, exactly like any
-# other chain member. `BranchesSeries` falls into the blanket method and answers `false`,
-# which is the correct answer for it.
-_entry_carries(entry::PSY.ACTransmission, member::PSY.ACTransmission) = entry === member
-_entry_carries(group::AbstractBranchesParallel, member::PSY.ACTransmission) =
-    any(m === member for m in group)
-
 """
 Component-name index for name-based matrix indexing (`get_branch_multiplier`), whose API takes
 a bare name.
@@ -420,11 +408,8 @@ a bare name.
 Built from the component-keyed maps rather than `name_to_arc`, which holds *entry* names: an
 aggregate's entry name is the group's, not any component's.
 
-A name is indexed only where `_branch_multiplier` can answer for it: the branch must be the
-entry on its arc, or one of that entry's own members. Every member of a chain is therefore
-absent, whether the chain stands alone in `series_branch_map` or was grouped into a
-`BranchesParallel{BranchesSeries}` -- name-based matrix indexing does not resolve them, and
-`get_branch_multiplier` says so rather than dead-ending.
+A name is indexed only where `_branch_multiplier` can answer: the arc's entry or one of its
+direct members. Chain members, standalone or grouped, are never indexed.
 """
 function _build_component_name_index(
     nrd::NetworkReductionData,
@@ -441,9 +426,7 @@ function _build_component_name_index(
     end
     for (member, arc) in nrd.reverse_parallel_branch_map
         _entry_matches(member, predicate) || continue
-        # The forward pass owns `arcs` and its verdict is the catalog's, exactly as in
-        # `_index_reverse!`: `MixedBranchesParallel` matches on `all`, so a member can pass
-        # this predicate while its group did not, and the arc is then not a row at all.
+        # Same forward-pass verdict as `_index_reverse!` (MixedBranchesParallel matches `all`).
         haskey(arcs, arc) || continue
         _entry_carries(get_entry(arcs[arc]), member) || continue
         push!(
@@ -455,25 +438,10 @@ function _build_component_name_index(
 end
 
 """
-Throws when an arc in `nrd`'s direct, parallel or series map got no row in `name_to_arc`, so
-nothing that indexes by PSY component type can reach it. Every unfiltered
-[`BranchCatalog`](@ref) runs this before returning; a filtered one drops arcs by design and
-skips it.
-
-This is **not** an independent audit of the catalog. `name_to_arc` is built by
-`_index_forward!` / `_index_series!` walking the same three maps, and under `_keep_all` every
-entry registers, so the comparison is tautological except in the two cases it exists to catch:
-
-  - An entry that names no branch type. `_get_concrete_types` (parallel) and the per-segment
-    type loop (series) register nothing for an aggregate with no leaf components, and
-    `_entry_matches(::BranchesParallel, ...)` is `any`, which is `false` over no members. Such
-    an arc carries flow in the matrices while no `DeviceModel` can ask for it.
-  - A name collision inside one type bucket. `name_to_arc[T]` is keyed by entry name, so two
-    arcs producing the same name leave only the second and the first becomes unreachable.
-
-Both are otherwise silent: an arc is reached only by asking for a component type, and a type
-that indexes nothing returns an empty map rather than an error -- no flow variable, no rating
-constraint, no nodal-balance term, and no complaint.
+Throws when an arc in `nrd`'s direct, parallel or series map has no row in `name_to_arc`. It
+catches two silent losses: an aggregate with no leaf components (it registers under no type),
+and an entry-name collision inside one type bucket (the later arc overwrites the earlier one).
+Either leaves an arc that carries flow but that no component-type query can reach.
 """
 function _validate_catalog_closure(nrd::NetworkReductionData, name_to_arc::NAME_TO_ARC)
     indexed = Set{Tuple{Int, Int}}()
@@ -516,9 +484,8 @@ Index over `nrd` holding only entries `predicate` accepts, where `predicate(T, c
 returns whether a component of branch type `T` should be indexed. An aggregate is judged by
 `_entry_matches`, which applies the predicate to every physical branch at its leaves.
 
-An unfiltered catalog runs [`_validate_catalog_closure`](@ref) before returning. A filtered
-one drops arcs by design, so an unreachable arc there is a filter decision rather than a lost
-entry and the check is skipped.
+Only an unfiltered catalog runs [`_validate_catalog_closure`](@ref); a filter drops arcs by
+design.
 """
 function BranchCatalog(nrd::NetworkReductionData, predicate)
     maps = BranchMapsByType()

@@ -498,9 +498,7 @@ end
 end
 
 @testset "N-1 rating is unknown while any member's rating is" begin
-    # Aggregating over the known subset alone reported the survivors' capacity as the whole
-    # group's N-1 value — exactly 0.0 for a pair with one known rating, which claims the
-    # corridor carries nothing post-contingency.
+    # One unknown member makes N-1 unknown, not the survivors' sum.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     line = first(PSY.get_components(PSY.Line, sys))
     transformer = first(PSY.get_components(PSY.TwoWindingTransformer, sys))
@@ -535,8 +533,6 @@ end
 end
 
 @testset "Three-winding circuit emergency rating reads rating_b" begin
-    # `PSY.TransformerCircuit` declares `rating_b`, and the two-winding path reads it off the
-    # identical type; returning the normal rating here understated the emergency limit.
     sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
     trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
     tertiary = PSY.get_tertiary_circuit(trf)

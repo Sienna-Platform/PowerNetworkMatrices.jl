@@ -156,9 +156,7 @@ end
         @test full[1] ≈ PNM.YBUS_ELTYPE(-Y11)
         @test full[2] ≈ PNM.YBUS_ELTYPE(-Y12)
 
-        # A winding is in service or out. A partial Δb has no meaning on a star-leg arc, and
-        # silently cancelling the whole Pi-model would have the DC and AC sides describing
-        # two different contingencies.
+        # Partial Δb is rejected.
         @test_throws ErrorException PNM._compute_arc_ybus_delta(nr, arc, -0.5 * b_arc)
         @test_throws "Partial" PNM._compute_arc_ybus_delta(nr, arc, -0.5 * b_arc)
         @test_throws PNM.get_name(winding) PNM._compute_arc_ybus_delta(

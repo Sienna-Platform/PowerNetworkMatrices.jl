@@ -9,22 +9,14 @@ Implements van Dijk et al. Eq. 29:
 """
     _invert_woodbury_W(W_mat, M) -> (W_inv::Matrix{Float64}, is_islanding::Bool)
 
-Invert the M×M Woodbury W matrix. Analytical formulas for M=1 and M=2 avoid
-LU factorization overhead; M > 2 falls back to LU. `M` is a plain `Int`: it comes
-from a runtime contingency size, so a `Val{M}` would buy a dynamic dispatch and a
-fresh specialization per distinct size rather than a compile-time constant.
+Invert the M×M Woodbury W; closed form for M ≤ 2, LU otherwise.
 """
 function _invert_woodbury_W(
     W_mat::Matrix{Float64},
     M::Int,
 )::Tuple{Matrix{Float64}, Bool}
     if iszero(M)
-        # A contingency whose branch was eliminated by the zero-impedance reduction
-        # resolves to no arc modifications, so W is 0×0. LAPACK's getri! (reached via
-        # `inv`) rejects a 0×0 argument ("invalid argument #6"), so return the empty
-        # inverse directly. The correction is then nil and the unmodified base PTDF
-        # row survives. Only a hand-built modification reaches this; registered outages
-        # are rejected by `_validate_transmission_survived`.
+        # M = 0 (hand-built modifications only; registration rejects it): getri! rejects 0×0.
         return Matrix{Float64}(undef, 0, 0), false
     elseif M == 1
         w = W_mat[1, 1]
@@ -198,9 +190,7 @@ end
     _woodbury_correction!(z_m, BA, b_mon_pre, b_mon_post, monitored_idx, wf) -> Vector{Float64}
 
 Turn `z_m` — `B⁻¹ν_m / b_mon_pre` in full-bus space — into the post-modification
-PTDF row of the monitored arc, in place. The callers differ only in how they
-obtain `z_m`: a solve in the kernel path, a lookup into the batched
-pre-contingency solves in `populate_cache`.
+PTDF row of the monitored arc, in place.
 """
 function _woodbury_correction!(
     z_m::Vector{Float64},
@@ -265,11 +255,7 @@ function _compute_woodbury_factors_impl(
         b_e = arc_sus[e]
 
         lin_solve = _solve_ba_column!(K, work_ba_col, BA, bus_to_valid_idx, e)
-
-        fill!(view(Z, :, j), 0.0)
-        @inbounds for i in eachindex(valid_ix)
-            Z[valid_ix[i], j] = lin_solve[i] / b_e
-        end
+        _gather_to_buses!(view(Z, :, j), valid_ix, lin_solve, b_e)
     end
 
     return _woodbury_factors_from_Z(Z, BA, arc_sus, modifications)
@@ -303,11 +289,7 @@ function _apply_woodbury_correction_impl(
     # z_m = B⁻¹ν_m / b_mon_pre.
     b_mon_pre = arc_sus[monitored_idx]
     lin_solve = _solve_ba_column!(K, work_ba_col, BA, bus_to_valid_idx, monitored_idx)
-
-    fill!(temp_data, 0.0)
-    @inbounds for i in eachindex(valid_ix)
-        temp_data[valid_ix[i]] = lin_solve[i] / b_mon_pre
-    end
+    _gather_to_buses!(temp_data, valid_ix, lin_solve, b_mon_pre)
 
     _woodbury_correction!(temp_data, BA, b_mon_pre, b_mon, monitored_idx, wf)
     return copy(temp_data)

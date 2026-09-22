@@ -131,19 +131,15 @@ function Base.getindex(
     return cache.temp_cache[key]
 end
 
-# Pinned rows count against `max_num_keys`, and one slot must stay evictable so
-# `check_cache_size!` can always make room for a lazy insert. This is the bound the
-# constructor already enforces on the initial persistent set (`length + 1 <= max_num_keys`);
-# pinning that outgrows it is rejected rather than silently overrunning `max_cache_size`.
+# One slot stays evictable so check_cache_size! can always make room (the constructor's
+# length + 1 <= max_num_keys bound).
 function _pin!(cache::RowCache, key::Int)
     key in cache.persistent_cache_keys && return
     if length(cache.persistent_cache_keys) >= cache.max_num_keys - 1
         error(
-            "Cannot pin row $key: the cache already holds " *
-            "$(length(cache.persistent_cache_keys)) pinned rows and its capacity is " *
-            "max_num_keys = $(cache.max_num_keys) (max_cache_size = " *
-            "$(cache.max_cache_size) bytes), which must leave one evictable slot. " *
-            "Increase `max_cache_size` or pin fewer rows.",
+            "Cannot pin row $key: $(length(cache.persistent_cache_keys)) pinned rows " *
+            "already fill max_num_keys = $(cache.max_num_keys) less one evictable slot. " *
+            "Increase max_cache_size or pin fewer rows.",
         )
     end
     push!(cache.persistent_cache_keys, key)
@@ -229,20 +225,15 @@ end
 
 """
 Check saved rows in cache and delete one not belonging to `persistent_cache_keys`.
-Errors when the cache is at capacity with every row pinned, rather than logging
-and leaving it over its `max_cache_size`.
+Errors when every row is pinned.
 """
 function check_cache_size!(cache::RowCache; new_add::Bool = false)
-    if new_add
-        v = 1
-    else
-        v = 0
-    end
-    length(cache.temp_cache) > cache.max_num_keys - v || return
+    limit = cache.max_num_keys - Int(new_add)
+    length(cache.temp_cache) > limit || return
     @info "Maximum memory reached, removing rows from cache (not belonging to `persistent_cache_keys`)." maxlog =
         1
     purge_one!(cache)
-    if length(cache.temp_cache) > cache.max_num_keys - v
+    if length(cache.temp_cache) > limit
         error(
             "RowCache holds $(length(cache.temp_cache)) rows at capacity " *
             "max_num_keys = $(cache.max_num_keys) and every one of them is pinned, so " *

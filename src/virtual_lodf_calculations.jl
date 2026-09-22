@@ -200,11 +200,8 @@ function VirtualLODF(
     end
 
     bus_ax = core.axes[2]
-    empty_cache = RowCache(
-        max_cache_size * MiB,
-        Set{Int}(look_up[1][k] for k in persistent_arcs),
-        length(bus_ax) * sizeof(Float64),
-    )
+    empty_cache =
+        _persistent_row_cache(max_cache_size, look_up, persistent_arcs, length(bus_ax))
 
     return VirtualLODF(
         core,
@@ -279,10 +276,7 @@ function _compute_lodf_row(vlodf::VirtualLODF, row::Int)::Vector{Float64}
         lin_solve =
             _solve_ba_column!(K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, row)
 
-        fill!(temp_data, 0.0)
-        @inbounds for i in eachindex(core.valid_ix)
-            temp_data[core.valid_ix[i]] = lin_solve[i]
-        end
+        _gather_to_buses!(temp_data, core.valid_ix, lin_solve)
 
         lodf_row = core.A * temp_data
         lodf_row .*= inv_PTDF_A_diag
@@ -396,10 +390,7 @@ function _getindex_partial(
         )
 
         # Step 3: Map solution back to full bus space.
-        fill!(temp_data, 0.0)
-        @inbounds for i in eachindex(core.valid_ix)
-            temp_data[core.valid_ix[i]] = lin_solve[i]
-        end
+        _gather_to_buses!(temp_data, core.valid_ix, lin_solve)
 
         # Step 4: H_col[ℓ] = b_e · C[e,ℓ] for all monitoring arcs ℓ.
         H_col = core.A * temp_data

@@ -124,21 +124,25 @@ The circuit's own rating (MVA, device base). May be `nothing` when unset, mirror
 get_equivalent_rating(tw::ThreeWindingTransformerCircuit) =
     PSY.get_rating(tw.circuit, PSY.CU)
 
-"""
-    get_equivalent_emergency_rating(tw::ThreeWindingTransformerCircuit)
-
-The circuit's own `rating_b` (MVA, device base), falling back to its normal-operation rating
-when unset — the same rule the `PSY.TwoWindingTransformer` method applies to the identical
-`PSY.TransformerCircuit` type. May be `nothing` when the circuit carries neither rating.
-"""
-function get_equivalent_emergency_rating(tw::ThreeWindingTransformerCircuit)
-    rating_b = PSY.get_rating_b(tw.circuit, PSY.CU)
+# Shared by the 2W and 3W methods: `PSY.TransformerCircuit`'s `rating_b` (MVA, device base),
+# falling back to its normal rating when unset.
+function _circuit_emergency_rating(c::PSY.TransformerCircuit, name::AbstractString)
+    rating_b = PSY.get_rating_b(c, PSY.CU)
     if isnothing(rating_b)
-        @debug "Circuit $(get_name(tw)) has no 'rating_b' defined; using normal-operation rating."
-        return get_equivalent_rating(tw)
+        @debug "$name has no 'rating_b' defined; using normal-operation rating."
+        return PSY.get_rating(c, PSY.CU)
     end
     return rating_b
 end
+
+"""
+    get_equivalent_emergency_rating(tw::ThreeWindingTransformerCircuit)
+
+The circuit's `rating_b` (MVA, device base), falling back to its normal rating as the 2W
+method does. May be `nothing`.
+"""
+get_equivalent_emergency_rating(tw::ThreeWindingTransformerCircuit) =
+    _circuit_emergency_rating(tw.circuit, get_name(tw))
 
 """
     get_equivalent_available(tw::ThreeWindingTransformerCircuit)

@@ -358,10 +358,7 @@ end
 end
 
 @testset "configured minimum_retained_impedance reaches parallel-group members" begin
-    # An aggregate resolves its members through `ybus_branch_entries(member, nr)`, which must
-    # take the substitute reactance from the reduction spec. Stamping the default instead put
-    # the AC Ybus three orders of magnitude away from the DC susceptance built from the same
-    # group, silently and only for members inside an aggregate.
+    # Aggregate members get the configured substitute reactance, not the default.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     t = get_component(TwoWindingTransformer, sys, "Trans4")
     set_r!(t, 0.0 * PSY.SU)
@@ -416,10 +413,7 @@ end
 end
 
 @testset "configured minimum_retained_impedance reaches series-chain segments" begin
-    # The chain arm resolves its segments through the same `ybus_branch_entries(segment, nr)`
-    # as a parallel group. ZeroImpedanceBranchReduction excludes transformer arcs, so a
-    # transformer with r == x == 0 survives inside the folded chain and its substituted
-    # reactance lands in the chain's equivalent series impedance.
+    # ZIR excludes transformer arcs, so an r == x == 0 transformer survives into the chain.
     sys, buses = _mk_bus_system(4)
     function _mk_line(name, f, t, x)
         arc = Arc(; from = buses[f], to = buses[t])
@@ -1684,10 +1678,7 @@ end
     )
 end
 
-@testset "ZeroImpedanceBranchReduction: an aggregate holding a transformer is a transformer arc" begin
-    # `_is_transformer`'s blanket `PSY.ACTransmission` method answered `false` for an
-    # aggregate, which subtypes it — so a chain carrying a transformer read as an ordinary
-    # branch, and the transformer exclusion that ZIR relies on would not have applied.
+@testset "ZIR: aggregate with a transformer is a transformer arc" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     transformer = first(PSY.get_components(PSY.TwoWindingTransformer, sys))
     line = first(PSY.get_components(PSY.Line, sys))

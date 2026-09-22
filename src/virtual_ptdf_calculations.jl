@@ -217,11 +217,8 @@ function VirtualPTDF(
         dist_slack_vector = redistribute_dist_slack(dist_slack, core)
     end
 
-    empty_cache = RowCache(
-        max_cache_size * MiB,
-        Set{Int}(look_up[1][k] for k in persistent_arcs),
-        length(bus_ax) * sizeof(Float64),
-    )
+    empty_cache =
+        _persistent_row_cache(max_cache_size, look_up, persistent_arcs, length(bus_ax))
 
     if !isempty(dist_slack_vector)
         dist_slack_normalized = dist_slack_vector / sum(dist_slack_vector)
@@ -296,11 +293,7 @@ function _compute_ptdf_row(vptdf::VirtualPTDF, row::Int)::Vector{Float64}
     ) do K_solver, work_ba_col, temp_data
         lin_solve =
             _solve_ba_column!(K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, row)
-        fill!(temp_data, 0.0)
-        valid_ix = core.valid_ix
-        @inbounds for i in eachindex(valid_ix)
-            temp_data[valid_ix[i]] = lin_solve[i]
-        end
+        _gather_to_buses!(temp_data, core.valid_ix, lin_solve)
         if use_dist_slack
             adjustment = dot(temp_data, dist_slack_normalized)
             return temp_data .- adjustment

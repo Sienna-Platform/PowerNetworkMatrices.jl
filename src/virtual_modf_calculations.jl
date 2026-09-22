@@ -295,9 +295,7 @@ end
 
 Build a VirtualMODF that reuses an existing `VirtualPTDF`'s factorization. The
 two objects share the same [`VirtualFactorCore`](@ref), so the ABA matrix is
-factorized only once. Carries the same reduction caveat as
-`VirtualMODF(core, sys)`: a `VirtualPTDF` built under reductions knows nothing about the
-system's outages, so an outaged branch it reduced away is rejected here.
+factorized only once. Same reduction caveat as VirtualMODF(core, sys).
 """
 function VirtualMODF(vptdf::VirtualPTDF, sys::PSY.System; kwargs...)
     return VirtualMODF(get_core(vptdf), sys; kwargs...)
@@ -306,23 +304,10 @@ end
 """
     _validate_transmission_survived(sys, outage, mod)
 
-Decide what an outage that references `ACTransmission` components but resolves to no arc
-modifications actually means, and reject only the case that is wrong.
-
-Two different situations produce that same empty `arc_modifications`:
-
-  - **A branch that is `available` but reached no reduction map.** The network the matrix was
-    built on has no arc for it, so the outage cannot be represented and every query would
-    return the base-case row — a silently wrong answer. This throws.
-  - **A branch that is already `available = false`.** It never entered the Ybus, so outaging it
-    removes nothing and the base-case row *is* the correct answer. This is legitimate; it
-    warns, because the contingency is a no-op and an N-1 screen over it proves nothing.
-
-This is the one survive-check the core-sharing constructors can run. `VirtualMODF(sys; ...)`
-*prevents* the first case by folding the outage buses into `irreducible_buses` before the Ybus
-is built; a core handed over already factorized carries whatever reduction its own build
-applied, and neither `_collect_protected_buses` nor `_split_zero_impedance_reduction` can be
-replayed on it. Checking the resolved modification catches the outcome of all of them.
+For an outage whose ACTransmission components resolved to no arc modifications: throw when
+any is in service (a reduction eliminated it, so every query would return the base-case row);
+warn when all are out of service (a legitimate no-op). This is the only survive-check
+possible on a core that was reduced before outages were known.
 """
 function _validate_transmission_survived(
     sys::PSY.System,
@@ -349,13 +334,10 @@ function _validate_transmission_survived(
     throw(
         IS.ConflictingInputsError(
             "Outage (label=$(mod.label)) references in-service transmission component(s) \
-            $(join(names, ", ")) that resolved to no arc modifications: they are absent from \
-            the network this matrix was built on, normally because a network reduction \
-            eliminated them. Every query of this contingency would return the unmodified \
-            PTDF row. Build the VirtualMODF from the system \
-            (`VirtualMODF(sys; network_reductions = ...)`), which protects outaged and \
-            monitored buses before reducing, or reduce the shared core with those buses in \
-            `irreducible_buses`.",
+            $(join(names, ", ")) that a network reduction eliminated; every query would \
+            return the base-case row. Build with \
+            VirtualMODF(sys; network_reductions = ...) or put their buses in \
+            irreducible_buses.",
         ),
     )
 end

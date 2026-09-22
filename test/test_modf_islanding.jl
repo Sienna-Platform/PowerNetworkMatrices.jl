@@ -202,7 +202,6 @@ end
         PSB.PSSEParsingTestSystems,
         "psse_14_network_reduction_test_system",
     )
-    # KLU throws on a singular factorization where AppleAccelerate returns garbage.
     vptdf = VirtualPTDF(sys; linear_solver = "KLU")
     vmodf = VirtualMODF(sys; linear_solver = "KLU")  # only to locate a bridge arc via PTDF_A_diag
     ptdf_ref = PTDF(sys)
@@ -223,14 +222,11 @@ end
 end
 
 @testset "MODF islanding: populate_cache rows match the lazy path" begin
-    # `populate_cache` pins its rows permanently, so a row that skips the islanding
-    # zero-out is never re-derived: calling it would silently change the answer to a
-    # query that was correct without it.
+    # Pinned rows are never recomputed, so populate_cache must zero islanded buses too.
     sys14 = PSB.build_system(
         PSB.PSSEParsingTestSystems,
         "psse_14_network_reduction_test_system",
     )
-    # KLU throws on a singular factorization where AppleAccelerate returns garbage.
     v_lazy = VirtualMODF(sys14; linear_solver = "KLU")
     v_pop = VirtualMODF(sys14; linear_solver = "KLU")
 

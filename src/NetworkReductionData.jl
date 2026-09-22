@@ -125,6 +125,11 @@ leaf_components(branch::PSY.ACTransmission) = PSY.ACTransmission[branch]
 leaf_components(entry::AbstractReductionAggregate) =
     _collect_leaves!(PSY.ACTransmission[], entry)
 
+# Whether `br` is a leaf of `x`, without allocating the full `leaf_components` vector.
+_has_leaf(x::PSY.ACTransmission, br::PSY.ACTransmission) = x === br
+_has_leaf(x::AbstractReductionAggregate, br::PSY.ACTransmission) =
+    any(m -> _has_leaf(m, br), x)
+
 _get_segment_components(x) = leaf_components(x)
 _get_segment_type(::T) where {T <: PSY.ACBranch} = T
 _get_segment_type(::BranchesParallel{T}) where {T <: PSY.ACTransmission} = T
@@ -251,8 +256,6 @@ end
 _is_three_winding_circuit(::PSY.ACTransmission) = false
 _is_three_winding_circuit(::ThreeWindingTransformerCircuit) = true
 
-# A `ThreeWindingTransformerCircuit` reports the parent transformer type; every other branch
-# reports its own concrete type.
 _ac_transmission_type(x::PSY.ACTransmission) = typeof(x)
 _ac_transmission_type(w::ThreeWindingTransformerCircuit) = get_transformer_type(w)
 

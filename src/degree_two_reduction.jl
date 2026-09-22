@@ -368,14 +368,16 @@ function _get_partial_chain_recursive!(
         end
 
         reduced_indices[current_node] = true
-        # Get neighbors
-        neighbors = _get_neighbors(adj_matrix, current_node)
+        # `_is_final_node` above already confirmed degree 2, so the range holds exactly two
+        # entries; reading its endpoints avoids `_get_neighbors`'s fancy-index allocation.
+        nz = SparseArrays.nzrange(adj_matrix, current_node)
+        rv = SparseArrays.rowvals(adj_matrix)
 
         # Determine the next node to visit. It must not be the `previous_node`.
         # This prevents the traversal from going back and forth between two nodes.
-        next_node = neighbors[1]
+        next_node = rv[first(nz)]
         if next_node == prev_node
-            next_node = neighbors[2]
+            next_node = rv[last(nz)]
         end
         prev_node = current_node
         current_node = next_node

@@ -137,9 +137,7 @@ end
 end
 
 @testset "Partial LODF: a bridge arc uses the same clamp as the cached row" begin
-    # Arc 2 of c_sys14 is a bridge (H[e,e] == 1.0). The cached path clamps that
-    # diagonal, the partial path used to read it raw and divide by 1 - H[e,e] ≈ 0,
-    # returning Inf for every non-self entry.
+    # Arc 2 of c_sys14 is a bridge (H[e,e] == 1.0).
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     vlodf = VirtualLODF(sys)
     n_arcs = size(vlodf, 1)

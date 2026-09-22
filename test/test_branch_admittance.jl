@@ -13,7 +13,7 @@
     @test a.shift == 0.0
 end
 
-@testset "_reduced_arc_equivalent_branch skips a direct arc shadowed by a reverse-keyed group" begin
+@testset "_reduced_arc_equivalent_branch: reverse-keyed group shadows direct arc" begin
     # (1,2) is a lone direct line; the two (2,1) lines form a parallel group keyed at (2,1).
     edges = [
         (1, 2, 0.0, 0.10, 0.0, 0.0), (2, 1, 0.0, 0.20, 0.0, 0.0),
@@ -45,12 +45,8 @@ end
 end
 
 @testset "branch_flow_limits on a reduction aggregate" begin
-    # Aggregates subtype `PSY.ACTransmission`, so a group used to fall into the blanket method
-    # and report its equivalent rating in both directions — widening the asymmetric member's
-    # reverse limit from 120.0 to the group total.
-    # The branches stay detached deliberately: `branch_flow_limits` and
-    # `get_equivalent_rating` read `PSY.CU` only, which needs no system base, and the buses
-    # come from a real system so the arc resolves. Nothing here touches `PSY.SU`.
+    # Detached on purpose: branch_flow_limits reads PSY.CU only. An asymmetric member must
+    # keep its own reverse limit.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
     buses = collect(PSY.get_components(PSY.ACBus, sys))
     arc = PSY.Arc(; from = buses[1], to = buses[2])

@@ -120,13 +120,8 @@ function BA_Matrix(ybus::Ybus)
     for (ix_arc, arc) in enumerate(arc_ax)
         ix_from_bus = get_bus_index(arc[1], bus_lookup, nr)
         ix_to_bus = get_bus_index(arc[2], bus_lookup, nr)
-        # The arc's own branch-map entry, not `ybus.data` at the bus pair: an anti-parallel
-        # twin is a separate arc key on the same pair, and a Ward equivalent can be filed
-        # under an existing key, so the off-diagonal alone conflates them; see
-        # `_ba_arc_susceptance`.
         b = _ba_arc_susceptance(nr_data, arc)
-        # Stamped into BA it would spread through every downstream factorization, untraceable.
-        # A legitimately zero susceptance is finite and reaches here unaffected.
+        # A NaN/Inf in BA would poison every downstream factorization.
         if !isfinite(b)
             error(
                 "Non-finite DC susceptance $(b) on arc $(arc); BA_Matrix has no " *

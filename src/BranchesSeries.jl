@@ -1,6 +1,5 @@
 mutable struct BranchesSeries <: AbstractReductionAggregate
     branches::Dict{DataType, Vector{PSY.ACTransmission}}
-    mixed_types::Bool
     insertion_order::Vector{Tuple{DataType, Int}}
     segment_orientations::Vector{Symbol}
     # The chain's endpoints in original bus numbers, remapped with `nr` on read. A chain can be
@@ -11,7 +10,6 @@ mutable struct BranchesSeries <: AbstractReductionAggregate
 
     function BranchesSeries(
         branches::Dict{DataType, Vector{PSY.ACTransmission}},
-        mixed_types::Bool,
         insertion_order::Vector{Tuple{DataType, Int}},
         segment_orientations::Vector{Symbol},
         arc_key::Tuple{Int, Int},
@@ -21,15 +19,13 @@ mutable struct BranchesSeries <: AbstractReductionAggregate
         n_members = sum(length, values(branches); init = 0)
         if length(insertion_order) != n_members
             error(
-                "BranchesSeries on arc $arc_key holds $n_members member(s) but " *
-                "$(length(insertion_order)) insertion_order entries. insertion_order is the " *
-                "chain's only traversal path, so a mismatch iterates as a shorter chain " *
-                "instead of failing. Build chains with BranchesSeries(arc_key) and add_branch!.",
+                "BranchesSeries on arc $arc_key: $n_members member(s) but " *
+                "$(length(insertion_order)) insertion_order entries. Build chains with " *
+                "BranchesSeries(arc_key) and add_branch!.",
             )
         end
         return new(
             branches,
-            mixed_types,
             insertion_order,
             segment_orientations,
             arc_key,
@@ -39,9 +35,11 @@ mutable struct BranchesSeries <: AbstractReductionAggregate
     end
 end
 
+# More than one key means a chain mixing branch types.
+_has_mixed_types(bs::BranchesSeries) = length(bs.branches) > 1
+
 BranchesSeries(arc_key::Tuple{Int, Int}) = BranchesSeries(
     Dict{DataType, Vector{PSY.ACTransmission}}(),
-    false,
     Vector{Tuple{DataType, Int}}(),
     Vector{Symbol}(),
     arc_key,
@@ -56,17 +54,13 @@ function add_branch!(
 ) where {T <: PSY.ACTransmission}
     invalidate_equivalent_ybus!(bs)
     push!(bs.segment_orientations, orientation)
-    if !isempty(bs.branches) && !haskey(bs.branches, T)
-        bs.mixed_types = true
-    end
     members = get!(() -> Vector{PSY.ACTransmission}(), bs.branches, T)
     push!(members, branch)
     push!(bs.insertion_order, (T, length(members)))
     return
 end
 
-# `insertion_order` is the chain's traversal order and the only iteration path, so the state
-# is a plain position: a uniform state keeps the accessors that sum over a chain inferable.
+# Integer position over `insertion_order` keeps chain sums inferable.
 function Base.iterate(bs::BranchesSeries, position::Int = 1)
     if position > length(bs.insertion_order)
         return nothing
@@ -262,14 +256,8 @@ end
 `get_rating`/`get_rating_b`); falls back to the winding's normal-operation rating when
 `rating_b` is unset. May return `nothing` when the winding has neither rating.
 """
-function get_equivalent_emergency_rating(branch::PSY.TwoWindingTransformer)
-    w = PSY.get_circuit(branch)
-    if isnothing(PSY.get_rating_b(w, PSY.CU))
-        @debug "Winding of $(PSY.get_name(branch)) has no 'rating_b' defined; using normal-operation rating."
-        return PSY.get_rating(w, PSY.CU)
-    end
-    return PSY.get_rating_b(w, PSY.CU)
-end
+get_equivalent_emergency_rating(branch::PSY.TwoWindingTransformer) =
+    _circuit_emergency_rating(PSY.get_circuit(branch), "Winding of $(PSY.get_name(branch))")
 
 """
     get_equivalent_emergency_rating(bs<:PSY.ACTransmission)
@@ -285,7 +273,7 @@ end
 # the path between its endpoints.
 # Recursive: might be nested, have BranchesParallel as link in degree 2 chain.
 function _entry_matches(chain::BranchesSeries, predicate)
-    if chain.mixed_types && !_is_unfiltered(predicate)
+    if _has_mixed_types(chain) && !_is_unfiltered(predicate)
         _warn_mixed_group("Series circuit", _get_segment_components(chain))
     end
     return all(_entry_matches(segment, predicate)::Bool for segment in chain)

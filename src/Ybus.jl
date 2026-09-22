@@ -262,7 +262,7 @@ reverse lookup dictionaries for efficient access.
   (`_make_parallel_branch_pair`): homogeneous `BranchesParallel{T}` when types match,
   `MixedBranchesParallel` with a `@warn` otherwise
 - Otherwise creates a new direct mapping
-- Phase-shifting members are grouped like any other branch — never dropped or forced direct
+- Phase-shifting members are grouped like any other branch
 - Maintains reverse lookup consistency
 """
 function add_to_branch_maps!(
@@ -427,14 +427,8 @@ function add_branch_entries_to_indexing_maps!(
     return
 end
 
-"""Ybus 2x2 for any single branch on its own terms — line, Ward equivalent, or transformer
-circuit of either arity. The π-model comes from [`equivalent_branch`](@ref), the single
-source of truth, and this method carries that one's meaning: no impedance correction, and
-`min_x_eps` rather than a reduction's configured substitute reactance.
-
-Use the `nr` form below wherever an `nr` is available. A caller recomputing a flow from
-solved voltages must reach the *same* admittance that was stamped, and mixing the two forms
-over one network is a numeric split rather than an error."""
+"""Ybus 2x2 of a single branch on its own terms (no correction, `min_x_eps` substitute); see
+[`equivalent_branch`](@ref). Use the `nr` form when an `nr` exists."""
 function ybus_branch_entries(
     br::PSY.ACTransmission;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
@@ -442,10 +436,9 @@ function ybus_branch_entries(
     return _equivalent_to_ybus(br, equivalent_branch(br; min_x_eps = min_x_eps))
 end
 
-"""Ybus 2x2 for any single branch exactly as the assembled matrices carry it: `nr` supplies
-both the impedance correction and the zero-impedance substitute reactance. Aggregates
-(parallel groups, series chains) have their own methods below — for those Ybus is the
-primitive and the π-model is derived from it, not the reverse."""
+"""Ybus 2x2 of a single branch as assembled: `nr` supplies the impedance correction and the
+zero-impedance substitute. Aggregates have their own methods below, where Ybus is the
+primitive and the π-model is derived from it."""
 function ybus_branch_entries(br::PSY.ACTransmission, nr::NetworkReductionData)
     return _equivalent_to_ybus(br, equivalent_branch(br, nr))
 end
@@ -1638,9 +1631,8 @@ _dropped_entry_label(br::PSY.ACTransmission) = "branch $(get_name(br))"
 _dropped_entry_label(bp::AbstractBranchesParallel) =
     "parallel group $(get_name(bp)) with $(length(bp)) branch(es)"
 
-# Collect phase of a branch-map remap: pop every entry whose arc touches a merged bus,
-# drop the ones that collapse to a self-loop, and return the survivors keyed by their new
-# arc. Collecting before re-inserting keeps the apply phase from revisiting its own writes.
+# Pop entries touching a merged bus, drop self-loops, return survivors by new arc; collecting
+# first keeps the apply phase off its own writes.
 function _collect_remapped_entries!(
     branch_map::Dict{Tuple{Int, Int}, V},
     merged_bus_pairs::Dict{Int, Int},
@@ -2220,10 +2212,6 @@ function add_segment_to_ybus!(
     end
 end
 
-# A chain reached as another chain's segment enters as its own two-port, which is both what a
-# composite arc contributes to Ybus and what `_composite_raw_two_port` backs out for it. Resolving
-# it through `nr` keeps those two agreeing; the one-argument form has no method for an aggregate
-# and would fall through to the single-branch path.
 """
     add_segment_to_ybus!(
         segment::AbstractReductionAggregate,
@@ -2241,9 +2229,8 @@ end
 Add a reduction aggregate — a parallel group or a series chain — as a single segment to Y-bus
 vectors during series chain reduction.
 
-Resolves the aggregate's orientation-correct two-port directly via `ybus_branch_entries`, rather
-than summing members under one shared orientation, which would mis-handle an anti-parallel
-asymmetric member. A chain reached as another chain's segment enters as its own two-port here.
+Uses the aggregate's own two-port (`ybus_branch_entries(segment, nr)`); summing members under
+one orientation mis-handles an anti-parallel asymmetric member.
 
 # Arguments
 - `segment::AbstractReductionAggregate`: parallel group or series chain to add
@@ -2257,7 +2244,6 @@ asymmetric member. A chain reached as another chain's segment enters as its own 
 - `segment_orientation::Symbol`: `:FromTo` or `:ToFrom` orientation
 
 # Implementation Details
-- Computes the two-port directly via `ybus_branch_entries(segment, nr)`, not a per-member sum
 - Handles orientation by swapping entries for `:ToFrom`
 - Sets bus indices to consecutive values (ix, ix+1) for chain building
 
@@ -2277,8 +2263,6 @@ function add_segment_to_ybus!(
     segment_orientation::Symbol,
     nr::NetworkReductionData,
 )
-    # For a parallel group this is the orientation-correct equivalent block rather than a sum of
-    # members under one shared orientation, which mis-handles an anti-parallel asymmetric member.
     (Y11, Y12, Y21, Y22) = ybus_branch_entries(segment, nr)
     push!(fb, ix)
     push!(tb, ix + 1)

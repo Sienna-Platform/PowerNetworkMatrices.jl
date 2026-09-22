@@ -852,11 +852,8 @@ function build_antiparallel_chain_segment_system()
 end
 
 """
-`build_antiparallel_chain_segment_system` with a second `10 -> 3` line alongside the existing
-one, so chain segment 2 promotes to `MixedBranchesParallel[Line, BranchesParallel{Line}]`: the
-anti-parallel twin (`3 -> 10`) stays a direct member while the two same-direction lines nest
-into their own `BranchesParallel`. Exercises outage helpers that must resolve a tripped branch
-down through a nested aggregate to its leaves rather than matching only direct members.
+`build_antiparallel_chain_segment_system` plus a second 10→3 line, so segment 2 is
+MixedBranchesParallel[Line, BranchesParallel{Line}].
 """
 function build_antiparallel_chain_segment_nested_parallel_system()
     sys = build_antiparallel_chain_segment_system()
@@ -1097,13 +1094,8 @@ function _mk_line_pst_parallel_system(; pst_r = 0.0, pst_x = 0.2)
     return sys
 end
 
-# Build a `ThreeWindingTransformer` into `sys`, wiring three terminal
-# buses to a hidden star bus. The circuit-resident star-leg series impedances are derived
-# from the pairwise data here (as PFFP does at parse) and stored per circuit on `bp`
-# (= system base here, so SU == CU keeps the hand-computed literals clean); the pairwise data
-# stays on the parent. The magnetizing shunt and its location live on the parent transformer.
-# Each circuit carries its own arc, base power, base voltages, and rating. Returns the
-# attached transformer.
+# ThreeWindingTransformer on three terminal buses → star_bus; star-leg impedances derived
+# from pairwise data, system base (SU == CU).
 function _add_three_winding_transformer!(
     sys,
     busP,
