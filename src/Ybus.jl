@@ -225,6 +225,22 @@ function _push_parallel_branch_dispatch!(
     return
 end
 
+function _promote_pair_to_parallel!(
+    parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel},
+    arc_tuple::Tuple{Int, Int},
+    first_branch::PSY.ACTransmission,
+    second_branch::PSY.ACTransmission,
+)
+    if haskey(parallel_branch_map, arc_tuple)
+        _push_parallel_branch!(parallel_branch_map, arc_tuple, first_branch)
+        _push_parallel_branch!(parallel_branch_map, arc_tuple, second_branch)
+    else
+        parallel_branch_map[arc_tuple] =
+            _make_parallel_branch_pair(first_branch, second_branch, arc_tuple)
+    end
+    return
+end
+
 """
     add_to_branch_maps!(nr::NetworkReductionData, arc::PSY.Arc, br::PSY.ACTransmission)
 
@@ -266,8 +282,12 @@ function add_to_branch_maps!(
         corresponding_branch = direct_branch_map[arc_tuple]
         delete!(direct_branch_map, arc_tuple)
         delete!(reverse_direct_branch_map, corresponding_branch)
-        parallel_branch_map[arc_tuple] =
-            _make_parallel_branch_pair(corresponding_branch, br, arc_tuple)
+        _promote_pair_to_parallel!(
+            parallel_branch_map,
+            arc_tuple,
+            corresponding_branch,
+            br,
+        )
         reverse_parallel_branch_map[corresponding_branch] = arc_tuple
         reverse_parallel_branch_map[br] = arc_tuple
     else
@@ -1633,13 +1653,7 @@ function _remap_merged_bus_in_branch_maps!(
         if haskey(nr.direct_branch_map, new_arc)
             existing = pop!(nr.direct_branch_map, new_arc)
             @debug "Bus merge collision on direct arc $new_arc: promoting $(get_name(existing)) and $(get_name(val)) to a parallel group."
-            if haskey(nr.parallel_branch_map, new_arc)
-                _push_parallel_branch!(nr.parallel_branch_map, new_arc, existing)
-                _push_parallel_branch!(nr.parallel_branch_map, new_arc, val)
-            else
-                nr.parallel_branch_map[new_arc] =
-                    _make_parallel_branch_pair(existing, val, new_arc)
-            end
+            _promote_pair_to_parallel!(nr.parallel_branch_map, new_arc, existing, val)
         elseif haskey(nr.parallel_branch_map, new_arc)
             @debug "Bus merge collision on direct arc $new_arc: adding $(get_name(val)) to existing parallel group."
             _push_parallel_branch!(nr.parallel_branch_map, new_arc, val)
@@ -1648,13 +1662,12 @@ function _remap_merged_bus_in_branch_maps!(
             # Normalize to the already-established key so the pair is stored as a single parallel group.
             existing = pop!(nr.direct_branch_map, reverse_new_arc)
             @debug "Bus merge created anti-parallel collision: remapped arc $new_arc conflicts with existing $reverse_new_arc; promoting $(get_name(existing)) and $(get_name(val)) to a parallel group under $reverse_new_arc."
-            if haskey(nr.parallel_branch_map, reverse_new_arc)
-                _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, existing)
-                _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, val)
-            else
-                nr.parallel_branch_map[reverse_new_arc] =
-                    _make_parallel_branch_pair(existing, val, reverse_new_arc)
-            end
+            _promote_pair_to_parallel!(
+                nr.parallel_branch_map,
+                reverse_new_arc,
+                existing,
+                val,
+            )
         elseif haskey(nr.parallel_branch_map, reverse_new_arc)
             @debug "Bus merge created anti-parallel collision: remapped arc $new_arc conflicts with existing parallel group at $reverse_new_arc; adding $(get_name(val)) to that group."
             _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, val)
