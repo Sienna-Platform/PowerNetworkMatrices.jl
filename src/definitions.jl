@@ -36,7 +36,7 @@ const YBUS_DELTA_TOL = 1e-10
 # returned exactly. Sparsification only pays off — and is only wanted — at scale.
 const AUTO_TOLERANCE_BUS_LIMIT = 2000
 
-DEFAULT_LODF_CHUNK_SIZE = 18_000
+const DEFAULT_LODF_CHUNK_SIZE = 18_000
 
 # Phase shifting is a per-circuit data property, so this is data-driven via
 # `PSY.is_phase_shifting` rather than a type list. Non-transformer branches never shift;
