@@ -1,6 +1,6 @@
 mutable struct BranchesSeries <: AbstractReductionAggregate
-    branches::Dict{DataType, Vector{<:PSY.ACTransmission}}
-    needs_insertion_order::Bool
+    branches::Dict{DataType, Vector{PSY.ACTransmission}}
+    mixed_types::Bool
     insertion_order::Vector{Tuple{DataType, Int}}
     segment_orientations::Vector{Symbol}
     # The chain's endpoints in original bus numbers, remapped with `nr` on read. A chain can be
@@ -11,7 +11,7 @@ mutable struct BranchesSeries <: AbstractReductionAggregate
 end
 
 BranchesSeries(arc_key::Tuple{Int, Int}) = BranchesSeries(
-    Dict{DataType, Vector{<:PSY.ACTransmission}}(),
+    Dict{DataType, Vector{PSY.ACTransmission}}(),
     false,
     Vector{Tuple{DataType, Int}}(),
     Vector{Symbol}(),
@@ -28,87 +28,26 @@ function add_branch!(
     # Clear the cached two-port up front so every early return below is covered.
     invalidate_equivalent_ybus!(bs)
     push!(bs.segment_orientations, orientation)
-    if isempty(bs.branches)
-        # add the branch just once and return
-        push!(get!(bs.branches, T, Vector{T}()), branch)
-        return
+    if !isempty(bs.branches) && !haskey(bs.branches, T)
+        bs.mixed_types = true
     end
-
-    if haskey(bs.branches, T) && !bs.needs_insertion_order
-        push!(bs.branches[T], branch)
-    elseif !haskey(bs.branches, T) && isempty(bs.insertion_order)
-        bs.needs_insertion_order = true
-        @assert length(keys(bs.branches)) == 1
-        for (existing_type, existing_branches) in bs.branches
-            for i in eachindex(existing_branches)
-                push!(bs.insertion_order, (existing_type, i))
-            end
-        end
-        push!(get!(bs.branches, T, Vector{T}()), branch)
-        push!(bs.insertion_order, (T, 1))
-    elseif !haskey(bs.branches, T) && !isempty(bs.insertion_order)
-        push!(get!(bs.branches, T, Vector{T}()), branch)
-        push!(bs.insertion_order, (T, length(bs.branches[T])))
-    else
-        push!(bs.branches[T], branch)
-        push!(bs.insertion_order, (T, length(bs.branches[T])))
-    end
+    members = get!(() -> Vector{PSY.ACTransmission}(), bs.branches, T)
+    push!(members, branch)
+    push!(bs.insertion_order, (T, length(members)))
     return
 end
 
-# Iteration support
-function Base.iterate(bs::BranchesSeries)
-    if isempty(bs.branches)
+# `insertion_order` is the chain's traversal order and the only iteration path, so the state
+# is a plain position: a uniform state keeps the accessors that sum over a chain inferable.
+function Base.iterate(bs::BranchesSeries, position::Int = 1)
+    if position > length(bs.insertion_order)
         return nothing
     end
-
-    # Single key case - iterate over the single vector directly
-    if bs.needs_insertion_order
-        # Multi-key case - use insertion_order
-        if isempty(bs.insertion_order)
-            return nothing
-        end
-
-        type, idx = bs.insertion_order[1]
-        branch = bs.branches[type][idx]
-        return (branch, (1, nothing))
-    else
-        single_vector = first(values(bs.branches))
-        if isempty(single_vector)
-            return nothing
-        end
-        return (single_vector[1], (1, single_vector))
-    end
+    type, idx = bs.insertion_order[position]
+    return (bs.branches[type][idx], position + 1)
 end
 
-function Base.iterate(bs::BranchesSeries, state)
-    position, vector_cache = state
-
-    if bs.needs_insertion_order
-        # Multi-key iteration using insertion_order
-        next_position = position + 1
-        if next_position > length(bs.insertion_order)
-            return nothing
-        end
-        type, idx = bs.insertion_order[next_position]
-        branch = bs.branches[type][idx]
-        return (branch, (next_position, nothing))
-    else
-        # Single key iteration
-        next_idx = position + 1
-        if next_idx > length(vector_cache)
-            return nothing
-        end
-        return (vector_cache[next_idx], (next_idx, vector_cache))
-    end
-end
-
-Base.length(bs::BranchesSeries) =
-    if bs.needs_insertion_order
-        length(bs.insertion_order)
-    else
-        sum(length(v) for v in values(bs.branches))
-    end
+Base.length(bs::BranchesSeries) = length(bs.insertion_order)
 
 Base.eltype(::Type{BranchesSeries}) = PSY.ACTransmission
 
@@ -210,7 +149,7 @@ _series_reactance(seg::AbstractReductionAggregate, units::IS.AbstractUnitSystem)
 function _series_susceptance_raw(
     series_chain::BranchesSeries,
     units::IS.AbstractUnitSystem,
-)
+)::Float64
     return 1 / sum(_series_reactance(x, units) for x in series_chain)
 end
 
@@ -318,7 +257,7 @@ end
 # the path between its endpoints.
 # Recursive: might be nested, have BranchesParallel as link in degree 2 chain.
 function _entry_matches(chain::BranchesSeries, predicate)
-    if chain.needs_insertion_order && !_is_unfiltered(predicate)
+    if chain.mixed_types && !_is_unfiltered(predicate)
         _warn_mixed_group("Series circuit", _get_segment_components(chain))
     end
     return all(_entry_matches(segment, predicate)::Bool for segment in chain)

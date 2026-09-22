@@ -438,9 +438,9 @@ _zero_impedance_susceptance(w::ThreeWindingTransformerCircuit, min_x_eps::Float6
 # Only the susceptance form is tap-divided, matching `get_series_susceptance`.
 _zero_impedance_susceptance(c::PSY.TransformerCircuit, min_x_eps::Float64) =
     (1 / min_x_eps) / PSY.get_tap(c)
-_zero_impedance_susceptance(bp::AbstractBranchesParallel, min_x_eps::Float64) =
+_zero_impedance_susceptance(bp::AbstractBranchesParallel, min_x_eps::Float64)::Float64 =
     sum(_finite_series_susceptance(br, min_x_eps) for br in bp)
-_zero_impedance_susceptance(bs::BranchesSeries, min_x_eps::Float64) =
+_zero_impedance_susceptance(bs::BranchesSeries, min_x_eps::Float64)::Float64 =
     1 / sum(inv(_finite_series_susceptance(seg, min_x_eps)) for seg in bs)
 
 # A guard on the raw layer, not a parallel implementation: non-degenerate branches keep one
@@ -674,11 +674,13 @@ function _dc_series_impedance(tw::ThreeWindingTransformerCircuit)
     return _dc_series_impedance(tw.circuit)
 end
 
-function _dc_series_impedance(bp::AbstractBranchesParallel)
+# A member can itself be an aggregate, so inference recurses through these two and gives up;
+# the annotations cut that off at the only place the value is known to be a scalar impedance.
+function _dc_series_impedance(bp::AbstractBranchesParallel)::ComplexF64
     return inv(sum(inv(_dc_series_impedance(br)) for br in bp))
 end
 
-function _dc_series_impedance(bs::BranchesSeries)
+function _dc_series_impedance(bs::BranchesSeries)::ComplexF64
     return sum(_dc_series_impedance(seg) for seg in bs)
 end
 

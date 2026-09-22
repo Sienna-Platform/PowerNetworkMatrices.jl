@@ -163,7 +163,7 @@ end
 _series_susceptance_raw(
     segment::AbstractBranchesParallel,
     units::IS.AbstractUnitSystem,
-) = sum(_series_susceptance_raw(branch, units) for branch in segment.branches)
+)::Float64 = sum(_series_susceptance_raw(branch, units) for branch in segment.branches)
 
 # `get_equivalent_physical_branch_parameters` / `populate_equivalent_ybus!` for parallel and
 # series groups live in common.jl, which is included after NetworkReductionData so `nr` can be
@@ -311,6 +311,9 @@ end
 function Base.length(bp::AbstractBranchesParallel)
     return length(bp.branches)
 end
+
+Base.eltype(::Type{BranchesParallel{T}}) where {T} = T
+Base.eltype(::Type{MixedBranchesParallel}) = PSY.ACTransmission
 
 # Indexed when ANY member is: the arc is modeled, so its group must be reachable.
 # Recursive: consider series-in-parallel.

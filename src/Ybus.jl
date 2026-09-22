@@ -449,9 +449,8 @@ function ybus_branch_entries(
     nr::NetworkReductionData;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
-    # Pass the group itself, not `collect(parallel_br)`: `collect` yields a `Vector{Any}`
-    # (only `BranchesSeries` defines `eltype`), which both allocates per call on the Ybus
-    # assembly path and forces the loop's calls dynamic.
+    # Pass the group itself, not `collect(parallel_br)`: collecting allocates a vector per
+    # call on the Ybus assembly path and buys nothing.
     return _subset_two_port(parallel_br, get_arc_tuple(parallel_br, nr), nr)
 end
 
