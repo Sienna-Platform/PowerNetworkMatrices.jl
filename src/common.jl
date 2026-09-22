@@ -657,9 +657,11 @@ end
 
 DC circulating-flow component of one member of a parallel group, `bₘ·(α_eq − αₘ)` in the
 group's arc frame (per unit, system base). The member's total DC flow is
-`compute_parallel_multiplier(bp, branch)·f_arc + compute_parallel_circulating_flow(bp, nr, branch)`;
-the circulating components sum to zero over the group. Member resolved by object identity;
-a non-member is an error.
+`compute_parallel_multiplier(bp, branch, nr)·f_arc + compute_parallel_circulating_flow(bp, nr, branch)`;
+the circulating components sum to zero over the group. Take the share on `nr` as written: the
+`nr`-less method cannot see the reduction's configured substitute reactance, so its share
+disagrees with the matrix `f_arc` came from whenever the group holds a zero-impedance member.
+Member resolved by object identity; a non-member is an error.
 """
 function compute_parallel_circulating_flow(
     bp::AbstractBranchesParallel,

@@ -397,13 +397,78 @@ end
     # The group is mixed, so the epsilon does not cancel out of the ratio.
     @test_throws ErrorException PNM.compute_parallel_multiplier(bp, t)
     @test_throws ErrorException PNM.get_impedance_averaged_rating(bp)
-    b_t = PNM._finite_series_susceptance(t, min_x_eps)
-    b_sibling = PNM._finite_series_susceptance(sibling, min_x_eps)
+    # Hand values, both taps 1.0: b_Trans4 = 1/1e-3 = 1000, b_sibling = 1/0.1 = 10. The 1e-6
+    # default would give 1e6 and 1e10 ratings/shares one part in 1e5 from the group total.
     share = PNM.compute_parallel_multiplier(bp, t, nrd)
-    @test share ≈ b_t / (b_t + b_sibling) rtol = 1e-12
-    # The 1e-6 default would hand the degenerate member a 0.99999 share.
+    @test share ≈ 1000.0 / 1010.0 rtol = 1e-12
     @test share < 0.995
-    @test isfinite(PNM.get_impedance_averaged_rating(bp, nrd))
+    # Ratings 20.0 (Trans4) and 1.0 (the sibling), susceptance-weighted.
+    @test PNM.get_impedance_averaged_rating(bp, nrd) ≈ (1000.0 * 20.0 + 10.0 * 1.0) / 1010.0 rtol =
+        1e-12
+end
+
+@testset "configured minimum_retained_impedance reaches series-chain segments" begin
+    # The chain arm resolves its segments through the same `ybus_branch_entries(segment, nr)`
+    # as a parallel group. ZeroImpedanceBranchReduction excludes transformer arcs, so a
+    # transformer with r == x == 0 survives inside the folded chain and its substituted
+    # reactance lands in the chain's equivalent series impedance.
+    sys, buses = _mk_bus_system(4)
+    function _mk_line(name, f, t, x)
+        arc = Arc(; from = buses[f], to = buses[t])
+        add_component!(sys, arc)
+        add_component!(
+            sys,
+            Line(;
+                name = name,
+                available = true,
+                active_power_flow = 0.0,
+                reactive_power_flow = 0.0,
+                arc = arc,
+                r = 0.0,
+                x = x,
+                b = (from = 0.0, to = 0.0),
+                rating = 1.0,
+                angle_limits = (min = -1.5, max = 1.5),
+            ),
+        )
+    end
+    zi_arc = Arc(; from = buses[1], to = buses[2])
+    add_component!(sys, zi_arc)
+    add_component!(
+        sys,
+        PSY.TwoWindingTransformer(;
+            name = "T12_zero_impedance",
+            circuit = PSY.TransformerCircuit(;
+                arc = zi_arc, tap = 1.0, α = 0.0, available = true,
+                active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
+                base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
+            ),
+            magnetizing_shunt = Complex(0.0, 0.0),
+        ),
+    )
+    x_l23 = 1e-3
+    _mk_line("L23", 2, 3, x_l23)
+    _mk_line("L34", 3, 4, 0.1)
+    _mk_line("L41", 4, 1, 0.1)
+
+    min_x_eps = 1e-3
+    ybus = Ybus(
+        sys;
+        irreducible_buses = [1, 3, 4],
+        network_reductions = NetworkReduction[
+            ZeroImpedanceBranchReduction(; minimum_retained_impedance = min_x_eps),
+            DegreeTwoReduction(),
+        ],
+    )
+    nrd = PNM.get_network_reduction_data(ybus)
+    chain = PNM.get_series_branch_map(nrd)[(1, 3)]
+    @test length(chain) == 2
+
+    # Lossless, unit taps, no shunts: the chain's series reactance is the sum of the segments'.
+    _, Y12, _, _ = PNM.ybus_branch_entries(chain, nrd)
+    @test imag(Y12) ≈ 1 / (min_x_eps + x_l23) rtol = 1e-4
+    # The 1e-6 default would nearly double it, to 1/(1e-6 + 1e-3).
+    @test imag(Y12) < 600.0
 end
 
 @testset "ZeroImpedanceBranchReduction: degenerate 3WT merge promotes windings to a parallel group" begin

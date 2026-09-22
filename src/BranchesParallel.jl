@@ -251,7 +251,9 @@ end
 Susceptance-weighted average of individual branch ratings,
 ``\\sum_i f_i \\cdot S_i`` with ``f_i = b_i / \\sum_k b_k``. Reflects how DC flow
 physically splits across a parallel group. Throws `ArgumentError` if the total
-series susceptance is zero.
+series susceptance is zero, and errors on a group mixing zero-impedance members with finite
+ones — those weights follow the reduction's configured substitute reactance, so use the
+`NetworkReductionData` method for such a group.
 
 Members with no known rating are skipped (their susceptance still contributes to the
 weighting denominator); returns `nothing` only when no member has a known rating (see
