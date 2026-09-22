@@ -454,19 +454,25 @@ function _build_component_name_index(
 end
 
 """
-Throws unless every arc the reduction *folded* is still reachable by component type. Every
-unfiltered [`BranchCatalog`](@ref) runs this before returning; a filtered one omits arcs by
-design, so the invariant does not apply there.
+Throws when an arc in `nrd`'s direct, parallel or series map got no row in `name_to_arc`, so
+nothing that indexes by PSY component type can reach it. Every unfiltered
+[`BranchCatalog`](@ref) runs this before returning; a filtered one drops arcs by design and
+skips it.
 
-Radial reduction legitimately removes a branch: its arc leaves the network and leaves these
-maps, so there is nothing left to index. Series and parallel reductions remove nothing --
-they fold branches into a composite arc that still exists and still carries flow, so it must
-stay reachable. This checks that the distinction held.
+This is **not** an independent audit of the catalog. `name_to_arc` is built by
+`_index_forward!` / `_index_series!` walking the same three maps, and under `_keep_all` every
+entry registers, so the comparison is tautological except in the two cases it exists to catch:
 
-The two are indistinguishable to a consumer, which is why the check is worth writing: an arc
-is reached only by asking for a PSY component type, and a type that indexes nothing returns
-an empty map rather than an error. A folded arc that lost its entry is therefore invisible --
-no flow variable, no rating constraint, no nodal-balance term, and no complaint.
+  - An entry that names no branch type. `_get_concrete_types` (parallel) and the per-segment
+    type loop (series) register nothing for an aggregate with no leaf components, and
+    `_entry_matches(::BranchesParallel, ...)` is `any`, which is `false` over no members. Such
+    an arc carries flow in the matrices while no `DeviceModel` can ask for it.
+  - A name collision inside one type bucket. `name_to_arc[T]` is keyed by entry name, so two
+    arcs producing the same name leave only the second and the first becomes unreachable.
+
+Both are otherwise silent: an arc is reached only by asking for a component type, and a type
+that indexes nothing returns an empty map rather than an error -- no flow variable, no rating
+constraint, no nodal-balance term, and no complaint.
 """
 function _validate_catalog_closure(nrd::NetworkReductionData, name_to_arc::NAME_TO_ARC)
     indexed = Set{Tuple{Int, Int}}()

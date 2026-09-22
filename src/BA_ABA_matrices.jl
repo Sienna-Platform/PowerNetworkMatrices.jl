@@ -158,6 +158,14 @@ function BA_Matrix(ybus::Ybus)
                 b = _symmetric_arc_dc_susceptance(Y_ft)
             end
         end
+        # Stamped into BA it would spread through every downstream factorization, untraceable.
+        # A legitimately zero susceptance is finite and reaches here unaffected.
+        if !isfinite(b)
+            error(
+                "Non-finite DC susceptance $(b) on arc $(arc); BA_Matrix has no " *
+                "representation for it. This is a bug in PowerNetworkMatrices.",
+            )
+        end
         BA_I[2 * ix_arc - 1] = ix_from_bus
         BA_J[2 * ix_arc - 1] = ix_arc
         BA_V[2 * ix_arc - 1] = b

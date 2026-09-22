@@ -26,22 +26,28 @@ end
     # Aggregates subtype `PSY.ACTransmission`, so a group used to fall into the blanket method
     # and report its equivalent rating in both directions — widening the asymmetric member's
     # reverse limit from 120.0 to the group total.
+    # The branches stay detached deliberately: `branch_flow_limits` and
+    # `get_equivalent_rating` read `PSY.CU` only, which needs no system base, and the buses
+    # come from a real system so the arc resolves. Nothing here touches `PSY.SU`.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
     buses = collect(PSY.get_components(PSY.ACBus, sys))
     arc = PSY.Arc(; from = buses[1], to = buses[2])
-    plain = PSY.Line(;
-        name = "bfl_line",
-        available = true,
-        active_power_flow = 0.0,
-        reactive_power_flow = 0.0,
-        arc = arc,
-        r = 0.1,
-        x = 0.2,
-        b = (from = 0.01, to = 0.01),
-        g = (from = 0.0, to = 0.0),
-        rating = 100.0,
-        angle_limits = (min = -pi / 2, max = pi / 2),
-    )
+    function bfl_line(name)
+        return PSY.Line(;
+            name = name,
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            arc = arc,
+            r = 0.1,
+            x = 0.2,
+            b = (from = 0.01, to = 0.01),
+            g = (from = 0.0, to = 0.0),
+            rating = 100.0,
+            angle_limits = (min = -pi / 2, max = pi / 2),
+        )
+    end
+    plain = bfl_line("bfl_line_1")
     monitored = PSY.MonitoredLine(;
         name = "bfl_monitored",
         available = true,
@@ -57,7 +63,7 @@ end
         angle_limits = (min = -pi / 2, max = pi / 2),
     )
 
-    symmetric = PNM.BranchesParallel([plain, deepcopy(plain)])
+    symmetric = PNM.BranchesParallel([plain, bfl_line("bfl_line_2")])
     @test PNM.branch_flow_limits(symmetric).from_to == 200.0
     @test PNM.branch_flow_limits(symmetric).to_from == 200.0
 
