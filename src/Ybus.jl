@@ -69,7 +69,7 @@ end
 get_axes(M::Ybus) = M.axes
 get_lookup(M::Ybus) = M.lookup
 get_ref_bus(M::Ybus) = sort!(collect(keys(M.subnetwork_axes)))
-get_ref_bus_position(M::Ybus) = [get_bus_lookup(M)[x] for x in keys(M.subnetwork_axes)]
+
 """Get the [`NetworkReduction`](@ref) data applied to this matrix."""
 get_network_reduction_data(M::Ybus) = M.network_reduction_data
 get_bus_axis(M::Ybus) = M.axes[1]
@@ -978,6 +978,9 @@ function Ybus(
     end
     user_irreducible = Set{Int}(irreducible_buses)
     ref_bus_numbers = Set{Int}()
+    # Stored angles of the swing (REF) buses, used to pick the smallest-angle swing as the
+    # representative when an island holds more than one (see `assign_reference_buses!`).
+    ref_bus_angles = Dict{Int, Float64}()
     # Seed the user set and ZIBR spec into the container so every reduction step and
     # the assembly path can read them.
     nr = NetworkReductionData(;
@@ -996,6 +999,7 @@ function Ybus(
             bus_reduction_map[PSY.get_number(b)] = Set{Int}()
             if PSY.get_bustype(b) == ACBusTypes.REF
                 push!(ref_bus_numbers, PSY.get_number(b))
+                ref_bus_angles[PSY.get_number(b)] = PSY.get_angle(b)
             end
         else
             @debug "Found available isolated bus $(PSY.get_name(b)) with number $(PSY.get_number(b)). This is excluded from the Ybus build."
@@ -1120,6 +1124,7 @@ function Ybus(
         subnetworks = assign_reference_buses!(
             find_subnetworks(ybus, bus_ax; subnetwork_algorithm = subnetwork_algorithm),
             ref_bus_numbers,
+            ref_bus_angles,
         )
         if length(subnetworks) > 1
             @warn "More than one island found; Network is not connected"
@@ -1350,7 +1355,7 @@ function _resolve_arc_admittance(
     arc_remove_ixs = indexin(removed_arcs, get_arc_axis(new_y_ft))
     arc_keep_ixs = setdiff(collect(1:length(get_arc_axis(new_y_ft))), arc_remove_ixs)
     # Remap arc endpoint labels to surviving bus numbers. Column data was already merged
-    # in _merge_arc_admittance_bus_columns! before this call; only the axis labels need
+    # in _merge_arc_admittance_bus_columns before this call; only the axis labels need
     # updating so downstream reductions can match arcs by their new bus numbers.
     if !isempty(merged_bus_pairs)
         for k in eachindex(arc_ax)
@@ -1421,30 +1426,73 @@ function _resolve_arc_admittance(
     return existing_ft, existing_tf
 end
 
-# Transfer arc admittance contributions from the removed bus column to the surviving bus
-# column before the removed bus column is sliced out. Without this, to-bus admittance
-# entries for arcs that terminate at the removed bus are silently dropped.
-function _merge_arc_admittance_bus_columns!(
+# Add every removed bus's column into its surviving bus's column on one arc×bus admittance
+# matrix, in a single O(nnz) relabel-and-sum pass. Each stored entry is emitted at its own
+# column and, when that column is a removed bus, also at its survivor's column; `sparse` sums
+# the collisions. Removed columns keep their own entries, since the bus-removal slice later
+# drops them.
+function _merge_arc_admittance_columns(
+    M::SparseArrays.SparseMatrixCSC{T, Int},
+    bus_lookup::Dict{Int, Int},
+    merged_bus_pairs::Dict{Int, Int},
+) where {T}
+    ncols = size(M, 2)
+    col_survivor = collect(1:ncols)
+    for (removed_bus, surviving_bus) in merged_bus_pairs
+        col_survivor[bus_lookup[removed_bus]] = bus_lookup[surviving_bus]
+    end
+    rows = SparseArrays.rowvals(M)
+    vals = SparseArrays.nonzeros(M)
+    cap = 2 * length(vals)
+    I = Vector{Int}(undef, cap)
+    J = Vector{Int}(undef, cap)
+    V = Vector{T}(undef, cap)
+    n = 0
+    for col in 1:ncols
+        s = col_survivor[col]
+        for k in SparseArrays.nzrange(M, col)
+            r = rows[k]
+            v = vals[k]
+            n += 1
+            I[n] = r
+            J[n] = col
+            V[n] = v
+            if s != col
+                n += 1
+                I[n] = r
+                J[n] = s
+                V[n] = v
+            end
+        end
+    end
+    return SparseArrays.sparse(
+        resize!(I, n), resize!(J, n), resize!(V, n), size(M, 1), ncols)
+end
+
+# Merge the removed-bus columns into their survivors on both arc admittance matrices, returning
+# new matrices. This transfer keeps the to-bus admittance entries for arcs terminating at a
+# removed bus, which the later bus-removal slice would otherwise drop.
+function _merge_arc_admittance_bus_columns(
     yft::ArcAdmittanceMatrix,
     ytf::ArcAdmittanceMatrix,
     bus_lookup::Dict{Int, Int},
     merged_bus_pairs::Dict{Int, Int},
 )
-    for (removed_bus, surviving_bus) in merged_bus_pairs
-        i = bus_lookup[surviving_bus]
-        j = bus_lookup[removed_bus]
-        yft.data[:, i] += yft.data[:, j]
-        ytf.data[:, i] += ytf.data[:, j]
-    end
-    return
+    new_yft = ArcAdmittanceMatrix(
+        _merge_arc_admittance_columns(yft.data, bus_lookup, merged_bus_pairs),
+        yft.axes, yft.lookup, yft.network_reduction_data, yft.direction)
+    new_ytf = ArcAdmittanceMatrix(
+        _merge_arc_admittance_columns(ytf.data, bus_lookup, merged_bus_pairs),
+        ytf.axes, ytf.lookup, ytf.network_reduction_data, ytf.direction)
+    return new_yft, new_ytf
 end
 
-_merge_arc_admittance_bus_columns!(
+_merge_arc_admittance_bus_columns(
     ::Nothing,
     ::Nothing,
     ::Dict{Int, Int},
     ::Dict{Int, Int},
-) = nothing
+) = (nothing, nothing)
 
 function _accumulate_csc_row_into!(
     M::SparseArrays.SparseMatrixCSC,
@@ -1631,14 +1679,15 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     nr = get_network_reduction_data(ybus)
 
     # A pure-merge reduction (only ZIBR today) folds removed buses into survivors purely by
-    # index relabeling, so the merge and the bus-removal slice are fused into one O(nnz)
-    # rebuild below instead of in-place CSC structural inserts. Arc-admittance columns are
-    # still merged here (column adds on the arc×bus matrix, not the hot square-matrix path).
+    # index relabeling, so its merge and bus-removal slice are fused into one O(nnz) rebuild
+    # below; any other reduction merges the square Ybus in place via _merge_ybus_buses!. In
+    # either case the arc-admittance bus columns are merged in _merge_arc_admittance_bus_columns.
     fast_merge = _is_pure_merge_reduction(nr_new)
+    yft_merged, ytf_merged = ybus.arc_admittance_from_to, ybus.arc_admittance_to_from
     if !isempty(nr_new.merged_bus_pairs)
         fast_merge ||
             _merge_ybus_buses!(data, adjacency_data, bus_lookup, nr_new.merged_bus_pairs)
-        _merge_arc_admittance_bus_columns!(
+        yft_merged, ytf_merged = _merge_arc_admittance_bus_columns(
             ybus.arc_admittance_from_to,
             ybus.arc_admittance_to_from,
             bus_lookup,
@@ -1650,8 +1699,8 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     new_y_ft, new_y_tf = _add_series_branches_to_ybus!(
         ybus.data,
         get_bus_lookup(ybus),
-        ybus.arc_admittance_from_to,
-        ybus.arc_admittance_to_from,
+        yft_merged,
+        ytf_merged,
         nr_new.series_branch_map,
         nr,
     )
@@ -2003,13 +2052,27 @@ function _make_subnetwork_axes(
             push!(subnetwork_key_removed, k)
         end
     end
+    reverse_bus_search_map = get_reverse_bus_search_map(get_network_reduction_data(ybus))
     for k in subnetwork_key_removed
-        axis_1, axis_2 = pop!(subnetwork_axes, k)
-        new_ref_bus = pop!(axis_1)
+        axis_1, axis_2 = subnetwork_axes[k]
+        surviving_buses = setdiff(axis_1, bus_numbers_to_remove)
+        # An island losing every bus is dropped by the empty-subnetwork sweep below; re-keying
+        # it would only swap one dead key for another.
+        isempty(surviving_buses) && continue
+        # The bus the old representative was folded into inherits the role, so the reference
+        # bus stays electrically the same bus. Only a removal that merges nothing (no reverse
+        # map entry) falls back to an order-independent pick.
+        merge_target = get(reverse_bus_search_map, k, k)
+        if merge_target in surviving_buses
+            new_ref_bus = merge_target
+        else
+            new_ref_bus = minimum(surviving_buses)
+        end
+        delete!(subnetwork_axes, k)
         subnetwork_axes[new_ref_bus] = (axis_1, axis_2)
         # If a reference bus key is reduced, change the arc subnetwork axis key as well:
         arc_subnetwork_axis[new_ref_bus] = pop!(arc_subnetwork_axis, k)
-        @warn "Original reference bus $k removed during reduction; assigning arbitrary reference bus to be $new_ref_bus."
+        @warn "Original reference bus $k removed during reduction; reassigning the subnetwork reference bus to $new_ref_bus."
     end
     empty_subnetwork_keys = Set{Int}()
     for (k, values) in subnetwork_axes

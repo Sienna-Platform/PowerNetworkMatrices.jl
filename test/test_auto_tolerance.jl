@@ -1,3 +1,10 @@
+# Several testsets below assert that AutoTolerance is a no-op by comparing a matrix built with
+# it against one built at eps(). Two separate builds are not bitwise reproducible -- the
+# AppleAccelerate backend drifts by a ULP on roughly 1 run in 20 -- so these compare with a
+# tolerance. 1e-10 still proves the no-op: genuinely sparsifying would zero entries, moving
+# them by their full magnitude (>=1e-3 in these systems).
+const NO_OP_BUILD_ATOL = 1e-10
+
 @testset "AutoTolerance type construction" begin
     t = AutoTolerance()
     @test t.data_precision === :auto          # default discovers precision
@@ -124,7 +131,7 @@ end
     # dispatch are preserved); sparsification is reserved for VirtualPTDF.
     p_auto = PTDF(A, BA; tol = AutoTolerance(; data_precision = 1e-2))
     @test PNM.get_tol(p_auto)[] == eps()
-    @test get_ptdf_data(p_auto) == get_ptdf_data(p_eps)
+    @test isapprox(get_ptdf_data(p_auto), get_ptdf_data(p_eps); atol = NO_OP_BUILD_ATOL)
     # Dense storage is preserved -> matches the DC_PTDF_Matrix alias (the data
     # field is a Matrix{Float64}, so downstream dispatch is unaffected).
     @test p_auto isa PNM.DC_PTDF_Matrix
@@ -179,7 +186,8 @@ end
     v_auto = VirtualPTDF(sys)                           # default, below gate
     @test v_auto.tol isa PNM.AbsoluteCutoff
     @test PNM.get_tol(v_auto) == eps()
-    @test v_auto[arc, :] == v_exact[arc, :]             # exact, no entries dropped
+    # No entries dropped.
+    @test isapprox(v_auto[arc, :], v_exact[arc, :]; atol = NO_OP_BUILD_ATOL)
 
     # Explicit Float64 -> absolute cutoff -> genuinely sparse, faithful column.
     v_num = VirtualPTDF(sys; tol = 1e-2)
@@ -208,7 +216,7 @@ end
     l_exact = LODF(A, ABA, BA; tol = eps())
     l_auto = LODF(A, ABA, BA; tol = AutoTolerance(; data_precision = 1e-2))
     @test PNM.get_tol(l_auto)[] == eps()
-    @test l_auto.data == l_exact.data
+    @test isapprox(l_auto.data, l_exact.data; atol = NO_OP_BUILD_ATOL)
 
     # System constructor: AutoTolerance routes through the ABA path and is a no-op.
     l_sys_auto = LODF(sys; tol = AutoTolerance(; data_precision = 1e-2))
@@ -273,7 +281,11 @@ end
             )
         p_eps = PTDF(A, BA; linear_solver = solver, tol = eps())
         @test PNM.get_tol(p_auto)[] == eps()
-        @test get_ptdf_data(p_auto) == get_ptdf_data(p_eps)
+        @test isapprox(
+            get_ptdf_data(p_auto),
+            get_ptdf_data(p_eps);
+            atol = NO_OP_BUILD_ATOL,
+        )
         @test p_auto isa PNM.DC_PTDF_Matrix
     end
 end
