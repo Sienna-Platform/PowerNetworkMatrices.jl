@@ -169,8 +169,10 @@ This method is the component's **own** π-model: no impedance correction, and `m
 rather than a reduction's configured substitute reactance. That is deliberate, and it is
 the only π-model accessor with that meaning — `equivalent_branch(b, nr)`,
 `branch_admittance` and `ybus_branch_entries` all take `nr` and all report what the AC
-matrices carry. (The DC side is a separate contract: it ignores the correction outright and
-warns when one is active, see `_warn_impedance_correction_in_dc`.)
+matrices carry. (The DC side is a separate contract, and a mixed one: phase-shifting arcs
+and standalone series chains read component reactances, which the correction does not touch,
+while every other arc inherits it through Ybus. It warns when a correction is active, see
+`_warn_impedance_correction_in_dc`.)
 
 Methods exist for lines, `GenericArcImpedance` Ward equivalents, and transformer circuits of
 either arity — a transformer's series data lives on its `PSY.TransformerCircuit`, so 2W and

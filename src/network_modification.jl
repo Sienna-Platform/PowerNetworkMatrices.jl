@@ -4,10 +4,13 @@
 # outage ratio (an identical double circuit is 0.5).
 # Magnitudes, because the two sides carry different sign conventions: every `delta_b` read
 # off `_get_arc_susceptances` is `-|b|` (`_extract_arc_susceptances` takes `abs` of the BA
-# column, and the whole Woodbury layer works in that space), while `_ba_arc_susceptance` and
-# the chain arithmetic are signed. They agree until an arc has net negative reactance — a 3W
-# star leg, a series-compensated line — and then a signed test calls a full outage partial
-# and `delta_b / b_arc` comes out at `+1`, doubling on the AC side what the DC side removed.
+# column, and the Woodbury layer uses that convention throughout), while
+# `_ba_arc_susceptance` and the chain arithmetic are signed. They agree until an arc has net
+# negative reactance — a 3W star leg, a series-compensated line — and then a signed test
+# calls a full outage partial and `delta_b / b_arc` comes out at `+1`, doubling on the AC
+# side what the DC side removed. Whether the magnitude convention is the right one for a
+# negative-susceptance arc is unresolved: the MODF Woodbury update disagrees with a direct
+# oracle on such arcs, and the disagreement predates this code.
 _is_full_outage(delta_b::Float64, b_arc::Float64) =
     isapprox(abs(delta_b), abs(b_arc); atol = YBUS_DELTA_TOL, rtol = sqrt(eps(Float32)))
 

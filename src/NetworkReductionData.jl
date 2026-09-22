@@ -331,19 +331,6 @@ function get_arc_axis(nr::NetworkReductionData)
     return unique!(arc_ax)
 end
 
-function is_arc_in_series_map(nr::NetworkReductionData, arc::Tuple{Int64, Int64})
-    return haskey(nr.series_branch_map, arc)
-end
-
-function get_mapped_series_branch(nr::NetworkReductionData, arc::Tuple{Int64, Int64})
-    if is_arc_in_series_map(nr, arc)
-        return nr.series_branch_map[arc]
-    else
-        error("Arc $arc not found in series branch map")
-    end
-    return
-end
-
 function Base.show(io::IO, ::MIME{Symbol("text/plain")}, nrd::NetworkReductionData)
     println("Network Reduction Summary:")
     println("\tNumber of remapped buses: $(length(nrd.reverse_bus_search_map))")
