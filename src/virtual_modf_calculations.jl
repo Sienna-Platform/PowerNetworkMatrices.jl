@@ -306,13 +306,21 @@ end
 """
     _validate_transmission_survived(sys, outage, mod)
 
-Reject an outage that references `ACTransmission` components but resolves to no arc
-modifications: those branches were eliminated by a reduction, so every query of the
-contingency would silently return the unmodified base row.
+Decide what an outage that references `ACTransmission` components but resolves to no arc
+modifications actually means, and reject only the case that is wrong.
+
+Two different situations produce that same empty `arc_modifications`:
+
+  - **A branch that is `available` but reached no reduction map.** The network the matrix was
+    built on has no arc for it, so the outage cannot be represented and every query would
+    return the base-case row — a silently wrong answer. This throws.
+  - **A branch that is already `available = false`.** It never entered the Ybus, so outaging it
+    removes nothing and the base-case row *is* the correct answer. This is legitimate; it
+    warns, because the contingency is a no-op and an N-1 screen over it proves nothing.
 
 This is the one survive-check the core-sharing constructors can run. `VirtualMODF(sys; ...)`
-*prevents* the loss by folding the outage buses into `irreducible_buses` before the Ybus is
-built; a core handed over already factorized carries whatever reduction its own build
+*prevents* the first case by folding the outage buses into `irreducible_buses` before the Ybus
+is built; a core handed over already factorized carries whatever reduction its own build
 applied, and neither `_collect_protected_buses` nor `_split_zero_impedance_reduction` can be
 replayed on it. Checking the resolved modification catches the outcome of all of them.
 """
@@ -323,18 +331,31 @@ function _validate_transmission_survived(
 )
     isempty(mod.arc_modifications) || return
     transmission =
-        PSY.get_associated_components(sys, outage; component_type = PSY.ACTransmission)
+        collect(
+            PSY.get_associated_components(sys, outage; component_type = PSY.ACTransmission),
+        )
     isempty(transmission) && return
-    names = sort!([PSY.get_name(c) for c in transmission])
+    # `get_available` is derived for a ThreeWindingTransformer, so this one predicate covers
+    # every transmission type without a type check.
+    in_service = filter(PSY.get_available, transmission)
+    if isempty(in_service)
+        @warn "Outage (label=$(mod.label)) references only out-of-service transmission " *
+              "component(s) $(join(sort!([PSY.get_name(c) for c in transmission]), ", ")); " *
+              "they carry no flow, so this contingency is a no-op and every query returns " *
+              "the base-case row." maxlog = 5
+        return
+    end
+    names = sort!([PSY.get_name(c) for c in in_service])
     throw(
         IS.ConflictingInputsError(
-            "Outage (label=$(mod.label)) references transmission component(s) \
-            $(join(names, ", ")) but resolved to no arc modifications: a network \
-            reduction eliminated them, and every query of this contingency would return \
-            the unmodified PTDF row. Build the VirtualMODF from the system \
+            "Outage (label=$(mod.label)) references in-service transmission component(s) \
+            $(join(names, ", ")) that resolved to no arc modifications: they are absent from \
+            the network this matrix was built on, normally because a network reduction \
+            eliminated them. Every query of this contingency would return the unmodified \
+            PTDF row. Build the VirtualMODF from the system \
             (`VirtualMODF(sys; network_reductions = ...)`), which protects outaged and \
-            monitored buses before reducing, or reduce the shared core with those buses \
-            in `irreducible_buses`.",
+            monitored buses before reducing, or reduce the shared core with those buses in \
+            `irreducible_buses`.",
         ),
     )
 end

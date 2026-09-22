@@ -198,7 +198,7 @@ end
 end
 
 # Minimal capturing logger: ReTest cannot `record` a `@test_logs` failure, so we
-# capture log records directly and assert on them.
+# capture log records directly and assert on them. Used by the out-of-service no-op test.
 mutable struct _CollectLogs <: Logging.AbstractLogger
     records::Vector{Tuple{Any, String}}
 end
@@ -246,13 +246,50 @@ end
 end
 
 # First branch the reduction behind `nrd` leaves on no arc at all. A degree-two branch
-# still resolves through the series map, so an absent arc key is not enough.
+# still resolves through the series map, so an absent arc key is not enough. Errors rather
+# than returning a `nothing` sentinel: no such branch means the fixture stopped exercising
+# the case, which is a broken test, not a result to branch on.
 function _branch_off_every_map(sys, nrd)
     for br in PSY.get_components(PSY.ACTransmission, sys)
         tag, _ = PNM._resolve_branch_arc(nrd, br)
         tag in (:direct, :parallel, :series) || return br
     end
-    return nothing
+    return error(
+        "No branch of this system is off every reduction map; the fixture no longer " *
+        "reproduces a reduction-eliminated outage.",
+    )
+end
+
+@testset "VirtualMODF: an outage on an out-of-service branch is a no-op, not an error" begin
+    # No reductions at all. The branch is simply `available = false`, so it never entered the
+    # Ybus; outaging it removes nothing and the base-case row is the correct answer. This must
+    # not be confused with a branch a reduction ate, which cannot be represented at all.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    line = PSY.get_component(PSY.ACTransmission, sys, "1")
+    PSY.set_available!(line, false)
+    PSY.add_supplemental_attribute!(sys, line, _fixed_outage())
+
+    collector = _CollectLogs(Tuple{Any, String}[])
+    vmodf = Logging.with_logger(collector) do
+        VirtualMODF(sys)
+    end
+    @test length(PNM.get_registered_contingencies(vmodf)) == 1
+    # Legitimate, but not silent: the contingency screens nothing.
+    @test any(
+        r -> r[1] == Logging.Warn && occursin("out-of-service transmission", r[2]),
+        collector.records,
+    )
+
+    # The same empty modification from an in-service branch is still rejected.
+    in_service = PSY.get_component(PSY.ACTransmission, sys, "2")
+    @test PSY.get_available(in_service)
+    live_outage = _fixed_outage()
+    PSY.add_supplemental_attribute!(sys, in_service, live_outage)
+    @test_throws IS.ConflictingInputsError PNM._validate_transmission_survived(
+        sys,
+        live_outage,
+        NetworkModification("dropped", ArcModification[]),
+    )
 end
 
 @testset "VirtualMODF over a shared core rejects an outage branch reduced away" begin
@@ -264,7 +301,6 @@ end
     # must refuse instead of serving base-case rows for every query of the contingency.
     vptdf = VirtualPTDF(sys; network_reductions = reductions)
     target = _branch_off_every_map(sys, get_network_reduction_data(vptdf))
-    @test target !== nothing
     PSY.add_supplemental_attribute!(sys, target, _fixed_outage())
 
     @test_throws IS.ConflictingInputsError VirtualMODF(vptdf, sys)
