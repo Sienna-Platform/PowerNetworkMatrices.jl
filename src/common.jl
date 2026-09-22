@@ -422,6 +422,16 @@ function _member_shift_injection(
     nr::NetworkReductionData,
     br::PSY.ACTransmission,
 )
+    # Without this a branch nested below the group — a segment of a chain the grouping
+    # absorbed — is answered with a plausible angle, sign-flipped because its interior arc
+    # never matches the group frame.
+    if !any(member === br for member in bp)
+        error(
+            "$(typeof(br)) $(get_name(br)) is not a member of the parallel group " *
+            "$(get_name(bp)); a shift injection is defined only for a direct member. " *
+            "Resolve a nested branch to the member that carries it first.",
+        )
+    end
     α = _oriented_member_phase_shift(br, bp, nr)
     iszero(α) && return 0.0
     return _finite_series_susceptance(br, nr) * α

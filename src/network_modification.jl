@@ -56,6 +56,66 @@ function _member_outage_ybus_delta(
     return _negated_pi_model(entries)
 end
 
+"""
+    _outaged_group_member(bp, branch) -> PSY.ACTransmission
+
+The member of `bp` that leaves service when `branch` trips: `branch` itself when it is a
+direct member, otherwise the aggregate member it sits at the leaves of. Sibling degree-two
+chains collapse into a `BranchesParallel{BranchesSeries}`, so a physical branch on such an
+arc is a leaf of a chain rather than a member of the group, and the chain is what trips.
+"""
+function _outaged_group_member(
+    bp::AbstractBranchesParallel,
+    branch::PSY.ACTransmission,
+)::PSY.ACTransmission
+    for member in bp
+        any(leaf === branch for leaf in leaf_components(member)) && return member
+    end
+    return error(
+        "$(typeof(branch)) $(get_name(branch)) is filed on the arc of parallel group " *
+        "$(get_name(bp)) but no member of the group carries it.",
+    )
+end
+
+# Susceptance the group arc loses when `branch` trips. A physical member leaves with all of
+# it.
+_member_outage_delta_b(
+    member::PSY.ACTransmission,
+    ::PSY.ACTransmission,
+    nr::NetworkReductionData,
+)::Float64 = -_finite_series_susceptance(member, nr)
+
+# An aggregate member is representable on the group arc only when it opens entirely, since
+# `_member_outage_ybus_delta` can only negate a member's whole Pi-model. Subtypes that can
+# answer refine this; the rest say so rather than reporting the whole member as lost.
+_member_outage_delta_b(
+    member::AbstractReductionAggregate,
+    branch::PSY.ACTransmission,
+    ::NetworkReductionData,
+)::Float64 = error(
+    "Tripping $(typeof(branch)) $(get_name(branch)) leaves $(get_name(member)) partly in " *
+    "service, and a partial Pi-model delta is not supported on the composite arc it sits on.",
+)
+
+# A chain opens when any segment loses all of its susceptance, which is what tripping a
+# single-branch segment does. The same limit `_series_arc_ybus_delta` enforces on a chain
+# standing alone in `series_branch_map`.
+function _member_outage_delta_b(
+    member::BranchesSeries,
+    branch::PSY.ACTransmission,
+    nr::NetworkReductionData,
+)::Float64
+    delta_b = _compute_series_outage_delta_b(member, branch, nr)
+    if !_is_full_outage(delta_b, _finite_series_susceptance(member, nr))
+        error(
+            "Tripping $(typeof(branch)) $(get_name(branch)) leaves the series chain " *
+            "$(get_name(member)) partly in service. A partial Ybus delta is not supported " *
+            "on the composite arc it was grouped onto. Δb=$(delta_b).",
+        )
+    end
+    return delta_b
+end
+
 # Direct arc: full outage negates the Pi-model; otherwise scale it by `delta_b / b_arc`.
 # `b_arc` must be what BA holds for the arc: `delta_b` comes from BA, which already
 # substituted `min_x_eps` and, for a symmetric arc, read the corrected Ybus entry. Component
@@ -381,6 +441,35 @@ _is_three_winding_transformer(::Any) = false
 _is_three_winding_transformer(::PSY.ThreeWindingTransformer) = true
 
 """
+    _parallel_arc_modification(nr, arc_lookup, arc_tuple, branch) -> ArcModification
+
+Arc modification for tripping `branch` off the parallel group on `arc_tuple`. The unit that
+trips is the group member carrying `branch`, which is `branch` itself unless a grouped
+degree-two chain sits between the two.
+"""
+function _parallel_arc_modification(
+    nr::NetworkReductionData,
+    arc_lookup::Dict,
+    arc_tuple::Tuple{Int, Int},
+    branch::PSY.ACTransmission,
+)::ArcModification
+    bp = nr.parallel_branch_map[arc_tuple]
+    member = _outaged_group_member(bp, branch)
+    delta_b = _member_outage_delta_b(member, branch, nr)
+    delta_shift = -_member_shift_injection(bp, nr, member)
+    dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b, member)
+    return ArcModification(
+        arc_lookup[arc_tuple],
+        delta_b,
+        delta_shift,
+        dy11,
+        dy12,
+        dy21,
+        dy22,
+    )
+end
+
+"""
     _classify_outage_component!(nr, arc_lookup, arc_sus, bus_lookup, component, ...) -> nothing
 
 Classify a single outage component via multiple dispatch. ACTransmission branches are
@@ -412,15 +501,9 @@ function _classify_outage_component!(
             ArcModification(arc_idx, -b_arc, delta_shift, dy11, dy12, dy21, dy22),
         )
     elseif tag === :parallel
-        arc_idx = arc_lookup[arc_tuple]
-        b_circuit = _finite_series_susceptance(component, nr)
-        delta_shift =
-            -_member_shift_injection(nr.parallel_branch_map[arc_tuple], nr, component)
-        dy11, dy12, dy21, dy22 =
-            _compute_arc_ybus_delta(nr, arc_tuple, -b_circuit, component)
         push!(
             parallel_mods,
-            ArcModification(arc_idx, -b_circuit, delta_shift, dy11, dy12, dy21, dy22),
+            _parallel_arc_modification(nr, arc_lookup, arc_tuple, component),
         )
     elseif tag === :series
         arc_idx = arc_lookup[arc_tuple]
@@ -594,13 +677,7 @@ function _classify_branch_modification(
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc, branch)
         return [ArcModification(arc_idx, -b_arc, delta_shift, dy11, dy12, dy21, dy22)]
     elseif tag === :parallel
-        arc_idx = arc_lookup[arc_tuple]
-        b_circuit = _finite_series_susceptance(branch, nr)
-        delta_shift =
-            -_member_shift_injection(nr.parallel_branch_map[arc_tuple], nr, branch)
-        dy11, dy12, dy21, dy22 =
-            _compute_arc_ybus_delta(nr, arc_tuple, -b_circuit, branch)
-        return [ArcModification(arc_idx, -b_circuit, delta_shift, dy11, dy12, dy21, dy22)]
+        return [_parallel_arc_modification(nr, arc_lookup, arc_tuple, branch)]
     elseif tag === :series
         arc_idx = arc_lookup[arc_tuple]
         series_chain = nr.series_branch_map[arc_tuple]

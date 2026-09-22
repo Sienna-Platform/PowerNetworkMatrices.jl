@@ -414,3 +414,48 @@ end
         @test am.delta_y22 ≈ PNM.YBUS_ELTYPE(-Y22)
     end
 end
+
+@testset "NetworkModification: grouped degree-two chain leaf trips its whole chain" begin
+    sys = build_two_parallel_degree_two_chains()
+    reductions = NetworkReduction[
+        DegreeTwoReduction(; reduce_reactive_power_injectors = false),
+    ]
+    vptdf = VirtualPTDF(sys; network_reductions = reductions)
+    nr = PNM.get_network_reduction_data(vptdf)
+    leaf = PSY.get_component(Line, sys, "L_1_10")
+
+    # Sibling chains collapse into one `BranchesParallel{BranchesSeries}`, so the leaf is
+    # filed on the group arc without being a member of the group.
+    @test PNM._resolve_branch_arc(nr, leaf) == (:parallel, (1, 3))
+
+    mod = NetworkModification(vptdf, leaf)
+    am = only(mod.arc_modifications)
+    @test am.arc_index == PNM.get_arc_lookup(vptdf)[(1, 3)]
+
+    bp = PNM.get_parallel_branch_map(nr)[(1, 3)]
+    chain = PNM._outaged_group_member(bp, leaf)
+    @test any(l === leaf for l in PNM.leaf_components(chain))
+    @test am.delta_b ≈ -PNM._finite_series_susceptance(chain, nr)
+    @test iszero(am.delta_shift_injection)
+
+    # The arc loses exactly the tripped chain's two-port, not one segment's.
+    Y11, Y12, Y21, Y22 = PNM.ybus_branch_entries(chain, nr)
+    @test am.delta_y11 ≈ PNM.YBUS_ELTYPE(-Y11)
+    @test am.delta_y12 ≈ PNM.YBUS_ELTYPE(-Y12)
+    @test am.delta_y21 ≈ PNM.YBUS_ELTYPE(-Y21)
+    @test am.delta_y22 ≈ PNM.YBUS_ELTYPE(-Y22)
+
+    # The surviving sibling still carries the arc: this is not a full-arc outage.
+    @test abs(PNM._get_arc_susceptances(vptdf)[am.arc_index] + am.delta_b) > 1.0
+
+    # A branch nested below the group is not a group member, and the shift injection says so
+    # instead of answering with a sign-flipped angle.
+    err = try
+        PNM._member_shift_injection(bp, nr, leaf)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("L_1_10", err.msg)
+end
