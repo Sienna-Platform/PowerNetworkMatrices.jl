@@ -36,7 +36,7 @@ serializes through the process-wide `_LIBKLU_LOCK`.
         Resolved contingencies keyed by outage UUID.
 - `woodbury_cache::Dict{NetworkModification, WoodburyFactors}`:
         Precomputed Woodbury factors keyed by modification.
-- `row_caches::Dict{NetworkModification, RowCache}`:
+- `row_caches::Dict{NetworkModification, RowCache{RowCacheValue}}`:
         One `RowCache` per modification.
 - `max_cache_size_bytes::Int`:
         Max cache size in bytes per contingency.
@@ -47,7 +47,7 @@ struct VirtualMODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}, K} <:
     dist_slack::Vector{Float64}
     contingency_cache::Dict{Int, ContingencySpec}
     woodbury_cache::Dict{NetworkModification, WoodburyFactors}
-    row_caches::Dict{NetworkModification, RowCache}
+    row_caches::Dict{NetworkModification, RowCache{RowCacheValue}}
     max_cache_size_bytes::Int
 end
 
@@ -276,7 +276,7 @@ function VirtualMODF(
         dist_slack,
         Dict{Int, ContingencySpec}(),
         Dict{NetworkModification, WoodburyFactors}(),
-        Dict{NetworkModification, RowCache}(),
+        Dict{NetworkModification, RowCache{RowCacheValue}}(),
         max_cache_bytes,
     )
 

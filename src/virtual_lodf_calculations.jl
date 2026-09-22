@@ -36,7 +36,7 @@ every libklu solve runs under `_LIBKLU_LOCK` (process-wide) and the core's
         Tuple of two dictionaries mapping arc identifiers to row/column indices.
 - `subnetwork_axes::Dict{Int, Ax}`:
         Per-reference-bus subnetwork axes in arc×arc form.
-- `cache::RowCache`:
+- `cache::RowCache{RowCacheValue}`:
         Cache where LODF rows are stored.
 - `cache_lock::ReentrantLock`:
         Guards `cache` reads/writes for parallel `getindex` callers.
@@ -55,7 +55,7 @@ struct VirtualLODF{
     axes::Ax
     lookup::L
     subnetwork_axes::Dict{Int, Ax}
-    cache::RowCache
+    cache::RowCache{RowCacheValue}
     cache_lock::ReentrantLock
 end
 
@@ -294,7 +294,8 @@ function _compute_lodf_row(vlodf::VirtualLODF, row::Int)::Vector{Float64}
             temp_data[core.valid_ix[i]] = lin_solve[i]
         end
 
-        lodf_row = (core.A * temp_data) .* inv_PTDF_A_diag
+        lodf_row = core.A * temp_data
+        lodf_row .*= inv_PTDF_A_diag
         lodf_row[row] = -1.0
         return lodf_row
     end
@@ -426,9 +427,9 @@ function _getindex_partial(
         alpha = -delta_b / b_arc
         denom = 1.0 - alpha * H_ee
 
-        # Step 6: Partial LODF column scaled by b_ℓ/b_e.
-        partial_lodf =
-            (alpha / (denom * b_arc)) .* (core.arc_susceptances .* H_col)
+        # Step 6: Partial LODF column scaled by b_ℓ/b_e, in place on the fresh `H_col`.
+        partial_lodf = H_col
+        partial_lodf .*= (alpha / (denom * b_arc)) .* core.arc_susceptances
 
         # Full-outage self-element convention: -1.0.
         if abs(delta_b + b_arc) < eps() * b_arc

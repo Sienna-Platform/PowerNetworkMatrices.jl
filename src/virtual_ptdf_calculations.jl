@@ -31,7 +31,7 @@ simultaneously; their libklu work runs one at a time, while the JuMP-side work
         Vector of weights to be used as distributed slack bus.
 - `dist_slack_normalized::Vector{Float64}`:
         Pre-normalized distributed slack weights.
-- `cache::RowCache`:
+- `cache::RowCache{RowCacheValue}`:
         Cache where PTDF rows are stored.
 - `cache_lock::ReentrantLock`:
         Guards `cache` reads/writes for parallel `getindex` callers.
@@ -44,7 +44,7 @@ struct VirtualPTDF{Ax, L <: NTuple{2, Dict}, K} <:
     core::VirtualFactorCore{Ax, L, K}
     dist_slack::Vector{Float64}
     dist_slack_normalized::Vector{Float64}
-    cache::RowCache
+    cache::RowCache{RowCacheValue}
     cache_lock::ReentrantLock
 end
 
