@@ -51,7 +51,9 @@ function RowCache(max_cache_size::Int, persistent_rows::Set{Int}, row_size)
             Dict{Int, Union{Vector{Float64}, SparseArrays.SparseVector{Float64}}}(),
             max_num_keys,
         ),
-        persistent_rows,
+        # Copy: the cache mutates this set (pinning, and `empty!`), and the caller's own
+        # set must not move under it.
+        copy(persistent_rows),
         max_cache_size,
         max_num_keys,
         sizehint!(Vector{Int}(), max_num_keys),
@@ -168,9 +170,14 @@ function set_persistent_row!(
     key::Int,
     val::T,
 ) where {T <: Union{Vector{Float64}, SparseArrays.SparseVector{Float64}}}
-    _pin!(cache, key)
-    if !haskey(cache.temp_cache, key)
+    # Make room before pinning: a `_pin!` that throws must not leave a key in
+    # `persistent_cache_keys` with no row behind it.
+    is_new = !haskey(cache.temp_cache, key)
+    if is_new
         check_cache_size!(cache; new_add = true)
+    end
+    _pin!(cache, key)
+    if is_new
         push!(cache.access_order, key)
     end
     cache.temp_cache[key] = val

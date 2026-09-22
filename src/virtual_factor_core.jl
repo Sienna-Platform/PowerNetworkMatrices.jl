@@ -136,6 +136,9 @@ function get_PTDF_A_diag(c::VirtualFactorCore)
         @info "Computing PTDF_A_diag on first access ($n_arcs arcs)."
         t0 = time_ns()
         new_diag = _get_PTDF_A_diag(c.K, c.BA, c.A, _ref_bus_positions(c))
+        # A throw between the fill and the flag store (the `@info` below) would leave the
+        # vector populated but not ready, and the retry would append a second copy.
+        empty!(c.PTDF_A_diag)
         append!(c.PTDF_A_diag, new_diag)
         elapsed = (time_ns() - t0) / 1e9
         @info "Computed PTDF_A_diag in $(round(elapsed; digits = 2)) s (cached)."
@@ -157,6 +160,7 @@ function get_branch_susceptances_by_arc(c::VirtualFactorCore)
         new_bs = _extract_branch_susceptances_by_arc(
             c.BA, c.axes[1], get_network_reduction_data(c),
         )
+        empty!(c.branch_susceptances_by_arc)
         append!(c.branch_susceptances_by_arc, new_bs)
         c.branch_susceptances_ready[] = true
         return c.branch_susceptances_by_arc

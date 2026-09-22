@@ -65,10 +65,10 @@
 end
 
 @testset "VirtualFactorCore: concurrent first access publishes a complete vector" begin
-    # The lazy fields are published by a sequentially-consistent store to their
-    # readiness flag, so a reader either waits or sees the finished vector. Before
-    # that, the fast path tested `!isempty`, which `resize!` satisfies while the
-    # contents are still uninitialized (`UndefRefError` for the vector-of-vectors).
+    # The lazy fields are published by a release store to their readiness flag, which the
+    # reader's acquire load pairs with, so a reader either waits or sees the finished
+    # vector. Before that, the fast path tested `!isempty`, which `resize!` satisfies while
+    # the contents are still uninitialized (`UndefRefError` for the vector-of-vectors).
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     core = PNM.get_core(VirtualPTDF(Ybus(sys)))
     reference_diag = PNM._get_PTDF_A_diag(
