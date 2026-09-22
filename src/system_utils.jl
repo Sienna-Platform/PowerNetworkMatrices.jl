@@ -1,10 +1,10 @@
 """
-    validate_connectivity(sys::PSY.System) -> Bool
+    validate_connectivity(sys::PowerSystems.System) -> Bool
 
 Check whether the power system network is fully connected using Depth First Search (DFS).
 
 # Arguments
-- `sys::PSY.System`: The power system to validate
+- `sys::PowerSystems.System`: The power system to validate
 
 # Returns
 - `Bool`: `true` if the network is fully connected, `false` otherwise

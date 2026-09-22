@@ -100,7 +100,7 @@ end
 
 Canonical description of topology changes to a power network.
 Wraps arc susceptance changes, shunt admittance changes, and islanding status.
-No dependency on `PSY.System` after construction.
+No dependency on `PowerSystems.System` after construction.
 
 # Fields
 - `label::String`: Human-readable identifier for the modification.
@@ -110,7 +110,7 @@ No dependency on `PSY.System` after construction.
 
 Modification vectors are converted to tuples at construction time to guarantee
 immutability. This is required because `NetworkModification` is used as a `Dict`
-key (via custom `hash`/`==`) in VirtualMODF caches; mutable fields would
+key (via custom `hash`/`==`) in [`VirtualMODF`](@ref) caches; mutable fields would
 silently corrupt lookups if modified after insertion.
 """
 struct NetworkModification
@@ -170,7 +170,7 @@ Base.:(==)(a::NetworkModification, b::NetworkModification) =
 
 A resolved, self-contained contingency specification backed by a
 [`NetworkModification`](@ref). The UUID links back to the source
-`PSY.Outage` supplemental attribute for caching purposes.
+`PowerSystems.Outage` supplemental attribute for caching purposes.
 
 # Fields
 - `uuid::Base.UUID`: Unique identifier matching the source Outage supplemental attribute.
@@ -185,12 +185,14 @@ end
     WoodburyFactors
 
 Cached Woodbury intermediates shared across monitored arcs for one contingency.
-Computed from van Dijk et al. Eq. 29:
-    B_m⁻¹ = B_r⁻¹ - B_r⁻¹ U (A⁻¹ + U⊤ B_r⁻¹ U)⁻¹ U⊤ B_r⁻¹
+Computed from van Dijk et al. Eq. 29,
+```math
+B_m^{-1} = B_r^{-1} - B_r^{-1} U (A^{-1} + U^\\top B_r^{-1} U)^{-1} U^\\top B_r^{-1}.
+```
 
 # Fields
-- `Z::Matrix{Float64}`: B⁻¹U matrix (n_bus × M), one column per modified arc
-- `W_inv::Matrix{Float64}`: Pre-inverted W = (A⁻¹ + U⊤B⁻¹U)⁻¹ (M × M). For M ≤ 2, computed analytically; for M > 2, computed via LU factorization.
+- `Z::Matrix{Float64}`: ``B^{-1}U`` matrix (n_bus × M), one column per modified arc
+- `W_inv::Matrix{Float64}`: Pre-inverted ``W = (A^{-1} + U^\\top B^{-1} U)^{-1}`` (M × M). For M ≤ 2, computed analytically; for M > 2, computed via LU factorization.
 - `arc_indices::Vector{Int}`: Arc indices of modified arcs
 - `delta_b::Vector{Float64}`: Susceptance changes per modified arc
 - `is_islanding::Bool`: Whether this contingency islands the network

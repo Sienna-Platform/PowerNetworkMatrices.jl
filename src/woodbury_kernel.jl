@@ -1,17 +1,15 @@
-"""
-Shared Woodbury matrix identity kernel for computing post-modification
-network sensitivity factors. Used by both VirtualPTDF and VirtualMODF.
-
-Implements van Dijk et al. Eq. 29:
-    B_m⁻¹ = B_r⁻¹ - B_r⁻¹ U (A⁻¹ + U⊤ B_r⁻¹ U)⁻¹ U⊤ B_r⁻¹
-"""
+# Shared Woodbury matrix identity kernel for computing post-modification network
+# sensitivity factors, used by both VirtualPTDF and VirtualMODF. Implements van Dijk
+# et al. Eq. 29:
+#
+#   B_m^-1 = B_r^-1 - B_r^-1 U (A^-1 + U' B_r^-1 U)^-1 U' B_r^-1
 
 """
     _invert_woodbury_W(W_mat, ::Val{M}) -> (W_inv::Matrix{Float64}, is_islanding::Bool)
 
-Invert the M×M Woodbury W matrix. Dispatches on `Val{M}` so the compiler
-can specialize each case. Analytical formulas for M=1 and M=2 avoid LU
-factorization overhead. Falls back to LU for M > 2.
+Invert the ``M \\times M`` Woodbury ``W`` matrix. Dispatches on `Val{M}` so the compiler
+can specialize each case. Analytical formulas for ``M = 1`` and ``M = 2`` avoid LU
+factorization overhead. Falls back to LU for ``M > 2``.
 """
 function _invert_woodbury_W(
     W_mat::Matrix{Float64},

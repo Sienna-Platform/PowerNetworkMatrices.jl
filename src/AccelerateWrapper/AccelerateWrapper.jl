@@ -16,7 +16,7 @@ designed for the access patterns of `PowerNetworkMatrices`:
 
 This module is intentionally lighter than the upstream `AppleAccelerate.jl`
 package: it owns no high-level Julia wrappers over libSparse, exposes the
-symbolic/numeric split directly, binds only the entry points used by PNM,
+symbolic/numeric split directly, binds only the entry points used by PowerNetworkMatrices,
 and is compile-gated to macOS so non-Apple builds never codegen the
 `@ccall` sites.
 """

@@ -3,25 +3,43 @@
 
 Request automatic, condition-aware sparsification of a PTDF/LODF matrix. The
 matrix is sparsified with a *relative* per-row cutoff: an entry is dropped when
-
-    |entry| < α · max|row|,     α = clamp(safety · δ, $(string(1e-6)), $(string(1e-2)))
-
-where `δ` is the relative precision of the branch data. Because the cutoff is
+```math
+|\\mathrm{entry}| < \\alpha \\cdot \\max|\\mathrm{row}|,
+\\qquad \\alpha = \\mathrm{clamp}(\\mathrm{safety} \\cdot \\delta, \\, 10^{-6}, \\, 10^{-2})
+```
+where ``\\delta`` is the relative precision of the branch data. Because the cutoff is
 relative to each row's own peak, columns of large, ill-conditioned systems stay
 sparse regardless of the conditioning of `ABA`; the 1-norm condition estimate of
 `ABA` is still computed and logged as a diagnostic, but never multiplies the
 cutoff.
 
-- `data_precision`: relative precision `δ` of the branch parameters. `:auto`
-  (default) discovers it from the branch reactances (see
+- `data_precision`: relative precision ``\\delta`` of the branch parameters. `:auto`
+  (default) discovers it from the branch susceptances (see
   [`discover_data_precision`](@ref)); a `Float64` sets it explicitly (e.g. `1e-3`
   for reactances good to 0.1%).
 - `safety`: aggressiveness multiplier on `δ`; `> 1` sparsifies more, `< 1` less.
 - `quantile`: only used when `data_precision = :auto`; which quantile of the
   per-branch significant-figure counts to adopt.
 
-A plain `Float64` `tol` is still accepted by every constructor and applies a
-fixed *absolute* cutoff (backward compatible / exact tolerance).
+# Where the cutoff applies
+
+An `AutoTolerance` is a **no-op below `AUTO_TOLERANCE_BUS_LIMIT`** (2000 buses): small
+systems and the test cases are returned exactly, and its relative drop is reserved for
+the large virtual matrices ([`VirtualPTDF`](@ref) / [`VirtualLODF`](@ref) /
+[`VirtualMODF`](@ref)). On the **dense** [`PTDF`](@ref) / [`LODF`](@ref) path it is also
+a no-op, preserving the `Matrix{Float64}` element type.
+
+A plain `Float64` `tol` is accepted by every constructor and applies a fixed *absolute*
+cutoff (``|\\mathrm{entry}| < \\mathrm{tol}``) at any system size, dense or virtual — the backward-compatible,
+exact-tolerance path.
+
+# Examples
+
+```julia
+PTDF(sys; tol = 1e-5)                                  # fixed absolute cutoff, any size
+PTDF(sys; tol = AutoTolerance(; safety = 5.0))         # sparsify large virtual matrices harder
+PTDF(sys; tol = AutoTolerance(; data_precision = 1e-3))  # pin precision instead of discovering it
+```
 """
 struct AutoTolerance{D <: Union{Float64, Symbol}}
     data_precision::D
@@ -114,14 +132,14 @@ end
 """
     discover_data_precision(susceptances; q = 0.5, maxsig = 10, rtol = 1e-9) -> Float64
 
-Estimate relative data precision from branch susceptances `b_k`. Recovers the
-reactances `x_k = 1/b_k` (the susceptance hides the original precision; the
+Estimate relative data precision from branch susceptances ``b_k``. Recovers the
+reactances ``x_k = 1/b_k`` (the susceptance hides the original precision; the
 reciprocal does not), counts the significant figures of each, and returns
-`0.5·10^(-(s-1))` at the `q`-quantile of those counts, clamped to `[eps, 1e-2]`.
-`maxsig` is coupled to `rtol`: rounding to `s` figures carries a relative error of
-`0.5·10^(1-s)`, so `rtol = 1e-9` first accepts `s = 10` and no real data resolves
+``0.5 \\cdot 10^{-(s-1)}`` at the ``q``-quantile of those counts, clamped to `[eps, 1e-2]`.
+`maxsig` is coupled to `rtol`: rounding to ``s`` figures carries a relative error of
+``0.5 \\cdot 10^{1-s}``, so `rtol = 1e-9` first accepts ``s = 10`` and no real data resolves
 further. Full-precision data (e.g. computed equivalent branches) hits this `maxsig`
-cap and yields the tightest precision `5e-10`.
+cap and yields the tightest precision ``5 \\times 10^{-10}``.
 """
 function discover_data_precision(
     susceptances::AbstractVector{Float64};

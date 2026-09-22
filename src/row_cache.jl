@@ -137,8 +137,8 @@ end
 
 """
 Deletes a row from the stored matrix in cache not belonging to the
-persistent_cache_keys set. Uses LRU (Least Recently Used) eviction strategy
-based on access_order tracking.
+`persistent_cache_keys` set. Uses LRU (Least Recently Used) eviction strategy
+based on `access_order` tracking.
 """
 function purge_one!(cache::RowCache)
     # Use LRU eviction: find oldest non-persistent key
@@ -200,7 +200,7 @@ end
 
 `cutoff` is the resolved `SparsificationCutoff` stored on the matrix: an
 `AbsoluteCutoff` drops below a fixed value, a `RelativeCutoff` drops below
-`fraction · max|row|` so columns of large cases stay sparse.
+``\\mathrm{fraction} \\cdot \\max|\\mathrm{row}|`` so columns of large cases stay sparse.
 """
 function cached_row_lookup(
     compute_row,
