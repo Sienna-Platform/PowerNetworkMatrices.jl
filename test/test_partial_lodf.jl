@@ -135,3 +135,23 @@ end
 
     @test isapprox(partial_row, gt_row, atol = 1e-12)
 end
+
+@testset "Partial LODF: a bridge arc uses the same clamp as the cached row" begin
+    # Arc 2 of c_sys14 is a bridge (H[e,e] == 1.0). The cached path clamps that
+    # diagonal, the partial path used to read it raw and divide by 1 - H[e,e] ≈ 0,
+    # returning Inf for every non-self entry.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    vlodf = VirtualLODF(sys)
+    n_arcs = size(vlodf, 1)
+    bridges = findall(x -> x > 1 - PNM.LODF_ENTRY_TOLERANCE, vlodf.PTDF_A_diag)
+    @test !isempty(bridges)
+
+    for e in bridges
+        b_e = vlodf.arc_susceptances[e]
+        partial_row = PNM.get_partial_lodf_row(vlodf, e, -b_e)
+        cached_col = [vlodf[l, e] for l in 1:n_arcs]
+        @test all(isfinite, partial_row)
+        @test isapprox(partial_row, cached_col; atol = 1e-10)
+        @test partial_row[e] == -1.0
+    end
+end

@@ -162,6 +162,16 @@ function VirtualLODF(
     )
 end
 
+# A bridge arc islands the network when it is outaged, so `1 - H[e,e]` collapses and the
+# LODF scaling is undefined. Both LODF paths clamp such a diagonal to zero — a denominator
+# of exactly 1 — instead of dividing by a vanishing number.
+function _clamped_ptdf_a_diag(h_ee::Float64)
+    if h_ee > 1 - LODF_ENTRY_TOLERANCE
+        return 0.0
+    end
+    return h_ee
+end
+
 """
 Builds a VirtualLODF that wraps an existing [`VirtualFactorCore`](@ref). Forces
 the core's `PTDF_A_diag` computation (needed for the LODF scaling) and derives
@@ -175,9 +185,7 @@ function VirtualLODF(
 )
     # Force the (shared, cached) raw H[e,e] on the core; clamp a copy for the
     # LODF scaling so the core's raw value stays available to MODF/PTDF.
-    raw_diag = get_PTDF_A_diag(core)
-    clamped = copy(raw_diag)
-    clamped[clamped .> 1 - LODF_ENTRY_TOLERANCE] .= 0.0
+    clamped = _clamped_ptdf_a_diag.(get_PTDF_A_diag(core))
     inv_PTDF_A_diag = 1.0 ./ (1.0 .- clamped)
 
     arc_ax = core.axes[1]
@@ -371,9 +379,10 @@ Uses the Sherman-Morrison (matrix inversion lemma) formula:
 
     partial_LODF[ℓ, e] = α · (b_ℓ / b_e) · H[ℓ,e] / (1 - α · H[e,e])
 
-where α = -Δb / b_e, H[e,e] = PTDF_A_diag[e]. When `delta_b = -b_e` (full
-outage) this reduces to the standard LODF column; the self-element is overridden
-to -1.0 for a full outage.
+where α = -Δb / b_e and H[e,e] is `PTDF_A_diag[e]` clamped by
+`_clamped_ptdf_a_diag`, the same clamp `inv_PTDF_A_diag` carries. When
+`delta_b = -b_e` (full outage) this reduces to the standard LODF column; the
+self-element is overridden to -1.0 for a full outage.
 """
 function _getindex_partial(
     vlodf::VirtualLODF,
@@ -423,7 +432,7 @@ function _getindex_partial(
         H_col = core.A * temp_data
 
         # Step 5: Scalar denominator: 1 - α · H[e,e].
-        H_ee = ptdf_a_diag[arc_idx]
+        H_ee = _clamped_ptdf_a_diag(ptdf_a_diag[arc_idx])
         alpha = -delta_b / b_arc
         denom = 1.0 - alpha * H_ee
 
