@@ -210,10 +210,11 @@ existing grouping.
 
 ## 9. Testing and acceptance
 
-Tests go in a new file `test/test_flowgates.jl`; the runner auto-includes any
-`test/test_*.jl` file (`test/PowerNetworkMatricesTests.jl:44-48`), so no registration is
-needed. The harness is **ReTest** (`using ReTest`), with aliases `PSB`
-(`PowerSystemCaseBuilder`) and `PNM` already set up in the test module. Build systems
+Tests go in a new file `test/test_flowgates.jl`; the runner auto-discovers any top-level
+`test/test_*.jl` file (`test/runtests.jl`), so no registration is needed. The harness is
+**ParallelTestRunner** running plain `Test`, and each file gets its own worker process:
+aliases `PSB` (`PowerSystemCaseBuilder`) and `PNM`, and every shared fixture, come from
+`test/includes.jl`, not from a neighbouring test file. Build systems
 exactly as the existing LODF tests do (`test/test_lodf.jl:7`):
 
 ```julia
@@ -359,7 +360,7 @@ Everything below was checked against the working tree on branch `jd/make_flowgat
 10. **Integration specifics added** (§9, §10): include slot after
     `include("lodf_calculations.jl")` (`src/PowerNetworkMatrices.jl:144`); exports in
     the block at lines 3–60; test file auto-discovery via the `test_*.jl` glob
-    (`test/PowerNetworkMatricesTests.jl:44-48`); ReTest harness with `PSB`/`PNM`/`IS`
-    aliases; `@inferred` test pattern from `test/test_auto_tolerance.jl:32`; Documenter
+    (`test/runtests.jl`); ParallelTestRunner harness with `PSB`/`PNM`/`IS` aliases from
+    `test/includes.jl`; `@inferred` test pattern from `test/test_auto_tolerance.jl:32`; Documenter
     `@autodocs`/`missing_docs` implication of the module-wide docstring template
     (`src/PowerNetworkMatrices.jl:106-109`); formatter command requirement.

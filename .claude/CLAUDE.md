@@ -101,8 +101,10 @@ Exports live only in the main module file.
 
 ```sh
 julia --project=test -e 'using Pkg; Pkg.instantiate()'                         # once per clone
-julia --project=test test/runtests.jl                                          # full suite (ReTest)
-julia --project=test -e 'using PowerNetworkMatrices; include("test/PowerNetworkMatricesTests.jl"); run_tests("PTDF")'   # name filter
+julia --project=test test/runtests.jl                                          # full suite (ParallelTestRunner)
+julia --project=test test/runtests.jl test_ptdf                                # FILE-name filter (startswith)
+julia --project=test test/runtests.jl --list                                   # list discoverable tests
+julia --project=test test/runtests.jl --jobs=4                                 # cap parallelism
 julia --project=docs docs/make.jl                                              # docs must build clean
 julia --project=scripts/formatter -e 'include("scripts/formatter/formatter_code.jl")'
 ```
@@ -124,7 +126,7 @@ A docstring that is silently detached (see below) hides its own broken refs. Att
 
 **A comment between a docstring and its definition silently detaches the docstring** — Julia does not bridge it, and you get no warning; the symbol just reports "No documentation found". This bit `equivalent_branch`, whose docstring sat above an intervening comment and was dead text for its whole life. Put explanatory comments *above* the docstring, and verify with `@doc PNM.f`.
 
-ReTest notes: don't use `@test_logs` to assert warnings (MethodError on failure) — use a custom `AbstractLogger`; verify testset registration with `run_tests(dry=true)`. Filters match **testset names, not filenames** — `run_tests("equivalent_getters")` matches nothing and reports a misleading 0-pass green. The formatter also walks `docs/` and `.claude/` with `format_markdown=true` and **aborts the whole run** on the first unparseable markdown file, silently skipping `src/`. `.superpowers/`, `docs/superpowers/`, and `.claude/plans/` are excluded from the walk for exactly this reason — if a new plan-doc location outside those three trips it, add it to `formatter_code.jl`'s `ignore` list rather than reformatting the doc to satisfy the parser.
+Runner notes: every top-level `test_*.jl` runs in its **own worker process** (ParallelTestRunner/Malt), so nothing is shared between files — a helper defined in one test file is invisible to every other. Shared fixtures belong in `test/testing_data.jl`; shared imports and consts in `test/includes.jl`, which is evaluated into each worker's sandbox module before the file body. Filters match **file names** (`startswith`), not testset names, and `--list` prints exactly what is discoverable, so a typo yields "no tests" rather than a misleading 0-pass green. Each worker calls `Random.seed!(1)` before the file body, so a test that consumes randomness without seeding itself now sees a different stream than it did under the serial runner. A test that builds a PSB system with `force_build` must also pass `skip_serialization = true`, or it rewrites the shared `data/serialized_system/` cache while other workers are reading it. The formatter also walks `docs/` and `.claude/` with `format_markdown=true` and **aborts the whole run** on the first unparseable markdown file, silently skipping `src/`. `.superpowers/`, `docs/superpowers/`, and `.claude/plans/` are excluded from the walk for exactly this reason — if a new plan-doc location outside those three trips it, add it to `formatter_code.jl`'s `ignore` list rather than reformatting the doc to satisfy the parser.
 
 ## Test fixtures for reductions
 
