@@ -48,9 +48,10 @@ single-scratch model.
   `branch_susceptances_by_arc`.
 
 # Publication of the lazy fields
-Both lazy vectors are filled in place under `solver_lock` and published by a
-sequentially-consistent store to their `Threads.Atomic{Bool}` flag, which is the
-only thing the lock-free fast path tests. Reading emptiness instead would let a
+Both lazy vectors are filled in place under `solver_lock` and published by the
+release store to their `Threads.Atomic{Bool}` flag, which is the only thing the
+lock-free fast path tests; the reader's acquire load is what orders the element
+writes before its own reads. Reading emptiness instead would let a
 reader observe the vector between `resize!` and the copy — uninitialized
 `Float64`s, or undefined references for the `Vector{Vector{Float64}}`.
 """
