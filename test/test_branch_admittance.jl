@@ -496,7 +496,7 @@ end
 
     for (location, fr, to) in twoW_locations
         t = _t2w_with_shunt(location)
-        (Y11, Y12, Y21, Y22) = PNM.ybus_branch_entries(t)
+        (Y11, Y12, Y21, Y22) = PNM.ybus_branch_entries(t, PNM.NetworkReductionData())
         @test isapprox(Y11, Y_t + (fr ? y_shunt : 0.0 + 0.0im); atol = 1e-12)
         @test isapprox(Y22, Y_t + (to ? y_shunt : 0.0 + 0.0im); atol = 1e-12)
         @test isapprox(Y12, -Y_t; atol = 1e-12)
@@ -511,7 +511,7 @@ end
 
     # SPLIT applies the FULL value on both sides -- not halved.
     t_split = _t2w_with_shunt(PSY.TwoWindingTransformerShuntLocation.SPLIT)
-    (Y11, _, _, Y22) = PNM.ybus_branch_entries(t_split)
+    (Y11, _, _, Y22) = PNM.ybus_branch_entries(t_split, PNM.NetworkReductionData())
     @test isapprox(Y11 - Y_t, y_shunt; atol = 1e-12)
     @test isapprox(Y22 - Y_t, y_shunt; atol = 1e-12)
     @test !isapprox(Y11 - Y_t, y_shunt / 2; atol = 1e-9)
@@ -548,7 +548,7 @@ end
     for (i, (location, fr, to)) in enumerate(threeW_locations)
         t3w = _t3w_with_shunt(location, i)
         w1 = PNM.ThreeWindingTransformerCircuit(t3w, 1)
-        (Y11, Y12, Y21, Y22) = PNM.ybus_branch_entries(w1)
+        (Y11, Y12, Y21, Y22) = PNM.ybus_branch_entries(w1, PNM.NetworkReductionData())
         # STAR lands the shunt on the star-bus diagonal (circuit-1 Y22); PRIMARY on the
         # terminal-bus diagonal (Y11). Hand-computed: the whole value, on one side only.
         @test isapprox(Y11, Y_t + (fr ? y_shunt : 0.0 + 0.0im); atol = 1e-12)
@@ -564,7 +564,8 @@ end
         # diagonals stay at the bare series admittance (unit tap here).
         for cn in (2, 3)
             wc = PNM.ThreeWindingTransformerCircuit(t3w, cn)
-            (c11, _, _, c22) = PNM.ybus_branch_entries(wc)
+            (c11, _, _, c22) =
+                PNM.ybus_branch_entries(wc, PNM.NetworkReductionData())
             @test isapprox(c11, Y_t; atol = 1e-12)
             @test isapprox(c22, Y_t; atol = 1e-12)
             cadm = PNM.branch_admittance(wc)

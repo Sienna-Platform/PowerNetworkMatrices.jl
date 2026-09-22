@@ -369,3 +369,54 @@ end
     add_supplemental_attribute!(sys3, tr3, bad)
     @test_throws ErrorException Ybus(sys3)
 end
+
+@testset "impedance correction is not split across PNM accessors" begin
+    # Regression: the corrected model was reachable only through the `nr`-taking overloads,
+    # so a caller recomputing a flow from the `nr`-less ones disagreed with the stamped Ybus.
+    sys = deepcopy(build_system(PSITestSystems, "c_sys14"))
+    tr = first(get_components(TwoWindingTransformer, sys))
+    add_supplemental_attribute!(
+        sys,
+        tr,
+        ImpedanceCorrectionData(;
+            table_number = 1,
+            impedance_correction_curve = IS.PiecewiseLinearData([
+                (x = 0.5, y = 1.5),
+                (x = 1.5, y = 1.5),
+            ]),
+            transformer_winding = WindingCategory.TR2W_WINDING,
+            transformer_control_mode =
+            ImpedanceCorrectionTransformerControlMode.TAP_RATIO,
+        ),
+    )
+    ybus = Ybus(sys)
+    nr = get_network_reduction_data(ybus)
+    arc = PNM.get_arc_tuple(tr, nr)
+    # The transformer is the sole entry on its arc, so the Ybus entries are its own.
+    @test PNM.get_direct_branch_map(nr)[arc] === tr
+
+    # The fixture is non-trivial: the correction moves the series impedance.
+    uncorrected = PNM.equivalent_branch(tr)
+    corrected = PNM.equivalent_branch(tr, nr)
+    @test PNM._impedance_correction_factor(tr, nr) == 1.5
+    @test PNM.get_equivalent_x(corrected) ≈ 1.5 * PNM.get_equivalent_x(uncorrected)
+    @test !isapprox(
+        PNM.get_equivalent_x(corrected),
+        PNM.get_equivalent_x(uncorrected),
+    )
+
+    # Every reduction-aware accessor reports the corrected model...
+    entries = PNM.ybus_branch_entries(tr, nr)
+    @test PNM.get_equivalent_x(arc_equivalent_branch(nr, arc)) ≈
+          PNM.get_equivalent_x(corrected)
+    adm = branch_admittance(tr, nr)
+    @test complex(adm.g, adm.b) ≈
+          1 / (PNM.get_equivalent_r(corrected) + im * PNM.get_equivalent_x(corrected))
+
+    # ...and it is what the matrix carries.
+    @test isapprox(ybus[arc[1], arc[2]], entries[2]; rtol = 4 * eps(Float32))
+    @test isapprox(ybus[arc[2], arc[1]], entries[3]; rtol = 4 * eps(Float32))
+
+    # No `nr`-less route to a single branch's Ybus entries remains.
+    @test_throws MethodError PNM.ybus_branch_entries(tr)
+end

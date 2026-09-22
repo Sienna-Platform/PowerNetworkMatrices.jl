@@ -297,7 +297,7 @@ end
         @test am.arc_index == winding_arc_indices[w]
         sibling_indices = [winding_arc_indices[s] for s in 1:3 if s != w]
         @test am.arc_index ∉ sibling_indices
-        Y11, Y12, Y21, Y22 = PNM.ybus_branch_entries(winding)
+        Y11, Y12, Y21, Y22 = PNM.ybus_branch_entries(winding, nr)
         @test am.delta_y11 ≈ ComplexF32(-Y11)
         @test am.delta_y12 ≈ ComplexF32(-Y12)
         @test am.delta_y21 ≈ ComplexF32(-Y21)

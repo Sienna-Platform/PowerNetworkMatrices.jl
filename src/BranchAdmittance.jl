@@ -265,6 +265,9 @@ end
 π-model admittance `(g, b, g_fr, b_fr, g_to, b_to, tap, shift)` for any single branch, where
 `g + im*b == 1 / (r + im*x)` is the series admittance. The admittance-form view of
 [`equivalent_branch`](@ref); see it for the shunt and unit conventions.
+
+This is the component's own value, with no impedance correction and on the default epsilon.
+Use `branch_admittance(b, nr)` for what the assembled matrices carry.
 """
 function branch_admittance(
     b::PSY.ACTransmission;
@@ -433,12 +436,21 @@ function equivalent_branch(group::AbstractReductionAggregate, nr::NetworkReducti
 end
 
 """
-    branch_admittance(segment, nr::NetworkReductionData) -> NamedTuple
+    branch_admittance(entry, nr::NetworkReductionData) -> NamedTuple
 
-π-model admittance for a reduction-aggregated arc (a `BranchesSeries` chain or
-`BranchesParallel` group), built from PNM's reduction-aware equivalent physical branch
-parameters. Series/parallel equivalents of lines carry `tap == 1`.
+π-model admittance of any arc entry as the assembled matrices carry it: the
+[`equivalent_branch`](@ref) of a single branch with `nr`'s impedance correction applied, or
+the reduction-aware equivalent of an aggregate (a `BranchesSeries` chain or
+`BranchesParallel` group). Series/parallel equivalents of lines carry `tap == 1`.
+
+Prefer this over the `nr`-less method wherever `nr` is in scope: that one is the component's
+own uncorrected value, which does not match what was stamped for a transformer carrying a
+`PSY.ImpedanceCorrectionData` table.
 """
+function branch_admittance(b::PSY.ACTransmission, nr::NetworkReductionData)
+    return _to_admittance(equivalent_branch(b, nr))
+end
+
 function branch_admittance(segment::AbstractReductionAggregate, nr::NetworkReductionData)
     return _to_admittance(get_equivalent_physical_branch_parameters(segment, nr))
 end

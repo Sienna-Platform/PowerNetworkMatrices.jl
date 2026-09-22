@@ -383,9 +383,10 @@ end
     nrd = PNM.get_network_reduction_data(ybus)
     bp = PNM.get_parallel_branch_map(nrd)[PNM.get_arc_tuple(t, nrd)]
 
-    sibling_entries = PNM.ybus_branch_entries(sibling)
-    configured = PNM.ybus_branch_entries(t; min_x_eps = min_x_eps) .+ sibling_entries
-    unconfigured = PNM.ybus_branch_entries(t) .+ sibling_entries
+    sibling_entries = PNM.ybus_branch_entries(sibling, nrd)
+    configured = PNM.ybus_branch_entries(t, nrd) .+ sibling_entries
+    unconfigured =
+        PNM.ybus_branch_entries(t, PNM.NetworkReductionData()) .+ sibling_entries
     entries = PNM.ybus_branch_entries(bp, nrd)
     @test all(isapprox.(entries, configured; rtol = 1e-12))
     @test !isapprox(entries[2], unconfigured[2]; rtol = 1e-3)
@@ -533,7 +534,7 @@ end
     # The group equivalent equals the sum of the member windings' own Pi-models.
     w1 = PNM.ThreeWindingTransformerCircuit(t3w, 1)
     w2 = PNM.ThreeWindingTransformerCircuit(t3w, 2)
-    expected_sum = PNM.ybus_branch_entries(w1) .+ PNM.ybus_branch_entries(w2)
+    expected_sum = PNM.ybus_branch_entries(w1, nrd) .+ PNM.ybus_branch_entries(w2, nrd)
     @test all(isapprox.((Y11, Y12, Y21, Y22), expected_sum; atol = 1e-10))
     # And the merged matrix entry agrees with the group's off-diagonal.
     @test isapprox(ybus[busD_no, star_no], Y12; atol = 1e-4)
@@ -932,7 +933,7 @@ end
     # The old orientation-blind positional sum mis-places the reversed member's self admittance.
     blind11 = zero(eltype(ybus.data))
     for br in bp.branches
-        blind11 += PNM.ybus_branch_entries(br)[1]
+        blind11 += PNM.ybus_branch_entries(br, nr)[1]
     end
     @test !isapprox(blind11, ybus.data[ip, ip])
 end
@@ -1211,7 +1212,7 @@ end
     @test aware[2] ≈ ybus.data[ip, iq]
     @test aware[3] ≈ ybus.data[iq, ip]
     l2 = PNM.get_direct_branch_map(nr)[(2, 3)]
-    l2_self = PNM.ybus_branch_entries(l2)[1]
+    l2_self = PNM.ybus_branch_entries(l2, nr)[1]
     @test aware[4] + l2_self ≈ ybus.data[iq, iq]
 
     # BA takes the asymmetric-arc fallback: b = sum of member susceptances (α-independent).

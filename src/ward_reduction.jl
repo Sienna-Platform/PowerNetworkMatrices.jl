@@ -134,7 +134,10 @@ function get_ward_reduction(
                         r = real(arc_impedance),
                         x = imag(arc_impedance),
                     )
-                    Y11, Y12, _, Y22 = ybus_branch_entries(generic_arc_impedance)
+                    Y11, Y12, _, Y22 = _equivalent_to_ybus(
+                        generic_arc_impedance,
+                        equivalent_branch(generic_arc_impedance),
+                    )
                     @assert isapprox(-1.0 * Y12, y_eq[ix, jx])
                     #check if the arc of virtual line is already existing so we don't add an additional arc
                     if (bus_ix, bus_jx) ∈ arc_axis

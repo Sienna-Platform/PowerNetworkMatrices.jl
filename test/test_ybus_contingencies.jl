@@ -281,7 +281,7 @@ end
     # Identity-resolved delta for tripping the line: the negated LINE pi-model
     # (symmetric), never the PST's asymmetric one.
     dy = PNM._compute_arc_ybus_delta(nr, (1, 2), -b_line, line)
-    expected = PNM.ybus_branch_entries(line)
+    expected = PNM.ybus_branch_entries(line, nr)
     @test dy[1] ≈ -expected[1]
     @test dy[2] ≈ -expected[2]
     @test dy[3] ≈ -expected[3]
@@ -321,7 +321,8 @@ end
     m = mod.arc_modifications[1]
     @test m.delta_b == -PNM.get_series_susceptance(line, PSY.SU)
     @test m.delta_y12 ≈ m.delta_y21
-    @test m.delta_y11 ≈ -PNM.ybus_branch_entries(line)[1]
+    @test m.delta_y11 ≈
+          -PNM.ybus_branch_entries(line, PNM.get_network_reduction_data(vptdf))[1]
 end
 
 @testset "ArcModification stores correct Ybus delta entries" begin
@@ -433,7 +434,7 @@ end
     # Oracle: removal delta == (remaining member alone) - (full group), both already
     # oriented in the key frame (L1 seeds the key, so no swap on the survivor).
     group_entries = PNM.ybus_branch_entries(bp, nr)
-    remaining_entries = PNM.ybus_branch_entries(l1)
+    remaining_entries = PNM.ybus_branch_entries(l1, nr)
     m = only(mod.arc_modifications)
     @test m.delta_y11 ≈ remaining_entries[1] - group_entries[1] atol = 1e-5
     @test m.delta_y12 ≈ remaining_entries[2] - group_entries[2] atol = 1e-5
