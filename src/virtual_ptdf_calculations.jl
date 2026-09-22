@@ -271,21 +271,32 @@ if isdefined(Base, :print_array) # 0.7 and later
     Base.print_array(io::IO, X::VirtualPTDF) = "VirtualPTDF"
 end
 
-function _compute_ptdf_row(vptdf::VirtualPTDF, row::Int)::Vector{Float64}
-    core = get_core(vptdf)
+"""
+    _use_dist_slack(vptdf::VirtualPTDF) -> Bool
+
+Validate the distributed-slack specification and report whether it applies.
+Counts `subnetwork_axes` rather than calling `get_ref_bus_position`, which
+allocates one position per subnetwork on a per-row hot path.
+"""
+function _use_dist_slack(vptdf::VirtualPTDF)::Bool
     dist_slack = get_dist_slack(vptdf)
-    dist_slack_normalized = get_dist_slack_normalized(vptdf)
-    buscount = size(core.BA, 1)
-    ref_bus_positions = get_ref_bus_position(core)
-    if !isempty(dist_slack) && length(ref_bus_positions) != 1
+    isempty(dist_slack) && return false
+    core = get_core(vptdf)
+    if length(core.subnetwork_axes) != 1
         error(
             "Distributed slack is not supported for systems with multiple reference buses.",
         )
     end
-    use_dist_slack = length(dist_slack) == buscount
-    if !use_dist_slack && !isempty(dist_slack)
+    if length(dist_slack) != size(core.BA, 1)
         error("Distributed bus specification doesn't match the number of buses.")
     end
+    return true
+end
+
+function _compute_ptdf_row(vptdf::VirtualPTDF, row::Int)::Vector{Float64}
+    core = get_core(vptdf)
+    dist_slack_normalized = get_dist_slack_normalized(vptdf)
+    use_dist_slack = _use_dist_slack(vptdf)
 
     return with_solver(
         core.K, core.work_ba_col, core.temp_data, core.solver_lock,

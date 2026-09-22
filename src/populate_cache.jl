@@ -110,20 +110,9 @@ function populate_cache(vptdf::VirtualPTDF, components)
     core = get_core(vptdf)
     cache = get_cache(vptdf)
     cache_lock = get_cache_lock(vptdf)
-    dist_slack = get_dist_slack(vptdf)
     dist_slack_normalized = get_dist_slack_normalized(vptdf)
-
     buscount = size(core.BA, 1)
-    ref_bus_positions = get_ref_bus_position(core)
-    if !isempty(dist_slack) && length(ref_bus_positions) != 1
-        error(
-            "Distributed slack is not supported for systems with multiple reference buses.",
-        )
-    end
-    use_dist_slack = length(dist_slack) == buscount
-    if !use_dist_slack && !isempty(dist_slack)
-        error("Distributed bus specification doesn't match the number of buses.")
-    end
+    use_dist_slack = _use_dist_slack(vptdf)
     cutoff = get_cutoff(core)
 
     # Only solve rows not already resident; existing rows are pinned below.
@@ -261,9 +250,9 @@ _resolve_monitored_index(vmodf::VirtualMODF, m::Tuple{Int, Int}) =
     _woodbury_factors_from_base(base_full, BA, arc_sus, modifications, n_bus) -> WoodburyFactors
 
 Assemble Woodbury factors from precomputed pre-contingency solves. `base_full`
-maps each modified arc index to `B⁻¹ · BA[:, arc]` scattered to full-bus space.
-Identical math to `_compute_woodbury_factors_impl` but with the per-arc libklu
-solves replaced by dictionary lookups (the batched solve already paid for them).
+maps each modified arc index to `B⁻¹ · BA[:, arc]` scattered to full-bus space,
+so the per-arc libklu solves of `_compute_woodbury_factors_impl` become
+dictionary lookups; the shared kernel does the rest.
 """
 function _woodbury_factors_from_base(
     base_full::Dict{Int, Vector{Float64}},
@@ -272,57 +261,24 @@ function _woodbury_factors_from_base(
     modifications::Tuple{Vararg{ArcModification}},
     n_bus::Int,
 )::WoodburyFactors
-    M = length(modifications)
-    arc_indices = Vector{Int}(undef, M)
-    delta_b_vec = Vector{Float64}(undef, M)
-    for (j, mod) in enumerate(modifications)
-        arc_indices[j] = mod.arc_index
-        delta_b_vec[j] = mod.delta_b
-    end
-
     # Z[:, j] = B⁻¹ ν_j = (B⁻¹ BA[:, e_j]) / b_{e_j}
-    Z = Matrix{Float64}(undef, n_bus, M)
-    for j in 1:M
-        b_e = arc_sus[arc_indices[j]]
-        col = base_full[arc_indices[j]]
+    Z = Matrix{Float64}(undef, n_bus, length(modifications))
+    for (j, mod) in enumerate(modifications)
+        b_e = arc_sus[mod.arc_index]
+        col = base_full[mod.arc_index]
         @inbounds for i in 1:n_bus
             Z[i, j] = col[i] / b_e
         end
     end
-
-    # K_mat[i, j] = ν_i⊤ B⁻¹ ν_j, iterating the sparse BA columns of arc e_i.
-    ba_nzv = SparseArrays.nonzeros(BA)
-    ba_rv = SparseArrays.rowvals(BA)
-    K_mat = zeros(M, M)
-    for i in 1:M
-        e_i = arc_indices[i]
-        b_i = arc_sus[e_i]
-        for j in 1:M
-            val = 0.0
-            @inbounds for nz_idx in SparseArrays.nzrange(BA, e_i)
-                val += (ba_nzv[nz_idx] / b_i) * Z[ba_rv[nz_idx], j]
-            end
-            K_mat[i, j] = val
-        end
-    end
-
-    W_mat = LinearAlgebra.diagm(1.0 ./ delta_b_vec) + K_mat
-    W_inv, is_island = _invert_woodbury_W(W_mat, Val(M))
-    # Mirror `_compute_woodbury_factors_impl`: label post-contingency components
-    # only when islanding, so `_zero_islanded_entries!` can zero disconnected buses.
-    labels = Int[]
-    if is_island
-        labels = _post_contingency_bus_labels(BA, arc_sus, modifications, n_bus)
-    end
-    return WoodburyFactors(Z, W_inv, arc_indices, delta_b_vec, is_island, labels)
+    return _woodbury_factors_from_Z(Z, BA, arc_sus, modifications)
 end
 
 """
     _woodbury_correction_from_base(base_full, BA, arc_sus, monitored_idx, wf, n_bus) -> Vector{Float64}
 
-Post-modification PTDF row for `monitored_idx` from precomputed pre-contingency
-solves. Mirrors `_apply_woodbury_correction_impl`, reusing `base_full[monitored_idx]`
-(contingency-independent) instead of solving.
+Post-modification PTDF row for `monitored_idx`, reusing the contingency-independent
+`base_full[monitored_idx]` instead of solving. The correction itself — including
+the islanding zero-out — is the shared kernel's.
 """
 function _woodbury_correction_from_base(
     base_full::Dict{Int, Vector{Float64}},
@@ -332,32 +288,12 @@ function _woodbury_correction_from_base(
     wf::WoodburyFactors,
     n_bus::Int,
 )::Vector{Float64}
-    M = length(wf.arc_indices)
-
-    b_mon = arc_sus[monitored_idx]
-    for (j, idx) in enumerate(wf.arc_indices)
-        idx == monitored_idx && (b_mon += wf.delta_b[j])
-    end
+    b_mon = _post_modification_susceptance(arc_sus, monitored_idx, wf)
     abs(b_mon) < eps() && return zeros(n_bus)
 
     b_mon_pre = arc_sus[monitored_idx]
-    temp = base_full[monitored_idx] ./ b_mon_pre   # z_m (fresh vector; base_full untouched)
-
-    ba_nzv = SparseArrays.nonzeros(BA)
-    ba_rv = SparseArrays.rowvals(BA)
-    zm_Z = zeros(M)
-    @inbounds for nz_idx in SparseArrays.nzrange(BA, monitored_idx)
-        coeff = ba_nzv[nz_idx] / b_mon_pre
-        row = ba_rv[nz_idx]
-        for j in 1:M
-            zm_Z[j] += coeff * wf.Z[row, j]
-        end
-    end
-
-    correction_coeff = wf.W_inv * zm_Z
-    LinearAlgebra.mul!(temp, wf.Z, correction_coeff, -1.0, 1.0)
-    temp .*= b_mon
-    return temp
+    z_m = base_full[monitored_idx] ./ b_mon_pre   # fresh vector; base_full untouched
+    return _woodbury_correction!(z_m, BA, b_mon_pre, b_mon, monitored_idx, wf)
 end
 
 """
