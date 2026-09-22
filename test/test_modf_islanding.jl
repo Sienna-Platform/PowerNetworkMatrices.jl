@@ -63,7 +63,8 @@ end
         PSB.PSSEParsingTestSystems,
         "psse_14_network_reduction_test_system",
     )
-    vmodf = VirtualMODF(sys14)
+    # KLU throws on a singular factorization where AppleAccelerate returns garbage.
+    vmodf = VirtualMODF(sys14; linear_solver = "KLU")
     ptdf_ref = PTDF(sys14)
 
     # Compute shared arc indices once — deterministic since PTDF_A_diag is fixed
@@ -201,8 +202,9 @@ end
         PSB.PSSEParsingTestSystems,
         "psse_14_network_reduction_test_system",
     )
-    vptdf = VirtualPTDF(sys)
-    vmodf = VirtualMODF(sys)        # only used to locate a bridge arc via PTDF_A_diag
+    # KLU throws on a singular factorization where AppleAccelerate returns garbage.
+    vptdf = VirtualPTDF(sys; linear_solver = "KLU")
+    vmodf = VirtualMODF(sys; linear_solver = "KLU")  # only to locate a bridge arc via PTDF_A_diag
     ptdf_ref = PTDF(sys)
 
     # Arc indices align between VirtualPTDF and VirtualMODF of the same system.
