@@ -568,8 +568,9 @@ end
     # resolves to no arc modifications (M = 0), so the Woodbury W matrix is 0×0.
     # Regression: `inv` on that 0×0 matrix raised
     # `ArgumentError: invalid argument #6 to LAPACK call` (LAPACK getri!). The empty
-    # modification must instead return the unmodified base PTDF row — the documented
-    # behavior in `_warn_if_transmission_dropped`.
+    # modification must instead return the unmodified base PTDF row. Outage registration
+    # now rejects this case (`_validate_transmission_survived`); the modification here is
+    # hand-built, so it still reaches the kernel.
     sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
     reductions = NetworkReduction[]
     ptdf = PTDF(sys; network_reductions = reductions)

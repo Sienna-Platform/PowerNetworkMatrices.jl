@@ -260,8 +260,12 @@ end
     VirtualMODF(core::VirtualFactorCore, sys::PSY.System; kwargs...) -> VirtualMODF
 
 Wrap an existing [`VirtualFactorCore`](@ref) in a VirtualMODF and register the
-system's outages. Use this (or `VirtualMODF(vptdf, sys)`) to share one
-factorization across multiple virtual matrices.
+system's outages, sharing one factorization across multiple virtual matrices.
+
+The core arrives already reduced and factorized, so this path cannot protect the outaged
+and monitored buses the way `VirtualMODF(sys; ...)` does. Registration therefore validates
+each outage against the core's surviving arcs and errors when a reduction ate one. Reduce
+the core with those buses in `irreducible_buses`, or build from the system instead.
 """
 function VirtualMODF(
     core::VirtualFactorCore,
@@ -291,20 +295,28 @@ end
 
 Build a VirtualMODF that reuses an existing `VirtualPTDF`'s factorization. The
 two objects share the same [`VirtualFactorCore`](@ref), so the ABA matrix is
-factorized only once.
+factorized only once. Carries the same reduction caveat as
+`VirtualMODF(core, sys)`: a `VirtualPTDF` built under reductions knows nothing about the
+system's outages, so an outaged branch it reduced away is rejected here.
 """
 function VirtualMODF(vptdf::VirtualPTDF, sys::PSY.System; kwargs...)
     return VirtualMODF(get_core(vptdf), sys; kwargs...)
 end
 
 """
-    _warn_if_transmission_dropped(sys, outage, mod)
+    _validate_transmission_survived(sys, outage, mod)
 
-Warn when an outage references `ACTransmission` components but its modification has
-no arc modifications — those branches were eliminated by reduction, so the
+Reject an outage that references `ACTransmission` components but resolves to no arc
+modifications: those branches were eliminated by a reduction, so every query of the
 contingency would silently return the unmodified base row.
+
+This is the one survive-check the core-sharing constructors can run. `VirtualMODF(sys; ...)`
+*prevents* the loss by folding the outage buses into `irreducible_buses` before the Ybus is
+built; a core handed over already factorized carries whatever reduction its own build
+applied, and neither `_collect_protected_buses` nor `_split_zero_impedance_reduction` can be
+replayed on it. Checking the resolved modification catches the outcome of all of them.
 """
-function _warn_if_transmission_dropped(
+function _validate_transmission_survived(
     sys::PSY.System,
     outage::PSY.Outage,
     mod::NetworkModification,
@@ -313,10 +325,18 @@ function _warn_if_transmission_dropped(
     transmission =
         PSY.get_associated_components(sys, outage; component_type = PSY.ACTransmission)
     isempty(transmission) && return
-    @warn "Outage (label=$(mod.label)) references transmission components but " *
-          "resolved to no arc modifications; they were eliminated by a network " *
-          "reduction. Querying this contingency returns the unmodified PTDF row."
-    return
+    names = sort!([PSY.get_name(c) for c in transmission])
+    throw(
+        IS.ConflictingInputsError(
+            "Outage (label=$(mod.label)) references transmission component(s) \
+            $(join(names, ", ")) but resolved to no arc modifications: a network \
+            reduction eliminated them, and every query of this contingency would return \
+            the unmodified PTDF row. Build the VirtualMODF from the system \
+            (`VirtualMODF(sys; network_reductions = ...)`), which protects outaged and \
+            monitored buses before reducing, or reduce the shared core with those buses \
+            in `irreducible_buses`.",
+        ),
+    )
 end
 
 # --- Outage registration ---
@@ -365,9 +385,8 @@ function _register_outage!(vmodf::VirtualMODF, sys::PSY.System, outage::PSY.Outa
         return
     end
     mod = NetworkModification(vmodf, sys, outage)
-    ctg = ContingencySpec(outage_id, mod)
-    contingency_cache[outage_id] = ctg
-    _warn_if_transmission_dropped(sys, outage, mod)
+    _validate_transmission_survived(sys, outage, mod)
+    contingency_cache[outage_id] = ContingencySpec(outage_id, mod)
     return
 end
 

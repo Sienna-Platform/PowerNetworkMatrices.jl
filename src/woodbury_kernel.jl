@@ -23,7 +23,8 @@ function _invert_woodbury_W(
         # resolves to no arc modifications, so W is 0×0. LAPACK's getri! (reached via
         # `inv`) rejects a 0×0 argument ("invalid argument #6"), so return the empty
         # inverse directly. The correction is then nil and the unmodified base PTDF
-        # row survives — the documented behavior (see `_warn_if_transmission_dropped`).
+        # row survives. Registered outages can no longer reach this state
+        # (`_validate_transmission_survived` rejects them); a hand-built modification can.
         return Matrix{Float64}(undef, 0, 0), false
     elseif M == 1
         w = W_mat[1, 1]
