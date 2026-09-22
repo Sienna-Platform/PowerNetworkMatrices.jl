@@ -22,9 +22,8 @@ get_entry(e::ArcEntry) = e.entry
 get_name(e::ArcEntry) = e.name
 get_leaves(e::ArcEntry) = e.leaves
 
-# The arc alone: concrete and isbits, 16 bytes. This carried a `Symbol` naming the
-# `BranchMapsByType` field that held the entry, so consumers could navigate back to it; that
-# is now `get_reduction_entry`, and the arc is the whole identity.
+# The arc alone: concrete and isbits, 16 bytes. Consumers navigate back to the entry via
+# `get_reduction_entry`; the arc is the whole identity.
 const ARC_ENTRY = Tuple{Int, Int}
 const ARC_TABLE = Dict{ARC_ENTRY, ArcEntry}
 const NAME_TO_ARC = Dict{DataType, DataStructures.SortedDict{String, ARC_ENTRY}}

@@ -188,7 +188,7 @@ function _compute_woodbury_factors_impl(
     end
 
     # K_mat[i,j] = ν_i⊤ B⁻¹ ν_j
-    # Use BA[:,arc]/b instead of A[arc,:] for consistent sign convention (issue #278).
+    # Use BA[:,arc]/b instead of A[arc,:] for consistent sign convention.
     # Iterate sparse BA columns (typically 2 nonzeros per arc).
     ba_nzv = SparseArrays.nonzeros(BA)
     ba_rv = SparseArrays.rowvals(BA)
@@ -275,7 +275,7 @@ function _apply_woodbury_correction_impl(
     end
 
     # ν_m⊤ · Z  (1 × M vector)
-    # Use BA[:,m]/b instead of A[m,:] for consistent sign convention (issue #278).
+    # Use BA[:,m]/b instead of A[m,:] for consistent sign convention.
     ba_nzv = SparseArrays.nonzeros(BA)
     ba_rv = SparseArrays.rowvals(BA)
     zm_Z = zeros(M)

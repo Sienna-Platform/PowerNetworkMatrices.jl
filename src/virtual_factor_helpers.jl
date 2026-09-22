@@ -2,12 +2,7 @@
 #
 # These functions are intentionally defined early in the module load order
 # (before `virtual_factor_core.jl` and the `Virtual{PTDF,LODF,MODF}` wrappers)
-# so the core constructor and the wrappers can all call them. They were
-# previously split between `virtual_ptdf_calculations.jl`
-# (`_create_factorization`, `_solve_factorization`) and
-# `virtual_lodf_calculations.jl` (`_extract_arc_susceptances`,
-# `_extract_branch_susceptances_by_arc`, `_get_PTDF_A_diag`); they live here now
-# so a single shared `VirtualFactorCore` can build/solve the factorization once.
+# so the core constructor and the wrappers can all call them.
 
 # --- Factorization creation (solver dispatch) ---
 
@@ -65,7 +60,11 @@ function _extract_arc_susceptances(
     nzv = SparseArrays.nonzeros(BA)
     for j in 1:n_arcs
         rng = nzrange(BA, j)
-        b[j] = isempty(rng) ? 0.0 : abs(nzv[first(rng)])
+        if isempty(rng)
+            b[j] = 0.0
+        else
+            b[j] = abs(nzv[first(rng)])
+        end
     end
     return b
 end
@@ -92,7 +91,11 @@ function _extract_branch_susceptances_by_arc(
     for j in 1:n_arcs
         arc = arc_ax[j]
         rng = nzrange(BA, j)
-        arc_b = isempty(rng) ? 0.0 : abs(nzv[first(rng)])
+        if isempty(rng)
+            arc_b = 0.0
+        else
+            arc_b = abs(nzv[first(rng)])
+        end
 
         if haskey(nr_data.parallel_branch_map, arc)
             bp = nr_data.parallel_branch_map[arc]

@@ -251,6 +251,11 @@ end
 _is_three_winding_circuit(::PSY.ACTransmission) = false
 _is_three_winding_circuit(::ThreeWindingTransformerCircuit) = true
 
+# A `ThreeWindingTransformerCircuit` reports the parent transformer type; every other branch
+# reports its own concrete type.
+_ac_transmission_type(x::PSY.ACTransmission) = typeof(x)
+_ac_transmission_type(w::ThreeWindingTransformerCircuit) = get_transformer_type(w)
+
 """
    get_ac_transmission_types(network_reduction_data::NetworkReductionData)
 
@@ -262,10 +267,6 @@ Gets the concrete types of all AC transmission branches included in an instance 
 # Returns
 - `Set{DataType}`: Vector of the retained branch types.
 """
-# A `ThreeWindingTransformerCircuit` reports the parent transformer type; every other branch
-# reports its own concrete type.
-_ac_transmission_type(x::PSY.ACTransmission) = typeof(x)
-_ac_transmission_type(w::ThreeWindingTransformerCircuit) = get_transformer_type(w)
 function get_ac_transmission_types(network_reduction_data::NetworkReductionData)
     direct_types = Set{DataType}(
         _ac_transmission_type.(keys(network_reduction_data.reverse_direct_branch_map)),

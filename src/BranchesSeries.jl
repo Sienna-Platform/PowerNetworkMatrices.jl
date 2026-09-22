@@ -178,8 +178,8 @@ method (BranchesParallel.jl) for why the aggregate spells its own key and the ca
 the indexed one.
 
 A nested chain keeps its own frame, so two siblings in one group can name themselves from
-opposite endpoint orders -- they are not indexed, and #353 established that a nested chain's
-`arc_key` is a traversal frame rather than an identity.
+opposite endpoint orders -- they are not indexed, and a nested chain's `arc_key` is a traversal
+frame rather than an identity.
 """
 get_name(bs::BranchesSeries) = "series_$(bs.arc_key[1])_$(bs.arc_key[2])"
 

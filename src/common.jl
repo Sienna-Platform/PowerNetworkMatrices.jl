@@ -772,7 +772,7 @@ otherwise one element per impedance-angle partition. The partitions' π-models s
 `ybus_branch_entries(bp, nr)` exactly, which is the invariant the tests pin.
 
 This is the total counterpart of `get_equivalent_physical_branch_parameters`, which can only
-return a single π and therefore throws on lossy shifted groups (PNM issue #231).
+return a single π and therefore throws on lossy shifted groups.
 """
 function equivalent_partitions(bp::AbstractBranchesParallel, nr::NetworkReductionData)
     reference = get_arc_tuple(bp, nr)
@@ -864,7 +864,7 @@ end
 Every π branch needed to represent the retained `arc` exactly, oriented `from -> to` to match
 `arc`. One element for a direct branch, a Ward-added impedance, a single-π-representable group,
 or a representable chain; more than one only for a parallel group that mixes phase-shift angles
-with impedance angles (PNM issue #231). Prefer this over [`arc_equivalent_branch`](@ref) in any
+with impedance angles. Prefer this over [`arc_equivalent_branch`](@ref) in any
 consumer that can emit several branches between one bus pair — PowerModels keys branches by
 index, so it can.
 
@@ -893,13 +893,6 @@ function _dc_equivalent_resistance(
     return real(_dc_series_impedance(group))
 end
 
-"""
-    arc_dc_resistance(nr::NetworkReductionData, arc::Tuple{Int, Int}) -> Float64
-
-Equivalent series resistance of the retained `arc` for DC loss estimation (`r·P²`),
-system base. Total on every mapped arc -- including lossy shifted parallel groups, where
-[`arc_equivalent_branch`](@ref) has no single-π equivalent and throws.
-"""
 # Resistance is orientation-symmetric. Single branches (direct and added-Ward alike) take their
 # own equivalent; aggregates go through the shifted-group-aware combination.
 # Deliberately the uncorrected value: the DC model does not apply impedance correction.
@@ -920,6 +913,13 @@ end
 
 PSY.get_available(seg::AbstractReductionAggregate) = get_equivalent_available(seg)
 
+"""
+    arc_dc_resistance(nr::NetworkReductionData, arc::Tuple{Int, Int}) -> Float64
+
+Equivalent series resistance of the retained `arc` for DC loss estimation (`r·P²`),
+system base. Total on every mapped arc -- including lossy shifted parallel groups, where
+[`arc_equivalent_branch`](@ref) has no single-π equivalent and throws.
+"""
 function arc_dc_resistance(nr::NetworkReductionData, arc::Tuple{Int, Int})
     entry, _ = _resolve_arc_entry(nr, arc)
     return _dc_entry_resistance(entry, nr)

@@ -350,7 +350,11 @@ function NetworkModification(mat::PowerNetworkMatrix, sys::PSY.System, outage::P
     end
 
     outage_id = IS.get_id(outage)
-    ctg_name = isempty(component_names) ? string(outage_id) : join(component_names, "+")
+    if isempty(component_names)
+        ctg_name = string(outage_id)
+    else
+        ctg_name = join(component_names, "+")
+    end
 
     # A fully-outaged ThreeWindingTransformer isolates its star bus and may
     # island a real terminal bus; flag that on `is_islanding`.

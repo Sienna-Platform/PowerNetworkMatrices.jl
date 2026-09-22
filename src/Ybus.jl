@@ -247,7 +247,6 @@ reverse lookup dictionaries for efficient access.
   `MixedBranchesParallel` with a `@warn` otherwise
 - Otherwise creates a new direct mapping
 - Phase-shifting members are grouped like any other branch — never dropped or forced direct
-  (issue #305)
 - Maintains reverse lookup consistency
 """
 function add_to_branch_maps!(
@@ -1636,7 +1635,7 @@ function _remap_merged_bus_in_branch_maps!(
     nr::NetworkReductionData,
     merged_bus_pairs::Dict{Int, Int},
 )
-    # All four maps use a two-phase collect-then-apply loop. The collect phase pops every
+    # Both maps use a two-phase collect-then-apply loop. The collect phase pops every
     # entry whose arc touches a removed bus and records the resolved new arc alongside the
     # value. The apply phase re-inserts with map-specific collision handling. Using two
     # phases avoids visiting entries that were just inserted during the apply phase.
@@ -2227,9 +2226,13 @@ function add_segment_to_ybus!(
     end
 end
 
+# A chain reached as another chain's segment enters as its own two-port, which is both what a
+# composite arc contributes to Ybus and what `_composite_raw_two_port` backs out for it. Resolving
+# it through `nr` keeps those two agreeing; the one-argument form has no method for an aggregate
+# and would fall through to the single-branch path.
 """
     add_segment_to_ybus!(
-        segment::AbstractBranchesParallel,
+        segment::AbstractReductionAggregate,
         y11::Vector{YBUS_ELTYPE},
         y12::Vector{YBUS_ELTYPE},
         y21::Vector{YBUS_ELTYPE},
@@ -2237,17 +2240,19 @@ end
         fb::Vector{Int},
         tb::Vector{Int},
         ix::Int,
-        segment_orientation::Symbol
+        segment_orientation::Symbol,
+        nr::NetworkReductionData,
     )
 
-Add multiple parallel branches as a single segment to Y-bus vectors.
+Add a reduction aggregate — a parallel group or a series chain — as a single segment to Y-bus
+vectors during series chain reduction.
 
-Handles the case where a segment in a series chain consists of multiple parallel
-branches between the same pair of buses. Each branch in the set is added to the
-same Y-bus position, effectively combining their admittances.
+Resolves the aggregate's orientation-correct two-port directly via `ybus_branch_entries`, rather
+than summing members under one shared orientation, which would mis-handle an anti-parallel
+asymmetric member. A chain reached as another chain's segment enters as its own two-port here.
 
 # Arguments
-- `segment::AbstractBranchesParallel`: Set of parallel AC transmission branches
+- `segment::AbstractReductionAggregate`: parallel group or series chain to add
 - `y11::Vector{YBUS_ELTYPE}`: Vector for from-bus self admittances
 - `y12::Vector{YBUS_ELTYPE}`: Vector for from-to mutual admittances
 - `y21::Vector{YBUS_ELTYPE}`: Vector for to-from mutual admittances
@@ -2258,19 +2263,14 @@ same Y-bus position, effectively combining their admittances.
 - `segment_orientation::Symbol`: `:FromTo` or `:ToFrom` orientation
 
 # Implementation Details
-- Iterates through all branches in the parallel set
-- Calls single-branch `add_segment_to_ybus!()` for each branch
-- Y-bus entries are accumulated at the same index position
-- Results in equivalent admittance of parallel combination
+- Computes the two-port directly via `ybus_branch_entries(segment, nr)`, not a per-member sum
+- Handles orientation by swapping entries for `:ToFrom`
+- Sets bus indices to consecutive values (ix, ix+1) for chain building
 
 # See Also
 - [`add_segment_to_ybus!`](@ref): Single branch variant
 - [`DegreeTwoReduction`](@ref): Series chain elimination
 """
-# A chain reached as another chain's segment enters as its own two-port, which is both what a
-# composite arc contributes to Ybus and what `_composite_raw_two_port` backs out for it. Resolving
-# it through `nr` keeps those two agreeing; the one-argument form has no method for an aggregate
-# and would fall through to the single-branch path.
 function add_segment_to_ybus!(
     segment::AbstractReductionAggregate,
     y11::Vector{YBUS_ELTYPE},

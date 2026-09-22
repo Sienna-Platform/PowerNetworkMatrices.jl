@@ -131,7 +131,7 @@ end
 
 # Name-based lookup kept for callers that only hold a name (PTDF row API, PowerFlows).
 # PSY names are unique per concrete type only, so a name may match several members of a
-# mixed group; that was silently double-counted before — now it must resolve to exactly one.
+# mixed group; it must resolve to exactly one.
 function compute_parallel_multiplier(
     parallel_branch_set::AbstractBranchesParallel,
     branch_name::String,
