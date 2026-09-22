@@ -73,16 +73,24 @@ function _direct_arc_ybus_delta(
     return _scaled_pi_model(entries, delta_b / b_arc)
 end
 
-# A three-winding transformer winding is a one-to-one arc, but its stored arc susceptance
-# (the tap-divided star-leg convention) need not equal the imaginary Pi-model term that
-# `ybus_branch_entries` builds, so the generic susceptance-matched full/partial test above is
-# unreliable here. Only a full outage of the winding is meaningful, so cancel its whole
-# Pi-model directly.
+# A circuit is in service or out, so only a full outage is meaningful on a star-leg arc and
+# the whole Pi-model is cancelled rather than scaled. The Δb still has to say so: scaling the
+# DC side by a partial Δb while cancelling the entire AC side describes two different
+# contingencies. `_get_arc_susceptances` reports magnitudes and a star leg's susceptance is
+# routinely negative, so the comparison is on `|b|`.
 function _direct_arc_ybus_delta(
     tr::ThreeWindingTransformerCircuit,
     nr::NetworkReductionData,
-    ::Float64,
+    delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
+    b_arc = abs(_ba_arc_susceptance(tr, nr))
+    if !_is_full_outage(delta_b, b_arc)
+        error(
+            "Partial Ybus delta is not supported on the three-winding transformer " *
+            "star-leg arc $(get_arc_tuple(tr, nr)) of $(get_name(tr)): a circuit is " *
+            "either in service or out. Δb=$(delta_b), arc b=$(b_arc).",
+        )
+    end
     return _negated_pi_model(ybus_branch_entries(tr, nr))
 end
 
