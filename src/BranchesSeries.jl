@@ -8,6 +8,35 @@ mutable struct BranchesSeries <: AbstractReductionAggregate
     arc_key::Tuple{Int, Int}
     equivalent_ybus::CACHED_TWO_PORT
     equivalent_ybus_populated::Bool
+
+    function BranchesSeries(
+        branches::Dict{DataType, Vector{PSY.ACTransmission}},
+        mixed_types::Bool,
+        insertion_order::Vector{Tuple{DataType, Int}},
+        segment_orientations::Vector{Symbol},
+        arc_key::Tuple{Int, Int},
+        equivalent_ybus::CACHED_TWO_PORT,
+        equivalent_ybus_populated::Bool,
+    )
+        n_members = sum(length, values(branches); init = 0)
+        if length(insertion_order) != n_members
+            error(
+                "BranchesSeries on arc $arc_key holds $n_members member(s) but " *
+                "$(length(insertion_order)) insertion_order entries. insertion_order is the " *
+                "chain's only traversal path, so a mismatch iterates as a shorter chain " *
+                "instead of failing. Build chains with BranchesSeries(arc_key) and add_branch!.",
+            )
+        end
+        return new(
+            branches,
+            mixed_types,
+            insertion_order,
+            segment_orientations,
+            arc_key,
+            equivalent_ybus,
+            equivalent_ybus_populated,
+        )
+    end
 end
 
 BranchesSeries(arc_key::Tuple{Int, Int}) = BranchesSeries(
@@ -25,7 +54,6 @@ function add_branch!(
     branch::T,
     orientation,
 ) where {T <: PSY.ACTransmission}
-    # Clear the cached two-port up front so every early return below is covered.
     invalidate_equivalent_ybus!(bs)
     push!(bs.segment_orientations, orientation)
     if !isempty(bs.branches) && !haskey(bs.branches, T)

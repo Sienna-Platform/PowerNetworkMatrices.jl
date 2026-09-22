@@ -427,9 +427,11 @@ function _getindex_partial(
         alpha = -delta_b / b_arc
         denom = 1.0 - alpha * H_ee
 
-        # Step 6: Partial LODF column scaled by b_ℓ/b_e, in place on the fresh `H_col`.
+        # Step 6: Partial LODF column scaled by b_ℓ/b_e, in place on the fresh `H_col`. The
+        # operand order is load-bearing: float multiply does not reassociate, and `s * (a * h)`
+        # is what every stored reference row was produced with.
         partial_lodf = H_col
-        partial_lodf .*= (alpha / (denom * b_arc)) .* core.arc_susceptances
+        partial_lodf .= (alpha / (denom * b_arc)) .* (core.arc_susceptances .* partial_lodf)
 
         # Full-outage self-element convention: -1.0.
         if abs(delta_b + b_arc) < eps() * b_arc
