@@ -349,3 +349,34 @@ end
         @test b ≈ 1 / PSY.get_x(component, PSY.CU)
     end
 end
+
+@testset "Ward: BA combines both two-ports on an arc shared with the equivalent" begin
+    # 101-102 carries an existing line and gets a Ward equivalent filed under the same key
+    # (`ward_reduction.jl`); BA must reflect both two-ports, not just the co-keyed entry.
+    sys = PSB.build_system(PSB.PSIDSystems, "3 Bus Inverter Base")
+    ybus = @test_logs (
+        :warn,
+        r"Equivalent arc impedance computed during Ward reduction is in parallel with existing system arc.",
+    ) match_mode = :any Ybus(
+        sys;
+        network_reductions = NetworkReduction[WardReduction([101, 102])],
+    )
+    nr = get_network_reduction_data(ybus)
+    arc = (101, 102)
+    @test haskey(PNM.get_added_arc_impedance_map(nr), arc)
+    @test haskey(PNM.get_direct_branch_map(nr), arc)
+
+    line = PNM.get_direct_branch_map(nr)[arc]
+    b_direct_only = PNM.get_effective_series_susceptance(line, nr)
+
+    bus_lookup = PNM.get_bus_lookup(ybus)
+    ix_from = PNM.get_bus_index(101, bus_lookup, nr)
+    ix_arc = findfirst(==(arc), PNM.get_arc_axis(nr))
+    b_BA = BA_Matrix(ybus).data[ix_from, ix_arc]
+
+    Y_ft = -ybus.data[bus_lookup[101], bus_lookup[102]]
+    b_expected = PNM._symmetric_arc_dc_susceptance(Complex{Float64}(Y_ft))
+
+    @test b_BA ≈ b_expected rtol = 1e-5
+    @test !isapprox(b_BA, b_direct_only; rtol = 1e-3)
+end

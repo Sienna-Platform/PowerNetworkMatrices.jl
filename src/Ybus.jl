@@ -466,8 +466,6 @@ function ybus_branch_entries(
     parallel_br::AbstractBranchesParallel,
     nr::NetworkReductionData,
 )
-    # Pass the group itself, not `collect(parallel_br)`: collecting allocates a vector per
-    # call on the Ybus assembly path and buys nothing.
     return _subset_two_port(parallel_br, get_arc_tuple(parallel_br, nr), nr)
 end
 

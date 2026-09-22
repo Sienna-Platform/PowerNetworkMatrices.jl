@@ -10,7 +10,7 @@
 # calls a full outage partial and `delta_b / b_arc` comes out at `+1`, doubling on the AC
 # side what the DC side removed. Whether the magnitude convention is the right one for a
 # negative-susceptance arc is unresolved: the MODF Woodbury update disagrees with a direct
-# oracle on such arcs, and the disagreement predates this code.
+# oracle on such arcs.
 _is_full_outage(delta_b::Float64, b_arc::Float64) =
     isapprox(abs(delta_b), abs(b_arc); atol = YBUS_DELTA_TOL, rtol = sqrt(eps(Float32)))
 

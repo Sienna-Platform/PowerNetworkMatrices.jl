@@ -354,33 +354,32 @@ function _get_partial_chain_recursive!(
     reduced_indices::BitVector,
     irreducible_indices::BitVector,
 )
-    # If current node is reduced stop
-    if reduced_indices[current_node]
-        return Int[]
+    # A loop, not recursion: one stack frame per bus overflows on long chains.
+    while true
+        # If current node is reduced stop
+        if reduced_indices[current_node]
+            return nothing
+        end
+
+        push!(current_chain, current_node)
+
+        if _is_final_node(current_node, adj_matrix, reduced_indices, irreducible_indices)
+            return nothing
+        end
+
+        reduced_indices[current_node] = true
+        # Get neighbors
+        neighbors = _get_neighbors(adj_matrix, current_node)
+
+        # Determine the next node to visit. It must not be the `previous_node`.
+        # This prevents the traversal from going back and forth between two nodes.
+        next_node = neighbors[1]
+        if next_node == prev_node
+            next_node = neighbors[2]
+        end
+        prev_node = current_node
+        current_node = next_node
     end
-
-    push!(current_chain, current_node)
-
-    if _is_final_node(current_node, adj_matrix, reduced_indices, irreducible_indices)
-        return
-    end
-
-    reduced_indices[current_node] = true
-    # Get neighbors
-    neighbors = _get_neighbors(adj_matrix, current_node)
-
-    # Determine the next node to visit. It must not be the `previous_node`.
-    # This prevents the traversal from going back and forth between two nodes.
-    next_node = (neighbors[1] == prev_node) ? neighbors[2] : neighbors[1]
-    _get_partial_chain_recursive!(
-        current_chain,
-        adj_matrix,
-        next_node,
-        current_node,
-        reduced_indices,
-        irreducible_indices,
-    )
-    return
 end
 
 """

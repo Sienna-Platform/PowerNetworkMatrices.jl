@@ -13,6 +13,28 @@
     @test a.shift == 0.0
 end
 
+@testset "_reduced_arc_equivalent_branch skips a direct arc shadowed by a reverse-keyed group" begin
+    # (1,2) is a lone direct line; the two (2,1) lines form a parallel group keyed at (2,1).
+    edges = [
+        (1, 2, 0.0, 0.10, 0.0, 0.0), (2, 1, 0.0, 0.20, 0.0, 0.0),
+        (2, 3, 0.0, 0.10, 0.0, 0.0), (3, 1, 0.0, 0.10, 0.0, 0.0),
+    ]
+    sys = _build_degree_two_chain_system(edges)
+    arc21 = PSY.get_arc(PSY.get_component(Line, sys, "L_2_1"))
+    PSY.add_component!(
+        sys,
+        Line("L_2_1_b", true, 0.0, 0.0, arc21, 0.0, 0.30, (from = 0.0, to = 0.0), 2.0,
+            (-1.6, 1.6)),
+    )
+    nr = get_network_reduction_data(Ybus(sys))
+    @test haskey(PNM.get_direct_branch_map(nr), (1, 2))
+    @test haskey(PNM.get_parallel_branch_map(nr), (2, 1))
+
+    @test PNM._reduced_arc_equivalent_branch(nr, (1, 2)) === nothing
+    @test PNM.reduced_arc_admittance(nr, 1, 2) === nothing
+    @test PNM._reduced_arc_equivalent_branch(nr, (2, 1)) !== nothing
+end
+
 @testset "branch_flow_limits MonitoredLine" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
     ml = first(PSY.get_components(PSY.MonitoredLine, sys))
@@ -605,7 +627,7 @@ end
     end
     @test err isa ErrorException
     @test occursin("ZI", err.msg)
-    @test occursin("r == x == 0", err.msg) || occursin("non-finite", err.msg)
+    @test occursin("x == 0", err.msg) || occursin("non-finite", err.msg)
 
     # The substituting accessor answers where the public one refuses.
     ybus = Ybus(sys)

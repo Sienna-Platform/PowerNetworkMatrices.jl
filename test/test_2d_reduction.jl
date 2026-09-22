@@ -516,3 +516,14 @@ end
     PNM.add_branch!(all_zero, PSY.get_component(Line, sys, "L34"), :FromTo)
     @test PNM._series_susceptance_raw(all_zero, PSY.SU) == Inf
 end
+
+@testset "_get_complete_chain walks a long path without overflowing the call stack" begin
+    # Deep enough to overflow a recursive walker; starting mid-path runs both directions.
+    n = 100_000
+    from_ix = vcat(1:(n - 1), 2:n)
+    to_ix = vcat(2:n, 1:(n - 1))
+    adj = SparseArrays.sparse(from_ix, to_ix, ones(Int8, length(from_ix)), n, n)
+    chain = PNM._get_complete_chain(adj, n ÷ 2, falses(n), falses(n))
+    @test length(chain) == n
+    @test Set(chain) == Set(1:n)
+end

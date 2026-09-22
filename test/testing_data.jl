@@ -851,6 +851,24 @@ function build_antiparallel_chain_segment_system()
     return _build_degree_two_chain_system(edges)
 end
 
+"""
+`build_antiparallel_chain_segment_system` with a second `10 -> 3` line alongside the existing
+one, so chain segment 2 promotes to `MixedBranchesParallel[Line, BranchesParallel{Line}]`: the
+anti-parallel twin (`3 -> 10`) stays a direct member while the two same-direction lines nest
+into their own `BranchesParallel`. Exercises outage helpers that must resolve a tripped branch
+down through a nested aggregate to its leaves rather than matching only direct members.
+"""
+function build_antiparallel_chain_segment_nested_parallel_system()
+    sys = build_antiparallel_chain_segment_system()
+    arc = PSY.get_arc(PSY.get_component(Line, sys, "L_10_3"))
+    PSY.add_component!(
+        sys,
+        Line("L_10_3_b", true, 0.0, 0.0, arc, 0.015, 0.13,
+            (from = 0.01, to = 0.01), 2.0, (-1.6, 1.6)),
+    )
+    return sys
+end
+
 ##############################################################################
 ###################### Branch index fingerprinting ###########################
 ##############################################################################

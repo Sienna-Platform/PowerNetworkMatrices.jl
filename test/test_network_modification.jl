@@ -455,6 +455,33 @@ end
     @test_throws "L_1_10" PNM._member_shift_injection(bp, nr, leaf)
 end
 
+@testset "NetworkModification: nested aggregate member requires an all-or-none trip" begin
+    # Chain segment 2 is `MixedBranchesParallel[Line, BranchesParallel{Line}]`: the
+    # anti-parallel twin is a direct member and the same-direction pair nests below it.
+    sys = build_antiparallel_chain_segment_nested_parallel_system()
+    reductions = NetworkReduction[
+        DegreeTwoReduction(; reduce_reactive_power_injectors = false),
+    ]
+    vptdf = VirtualPTDF(sys; network_reductions = reductions)
+    nr = PNM.get_network_reduction_data(vptdf)
+    chain = only(values(PNM.get_series_branch_map(nr)))
+    b_old = PNM._finite_series_susceptance(chain, nr)
+
+    p1 = PSY.get_component(Line, sys, "L_10_3")
+    p2 = PSY.get_component(Line, sys, "L_10_3_b")
+    ap = PSY.get_component(Line, sys, "L_3_10")
+
+    # One nested leaf tripped leaves the `BranchesParallel` it sits inside partly in service;
+    # that has no representation on the composite arc it was grouped onto.
+    @test_throws "BranchesParallel" PNM._compute_series_outage_delta_b(chain, p1, nr)
+    @test_throws r"partly in service" PNM._compute_series_outage_delta_b(chain, p1, nr)
+
+    # Every leaf of the mixed segment tripped -- the nested pair and its anti-parallel twin
+    # -- is a full outage of that segment, and therefore of the whole series arc.
+    delta_b = PNM._compute_series_outage_delta_b(chain, [p1, p2, ap], nr)
+    @test delta_b ≈ -b_old rtol = 1e-8
+end
+
 # Two identical phase shifters on the same bus pair, one written each way. Their individual
 # two-ports are asymmetric, but the pair's summed off-diagonals are equal, so the pair is
 # symmetric only when each member is read in the shared arc frame.

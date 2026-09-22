@@ -40,7 +40,7 @@ function _is_zero_impedance_branch(
 end
 
 # An aggregate has no `(r, x)` of its own, and merging the endpoints of a composite arc would
-# discard its interior. ZIBR runs before every other reduction, so nothing routes one here today.
+# discard its interior. ZIBR runs before every other reduction, so nothing routes one here.
 _is_zero_impedance_branch(
     seg::AbstractReductionAggregate,
     ::Float64,

@@ -50,7 +50,7 @@ end
 # Kept out of line so the error body does not count against the caller's inlining budget.
 @noinline function _throw_non_finite_susceptance(segment::PSY.ACTransmission, b::Float64)
     error(
-        "Series susceptance of $(get_name(segment)) is $(b): the branch has r == x == 0. " *
+        "Series susceptance of $(get_name(segment)) is $(b): the branch has x == 0. " *
         "Ybus assembly substitutes the reduction's minimum retained impedance for such a " *
         "branch, so a consumer that needs the value the matrices use should call " *
         "`get_effective_series_susceptance(segment, nr)` instead.",
@@ -455,9 +455,8 @@ The admittance-form view of [`equivalent_branch`](@ref); see it for the shunt an
 conventions, and for what `nr` contributes.
 
 Prefer this form wherever an `nr` is in hand: an admittance that skips `nr`'s impedance
-correction does not match what was stamped, and mutating the Ybus with one was a live bug
-rather than a hypothetical one. The `nr`-less method below is the component's own π-model,
-for callers that genuinely have no reduction.
+correction does not match what was stamped. The `nr`-less method above is the component's
+own π-model, for callers with no reduction.
 """
 function branch_admittance(b::PSY.ACTransmission, nr::NetworkReductionData)
     return _to_admittance(equivalent_branch(b, nr))
@@ -533,6 +532,7 @@ end
 # Returns `nothing` when the arc is not aggregated. `get` is a single probe per key, unlike
 # haskey-then-index.
 function _reduced_arc_equivalent_branch(nr::NetworkReductionData, arc::Tuple{Int, Int})
+    haskey(get_direct_branch_map(nr), arc) && return nothing
     rev = (arc[2], arc[1])
     for map in (get_series_branch_map(nr), get_parallel_branch_map(nr))
         forward = get(map, arc, nothing)

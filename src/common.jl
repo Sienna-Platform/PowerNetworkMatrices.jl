@@ -436,7 +436,7 @@ function _member_shift_injection(
     return _finite_series_susceptance(br, nr) * α
 end
 
-# The substituted susceptance for an `r == x == 0` branch, matching what `equivalent_branch`
+# The substituted susceptance for an `x == 0` branch, matching what `equivalent_branch`
 # uses in Ybus assembly. Such branches normally merge away, but a pair between two
 # irreducible buses survives as a `BranchesParallel`.
 _zero_impedance_susceptance(::PSY.ACTransmission, min_x_eps::Float64) = 1 / min_x_eps
@@ -497,8 +497,37 @@ end
 _ba_arc_susceptance(segment::BranchesSeries, nr::NetworkReductionData) =
     _finite_series_susceptance(segment, nr)
 
-_ba_arc_susceptance(nr::NetworkReductionData, arc::Tuple{Int, Int}) =
-    _ba_arc_susceptance(first(_resolve_arc_entry(nr, arc)), nr)
+# `WardReduction` files its equivalent under an arc key already carrying a physical two-port
+# (`ward_reduction.jl`), so BA must combine both rather than reading only the co-keyed entry.
+# Summing the two-ports mirrors what Ybus assembly does when it stamps them onto the same
+# off-diagonal.
+function _ba_arc_susceptance(
+    entry::PSY.ACTransmission,
+    added::PSY.GenericArcImpedance,
+    nr::NetworkReductionData,
+)
+    _, Y12a, Y21a, _ = ybus_branch_entries(entry, nr)
+    _, Y12w, Y21w, _ = ybus_branch_entries(added, nr)
+    Y_ft = -(Y12a + Y12w)
+    Y_tf = -(Y21a + Y21w)
+    Y_ft != Y_tf &&
+        return _finite_series_susceptance(entry, nr) + _finite_series_susceptance(added, nr)
+    return _symmetric_arc_dc_susceptance(Y_ft)
+end
+
+_ba_arc_susceptance(
+    segment::BranchesSeries,
+    added::PSY.GenericArcImpedance,
+    nr::NetworkReductionData,
+) =
+    _finite_series_susceptance(segment, nr) + _finite_series_susceptance(added, nr)
+
+function _ba_arc_susceptance(nr::NetworkReductionData, arc::Tuple{Int, Int})
+    entry, _ = _resolve_arc_entry(nr, arc)
+    added = get(get_added_arc_impedance_map(nr), arc, nothing)
+    (isnothing(added) || added === entry) && return _ba_arc_susceptance(entry, nr)
+    return _ba_arc_susceptance(entry, added, nr)
+end
 
 """
     get_effective_series_susceptance(segment, nr::NetworkReductionData) -> Float64
@@ -1069,6 +1098,38 @@ function _resolve_branch_arc(
     end
 end
 
+# Susceptance one parallel-group member contributes once `tripped_set` is applied. A direct
+# member is all-or-none. A nested aggregate (e.g. a `BranchesParallel` folded into a
+# `MixedBranchesParallel`) can only answer all-or-none too, since its own two-port cannot be
+# partially cancelled on the arc it was grouped onto -- membership in `tripped_set` is
+# checked against its leaves, consistent with `_member_outage_delta_b`'s limit in
+# `network_modification.jl`.
+function _member_susceptance_after_outage(
+    member::PSY.ACTransmission,
+    tripped_set::Set{<:PSY.ACTransmission},
+    nr::NetworkReductionData,
+)::Float64
+    member ∈ tripped_set && return 0.0
+    return _finite_series_susceptance(member, nr)
+end
+
+function _member_susceptance_after_outage(
+    member::AbstractReductionAggregate,
+    tripped_set::Set{<:PSY.ACTransmission},
+    nr::NetworkReductionData,
+)::Float64
+    leaves = leaf_components(member)
+    tripped_leaves = filter(in(tripped_set), leaves)
+    isempty(tripped_leaves) && return _finite_series_susceptance(member, nr)
+    length(tripped_leaves) == length(leaves) && return 0.0
+    branch = first(tripped_leaves)
+    return error(
+        "Tripping $(typeof(branch)) $(get_name(branch)) leaves $(typeof(member)) " *
+        "$(get_name(member)) partly in service on arc $(get_arc_tuple(member, nr)), and " *
+        "a partial susceptance delta is not supported on the nested aggregate it sits on.",
+    )
+end
+
 """
     _segment_susceptance_after_outage(segment, tripped_set, nr::NetworkReductionData) -> Float64
 
@@ -1096,9 +1157,7 @@ function _segment_susceptance_after_outage(
 )::Float64
     b_remaining = 0.0
     for branch in segment.branches
-        if branch ∉ tripped_set
-            b_remaining += _finite_series_susceptance(branch, nr)
-        end
+        b_remaining += _member_susceptance_after_outage(branch, tripped_set, nr)
     end
     return b_remaining
 end
@@ -1169,8 +1228,8 @@ function _segment_phase_shift_after_outage(
     b_total = 0.0
     b_alpha = 0.0
     for br in segment.branches
-        br ∈ tripped_set && continue
-        b = _finite_series_susceptance(br, nr)
+        b = _member_susceptance_after_outage(br, tripped_set, nr)
+        iszero(b) && continue
         b_total += b
         b_alpha += b * _oriented_member_phase_shift(br, segment, nr)
     end
