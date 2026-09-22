@@ -129,88 +129,6 @@ end
     @test PNM.reduced_arc_admittance(nr, -1, -2) === nothing
 end
 
-# Build a `ThreeWindingTransformer` into `sys`, wiring three terminal
-# buses to a hidden star bus. The circuit-resident star-leg series impedances are derived
-# from the pairwise data here (as PFFP does at parse) and stored per circuit on `bp`
-# (= system base here, so SU == CU keeps the hand-computed literals clean); the pairwise data
-# stays on the parent. The magnetizing shunt and its location live on the parent transformer.
-# Each circuit carries its own arc, base power, base voltages, and rating. Returns the
-# attached transformer.
-function _add_three_winding_transformer!(
-    sys,
-    busP,
-    busS,
-    busT,
-    star_bus;
-    name = "T3W",
-    r12 = 0.01, x12 = 0.1,
-    r23 = 0.01, x23 = 0.1,
-    r31 = 0.01, x31 = 0.1,
-    bp = 100.0,
-    magnetizing_shunt = 0.0 + 0.0im,
-    shunt_location = PSY.ThreeWindingTransformerShuntLocation.PRIMARY,
-    ratings = (1.0, 1.0, 0.5),
-)
-    arcs = (
-        PSY.Arc(; from = busP, to = star_bus),
-        PSY.Arc(; from = busS, to = star_bus),
-        PSY.Arc(; from = busT, to = star_bus),
-    )
-    foreach(a -> PSY.add_component!(sys, a), arcs)
-    z12, z23, z31 = complex(r12, x12), complex(r23, x23), complex(r31, x31)
-    legs = (
-        (z12 + z31 - z23) / 2,
-        (z12 + z23 - z31) / 2,
-        (z31 + z23 - z12) / 2,
-    )
-    circuits = ntuple(
-        i -> PSY.TransformerCircuit(;
-            arc = arcs[i],
-            available = true,
-            base_power = bp,
-            base_voltage_primary = PSY.get_base_voltage(PSY.get_from(arcs[i])),
-            r = real(legs[i]),
-            x = imag(legs[i]),
-            rating = ratings[i],
-        ),
-        3,
-    )
-    t3w = PSY.ThreeWindingTransformer(;
-        name = name,
-        primary_circuit = circuits[1],
-        secondary_circuit = circuits[2],
-        tertiary_circuit = circuits[3],
-        star_bus = star_bus,
-        r_12 = r12, x_12 = x12,
-        r_23 = r23, x_23 = x23,
-        r_31 = r31, x_31 = x31,
-        base_power_12 = bp, base_power_23 = bp, base_power_31 = bp,
-        magnetizing_shunt = magnetizing_shunt,
-        shunt_location = shunt_location,
-    )
-    PSY.add_component!(sys, t3w)
-    return t3w
-end
-
-function _add_star_buses!(sys, busD; numbers = (101, 102, 103))
-    return map(numbers) do n
-        b = PSY.ACBus(;
-            number = n,
-            name = "Bus3WT_$n",
-            available = true,
-            bustype = PSY.ACBusTypes.PQ,
-            angle = 0.0,
-            magnitude = 1.0,
-            voltage_limits = (min = 0.95, max = 1.05),
-            base_voltage = 230.0,
-            area = PSY.get_area(busD),
-            load_zone = PSY.get_load_zone(busD),
-        )
-        PSY.add_component!(sys, b)
-        b
-    end
-end
-
 @testset "ThreeWindingTransformer branch_admittance and three_winding_arcs decomposition" begin
     # Unit test the per-circuit admittance helper against a real PNM
     # `ThreeWindingTransformerCircuit`: for a circuit whose derived star-leg impedance is
@@ -263,6 +181,7 @@ end
         PSSEParsingTestSystems,
         "pti_case14_with_pst3w_sys";
         force_build = true,
+        skip_serialization = true,
     )
     # Both 3W transformers in this fixture are phase-shifting, and component iteration
     # order is not stable across Julia versions, so pick by name rather than by whichever

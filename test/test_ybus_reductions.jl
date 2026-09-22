@@ -1045,73 +1045,6 @@ end
     @test !isapprox(blind12, ybus.data[ip, iq])
 end
 
-# Fresh System with `n` buses (bus 1 REF, the rest PV); returns the system and the buses.
-function _mk_bus_system(n::Int)
-    sys = System(100.0)
-    buses = ACBus[]
-    for i in 1:n
-        if i == 1
-            bustype = ACBusTypes.REF
-        else
-            bustype = ACBusTypes.PV
-        end
-        b = ACBus(;
-            number = i,
-            name = "b$i",
-            available = true,
-            bustype = bustype,
-            angle = 0.0,
-            magnitude = 1.0,
-            voltage_limits = (min = 0.9, max = 1.1),
-            base_voltage = 230.0,
-        )
-        add_component!(sys, b)
-        push!(buses, b)
-    end
-    return sys, buses
-end
-
-# Detached components suffice for map-filing tests: `add_to_branch_maps!` only reads arc bus
-# numbers, never impedances (which require an attached system).
-function _mk_detached_pst_fixture()
-    b1 = ACBus(;
-        number = 1, name = "b1", available = true, bustype = ACBusTypes.REF,
-        angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
-        base_voltage = 230.0,
-    )
-    b2 = ACBus(;
-        number = 2, name = "b2", available = true, bustype = ACBusTypes.PV,
-        angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
-        base_voltage = 230.0,
-    )
-    function _mk_fixture_line(name)
-        return Line(;
-            name = name, available = true, active_power_flow = 0.0,
-            reactive_power_flow = 0.0, arc = Arc(; from = b1, to = b2),
-            r = 0.0, x = 0.1, b = (from = 0.0, to = 0.0), rating = 1.0,
-            angle_limits = (min = -1.5, max = 1.5),
-        )
-    end
-    function _mk_fixture_pst(name, α)
-        return PSY.TwoWindingTransformer(;
-            name = name,
-            circuit = PSY.TransformerCircuit(;
-                arc = Arc(; from = b1, to = b2), tap = 1.0, α = α,
-                available = true, active_power_flow = 0.0, reactive_power_flow = 0.0,
-                rating = 1.0, base_power = 100.0, base_voltage_primary = 230.0,
-                r = 0.0, x = 0.2,
-            ),
-            magnetizing_shunt = Complex(0.0, 0.0),
-        )
-    end
-    return (
-        _mk_fixture_line("L1"),
-        _mk_fixture_line("L2"),
-        _mk_fixture_pst("PST1", 0.15),
-        _mk_fixture_pst("PST2", 0.10),
-    )
-end
-
 # Every branch filed on the arc must be reachable in exactly one reverse map, and the arc must
 # live in exactly one forward map.
 function _assert_arc_maps_complete(nr, branches)
@@ -1149,45 +1082,6 @@ end
         end
         _assert_arc_maps_complete(nr, branches)
     end
-end
-
-# Attached 3-bus system with L1 ∥ PST on (1, 2) and L2 on (2, 3). Attached (not detached, as
-# in `_mk_detached_pst_fixture`) because impedance reads need `base_value`, which only
-# `add_component!` populates.
-function _mk_line_pst_parallel_system(; pst_r = 0.0, pst_x = 0.2)
-    sys, buses = _mk_bus_system(3)
-    function _mk_sys_line(name, f, t)
-        arc = Arc(; from = buses[f], to = buses[t])
-        add_component!(sys, arc)
-        add_component!(
-            sys,
-            Line(;
-                name = name, available = true, active_power_flow = 0.0,
-                reactive_power_flow = 0.0, arc = arc, r = 0.0, x = 0.1,
-                b = (from = 0.0, to = 0.0), rating = 1.0,
-                angle_limits = (min = -1.5, max = 1.5),
-            ),
-        )
-        return arc
-    end
-    pst_arc = _mk_sys_line("L1", 1, 2)
-    _mk_sys_line("L2", 2, 3)
-    # PST shares L1's Arc — a second `Arc(; from = buses[1], to = buses[2])` collides on the
-    # auto-derived component name ("b1 -> b2"), same reasoning as `_mk_zi_parallel_sys` above.
-    add_component!(
-        sys,
-        PSY.TwoWindingTransformer(;
-            name = "PST",
-            circuit = PSY.TransformerCircuit(;
-                arc = pst_arc, tap = 1.0, α = 0.15, available = true,
-                active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
-                base_power = 100.0, base_voltage_primary = 230.0,
-                r = pst_r, x = pst_x,
-            ),
-            magnetizing_shunt = Complex(0.0, 0.0),
-        ),
-    )
-    return sys
 end
 
 @testset "issue 305: Line ∥ PST — Ybus, NRD completeness, BA susceptance" begin
@@ -1267,43 +1161,6 @@ end
     end
     @test err isa ErrorException
     @test occursin("Offending group", err.msg)
-end
-
-# Add a `Line` named `name` on `arc` with series impedance `(r, x)` and no charging.
-function _add_test_line!(sys, name, arc, r, x)
-    add_component!(
-        sys,
-        Line(;
-            name = name,
-            available = true,
-            active_power_flow = 0.0,
-            reactive_power_flow = 0.0,
-            arc = arc,
-            r = r,
-            x = x,
-            b = (from = 0.0, to = 0.0),
-            rating = 1.0,
-            angle_limits = (min = -1.5, max = 1.5),
-        ),
-    )
-end
-
-# Build a minimal 3-bus system (bus 1 REF) wired so that the parallel arc (2, 3)
-# carries the supplied (r, x) pairs; lines 1-2 and 1-3 keep the network connected.
-function _mk_zi_parallel_sys(rx_pairs::Vector{Tuple{Float64, Float64}})
-    sys, buses = _mk_bus_system(3)
-    # Parallel members share a single Arc (2, 3), as real parallel branches do.
-    zi_arc = Arc(; from = buses[2], to = buses[3])
-    add_component!(sys, zi_arc)
-    for (k, (r, x)) in enumerate(rx_pairs)
-        _add_test_line!(sys, "ZI$k", zi_arc, r, x)
-    end
-    for (f, t) in ((1, 2), (1, 3))
-        arc = Arc(; from = buses[f], to = buses[t])
-        add_component!(sys, arc)
-        _add_test_line!(sys, "L$f$t", arc, 0.0, 0.1)
-    end
-    return sys
 end
 
 @testset "ZIBR item 2: a single near-short branch merges despite a small combined entry" begin

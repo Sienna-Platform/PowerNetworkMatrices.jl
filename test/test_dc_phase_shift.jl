@@ -17,6 +17,7 @@ end
         PSSEParsingTestSystems,
         "pti_case14_with_pst3w_sys";
         force_build = true,
+        skip_serialization = true,
     )
     shifters = collect(
         Iterators.filter(

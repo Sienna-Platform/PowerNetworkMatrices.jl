@@ -197,8 +197,8 @@ end
     @test haskey(arc_lookup, (mfb, mtb)) || haskey(arc_lookup, (mtb, mfb))
 end
 
-# Minimal capturing logger: ReTest cannot `record` a `@test_logs` failure, so we
-# capture log records directly and assert on them. Used by the out-of-service no-op test.
+# Minimal capturing logger: captures log records directly so the assertion can name the
+# record it wants. Used by the out-of-service no-op test.
 mutable struct _CollectLogs <: Logging.AbstractLogger
     records::Vector{Tuple{Any, String}}
 end
