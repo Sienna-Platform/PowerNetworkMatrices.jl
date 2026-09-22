@@ -54,7 +54,7 @@ network reduction algorithms.
 - `parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel}`: Parallel branch combinations (homogeneous `BranchesParallel{T}` or `MixedBranchesParallel`)
 - `reverse_parallel_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}}`: Reverse parallel mappings
 - `series_branch_map::Dict{Tuple{Int, Int}, BranchesSeries}`: Series branch combinations
-- `reverse_series_branch_map::Dict{Any, Tuple{Int, Int}}`: Reverse series mappings
+- `reverse_series_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}}`: Reverse series mappings
 - `removed_buses::Set{Int}`: Set of buses eliminated from the network
 - `removed_arcs::Set{Tuple{Int, Int}}`: Set of arcs eliminated from the network
 - `merged_bus_pairs::Dict{Int, Int}`: Maps removed bus number to surviving bus number for zero-impedance branch bus merges; drives row/column summation in `_merge_ybus_buses!`
@@ -76,11 +76,11 @@ network reduction algorithms.
         Dict{PSY.ACTransmission, Tuple{Int, Int}}()
     parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel} =
         Dict{Tuple{Int, Int}, AbstractBranchesParallel}()
-    reverse_parallel_branch_map::Dict{<:PSY.ACTransmission, Tuple{Int, Int}} =
+    reverse_parallel_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}} =
         Dict{PSY.ACTransmission, Tuple{Int, Int}}()
     series_branch_map::Dict{Tuple{Int, Int}, BranchesSeries} =
         Dict{Tuple{Int, Int}, BranchesSeries}()
-    reverse_series_branch_map::Dict{<:PSY.ACTransmission, Tuple{Int, Int}} =
+    reverse_series_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}} =
         Dict{PSY.ACTransmission, Tuple{Int, Int}}()
     removed_buses::Set{Int} = Set{Int}()
     removed_arcs::Set{Tuple{Int, Int}} = Set{Tuple{Int, Int}}()
@@ -317,12 +317,18 @@ end
 Interface to obtain the arc axis based on the network reduction data
 """
 function get_arc_axis(nr::NetworkReductionData)
-    direct_arcs = collect(keys(nr.direct_branch_map))
-    parallel_arcs = collect(keys(nr.parallel_branch_map))
-    series_arcs = collect(keys(nr.series_branch_map))
-    additional_arcs = collect(keys(nr.added_arc_impedance_map))
-    arc_ax = unique(vcat(direct_arcs, parallel_arcs, series_arcs, additional_arcs))
-    return arc_ax
+    maps = (
+        nr.direct_branch_map,
+        nr.parallel_branch_map,
+        nr.series_branch_map,
+        nr.added_arc_impedance_map,
+    )
+    arc_ax = Vector{Tuple{Int, Int}}()
+    sizehint!(arc_ax, sum(length, maps))
+    for m in maps
+        append!(arc_ax, keys(m))
+    end
+    return unique!(arc_ax)
 end
 
 function is_arc_in_series_map(nr::NetworkReductionData, arc::Tuple{Int64, Int64})
