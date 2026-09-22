@@ -44,6 +44,35 @@ function _solve_factorization(K::AAFactorCache, b::Vector{Float64})
     return b
 end
 
+# --- BA-column scatter + solve ---
+
+"""
+    _solve_ba_column!(K, work_ba_col, BA, bus_to_valid_idx, col)
+
+Scatter the non-zeros of `BA[:, col]` into `work_ba_col` at non-reference-bus
+positions and solve in place. Iterates only the column's non-zeros (typically two
+per arc) instead of scanning the full bus axis. Returns the solved buffer: KLU
+mutates and returns `work_ba_col`, other backends may return a fresh vector, so
+callers must capture the return value.
+"""
+function _solve_ba_column!(
+    K,
+    work_ba_col::Vector{Float64},
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    bus_to_valid_idx::Vector{Int},
+    col::Int,
+)
+    fill!(work_ba_col, 0.0)
+    ba_rv = SparseArrays.rowvals(BA)
+    ba_nz = SparseArrays.nonzeros(BA)
+    @inbounds for k in SparseArrays.nzrange(BA, col)
+        valid_i = bus_to_valid_idx[ba_rv[k]]
+        valid_i > 0 || continue
+        work_ba_col[valid_i] = ba_nz[k]
+    end
+    return _solve_factorization(K, work_ba_col)
+end
+
 # --- Per-arc susceptance extraction ---
 
 """
@@ -162,21 +191,9 @@ function _get_PTDF_A_diag(
     end
 
     ba_col = zeros(n_valid)
-    ba_rv = SparseArrays.rowvals(BA)
-    ba_nz = SparseArrays.nonzeros(BA)
 
     for i in 1:n_branches
-        fill!(ba_col, 0.0)
-        @inbounds for k in SparseArrays.nzrange(BA, i)
-            valid_i = bus_to_valid_idx[ba_rv[k]]
-            valid_i > 0 || continue
-            ba_col[valid_i] = ba_nz[k]
-        end
-
-        # Read PTDF row from the returned buffer — backend-agnostic
-        # (KLU mutates `ba_col` and returns it; other backends may
-        # return a fresh vector, so capture the return value).
-        lin_solve = _solve_factorization(K, ba_col)
+        lin_solve = _solve_ba_column!(K, ba_col, BA, bus_to_valid_idx, i)
 
         # H[e,e] = ptdf[from] - ptdf[to]; ref-bus entries are 0.
         f = arc_from_valid[i]

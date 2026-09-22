@@ -259,21 +259,12 @@ function _compute_woodbury_factors_impl(
 
     # Compute Z[:,j] = B⁻¹ν_j for each modified arc
     Z = Matrix{Float64}(undef, n_bus, M)
-    ba_rv_outer = SparseArrays.rowvals(BA)
-    ba_nz_outer = SparseArrays.nonzeros(BA)
 
     for (j, mod) in enumerate(modifications)
         e = mod.arc_index
         b_e = arc_sus[e]
 
-        # Sparse-only extraction of BA[:, e] into work_ba_col.
-        fill!(work_ba_col, 0.0)
-        @inbounds for k in SparseArrays.nzrange(BA, e)
-            valid_i = bus_to_valid_idx[ba_rv_outer[k]]
-            valid_i > 0 || continue
-            work_ba_col[valid_i] = ba_nz_outer[k]
-        end
-        lin_solve = _solve_factorization(K, work_ba_col)
+        lin_solve = _solve_ba_column!(K, work_ba_col, BA, bus_to_valid_idx, e)
 
         fill!(view(Z, :, j), 0.0)
         @inbounds for i in eachindex(valid_ix)
@@ -309,17 +300,9 @@ function _apply_woodbury_correction_impl(
         return zeros(n_bus)
     end
 
-    # z_m = B⁻¹ν_m / b_mon_pre via sparse-only BA-column extraction + solve.
+    # z_m = B⁻¹ν_m / b_mon_pre.
     b_mon_pre = arc_sus[monitored_idx]
-    fill!(work_ba_col, 0.0)
-    ba_rv_mon = SparseArrays.rowvals(BA)
-    ba_nz_mon = SparseArrays.nonzeros(BA)
-    @inbounds for k in SparseArrays.nzrange(BA, monitored_idx)
-        valid_i = bus_to_valid_idx[ba_rv_mon[k]]
-        valid_i > 0 || continue
-        work_ba_col[valid_i] = ba_nz_mon[k]
-    end
-    lin_solve = _solve_factorization(K, work_ba_col)
+    lin_solve = _solve_ba_column!(K, work_ba_col, BA, bus_to_valid_idx, monitored_idx)
 
     fill!(temp_data, 0.0)
     @inbounds for i in eachindex(valid_ix)

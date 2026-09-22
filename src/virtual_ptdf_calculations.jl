@@ -301,20 +301,8 @@ function _compute_ptdf_row(vptdf::VirtualPTDF, row::Int)::Vector{Float64}
     return with_solver(
         core.K, core.work_ba_col, core.temp_data, core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
-        # Extract BA[:, row] non-zeros into work_ba_col at non-ref-bus
-        # positions. Iterates only the nonzeros of the BA column (typically
-        # 2 per arc) instead of scanning the full bus axis.
-        fill!(work_ba_col, 0.0)
-        BA = core.BA
-        bus_to_valid_idx = core.bus_to_valid_idx
-        ba_rv = SparseArrays.rowvals(BA)
-        ba_nz = SparseArrays.nonzeros(BA)
-        @inbounds for k in SparseArrays.nzrange(BA, row)
-            valid_i = bus_to_valid_idx[ba_rv[k]]
-            valid_i > 0 || continue
-            work_ba_col[valid_i] = ba_nz[k]
-        end
-        lin_solve = _solve_factorization(K_solver, work_ba_col)
+        lin_solve =
+            _solve_ba_column!(K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, row)
         fill!(temp_data, 0.0)
         valid_ix = core.valid_ix
         @inbounds for i in eachindex(valid_ix)

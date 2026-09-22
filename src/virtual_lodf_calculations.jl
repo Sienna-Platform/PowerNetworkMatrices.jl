@@ -283,19 +283,8 @@ function _compute_lodf_row(vlodf::VirtualLODF, row::Int)::Vector{Float64}
     return with_solver(
         core.K, core.work_ba_col, core.temp_data, core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
-        # Sparse-only extraction: iterate BA[:, row] non-zeros (typically
-        # 2 per arc) instead of scanning the full bus axis.
-        fill!(work_ba_col, 0.0)
-        BA = core.BA
-        bus_to_valid_idx = core.bus_to_valid_idx
-        ba_rv = SparseArrays.rowvals(BA)
-        ba_nz = SparseArrays.nonzeros(BA)
-        @inbounds for k in SparseArrays.nzrange(BA, row)
-            valid_i = bus_to_valid_idx[ba_rv[k]]
-            valid_i > 0 || continue
-            work_ba_col[valid_i] = ba_nz[k]
-        end
-        lin_solve = _solve_factorization(K_solver, work_ba_col)
+        lin_solve =
+            _solve_ba_column!(K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, row)
 
         fill!(temp_data, 0.0)
         @inbounds for i in eachindex(core.valid_ix)
@@ -408,19 +397,10 @@ function _getindex_partial(
     return with_solver(
         core.K, core.work_ba_col, core.temp_data, core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
-        # Steps 1-2: Compute B⁻¹(b_e · ν_e) via sparse-only BA-column
-        # extraction + solve.
-        fill!(work_ba_col, 0.0)
-        BA = core.BA
-        bus_to_valid_idx = core.bus_to_valid_idx
-        ba_rv = SparseArrays.rowvals(BA)
-        ba_nz = SparseArrays.nonzeros(BA)
-        @inbounds for k in SparseArrays.nzrange(BA, arc_idx)
-            valid_i = bus_to_valid_idx[ba_rv[k]]
-            valid_i > 0 || continue
-            work_ba_col[valid_i] = ba_nz[k]
-        end
-        lin_solve = _solve_factorization(K_solver, work_ba_col)
+        # Steps 1-2: Compute B⁻¹(b_e · ν_e).
+        lin_solve = _solve_ba_column!(
+            K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, arc_idx,
+        )
 
         # Step 3: Map solution back to full bus space.
         fill!(temp_data, 0.0)
