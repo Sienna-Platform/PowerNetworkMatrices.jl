@@ -46,7 +46,6 @@ jobs:
           disable_search: true
           flags: unittests
           name: codecov-umbrella
-          # github.repository resolves to Sienna-Platform/..., which 404s on Codecov ingest
-          slug: NREL-Sienna/PowerNetworkMatrices.jl
+          slug: ${{ github.repository }}
           fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
