@@ -99,7 +99,8 @@ integer arc indices, arc bus-pair tuples `(from, to)`, and branch-name strings.
 Populated rows are added to the cache's persistent set, so subsequent
 `vptdf[component, :]` queries are cache hits and are never evicted by later lazy
 lookups. Use this before an optimization-problem build to amortize the linear
-solves over the monitored branch set.
+solves over the monitored branch set. Pinned rows count against the cache
+capacity, so populating more rows than `max_cache_size` holds is an error.
 
 $(TYPEDSIGNATURES)
 """
@@ -149,7 +150,6 @@ function populate_cache(vptdf::VirtualPTDF, components)
         for r in rows
             pin_row!(cache, r)
         end
-        warn_if_over_capacity(cache)
     end
     return nothing
 end
@@ -165,7 +165,8 @@ multi-RHS solve. The post-contingency scaling `(A · B⁻¹ · BA) .* inv_PTDF_A
 is applied to all requested rows at once via one sparse-dense product.
 
 Populated rows are pinned in the cache so later `vlodf[component, :]` queries
-are cache hits.
+are cache hits. Pinned rows count against the cache capacity, so populating more
+rows than `max_cache_size` holds is an error.
 
 $(TYPEDSIGNATURES)
 """
@@ -214,7 +215,6 @@ function populate_cache(vlodf::VirtualLODF, components)
         for r in rows
             pin_row!(cache, r)
         end
-        warn_if_over_capacity(cache)
     end
     return nothing
 end
@@ -386,7 +386,6 @@ function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
                 stored = apply_cutoff(cutoff, row)
                 set_persistent_row!(rc, m, stored)
             end
-            warn_if_over_capacity(rc)
         end
     end
     return nothing
