@@ -1,5 +1,6 @@
+import Aqua
+
 @testset "Aqua" begin
-    import Aqua
     Aqua.test_unbound_args(PowerNetworkMatrices)
     Aqua.test_undefined_exports(PowerNetworkMatrices)
     Aqua.test_ambiguities(PowerNetworkMatrices)

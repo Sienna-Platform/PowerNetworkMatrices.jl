@@ -197,8 +197,9 @@ end
     @test haskey(arc_lookup, (mfb, mtb)) || haskey(arc_lookup, (mtb, mfb))
 end
 
-# Minimal capturing logger: captures log records directly so the assertion can name the
-# record it wants. Used by the out-of-service no-op test.
+# Minimal capturing logger: keeps every emitted record so the assertion below can be an
+# ordinary predicate over them rather than a log-pattern match. Used by the out-of-service
+# no-op test.
 mutable struct _CollectLogs <: Logging.AbstractLogger
     records::Vector{Tuple{Any, String}}
 end
