@@ -135,3 +135,4 @@ $RECYCLE.BIN/
 # Claude working artifacts — never track plans or drafts
 .claude/plans/
 .claude/drafts/
+.superpowers/
