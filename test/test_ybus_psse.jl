@@ -424,8 +424,16 @@ end
     @test isapprox(ybus[arc[1], arc[2]], entries[2]; rtol = 4 * eps(Float32))
     @test isapprox(ybus[arc[2], arc[1]], entries[3]; rtol = 4 * eps(Float32))
 
-    # No admittance-returning accessor skips the correction any more: there is no `nr`-less
-    # route to a single branch's Ybus entries or to its admittance.
-    @test_throws MethodError PNM.ybus_branch_entries(tr)
-    @test_throws MethodError PNM.branch_admittance(tr)
+    # The `nr`-less forms exist for consumers holding a branch with no reduction, and carry
+    # `equivalent_branch(b)`'s meaning exactly: the component's own, uncorrected model. The
+    # invariant worth pinning is not that they are absent but that they are distinguishable
+    # -- mixing a corrected and an uncorrected admittance over one network is the bug.
+    own_entries = PNM.ybus_branch_entries(tr)
+    @test all(isapprox.(own_entries, PNM._equivalent_to_ybus(tr, own)))
+    @test !isapprox(own_entries[2], entries[2])
+
+    y_own = 1 / (PNM.get_equivalent_r(own) + im * PNM.get_equivalent_x(own))
+    own_adm = PNM.branch_admittance(tr)
+    @test complex(own_adm.g, own_adm.b) ≈ y_own
+    @test !isapprox(complex(own_adm.g, own_adm.b), y_corrected)
 end
