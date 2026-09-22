@@ -127,26 +127,28 @@ end
         irreducible_buses = Set(collect(1:14)),
     )
 
-    # The three constructions agree to floating-point noise. Compare with an
-    # absolute tolerance: many entries are physically zero, so a relative
-    # tolerance (the `≈`/isapprox default) is meaningless there, and the dense
-    # and on-demand paths drift by a few ULPs run-to-run on the IS4/psy6 stack.
-    atol = 1e-10
+    # The three construction paths are electrically equivalent but not bitwise identical:
+    # each reduction leaves a different `valid_ix` ordering, so the factorization sums the
+    # same terms in a different order and results drift by a few ULP. Compare with a
+    # tolerance -- exact `==` here makes the testset flaky against any reordering. The
+    # tolerance is absolute: many entries are physically zero, where a relative one
+    # says nothing.
+    reduction_path_atol = 1e-10
     for i in ptdf_1.axes[1], j in ptdf_1.axes[2]
-        @test isapprox(ptdf_1[j, i], ptdf_2[j, i]; atol = atol) &&
-              isapprox(ptdf_2[j, i], ptdf_3[j, i]; atol = atol)
+        @test isapprox(ptdf_1[j, i], ptdf_2[j, i]; atol = reduction_path_atol)
+        @test isapprox(ptdf_2[j, i], ptdf_3[j, i]; atol = reduction_path_atol)
     end
     for i in lodf_1.axes[1], j in lodf_1.axes[2]
-        @test isapprox(lodf_1[i, j], lodf_2[i, j]; atol = atol) &&
-              isapprox(lodf_2[i, j], lodf_3[i, j]; atol = atol)
+        @test isapprox(lodf_1[i, j], lodf_2[i, j]; atol = reduction_path_atol)
+        @test isapprox(lodf_2[i, j], lodf_3[i, j]; atol = reduction_path_atol)
     end
     for i in vptdf_1.axes[1], j in vptdf_1.axes[2]
-        @test isapprox(vptdf_1[i, j], vptdf_2[i, j]; atol = atol) &&
-              isapprox(vptdf_2[i, j], vptdf_3[i, j]; atol = atol)
+        @test isapprox(vptdf_1[i, j], vptdf_2[i, j]; atol = reduction_path_atol)
+        @test isapprox(vptdf_2[i, j], vptdf_3[i, j]; atol = reduction_path_atol)
     end
     for i in vlodf_1.axes[1], j in vlodf_1.axes[2]
-        @test isapprox(vlodf_1[i, j], vlodf_2[i, j]; atol = atol) &&
-              isapprox(vlodf_2[i, j], vlodf_3[i, j]; atol = atol)
+        @test isapprox(vlodf_1[i, j], vlodf_2[i, j]; atol = reduction_path_atol)
+        @test isapprox(vlodf_2[i, j], vlodf_3[i, j]; atol = reduction_path_atol)
     end
 end
 
