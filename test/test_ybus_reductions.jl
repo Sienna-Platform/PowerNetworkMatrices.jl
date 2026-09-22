@@ -1818,3 +1818,35 @@ end
         rtol = sqrt(eps(real(YBUS_ELTYPE))),
     )
 end
+
+@testset "ZeroImpedanceBranchReduction: an aggregate holding a transformer is a transformer arc" begin
+    # `_is_transformer`'s blanket `PSY.ACTransmission` method answered `false` for an
+    # aggregate, which subtypes it — so a chain carrying a transformer read as an ordinary
+    # branch, and the transformer exclusion that ZIR relies on would not have applied.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    transformer = first(PSY.get_components(PSY.TwoWindingTransformer, sys))
+    line = first(PSY.get_components(PSY.Line, sys))
+
+    chain = PNM.BranchesSeries(PNM.get_arc_tuple(line))
+    PNM.add_branch!(chain, line, :FromTo)
+    PNM.add_branch!(chain, transformer, :FromTo)
+    @test PNM._is_transformer(chain)
+    @test !PNM._is_zero_impedance_arc(
+        chain,
+        PNM.ZERO_IMPEDANCE_BRANCH_YBUS_SUSCEPTANCE_THRESHOLD,
+        PNM.ZERO_IMPEDANCE_X_EPSILON,
+        0.0,
+    )
+
+    # Without a transformer the chain has no `(r, x)` of its own, so eligibility is rejected
+    # loudly rather than answered off a member.
+    plain_chain = PNM.BranchesSeries(PNM.get_arc_tuple(line))
+    PNM.add_branch!(plain_chain, line, :FromTo)
+    @test !PNM._is_transformer(plain_chain)
+    @test_throws ErrorException PNM._is_zero_impedance_arc(
+        plain_chain,
+        PNM.ZERO_IMPEDANCE_BRANCH_YBUS_SUSCEPTANCE_THRESHOLD,
+        PNM.ZERO_IMPEDANCE_X_EPSILON,
+        0.0,
+    )
+end

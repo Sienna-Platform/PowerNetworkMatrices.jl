@@ -854,8 +854,9 @@ end
 """
     get_partition_rating(pe::ParallelEquivalent) -> Union{Nothing, Float64}
 
-Summed rating of the partition's members, or `nothing` when any member's rating is unknown —
-matching `get_equivalent_rating(::AbstractBranchesParallel)` semantics for a subset.
+Summed rating of the partition's members, matching
+`get_equivalent_rating(::AbstractBranchesParallel)` semantics for a subset: members with no
+known rating are skipped, and the result is `nothing` only when no member has a known rating.
 """
 function get_partition_rating(pe::ParallelEquivalent)
     return _aggregate_known_ratings(sum, get_equivalent_rating, get_members(pe))
@@ -946,13 +947,23 @@ _dc_entry_resistance(group::AbstractReductionAggregate, nr::NetworkReductionData
     _dc_equivalent_resistance(group, nr)
 
 """
-    get_equivalent_available(seg::AbstractReductionAggregate) -> Bool
+    get_equivalent_available(bs::BranchesSeries) -> Bool
 
-Availability of a reduction aggregate: every member must be available for the equivalent arc to
-be. Parallel groups and series chains share the rule, so both dispatch here.
+Availability of a series chain: every segment must be available, since one outaged segment
+breaks the path the equivalent arc stands for.
 """
-function get_equivalent_available(seg::AbstractReductionAggregate)
-    return all(PSY.get_available(branch) for branch in seg)
+function get_equivalent_available(bs::BranchesSeries)
+    return all(PSY.get_available(segment) for segment in bs)
+end
+
+"""
+    get_equivalent_available(bp::AbstractBranchesParallel) -> Bool
+
+Availability of a parallel group: the equivalent arc survives while any member is in service,
+so this is `any`, not `all`. Nested chain members answer with their own `all` rule.
+"""
+function get_equivalent_available(bp::AbstractBranchesParallel)
+    return any(PSY.get_available(branch) for branch in bp)
 end
 
 PSY.get_available(seg::AbstractReductionAggregate) = get_equivalent_available(seg)

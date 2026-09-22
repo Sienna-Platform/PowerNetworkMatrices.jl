@@ -74,12 +74,11 @@ end
     # by component type.
     @test PNM._validate_catalog_closure(nrd, PNM.get_name_to_arc_maps(catalog)) === nothing
 
-    # Same check reached through the opt-in construction path.
-    @test PNM.BranchCatalog(nrd; validate = true) isa PNM.BranchCatalog
+    # Every unfiltered catalog runs it on construction.
+    @test PNM.BranchCatalog(nrd) isa PNM.BranchCatalog
 
-    # Refused on a filtered catalog: the invariant does not hold there by design, so
-    # answering "valid" would report a guarantee the check cannot give.
-    @test_throws ArgumentError PNM.BranchCatalog(nrd, (T, c) -> true; validate = true)
+    # Skipped on a filtered catalog: the invariant does not hold there by design.
+    @test PNM.BranchCatalog(nrd, (T, c) -> true) isa PNM.BranchCatalog
 end
 
 @testset "Filters see PSY components, never aggregate wrappers" begin

@@ -213,3 +213,15 @@ end
         @test test_value
     end
 end
+
+@testset "BA: an unresolvable phase-shifting arc errors instead of dropping out" begin
+    # A not-found lookup used to yield `NaN`, which the caller turned into `b = 0.0` — a real
+    # electrical statement (r > 0, x = 0 branches legitimately have zero DC coupling) and so
+    # indistinguishable from the arc silently leaving the DC network.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    nr = get_network_reduction_data(Ybus(sys))
+    absent = (typemax(Int) - 1, typemax(Int))
+    @test !haskey(PNM.get_direct_branch_map(nr), absent)
+    @test !haskey(PNM.get_parallel_branch_map(nr), absent)
+    @test_throws ErrorException PNM._arc_component_susceptance(nr, absent)
+end

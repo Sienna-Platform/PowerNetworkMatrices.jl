@@ -496,3 +496,58 @@ end
         )
     end
 end
+
+@testset "N-1 rating is unknown while any member's rating is" begin
+    # Aggregating over the known subset alone reported the survivors' capacity as the whole
+    # group's N-1 value — exactly 0.0 for a pair with one known rating, which claims the
+    # corridor carries nothing post-contingency.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    line = first(PSY.get_components(PSY.Line, sys))
+    transformer = first(PSY.get_components(PSY.TwoWindingTransformer, sys))
+    PSY.set_rating!(PSY.get_circuit(transformer), nothing)
+    @test isnothing(PNM.get_equivalent_rating(transformer))
+
+    group = PNM.MixedBranchesParallel(PSY.ACTransmission[line, transformer])
+    @test isnothing(PNM.get_single_element_contingency_rating(group))
+    # The sum-style aggregates still skip the unknown member.
+    @test PNM.get_sum_of_max_rating(group) == PSY.get_rating(line, PSY.CU)
+end
+
+@testset "Aggregate availability follows the topology" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    lines = collect(PSY.get_components(PSY.Line, sys))
+    first_line, second_line = lines[1], lines[2]
+
+    group = PNM.BranchesParallel([first_line, second_line])
+    chain = PNM.BranchesSeries(PNM.get_arc_tuple(first_line))
+    PNM.add_branch!(chain, first_line, :FromTo)
+    PNM.add_branch!(chain, second_line, :FromTo)
+    @test PNM.get_equivalent_available(group)
+    @test PNM.get_equivalent_available(chain)
+
+    # A parallel corridor survives on its remaining circuit; a chain does not.
+    PSY.set_available!(second_line, false)
+    @test PNM.get_equivalent_available(group)
+    @test !PNM.get_equivalent_available(chain)
+
+    PSY.set_available!(first_line, false)
+    @test !PNM.get_equivalent_available(group)
+end
+
+@testset "Three-winding circuit emergency rating reads rating_b" begin
+    # `PSY.TransformerCircuit` declares `rating_b`, and the two-winding path reads it off the
+    # identical type; returning the normal rating here understated the emergency limit.
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
+    tertiary = PSY.get_tertiary_circuit(trf)
+    circuit = PNM.ThreeWindingTransformerCircuit(trf, 3)
+
+    @test isnothing(PSY.get_rating_b(tertiary, PSY.CU))
+    @test PNM.get_equivalent_emergency_rating(circuit) == PNM.get_equivalent_rating(circuit)
+
+    PSY.set_rating_b!(tertiary, 1.25 * PSY.get_rating(tertiary, PSY.CU) * PSY.CU)
+    @test PNM.get_equivalent_emergency_rating(circuit) ==
+          PSY.get_rating_b(tertiary, PSY.CU)
+    @test PNM.get_equivalent_emergency_rating(circuit) >
+          PNM.get_equivalent_rating(circuit)
+end

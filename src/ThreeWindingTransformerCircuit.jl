@@ -127,11 +127,18 @@ get_equivalent_rating(tw::ThreeWindingTransformerCircuit) =
 """
     get_equivalent_emergency_rating(tw::ThreeWindingTransformerCircuit)
 
-Emergency rating for this circuit. No separate `rating_b` is modeled per circuit, so this
-mirrors [`get_equivalent_rating`](@ref).
+The circuit's own `rating_b` (MVA, device base), falling back to its normal-operation rating
+when unset — the same rule the `PSY.TwoWindingTransformer` method applies to the identical
+`PSY.TransformerCircuit` type. May be `nothing` when the circuit carries neither rating.
 """
-get_equivalent_emergency_rating(tw::ThreeWindingTransformerCircuit) =
-    get_equivalent_rating(tw)
+function get_equivalent_emergency_rating(tw::ThreeWindingTransformerCircuit)
+    rating_b = PSY.get_rating_b(tw.circuit, PSY.CU)
+    if isnothing(rating_b)
+        @debug "Circuit $(get_name(tw)) has no 'rating_b' defined; using normal-operation rating."
+        return get_equivalent_rating(tw)
+    end
+    return rating_b
+end
 
 """
     get_equivalent_available(tw::ThreeWindingTransformerCircuit)

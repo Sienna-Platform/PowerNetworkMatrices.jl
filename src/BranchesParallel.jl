@@ -234,15 +234,22 @@ end
 N-1 rating for the parallel group: the surviving capacity after the largest-rated
 circuit trips, ``\\sum_i S_i - \\max_i S_i``. For a group of one branch this is zero.
 
-Members with no known rating are skipped; returns `nothing` only when no member has a known
-rating (see [`get_sum_of_max_rating`](@ref)).
+Unlike its sibling aggregators this one cannot skip a member with no known rating: the
+largest circuit is unidentifiable while any rating is missing, and aggregating over the known
+subset alone reports the survivors' capacity as the whole group's — exactly `0.0` for a pair
+with one known rating. Returns `nothing` when any member's rating is unknown.
 """
 function get_single_element_contingency_rating(bp::AbstractBranchesParallel)
-    return _aggregate_known_ratings(
-        r -> sum(r) - maximum(r),
-        get_equivalent_rating,
-        bp.branches,
-    )
+    isempty(bp.branches) && return nothing
+    total = 0.0
+    largest = 0.0
+    for br in bp.branches
+        r = get_equivalent_rating(br)
+        isnothing(r) && return nothing
+        total += r
+        largest = max(largest, r)
+    end
+    return total - largest
 end
 
 """

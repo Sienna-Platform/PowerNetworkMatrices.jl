@@ -454,9 +454,9 @@ function _build_component_name_index(
 end
 
 """
-Throws unless every arc the reduction *folded* is still reachable by component type. Opt-in:
-pass `validate = true` to [`BranchCatalog`](@ref), or call this directly on a catalog under
-test. Construction does not run it by default.
+Throws unless every arc the reduction *folded* is still reachable by component type. Every
+unfiltered [`BranchCatalog`](@ref) runs this before returning; a filtered one omits arcs by
+design, so the invariant does not apply there.
 
 Radial reduction legitimately removes a branch: its arc leaves the network and leaves these
 maps, so there is nothing left to index. Series and parallel reductions remove nothing --
@@ -496,26 +496,24 @@ function _validate_catalog_closure(nrd::NetworkReductionData, name_to_arc::NAME_
 end
 
 """
-    BranchCatalog(nrd::NetworkReductionData; validate = false)
+    BranchCatalog(nrd::NetworkReductionData)
 
-The complete index over `nrd`. See `validate` on the filtered method below.
+The complete index over `nrd`.
 """
-BranchCatalog(nrd::NetworkReductionData; validate::Bool = false) =
-    BranchCatalog(nrd, _keep_all; validate = validate)
+BranchCatalog(nrd::NetworkReductionData) = BranchCatalog(nrd, _keep_all)
 
 """
-    BranchCatalog(nrd::NetworkReductionData, predicate; validate = false)
+    BranchCatalog(nrd::NetworkReductionData, predicate)
 
 Index over `nrd` holding only entries `predicate` accepts, where `predicate(T, component)`
 returns whether a component of branch type `T` should be indexed. An aggregate is judged by
 `_entry_matches`, which applies the predicate to every physical branch at its leaves.
 
-`validate` runs [`_validate_catalog_closure`](@ref) before returning. It is off by default so
-that indexing stays a pure build step; turn it on in tests, or wherever a caller wants the
-folded-arc invariant enforced rather than assumed. It is rejected for a filtered catalog,
-where the invariant does not hold by design.
+An unfiltered catalog runs [`_validate_catalog_closure`](@ref) before returning. A filtered
+one drops arcs by design, so an unreachable arc there is a filter decision rather than a lost
+entry and the check is skipped.
 """
-function BranchCatalog(nrd::NetworkReductionData, predicate; validate::Bool = false)
+function BranchCatalog(nrd::NetworkReductionData, predicate)
     maps = BranchMapsByType()
     arcs = ARC_TABLE()
     name_to_arc = NAME_TO_ARC()
@@ -551,16 +549,7 @@ function BranchCatalog(nrd::NetworkReductionData, predicate; validate::Bool = fa
         maps.reverse_series_branch_map, nrd.reverse_series_branch_map, predicate,
     )
 
-    if validate
-        # Refused rather than skipped: a filter drops arcs by design, so an unreachable arc
-        # there is a filter decision, not a lost entry. Silently answering "valid" would
-        # report a guarantee this cannot give.
-        _is_unfiltered(predicate) || throw(
-            ArgumentError(
-                "validate = true applies only to an unfiltered catalog; a filtered one \
-                 omits arcs by design.",
-            ),
-        )
+    if _is_unfiltered(predicate)
         _validate_catalog_closure(nrd, name_to_arc)
     end
 

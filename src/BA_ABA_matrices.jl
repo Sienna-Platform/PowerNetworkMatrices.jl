@@ -83,18 +83,21 @@ end
 
 # Phase-independent DC susceptance for a phase-shifting arc: read from components so α is
 # excluded, since the shift is applied separately as an injection (`arc_dc_shift_injection`).
-# `NaN` when the arc is in neither map.
 function _arc_component_susceptance(nr_data::NetworkReductionData, arc::Tuple{Int, Int})
-    # Raw `1/x` is `Inf` for an `r == x == 0` shifter, which the caller's non-finite fallback
-    # would turn into zero DC coupling — dropping the arc from BA while its injection still
-    # lands on both endpoints. That fallback is for the `NaN` not-found case below.
+    # `_finite_series_susceptance` substitutes the reduction's minimum retained impedance for an
+    # `r == x == 0` shifter, whose raw `1/x` is `Inf`, so every value returned here is finite.
     min_x_eps = _minimum_retained_impedance(nr_data)
     direct_map = get_direct_branch_map(nr_data)
     haskey(direct_map, arc) && return _finite_series_susceptance(direct_map[arc], min_x_eps)
     parallel_map = get_parallel_branch_map(nr_data)
     haskey(parallel_map, arc) &&
         return _finite_series_susceptance(parallel_map[arc], min_x_eps)
-    return NaN
+    # A zero susceptance is a real electrical statement (r > 0, x = 0), so answering one for an
+    # unresolvable arc would delete the arc from the DC network with no trace.
+    return error(
+        "Phase-shifting arc $(arc) is in neither the direct nor the parallel branch map, so " *
+        "BA_Matrix has no component susceptance to assign it.",
+    )
 end
 
 # The DC model reads phase-shifting arcs and standalone series chains from component
@@ -151,7 +154,6 @@ function BA_Matrix(ybus::Ybus)
                 # susceptance would fold its angle α into b, so take the phase-independent
                 # component susceptance instead.
                 b = _arc_component_susceptance(nr_data, arc)
-                isfinite(b) || (b = 0.0)
             else
                 b = _symmetric_arc_dc_susceptance(Y_ft)
             end
