@@ -288,3 +288,57 @@ end
         PNM.get_component_to_reduction_name_map(PNM.BranchCatalog(nrd), PSY.Line),
     )
 end
+
+@testset "BranchCatalog name index names only arcs the catalog holds" begin
+    # `MixedBranchesParallel` matches on `all`, so filtering out `Line` rejects the group
+    # while the transformer member still passes. The name index took the member's verdict
+    # and pointed at an arc with no row, which `get_branch_multiplier` reached as a bare
+    # `KeyError` from `get_reduction_entry`, at optimization-build time.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    line = first(PSY.get_components(PSY.Line, sys))
+    xfmr = first(PSY.get_components(PSY.TwoWindingTransformer, sys))
+    arc = PSY.get_arc(line)
+
+    nrd = PNM.NetworkReductionData()
+    PNM.add_to_branch_maps!(nrd, arc, line)
+    PNM.add_to_branch_maps!(nrd, arc, xfmr)
+
+    filtered = PNM.BranchCatalog(nrd, (T, c) -> T !== PSY.Line)
+    index = PNM.get_component_name_index(filtered)
+    for (_, candidates) in index
+        for (_, candidate_arc) in candidates
+            @test !isempty(PNM.get_name(PNM.get_reduction_entry(filtered, candidate_arc)))
+        end
+    end
+    @test !haskey(index, PSY.get_name(xfmr))
+
+    # Unfiltered both members resolve, so the emptiness above is the filter's doing and not
+    # a vacuous pass.
+    base = PNM.BranchCatalog(nrd)
+    base_index = PNM.get_component_name_index(base)
+    for name in (PSY.get_name(line), PSY.get_name(xfmr))
+        @test haskey(base_index, name)
+        for (_, candidate_arc) in base_index[name]
+            @test !isempty(PNM.get_name(PNM.get_reduction_entry(base, candidate_arc)))
+        end
+    end
+end
+
+@testset "BranchCatalog leaves a grouped chain's leaves out of the name index" begin
+    # Sibling chains on one bus pair are combined into a `BranchesParallel{BranchesSeries}`,
+    # whose direct members are chains. A leaf line is one level deeper, so it has no share of
+    # the arc -- the same position as any other chain member, and not resolvable by bare name.
+    sys = build_two_parallel_degree_two_chains()
+    ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    catalog = PNM.get_branch_catalog(ybus)
+    @test !haskey(PNM.get_component_name_index(catalog), "L_1_10")
+
+    ptdf = PTDF(ybus)
+    err = try
+        PNM.get_branch_multiplier(ptdf, "L_1_10")
+        ErrorException("get_branch_multiplier resolved a grouped chain leaf")
+    catch e
+        e
+    end
+    @test occursin("series chain", err.msg)
+end

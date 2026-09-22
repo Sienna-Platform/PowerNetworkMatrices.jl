@@ -403,15 +403,33 @@ end
 _name_candidates(index::COMPONENT_NAME_INDEX, name::String) =
     get!(() -> Tuple{DataType, ARC_ENTRY}[], index, name)
 
+# Whether `member` is one of the entry's own members, which is the only relationship
+# `_branch_multiplier` can resolve a bare name through. A leaf one level deeper -- a branch
+# inside a chain a parallel grouping absorbed -- carries no share of the arc, exactly like any
+# other chain member. `BranchesSeries` falls into the blanket method and answers `false`,
+# which is the correct answer for it.
+_entry_carries(entry::PSY.ACTransmission, member::PSY.ACTransmission) = entry === member
+_entry_carries(group::AbstractBranchesParallel, member::PSY.ACTransmission) =
+    any(m === member for m in group)
+
 """
 Component-name index for name-based matrix indexing (`get_branch_multiplier`), whose API takes
 a bare name.
 
 Built from the component-keyed maps rather than `name_to_arc`, which holds *entry* names: an
-aggregate's entry name is the group's, not any component's. Series-chain members are absent;
-name-based matrix indexing does not resolve them.
+aggregate's entry name is the group's, not any component's.
+
+A name is indexed only where `_branch_multiplier` can answer for it: the branch must be the
+entry on its arc, or one of that entry's own members. Every member of a chain is therefore
+absent, whether the chain stands alone in `series_branch_map` or was grouped into a
+`BranchesParallel{BranchesSeries}` -- name-based matrix indexing does not resolve them, and
+`get_branch_multiplier` says so rather than dead-ending.
 """
-function _build_component_name_index(nrd::NetworkReductionData, predicate)
+function _build_component_name_index(
+    nrd::NetworkReductionData,
+    arcs::ARC_TABLE,
+    predicate,
+)
     index = COMPONENT_NAME_INDEX()
     for (arc, entry) in nrd.direct_branch_map
         _entry_matches(entry, predicate) || continue
@@ -422,6 +440,11 @@ function _build_component_name_index(nrd::NetworkReductionData, predicate)
     end
     for (member, arc) in nrd.reverse_parallel_branch_map
         _entry_matches(member, predicate) || continue
+        # The forward pass owns `arcs` and its verdict is the catalog's, exactly as in
+        # `_index_reverse!`: `MixedBranchesParallel` matches on `all`, so a member can pass
+        # this predicate while its group did not, and the arc is then not a row at all.
+        haskey(arcs, arc) || continue
+        _entry_carries(get_entry(arcs[arc]), member) || continue
         push!(
             _name_candidates(index, get_name(member)),
             (typeof(member), arc),
@@ -547,6 +570,6 @@ function BranchCatalog(nrd::NetworkReductionData, predicate; validate::Bool = fa
         maps,
         name_to_arc,
         component_to_entry,
-        _build_component_name_index(nrd, predicate),
+        _build_component_name_index(nrd, arcs, predicate),
     )
 end
