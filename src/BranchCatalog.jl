@@ -30,10 +30,6 @@ const NAME_TO_ARC = Dict{DataType, DataStructures.SortedDict{String, ARC_ENTRY}}
 const COMPONENT_TO_ENTRY = Dict{DataType, Dict{String, String}}
 const COMPONENT_NAME_INDEX = Dict{String, Vector{Tuple{DataType, ARC_ENTRY}}}
 
-# Shared empty-map sentinels returned on a miss; callers must never mutate these.
-const EMPTY_NAME_TO_ARC_MAP = DataStructures.SortedDict{String, ARC_ENTRY}()
-const EMPTY_COMPONENT_TO_ENTRY_MAP = Dict{String, String}()
-
 """
     BranchCatalog
 
@@ -83,9 +79,13 @@ get_arc_leaves(c::BranchCatalog, arc::ARC_ENTRY) = get_leaves(c.arcs[arc])
 """
 Entries for branch type `T`. An absent `T` yields an empty map: a type is legitimately
 missing when every branch of it was absorbed by a reduction.
+
+The miss allocates a fresh map rather than handing back a shared one: these containers are
+mutable, and a consumer writing into a shared empty would be writing into every catalog in
+the process.
 """
 get_name_to_arc_map(c::BranchCatalog, ::Type{T}) where {T <: PSY.ACTransmission} =
-    get(c.name_to_arc, T, EMPTY_NAME_TO_ARC_MAP)
+    get(() -> DataStructures.SortedDict{String, ARC_ENTRY}(), c.name_to_arc, T)
 
 # 3W windings are filed under the parent transformer type, so the wrapper key translates.
 get_name_to_arc_map(c::BranchCatalog, ::Type{ThreeWindingTransformerCircuit}) =
@@ -95,7 +95,7 @@ get_component_to_reduction_name_map(
     c::BranchCatalog,
     ::Type{T},
 ) where {T <: PSY.ACTransmission} =
-    get(c.component_to_entry_name, T, EMPTY_COMPONENT_TO_ENTRY_MAP)
+    get(() -> Dict{String, String}(), c.component_to_entry_name, T)
 
 get_component_to_reduction_name_map(
     c::BranchCatalog,

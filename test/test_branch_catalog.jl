@@ -267,3 +267,24 @@ end
         end
     end
 end
+
+@testset "BranchCatalog hands every caller its own empty map" begin
+    # A miss used to answer with one process-wide `const` container, so a single consumer
+    # write was visible from every catalog in the session.
+    nrd = PNM.NetworkReductionData()
+    first_catalog, second_catalog = PNM.BranchCatalog(nrd), PNM.BranchCatalog(nrd)
+
+    rows_a = PNM.get_name_to_arc_map(first_catalog, PSY.Line)
+    rows_b = PNM.get_name_to_arc_map(second_catalog, PSY.Line)
+    @test rows_a !== rows_b
+    rows_a["POISON"] = (1, 2)
+    @test isempty(PNM.get_name_to_arc_map(PNM.BranchCatalog(nrd), PSY.Line))
+
+    redirects_a = PNM.get_component_to_reduction_name_map(first_catalog, PSY.Line)
+    redirects_b = PNM.get_component_to_reduction_name_map(second_catalog, PSY.Line)
+    @test redirects_a !== redirects_b
+    redirects_a["POISON"] = "POISON"
+    @test isempty(
+        PNM.get_component_to_reduction_name_map(PNM.BranchCatalog(nrd), PSY.Line),
+    )
+end
