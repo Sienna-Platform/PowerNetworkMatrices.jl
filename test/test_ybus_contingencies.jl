@@ -241,7 +241,7 @@ end
     sys, buses = _mk_bus_system(2)
     arc = Arc(; from = buses[1], to = buses[2])
     add_component!(sys, arc)
-    line = Line(;
+    line = Line(; input_basis = PSY.CU,
         name = "L1",
         available = true,
         active_power_flow = 0.0,
@@ -254,9 +254,9 @@ end
         angle_limits = (min = -1.5, max = 1.5),
     )
     add_component!(sys, line)
-    pst = PSY.TwoWindingTransformer(;
+    pst = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
         name = "PSTx01",
-        circuit = PSY.TransformerCircuit(;
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
             arc = arc,
             tap = 1.0,
             α = 0.15,
@@ -378,7 +378,7 @@ end
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(;
+            Line(; input_basis = PSY.CU,
                 name = name,
                 available = true,
                 active_power_flow = 0.0,
@@ -399,9 +399,9 @@ end
     add_component!(sys, arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(;
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "PST",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = arc,
                 tap = 1.05,
                 α = 0.0,
@@ -450,9 +450,9 @@ end
     add_component!(sys, zi_arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(;
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "ZI_T",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = zi_arc, tap = 1.0, α = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
@@ -504,9 +504,9 @@ end
     add_component!(sys, zi_arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(;
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "ZI_T",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = zi_arc, tap = 1.0, α = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,

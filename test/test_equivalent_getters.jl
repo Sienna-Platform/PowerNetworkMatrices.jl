@@ -7,7 +7,7 @@
     bus2 = collect(PSY.get_components(PSY.ACBus, sys))[2]
 
     # Create test branches with specific values
-    line1 = PSY.Line(;
+    line1 = PSY.Line(; input_basis = PSY.CU,
         name = "test_line_1",
         available = true,
         active_power_flow = 0.0,
@@ -21,7 +21,7 @@
         angle_limits = (min = -π / 2, max = π / 2),
     )
 
-    line2 = PSY.Line(;
+    line2 = PSY.Line(; input_basis = PSY.CU,
         name = "test_line_2",
         available = true,
         active_power_flow = 0.0,
@@ -163,7 +163,7 @@ function test_ybus_equivalence_branches_parallel(vector_branches)
             get_network_reduction_data(ybus),
         )
     if PNM.get_equivalent_shift(equivalent_pbranch) == 0.0
-        equivalent_branch = PSY.Line(;
+        equivalent_branch = PSY.Line(; input_basis = PSY.CU,
             name = "equivalent_line",
             available = true,
             active_power_flow = 0.0,
@@ -184,9 +184,9 @@ function test_ybus_equivalence_branches_parallel(vector_branches)
         )
         add_component!(sys_equivalent, equivalent_branch)
     else
-        equivalent_transformer = PSY.TwoWindingTransformer(;
+        equivalent_transformer = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "equivalent_transformer",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = PSY.Arc(; from = bus1, to = bus2),
                 tap = PNM.get_equivalent_tap(equivalent_pbranch),
                 α = PNM.get_equivalent_shift(equivalent_pbranch),
@@ -269,7 +269,7 @@ function test_ybus_equivalence_branches_series(vector_branches)
             get_network_reduction_data(ybus),
         )
     if PNM.get_equivalent_shift(equivalent_pbranch) == 0.0
-        equivalent_branch = PSY.Line(;
+        equivalent_branch = PSY.Line(; input_basis = PSY.CU,
             name = "equivalent_line",
             available = true,
             active_power_flow = 0.0,
@@ -290,9 +290,9 @@ function test_ybus_equivalence_branches_series(vector_branches)
         )
         add_component!(sys_equivalent, equivalent_branch)
     else
-        equivalent_transformer = PSY.TwoWindingTransformer(;
+        equivalent_transformer = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "equivalent_transformer",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = PSY.Arc(; from = bus1, to = bus2),
                 tap = PNM.get_equivalent_tap(equivalent_pbranch),
                 α = PNM.get_equivalent_shift(equivalent_pbranch),
@@ -328,7 +328,7 @@ function test_ybus_equivalence_branches_series(vector_branches)
     @test all(isapprox.(ybus.data, ybus_equivalent.data; atol = 1e-5))
 end
 @testset "Ybus correctness for equivalent parameters of BranchesSeries and BranchesParallel" begin
-    l1 = PSY.Line(;
+    l1 = PSY.Line(; input_basis = PSY.CU,
         name = "line_1",
         available = true,
         active_power_flow = 0.0,
@@ -341,7 +341,7 @@ end
         rating = 100.0,  # rating
         angle_limits = (min = -π / 2, max = π / 2),
     )
-    l2 = PSY.Line(;
+    l2 = PSY.Line(; input_basis = PSY.CU,
         name = "line_2",
         available = true,
         active_power_flow = 0.0,
@@ -354,7 +354,7 @@ end
         rating = 80.0,  # rating
         angle_limits = (min = -π / 2, max = π / 2),
     )
-    l3 = PSY.Line(;
+    l3 = PSY.Line(; input_basis = PSY.CU,
         name = "line_3",
         available = true,
         active_power_flow = 0.0,
@@ -367,9 +367,9 @@ end
         rating = 80.0,  # rating
         angle_limits = (min = -π / 2, max = π / 2),
     )
-    t1 = PSY.TwoWindingTransformer(;
+    t1 = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
         name = "tfw_1",
-        circuit = PSY.TransformerCircuit(;
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
             arc = PSY.Arc(nothing),
             tap = 1.0,
             available = true,
@@ -384,9 +384,9 @@ end
         ),
         magnetizing_shunt = 0.01 + im * 0.02,
     )
-    t2 = PSY.TwoWindingTransformer(;
+    t2 = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
         name = "tfw_2",
-        circuit = PSY.TransformerCircuit(;
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
             arc = PSY.Arc(nothing),
             tap = 1.0,
             available = true,
@@ -401,9 +401,9 @@ end
         ),
         magnetizing_shunt = 0.02 + im * 0.021,
     )
-    t3 = PSY.TwoWindingTransformer(;
+    t3 = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
         name = "tfw_3",
-        circuit = PSY.TransformerCircuit(;
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
             arc = PSY.Arc(nothing),
             tap = 1.0,
             α = 0.2,

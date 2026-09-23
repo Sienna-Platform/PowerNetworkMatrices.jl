@@ -61,7 +61,7 @@ end
     PSY.add_component!(sys, zi_arc)
     PSY.add_component!(
         sys,
-        PSY.Line(;
+        PSY.Line(; input_basis = PSY.CU,
             name = "zi_line", available = true, active_power_flow = 0.0,
             reactive_power_flow = 0.0, arc = zi_arc, r = 0.0, x = 1.0e-5,
             b = (from = 0.0, to = 0.0), rating = 10.0,

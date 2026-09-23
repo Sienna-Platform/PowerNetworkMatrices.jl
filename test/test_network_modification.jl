@@ -512,9 +512,9 @@ function _mk_antiparallel_identical_pst_system(; alpha = 0.15, x = 0.2, tap = 1.
         add_component!(sys, arc)
         add_component!(
             sys,
-            PSY.TwoWindingTransformer(;
+            PSY.TwoWindingTransformer(; input_basis = PSY.CU,
                 name = name,
-                circuit = PSY.TransformerCircuit(;
+                circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                     arc = arc, tap = tap, α = alpha, available = true,
                     active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                     base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = x,
@@ -530,7 +530,7 @@ function _mk_antiparallel_identical_pst_system(; alpha = 0.15, x = 0.2, tap = 1.
     add_component!(sys, arc)
     add_component!(
         sys,
-        Line(;
+        Line(; input_basis = PSY.CU,
             name = "L23", available = true, active_power_flow = 0.0,
             reactive_power_flow = 0.0, arc = arc, r = 0.0, x = 0.1,
             b = (from = 0.0, to = 0.0), rating = 1.0,
@@ -634,9 +634,9 @@ function _mk_shifted_grouped_chain_system(; alpha = 0.15, pst_x = 0.2)
     add_component!(sys, arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(;
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "PST_10_3",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = arc, tap = 1.0, α = alpha, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = pst_x,

@@ -51,7 +51,7 @@ end
     buses = collect(PSY.get_components(PSY.ACBus, sys))
     arc = PSY.Arc(; from = buses[1], to = buses[2])
     function bfl_line(name)
-        return PSY.Line(;
+        return PSY.Line(; input_basis = PSY.CU,
             name = name,
             available = true,
             active_power_flow = 0.0,
@@ -66,7 +66,7 @@ end
         )
     end
     plain = bfl_line("bfl_line_1")
-    monitored = PSY.MonitoredLine(;
+    monitored = PSY.MonitoredLine(; input_basis = PSY.CU,
         name = "bfl_monitored",
         available = true,
         active_power_flow = 0.0,
@@ -341,9 +341,9 @@ end
     PSY.add_component!(sys, busB)
     arc = PSY.Arc(; from = busA, to = busB)
     PSY.add_component!(sys, arc)
-    t = PSY.TwoWindingTransformer(;
+    t = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
         name = "T2W",
-        circuit = PSY.TransformerCircuit(;
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
             arc = arc,
             tap = 1.0,
             available = true,
@@ -413,9 +413,9 @@ end
         PSY.add_component!(sys, busB)
         arc = PSY.Arc(; from = busA, to = busB)
         PSY.add_component!(sys, arc)
-        t = PSY.TwoWindingTransformer(;
+        t = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "T2W_shunt",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = arc,
                 available = true,
                 rating = 1.0,
@@ -585,9 +585,9 @@ end
 
     arc2 = Arc(; from = buses[1], to = buses[3])
     add_component!(sys, arc2)
-    t = PSY.TwoWindingTransformer(;
+    t = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
         name = "T13",
-        circuit = PSY.TransformerCircuit(;
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
             arc = arc2, tap = 1.05, α = 0.0, available = true,
             active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
             base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.2,
@@ -640,9 +640,9 @@ end
     add_component!(sys, zi_arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(;
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "ZI_TAP",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = zi_arc, tap = tap, α = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,

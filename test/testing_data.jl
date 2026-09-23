@@ -486,7 +486,7 @@ function build_hvdc_with_single_bus_island()
         base_voltage = 69.0,
     )
     add_component!(sys, bus15)
-    load15 = PowerLoad(;
+    load15 = PowerLoad(; input_basis = PSY.CU,
         name = "Load_15",
         available = true,
         bus = bus15,
@@ -497,7 +497,7 @@ function build_hvdc_with_single_bus_island()
         max_reactive_power = 0.0,
     )
     add_component!(sys, load15)
-    gen15 = ThermalStandard(;
+    gen15 = ThermalStandard(; input_basis = PSY.CU,
         name = "Gen_15",
         available = true,
         status = OperationalStates.ONLINE,
@@ -516,7 +516,7 @@ function build_hvdc_with_single_bus_island()
     )
     add_component!(sys, gen15)
     bus14 = get_component(ACBus, sys, "Bus 14")
-    hvdc1 = TwoTerminalGenericHVDCLine(;
+    hvdc1 = TwoTerminalGenericHVDCLine(; input_basis = PSY.CU,
         name = "Line18",
         available = true,
         active_power_flow = 0.0,
@@ -566,7 +566,7 @@ function build_hvdc_with_small_island()
     add_component!(sys, bus16)
     add_component!(sys, bus17)
 
-    line17 = Line(;
+    line17 = Line(; input_basis = PSY.CU,
         name = "Line17",
         available = true,
         active_power_flow = 0.0,
@@ -579,7 +579,7 @@ function build_hvdc_with_small_island()
         angle_limits = (min = -0.7, max = 0.7),
     )
     add_component!(sys, line17)
-    line18 = Line(;
+    line18 = Line(; input_basis = PSY.CU,
         name = "Line18",
         available = true,
         active_power_flow = 0.0,
@@ -592,7 +592,7 @@ function build_hvdc_with_small_island()
         angle_limits = (min = -0.7, max = 0.7),
     )
     add_component!(sys, line18)
-    load16 = PowerLoad(;
+    load16 = PowerLoad(; input_basis = PSY.CU,
         name = "Bus16",
         available = true,
         bus = bus16,
@@ -603,7 +603,7 @@ function build_hvdc_with_small_island()
         max_reactive_power = 0.0,
     )
     add_component!(sys, load16)
-    gen17 = ThermalStandard(;
+    gen17 = ThermalStandard(; input_basis = PSY.CU,
         name = "Bus17",
         available = true,
         status = OperationalStates.ONLINE,
@@ -622,7 +622,7 @@ function build_hvdc_with_small_island()
     )
     add_component!(sys, gen17)
     bus14 = get_component(ACBus, sys, "Bus 14")
-    hvdc1 = TwoTerminalGenericHVDCLine(;
+    hvdc1 = TwoTerminalGenericHVDCLine(; input_basis = PSY.CU,
         name = "Line18",
         available = true,
         active_power_flow = 0.0,
@@ -672,7 +672,8 @@ function _build_degree_two_chain_system(edges; load_bus::Int = 3)
     end
     PSY.add_component!(
         sys,
-        ThermalStandard(; name = "G1", available = true, status = OperationalStates.ONLINE,
+        ThermalStandard(; input_basis = PSY.CU, name = "G1", available = true,
+            status = OperationalStates.ONLINE,
             bus = buses[1],
             active_power = 1.0, reactive_power = 0.0, rating = 2.0,
             prime_mover_type =
@@ -684,7 +685,8 @@ function _build_degree_two_chain_system(edges; load_bus::Int = 3)
     )
     PSY.add_component!(
         sys,
-        PowerLoad(; name = "D3", available = true, bus = buses[load_bus],
+        PowerLoad(; input_basis = PSY.CU, name = "D3", available = true,
+            bus = buses[load_bus],
             active_power = 1.0,
             reactive_power = 0.0, base_power = 100.0, max_active_power = 1.0,
             max_reactive_power = 0.0),
@@ -981,7 +983,7 @@ end
 function _add_test_line!(sys, name, arc, r, x)
     add_component!(
         sys,
-        Line(;
+        Line(; input_basis = PSY.CU,
             name = name,
             available = true,
             active_power_flow = 0.0,
@@ -1010,7 +1012,7 @@ function _mk_detached_pst_fixture()
         base_voltage = 230.0,
     )
     function _mk_fixture_line(name)
-        return Line(;
+        return Line(; input_basis = PSY.CU,
             name = name, available = true, active_power_flow = 0.0,
             reactive_power_flow = 0.0, arc = Arc(; from = b1, to = b2),
             r = 0.0, x = 0.1, b = (from = 0.0, to = 0.0), rating = 1.0,
@@ -1018,9 +1020,9 @@ function _mk_detached_pst_fixture()
         )
     end
     function _mk_fixture_pst(name, α)
-        return PSY.TwoWindingTransformer(;
+        return PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = name,
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = Arc(; from = b1, to = b2), tap = 1.0, α = α,
                 available = true, active_power_flow = 0.0, reactive_power_flow = 0.0,
                 rating = 1.0, base_power = 100.0, base_voltage_primary = 230.0,
@@ -1065,7 +1067,7 @@ function _mk_line_pst_parallel_system(; pst_r = 0.0, pst_x = 0.2)
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(;
+            Line(; input_basis = PSY.CU,
                 name = name, available = true, active_power_flow = 0.0,
                 reactive_power_flow = 0.0, arc = arc, r = 0.0, x = 0.1,
                 b = (from = 0.0, to = 0.0), rating = 1.0,
@@ -1080,9 +1082,9 @@ function _mk_line_pst_parallel_system(; pst_r = 0.0, pst_x = 0.2)
     # auto-derived component name ("b1 -> b2"), same reasoning as `_mk_zi_parallel_sys` above.
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(;
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "PST",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = pst_arc, tap = 1.0, α = 0.15, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0,
@@ -1124,7 +1126,7 @@ function _add_three_winding_transformer!(
         (z31 + z23 - z12) / 2,
     )
     circuits = ntuple(
-        i -> PSY.TransformerCircuit(;
+        i -> PSY.TransformerCircuit(; input_basis = PSY.CU,
             arc = arcs[i],
             available = true,
             base_power = bp,
@@ -1135,7 +1137,7 @@ function _add_three_winding_transformer!(
         ),
         3,
     )
-    t3w = PSY.ThreeWindingTransformer(;
+    t3w = PSY.ThreeWindingTransformer(; input_basis = PSY.CU,
         name = name,
         primary_circuit = circuits[1],
         secondary_circuit = circuits[2],

@@ -104,7 +104,7 @@ end
         voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 230.0,
     )
-    line = PSY.Line(;
+    line = PSY.Line(; input_basis = PSY.CU,
         name = "mixed_line",
         available = true,
         active_power_flow = 0.0,
@@ -117,9 +117,9 @@ end
         rating = 100.0,
         angle_limits = (min = -π / 2, max = π / 2),
     )
-    tap = PSY.TwoWindingTransformer(;
+    tap = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
         name = "mixed_tap",
-        circuit = PSY.TransformerCircuit(;
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
             arc = PSY.Arc(; from = bus1, to = bus2),
             tap = 1.0,
             available = true,

@@ -205,7 +205,7 @@ end
     )
     add_component!(sys_with_isolated, bus6)
     bus5 = get_component(ACBus, sys_with_isolated, "nodeD")
-    hvdc1 = TwoTerminalGenericHVDCLine(;
+    hvdc1 = TwoTerminalGenericHVDCLine(; input_basis = PSY.CU,
         name = "Line18",
         available = true,
         active_power_flow = 0.0,
@@ -255,7 +255,7 @@ end
     add_component!(sys, bus6)
     add_component!(
         sys,
-        TwoTerminalGenericHVDCLine(;
+        TwoTerminalGenericHVDCLine(; input_basis = PSY.CU,
             name = "Line18", available = true, active_power_flow = 0.0,
             arc = Arc(; from = get_component(ACBus, sys, "nodeD"), to = bus6),
             active_power_limits_from = (min = -100.0, max = 100.0),

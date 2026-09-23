@@ -186,7 +186,7 @@ end
 
     add_component!(
         sys_2,
-        PSY.Line(;
+        PSY.Line(; input_basis = PSY.CU,
             name = "7",
             available = branch_2.available,
             active_power_flow = branch_2.active_power_flow,

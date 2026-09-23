@@ -43,7 +43,7 @@ function _build_meshed_3wt_loop_system()
     star = mkbus(99, "STAR", PSY.ACBusTypes.PQ)
     foreach(b -> PSY.add_component!(sys, b), (b1, b2, b10, b3, star))
     for (bus, name) in ((b1, "g1"), (b2, "g2"))
-        gen = PSY.ThermalStandard(;
+        gen = PSY.ThermalStandard(; input_basis = PSY.CU,
             name = name,
             available = true,
             status = PSY.OperationalStates.ONLINE,
@@ -62,7 +62,7 @@ function _build_meshed_3wt_loop_system()
         )
         PSY.add_component!(sys, gen)
     end
-    load = PSY.PowerLoad(;
+    load = PSY.PowerLoad(; input_basis = PSY.CU,
         name = "load_star",
         available = true,
         bus = star,
@@ -76,7 +76,7 @@ function _build_meshed_3wt_loop_system()
     function mkline(name, f, t, x)
         arc = PSY.Arc(; from = f, to = t)
         PSY.add_component!(sys, arc)
-        line = PSY.Line(;
+        line = PSY.Line(; input_basis = PSY.CU,
             name = name,
             available = true,
             active_power_flow = 0.0,
@@ -108,7 +108,7 @@ function _build_meshed_3wt_loop_system()
         (z31 + z23 - z12) / 2,
     )
     circuits = ntuple(
-        i -> PSY.TransformerCircuit(;
+        i -> PSY.TransformerCircuit(; input_basis = PSY.CU,
             arc = arcs[i],
             available = true,
             base_power = 100.0,
@@ -119,7 +119,7 @@ function _build_meshed_3wt_loop_system()
         ),
         3,
     )
-    t3w = PSY.ThreeWindingTransformer(;
+    t3w = PSY.ThreeWindingTransformer(; input_basis = PSY.CU,
         name = "T3W",
         primary_circuit = circuits[1],
         secondary_circuit = circuits[2],
@@ -365,7 +365,7 @@ function _build_two_composite_arcs_system()
     end
     PSY.add_component!(
         sys,
-        ThermalStandard(; name = "G1", available = true,
+        ThermalStandard(; input_basis = PSY.CU, name = "G1", available = true,
             status = PSY.OperationalStates.ONLINE, bus = buses[1],
             active_power = 1.0, reactive_power = 0.0, rating = 2.0,
             prime_mover_type =
@@ -377,7 +377,8 @@ function _build_two_composite_arcs_system()
     )
     PSY.add_component!(
         sys,
-        PowerLoad(; name = "D3", available = true, bus = buses[3], active_power = 1.0,
+        PowerLoad(; input_basis = PSY.CU, name = "D3", available = true, bus = buses[3],
+            active_power = 1.0,
             reactive_power = 0.0, base_power = 100.0, max_active_power = 1.0,
             max_reactive_power = 0.0),
     )
@@ -446,9 +447,9 @@ end
     add_component!(sys, zi_arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(;
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "ZI_T",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = zi_arc, tap = 1.05, α = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
@@ -481,9 +482,9 @@ end
     add_component!(sys2, tap_arc)
     add_component!(
         sys2,
-        PSY.TwoWindingTransformer(;
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "TAP_T",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = tap_arc, tap = 1.05, α = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.2,

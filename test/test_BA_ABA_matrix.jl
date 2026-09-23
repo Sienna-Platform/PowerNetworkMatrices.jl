@@ -118,9 +118,9 @@ end
         _add_test_line!(sys, "L12", arc12, 0.0, 0.1)
         arc23 = Arc(; from = buses[2], to = buses[3])
         add_component!(sys, arc23)
-        pst = PSY.TwoWindingTransformer(;
+        pst = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "PST23",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 available = true,
                 arc = arc23,
                 tap = 1.05,

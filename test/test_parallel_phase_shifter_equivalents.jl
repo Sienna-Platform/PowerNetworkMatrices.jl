@@ -190,9 +190,9 @@ function _mk_two_transformer_parallel_system(; alpha1, alpha2, r1, x1, r2, x2)
     function _mk_xfmr(name, α, r, x)
         add_component!(
             sys,
-            PSY.TwoWindingTransformer(;
+            PSY.TwoWindingTransformer(; input_basis = PSY.CU,
                 name = name,
-                circuit = PSY.TransformerCircuit(;
+                circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                     arc = arc, tap = 1.0, α = α, available = true,
                     active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                     base_power = 100.0, base_voltage_primary = 230.0, r = r, x = x,
@@ -247,7 +247,7 @@ function _mk_two_lines_one_pst_parallel_system(;
     function _mk_pll_line(name, x)
         add_component!(
             sys,
-            Line(;
+            Line(; input_basis = PSY.CU,
                 name = name, available = true, active_power_flow = 0.0,
                 reactive_power_flow = 0.0, arc = arc, r = 0.0, x = x,
                 b = (from = 0.0, to = 0.0), rating = 1.0,
@@ -260,9 +260,9 @@ function _mk_two_lines_one_pst_parallel_system(;
     _mk_pll_line("L2", x_line2)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(;
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "PST",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = arc, tap = 1.0, α = pst_alpha, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = pst_r, x = pst_x,
@@ -297,7 +297,7 @@ function _mk_antiparallel_pst_system(; pst_r)
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(;
+            Line(; input_basis = PSY.CU,
                 name = name, available = true, active_power_flow = 0.0,
                 reactive_power_flow = 0.0, arc = arc, r = 0.0, x = x,
                 b = (from = 0.0, to = 0.0), rating = 1.0,
@@ -313,9 +313,9 @@ function _mk_antiparallel_pst_system(; pst_r)
     add_component!(sys, arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(;
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "PST",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = arc, tap = 1.05, α = 0.15, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = pst_r, x = 0.2,
@@ -361,7 +361,7 @@ function _mk_3w_winding_line_parallel_system(; line_r = 0.05, line_x = 0.15)
     # single-π, so the non-representable case needs α on the winding that parallels the line.
     alphas = (0.15, 0.0, 0.0)
     circuits = ntuple(
-        i -> PSY.TransformerCircuit(;
+        i -> PSY.TransformerCircuit(; input_basis = PSY.CU,
             arc = arcs[i], available = true, base_power = 100.0,
             base_voltage_primary = PSY.get_base_voltage(PSY.get_from(arcs[i])),
             r = real(legs[i]), x = imag(legs[i]), rating = 1.0,
@@ -369,7 +369,7 @@ function _mk_3w_winding_line_parallel_system(; line_r = 0.05, line_x = 0.15)
         ),
         3,
     )
-    t3w = PSY.ThreeWindingTransformer(;
+    t3w = PSY.ThreeWindingTransformer(; input_basis = PSY.CU,
         name = "T3W", primary_circuit = circuits[1], secondary_circuit = circuits[2],
         tertiary_circuit = circuits[3], star_bus = star,
         r_12 = 0.01, x_12 = 0.1, r_23 = 0.01, x_23 = 0.1, r_31 = 0.01, x_31 = 0.1,
@@ -380,7 +380,7 @@ function _mk_3w_winding_line_parallel_system(; line_r = 0.05, line_x = 0.15)
     add_component!(sys, t3w)
     add_component!(
         sys,
-        Line(;
+        Line(; input_basis = PSY.CU,
             name = "Lstar", available = true, active_power_flow = 0.0,
             reactive_power_flow = 0.0, arc = arc1, r = line_r, x = line_x,
             b = (from = 0.0, to = 0.0), rating = 1.0,

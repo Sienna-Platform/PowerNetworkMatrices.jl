@@ -364,9 +364,9 @@ end
     set_r!(t, 0.0 * PSY.SU)
     set_x!(t, 0.0 * PSY.SU)
     arc = PSY.get_arc(t)
-    sibling = PSY.TwoWindingTransformer(;
+    sibling = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
         name = "Trans4_parallel",
-        circuit = PSY.TransformerCircuit(;
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
             arc = arc, tap = 1.0, α = 0.0, available = true,
             active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
             base_power = 100.0,
@@ -420,7 +420,7 @@ end
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(;
+            Line(; input_basis = PSY.CU,
                 name = name,
                 available = true,
                 active_power_flow = 0.0,
@@ -438,9 +438,9 @@ end
     add_component!(sys, zi_arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(;
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "T12_zero_impedance",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = zi_arc, tap = 1.0, α = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
@@ -488,7 +488,7 @@ end
     )
     zi_arc = PSY.Arc(; from = busD, to = sec_bus)
     PSY.add_component!(sys, zi_arc)
-    zi_line = PSY.Line(;
+    zi_line = PSY.Line(; input_basis = PSY.CU,
         name = "zi_line",
         available = true,
         active_power_flow = 0.0,
@@ -840,7 +840,7 @@ end
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(;
+            Line(; input_basis = PSY.CU,
                 name = name,
                 available = true,
                 active_power_flow = 0.0,
@@ -899,7 +899,7 @@ end
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(;
+            Line(; input_basis = PSY.CU,
                 name = name,
                 available = true,
                 active_power_flow = 0.0,
@@ -969,7 +969,7 @@ end
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(;
+            Line(; input_basis = PSY.CU,
                 name = name,
                 available = true,
                 active_power_flow = 0.0,
@@ -991,9 +991,9 @@ end
     add_component!(sys, arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(;
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "PST",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = arc,
                 tap = 1.05,
                 α = 0.15,
@@ -1349,16 +1349,16 @@ end
     sys, buses = _mk_bus_system(2)
     arc = Arc(; from = buses[1], to = buses[2])
     add_component!(sys, arc)
-    line = Line(;
+    line = Line(; input_basis = PSY.CU,
         name = "L1", available = true, active_power_flow = 0.0,
         reactive_power_flow = 0.0, arc = arc, r = 0.0, x = 0.1,
         b = (from = 0.0, to = 0.0), rating = 1.0,
         angle_limits = (min = -1.5, max = 1.5),
     )
     add_component!(sys, line)
-    pst1 = PSY.TwoWindingTransformer(;
+    pst1 = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
         name = "PST1",
-        circuit = PSY.TransformerCircuit(;
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
             arc = arc, tap = 1.0, α = 0.0,
             available = true, active_power_flow = 0.0, reactive_power_flow = 0.0,
             rating = 1.0, base_power = 100.0, base_voltage_primary = 230.0,
@@ -1374,9 +1374,9 @@ end
     @test PNM.compute_parallel_multiplier(group, pst1) ≈ 5.0 / 15.0
 
     # Name collision across concrete types: was silently double-counted, now loud.
-    pst_same_name = PSY.TwoWindingTransformer(;
+    pst_same_name = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
         name = PSY.get_name(line),
-        circuit = PSY.TransformerCircuit(;
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
             arc = arc, tap = 1.0, α = 0.0,
             available = true, active_power_flow = 0.0, reactive_power_flow = 0.0,
             rating = 1.0, base_power = 100.0, base_voltage_primary = 230.0,
@@ -1651,7 +1651,7 @@ end
     add_component!(sys, arc2)
     add_component!(
         sys,
-        PSY.GenericArcImpedance(;
+        PSY.GenericArcImpedance(; input_basis = PSY.CU,
             name = "GAI_junction_to_stub",
             available = true,
             active_power_flow = 0.0,
