@@ -926,6 +926,18 @@ function has_single_pi_equivalent(bs::BranchesSeries, nr::NetworkReductionData)
     return true
 end
 
+"""
+    has_single_pi_equivalent(nr::NetworkReductionData, arc::Tuple{Int, Int}) -> Bool
+
+Whether the branch or reduction aggregate on `arc` collapses to one π-model, i.e. whether
+[`arc_equivalent_branches`](@ref) returns a single branch that reproduces the arc's two-port.
+Orientation does not matter. Throws if `arc` is in no reduction map.
+"""
+function has_single_pi_equivalent(nr::NetworkReductionData, arc::Tuple{Int, Int})
+    entry, _ = _resolve_arc_entry(nr, arc)
+    return _segment_has_single_pi(entry, nr)
+end
+
 _arc_equivalents(br::PSY.ACTransmission, nr::NetworkReductionData) =
     [equivalent_branch(br, nr)]
 

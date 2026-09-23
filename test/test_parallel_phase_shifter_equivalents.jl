@@ -132,6 +132,19 @@ end
     @test_throws ErrorException PNM.arc_equivalent_branches(nr, (7, 9))
 end
 
+@testset "has_single_pi_equivalent by arc" begin
+    sys = _mk_line_pst_parallel_system(; pst_r = 0.05)
+    nr = get_network_reduction_data(Ybus(sys))
+    @test !PNM.has_single_pi_equivalent(nr, (1, 2))
+    @test !PNM.has_single_pi_equivalent(nr, (2, 1))
+    @test PNM.has_single_pi_equivalent(nr, (2, 3))
+    @test_throws ErrorException PNM.has_single_pi_equivalent(nr, (7, 9))
+
+    lossless = _mk_line_pst_parallel_system(; pst_r = 0.0)
+    nr0 = get_network_reduction_data(Ybus(lossless))
+    @test PNM.has_single_pi_equivalent(nr0, (1, 2))
+end
+
 # `_mk_line_pst_parallel_system(; pst_r = 0.05)` is a 3-bus radial path whose bus 2 has no
 # injector and degree two, so DegreeTwoReduction folds it away, leaving a series chain on
 # composite arc (1, 3) whose first segment is the non-representable parallel group. Buses 1 and
