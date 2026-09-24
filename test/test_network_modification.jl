@@ -599,8 +599,9 @@ end
 
     mod = NetworkModification(vptdf, line)
     am = only(mod.arc_modifications)
-    # Pins the magnitude convention as it stands, not as established truth: the MODF Woodbury
-    # update disagrees with a direct oracle on negative-susceptance arcs.
+    # -|b| is correct here, not just pinned as-is: arc_sus is always the positive-by-convention
+    # DC susceptance magnitude, so -|b| is what cancels it. Using the signed b_arc instead would
+    # double-negate on this negative-reactance arc, per the scaling check below.
     @test am.delta_b ≈ -abs(b_arc)
     Y11, Y12, Y21, Y22 = PNM.ybus_branch_entries(line, nr)
     @test am.delta_y11 ≈ PNM.YBUS_ELTYPE(-Y11)
