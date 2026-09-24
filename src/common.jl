@@ -760,8 +760,11 @@ function _dc_series_impedance(tw::ThreeWindingTransformerCircuit)
     return _dc_series_impedance(tw.circuit)
 end
 
-# A member can itself be an aggregate, so inference recurses through these two and gives up;
-# the annotations cut that off at the only place the value is known to be a scalar impedance.
+# A `BranchesParallel` can hold a `BranchesSeries` member and vice versa, so these two methods
+# call each other through mutual recursion with no static base case; Julia's inference can't
+# resolve a concrete return type across that cycle and falls back to `Any`. The `::ComplexF64`
+# annotations are function barriers that break the cycle at the one place the answer is known:
+# both sides always reduce to a scalar impedance.
 function _dc_series_impedance(bp::AbstractBranchesParallel)::ComplexF64
     return inv(sum(inv(_dc_series_impedance(br)) for br in bp))
 end

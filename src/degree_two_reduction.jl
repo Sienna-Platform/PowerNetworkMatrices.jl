@@ -317,7 +317,7 @@ function _get_complete_chain(
     neighbors = _get_neighbors(adj_matrix, start_node)
     current_chain = [start_node]
     reduced_indices[start_node] = true
-    _get_partial_chain_recursive!(
+    _get_partial_chain!(
         current_chain,
         adj_matrix,
         neighbors[1],
@@ -326,7 +326,7 @@ function _get_complete_chain(
         irreducible_indices,
     )
     reverse!(current_chain)
-    _get_partial_chain_recursive!(
+    _get_partial_chain!(
         current_chain,
         adj_matrix,
         neighbors[2],
@@ -338,15 +338,18 @@ function _get_complete_chain(
 end
 
 """
-    _get_partial_chain(adj_matrix::SparseArrays.SparseMatrixCSC,
-                      current_node::Int,
-                      prev_node::Int,
-                      reduced_indices::Set{Int},
-                      irreducible_indices::Set{Int})
+    _get_partial_chain!(current_chain::Vector{Int},
+                       adj_matrix::SparseArrays.SparseMatrixCSC,
+                       current_node::Int,
+                       prev_node::Int,
+                       reduced_indices::BitVector,
+                       irreducible_indices::BitVector)
 
-Recursively build a chain in one direction from current_node, avoiding prev_node.
+Extend `current_chain` in one direction from `current_node`, avoiding `prev_node`. Iterative,
+not recursive: one stack frame per bus would overflow on a long radial chain (the same failure
+`_surviving_root!` was de-recursed for).
 """
-function _get_partial_chain_recursive!(
+function _get_partial_chain!(
     current_chain::Vector{Int},
     adj_matrix::SparseArrays.SparseMatrixCSC,
     current_node::Int,
@@ -354,7 +357,6 @@ function _get_partial_chain_recursive!(
     reduced_indices::BitVector,
     irreducible_indices::BitVector,
 )
-    # A loop, not recursion: one stack frame per bus overflows on long chains.
     while true
         # If current node is reduced stop
         if reduced_indices[current_node]

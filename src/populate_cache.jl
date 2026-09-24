@@ -249,10 +249,10 @@ _resolve_monitored_index(vmodf::VirtualMODF, m::Tuple{Int, Int}) =
 """
     _woodbury_factors_from_base(base_full, BA, arc_sus, modifications, n_bus) -> WoodburyFactors
 
-Assemble Woodbury factors from precomputed pre-contingency solves. `base_full`
-maps each modified arc index to `B⁻¹ · BA[:, arc]` scattered to full-bus space,
-so the per-arc libklu solves of `_compute_woodbury_factors_impl` become
-dictionary lookups; the shared kernel does the rest.
+Reuse each modified arc's pre-contingency solve instead of resolving it: `base_full[arc]` is
+that solve, already scattered to full-bus space, so this assembles Woodbury factors from a
+dictionary lookup per arc rather than a fresh libklu solve. `base_full` maps each modified arc
+index to `B⁻¹ · BA[:, arc]`; the shared kernel (`_woodbury_factors_from_Z`) does the rest.
 """
 function _woodbury_factors_from_base(
     base_full::Dict{Int, Vector{Float64}},
