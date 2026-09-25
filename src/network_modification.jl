@@ -805,49 +805,21 @@ function _foreach_arc_row_entry(
     d_f::YBUS_ELTYPE,
     d_t::YBUS_ELTYPE,
 ) where {F}
-    row = get_arc_lookup(work)[arc]
+    arc_lookup = get_arc_lookup(work)
+    if !haskey(arc_lookup, arc)
+        error("Arc $(arc) is not present in the arc-admittance matrix.")
+    end
+    row = arc_lookup[arc]
     fn(work.data, other.data, _stored_index(work.data, row, f_ix), d_f)
     fn(work.data, other.data, _stored_index(work.data, row, t_ix), d_t)
     return
 end
 
-function _foreach_arc_row_entry(
-    ::F,
-    ::Nothing,
-    other::ArcAdmittanceMatrix,
-    arc::Tuple{Int, Int},
-    f_ix::Int,
-    t_ix::Int,
-    d_f::YBUS_ELTYPE,
-    d_t::YBUS_ELTYPE,
-) where {F}
-    return error(
-        "Arc-admittance mismatch: the working Ybus has no arc matrices, but the base Ybus " *
-        "has an arc matrix for arc $(arc).",
-    )
-end
-
-function _foreach_arc_row_entry(
-    ::F,
-    work::ArcAdmittanceMatrix,
-    ::Nothing,
-    arc::Tuple{Int, Int},
-    f_ix::Int,
-    t_ix::Int,
-    d_f::YBUS_ELTYPE,
-    d_t::YBUS_ELTYPE,
-) where {F}
-    return error(
-        "Arc-admittance mismatch: the working Ybus has an arc matrix for arc $(arc), but the " *
-        "base Ybus has none.",
-    )
-end
-
-function _check_arc_admittance_pattern!(::Nothing, ::Nothing)
+function _check_arc_admittance_pattern(::Nothing, ::Nothing)
     return
 end
 
-function _check_arc_admittance_pattern!(
+function _check_arc_admittance_pattern(
     work::ArcAdmittanceMatrix,
     base::ArcAdmittanceMatrix,
 )
@@ -860,14 +832,14 @@ function _check_arc_admittance_pattern!(
     return
 end
 
-function _check_arc_admittance_pattern!(::Nothing, base::ArcAdmittanceMatrix)
+function _check_arc_admittance_pattern(::Nothing, base::ArcAdmittanceMatrix)
     return error(
         "The working Ybus has no arc-admittance matrices, but the base Ybus does. " *
         "Cannot apply an in-place modification across different structures.",
     )
 end
 
-function _check_arc_admittance_pattern!(work::ArcAdmittanceMatrix, ::Nothing)
+function _check_arc_admittance_pattern(work::ArcAdmittanceMatrix, ::Nothing)
     return error(
         "The working Ybus has arc-admittance matrices, but the base Ybus does not. " *
         "Cannot apply an in-place modification across different structures.",
@@ -883,15 +855,17 @@ function _foreach_modification_entry(
     other::Ybus,
     mod::NetworkModification,
 ) where {F}
-    SparseArrays.nnz(ybus.data) == SparseArrays.nnz(other.data) || error(
-        "The two Ybus matrices store $(SparseArrays.nnz(ybus.data)) and " *
-        "$(SparseArrays.nnz(other.data)) entries; an in-place modification needs one pattern.",
-    )
-    _check_arc_admittance_pattern!(
+    if SparseArrays.nnz(ybus.data) != SparseArrays.nnz(other.data)
+        error(
+            "The two Ybus matrices store $(SparseArrays.nnz(ybus.data)) and " *
+            "$(SparseArrays.nnz(other.data)) entries; an in-place modification needs one pattern.",
+        )
+    end
+    _check_arc_admittance_pattern(
         ybus.arc_admittance_from_to,
         other.arc_admittance_from_to,
     )
-    _check_arc_admittance_pattern!(
+    _check_arc_admittance_pattern(
         ybus.arc_admittance_to_from,
         other.arc_admittance_to_from,
     )
@@ -925,108 +899,35 @@ end
     apply_ybus_modification!(ybus::Ybus, mod::NetworkModification)
 
 Add `mod`'s arc and shunt admittance deltas into `ybus` in place: the bus admittance matrix and,
-when present, both arc admittance matrices. The sparsity pattern never changes, so a
+when present, both arc admittance matrices. The result is bitwise equal to
+`ybus.data + compute_ybus_delta(ybus, mod)`. The sparsity pattern never changes, so a
 factorization's symbolic analysis stays valid; an entry outside the pattern raises an error.
 Undo exactly with [`restore_ybus_modification!`](@ref).
 
-Because the in-place delta is accumulated in Float32 (`YBUS_ELTYPE`) arithmetic, a set of
-per-entry deltas that would cancel exactly in higher precision can leave a one-ulp residue in
-the stored entry. Callers that need an islanded bus to read exact zero must write the zero
-explicitly after applying the modification.
+The pattern check is by stored-entry count (`nnz`) only; callers that need an islanded bus to
+read exact zero must write the zero explicitly after applying the modification.
 """
 function apply_ybus_modification!(ybus::Ybus, mod::NetworkModification)
     bus_lookup = get_bus_lookup(ybus)
     arc_ax = get_arc_axis(get_network_reduction_data(ybus))
     Y = ybus.data
     Y_nz = SparseArrays.nonzeros(Y)
-    data_delta = zeros(YBUS_ELTYPE, length(Y_nz))
+
+    d = compute_ybus_delta(ybus, mod)
+    d_rows = SparseArrays.rowvals(d)
+    d_nz = SparseArrays.nonzeros(d)
+    for col in 1:size(d, 2)
+        for k in SparseArrays.nzrange(d, col)
+            Y_nz[_stored_index(Y, d_rows[k], col)] += d_nz[k]
+        end
+    end
 
     for m in mod.arc_modifications
         arc = arc_ax[m.arc_index]
         f_ix = bus_lookup[arc[1]]
         t_ix = bus_lookup[arc[2]]
-        data_delta[_stored_index(Y, f_ix, f_ix)] += m.delta_y11
-        data_delta[_stored_index(Y, f_ix, t_ix)] += m.delta_y12
-        data_delta[_stored_index(Y, t_ix, f_ix)] += m.delta_y21
-        data_delta[_stored_index(Y, t_ix, t_ix)] += m.delta_y22
-    end
-    for s in mod.shunt_modifications
-        data_delta[_stored_index(Y, s.bus_index, s.bus_index)] += s.delta_y
-    end
-    for p in eachindex(data_delta)
-        Y_nz[p] += data_delta[p]
-    end
-
-    _apply_arc_admittance_deltas!(ybus, mod)
-    return
-end
-
-function _apply_arc_matrix_delta!(
-    ::Nothing,
-    ::Nothing,
-    ::Tuple{Int, Int},
-    ::Int,
-    ::Int,
-    ::YBUS_ELTYPE,
-    ::YBUS_ELTYPE,
-)
-    return
-end
-
-function _apply_arc_matrix_delta!(
-    work::ArcAdmittanceMatrix,
-    base::ArcAdmittanceMatrix,
-    arc::Tuple{Int, Int},
-    f_ix::Int,
-    t_ix::Int,
-    d_f::YBUS_ELTYPE,
-    d_t::YBUS_ELTYPE,
-)
-    row = get_arc_lookup(work)[arc]
-    work_nz = SparseArrays.nonzeros(work.data)
-    work_nz[_stored_index(work.data, row, f_ix)] += d_f
-    work_nz[_stored_index(work.data, row, t_ix)] += d_t
-    return
-end
-
-function _apply_arc_matrix_delta!(
-    ::Nothing,
-    base::ArcAdmittanceMatrix,
-    arc::Tuple{Int, Int},
-    f_ix::Int,
-    t_ix::Int,
-    d_f::YBUS_ELTYPE,
-    d_t::YBUS_ELTYPE,
-)
-    return error(
-        "Arc-admittance mismatch: the working Ybus has no arc matrices, but the base Ybus " *
-        "has an arc matrix for arc $(arc).",
-    )
-end
-
-function _apply_arc_matrix_delta!(
-    work::ArcAdmittanceMatrix,
-    ::Nothing,
-    arc::Tuple{Int, Int},
-    f_ix::Int,
-    t_ix::Int,
-    d_f::YBUS_ELTYPE,
-    d_t::YBUS_ELTYPE,
-)
-    return error(
-        "Arc-admittance mismatch: the working Ybus has an arc matrix for arc $(arc), but the " *
-        "base Ybus has none.",
-    )
-end
-
-function _apply_arc_admittance_deltas!(ybus::Ybus, mod::NetworkModification)
-    bus_lookup = get_bus_lookup(ybus)
-    arc_ax = get_arc_axis(get_network_reduction_data(ybus))
-    for m in mod.arc_modifications
-        arc = arc_ax[m.arc_index]
-        f_ix = bus_lookup[arc[1]]
-        t_ix = bus_lookup[arc[2]]
-        _apply_arc_matrix_delta!(
+        _foreach_arc_row_entry(
+            (A, _, p, delta) -> (SparseArrays.nonzeros(A)[p] += delta),
             ybus.arc_admittance_from_to,
             ybus.arc_admittance_from_to,
             arc,
@@ -1035,7 +936,8 @@ function _apply_arc_admittance_deltas!(ybus::Ybus, mod::NetworkModification)
             m.delta_y11,
             m.delta_y12,
         )
-        _apply_arc_matrix_delta!(
+        _foreach_arc_row_entry(
+            (A, _, p, delta) -> (SparseArrays.nonzeros(A)[p] += delta),
             ybus.arc_admittance_to_from,
             ybus.arc_admittance_to_from,
             arc,

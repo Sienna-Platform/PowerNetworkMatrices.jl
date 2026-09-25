@@ -561,7 +561,7 @@ end
         apply_ybus_modification!(work, mod)
         @test SparseArrays.getcolptr(work.data) == colptr
         @test SparseArrays.rowvals(work.data) == rowval
-        @test isapprox(work.data, apply_ybus_modification(base, mod); atol = 1e-6)
+        @test work.data == apply_ybus_modification(base, mod)
         restore_ybus_modification!(work, base, mod)
         @test SparseArrays.nonzeros(work.data) == SparseArrays.nonzeros(base.data)
         @test SparseArrays.nonzeros(work.arc_admittance_from_to.data) ==
@@ -569,6 +569,40 @@ end
         @test SparseArrays.nonzeros(work.arc_admittance_to_from.data) ==
               SparseArrays.nonzeros(base.arc_admittance_to_from.data)
     end
+end
+
+@testset "apply_ybus_modification! accumulates a multi-branch bus-1 outage exactly" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    base = Ybus(sys; make_arc_admittance_matrices = true)
+    work = Ybus(sys; make_arc_admittance_matrices = true)
+    vptdf = VirtualPTDF(sys)
+    bus1 = first(b for b in get_components(PSY.ACBus, sys) if PSY.get_number(b) == 1)
+    bus1_lines = [
+        br for br in get_components(PSY.Line, sys) if
+        PSY.get_from(PSY.get_arc(br)) == bus1 ||
+        PSY.get_to(PSY.get_arc(br)) == bus1
+    ]
+    @test length(bus1_lines) == 3
+
+    outage = PSY.FixedForcedOutage(; outage_status = 1.0)
+    for br in bus1_lines
+        PSY.add_supplemental_attribute!(sys, br, outage)
+    end
+    mod = NetworkModification(vptdf, sys, outage)
+    apply_ybus_modification!(work, mod)
+    @test work.data == apply_ybus_modification(base, mod)
+
+    # Variant that also removes a FixedAdmittance at bus 1.
+    shunt_bus = first(b for b in get_components(PSY.ACBus, sys) if PSY.get_number(b) == 1)
+    shunt = PSY.FixedAdmittance("Bus1Shunt", true, shunt_bus, 0.0 + 0.1im)
+    PSY.add_component!(sys, shunt)
+    PSY.add_supplemental_attribute!(sys, shunt, outage)
+    base2 = Ybus(sys; make_arc_admittance_matrices = true)
+    work2 = Ybus(sys; make_arc_admittance_matrices = true)
+    vptdf2 = VirtualPTDF(sys)
+    mod2 = NetworkModification(vptdf2, sys, outage)
+    apply_ybus_modification!(work2, mod2)
+    @test work2.data == apply_ybus_modification(base2, mod2)
 end
 
 @testset "apply_ybus_modification! empties a fully outaged arc's admittance rows" begin
@@ -583,7 +617,7 @@ end
     for (w, b) in ((work.arc_admittance_from_to, base.arc_admittance_from_to),
         (work.arc_admittance_to_from, base.arc_admittance_to_from))
         row = PNM.get_arc_lookup(w)[arc]
-        @test all(v -> abs(v) < 1e-5, w.data[row, :])
+        @test iszero(w.data[row, :])
         for r in axes(w.data, 1)
             r == row && continue
             @test w.data[r, :] == b.data[r, :]
@@ -616,6 +650,13 @@ end
     add_supplemental_attribute!(sys, shunt, outage)
     mod = NetworkModification(vptdf, sys, outage)
     apply_ybus_modification!(work, mod)
+
+    set_available!(shunt, false)
+    ybus_ref = Ybus(sys)
+    set_available!(shunt, true)
+    @test work.data == ybus_ref.data
+    @test work.data != base.data
+
     restore_ybus_modification!(work, base, mod)
     @test SparseArrays.nonzeros(work.data) == SparseArrays.nonzeros(base.data)
     @test SparseArrays.nonzeros(work.arc_admittance_from_to.data) ==
@@ -632,7 +673,7 @@ end
     line = get_component(Line, sys, "1")
     mod = NetworkModification(vptdf, line)
     apply_ybus_modification!(work, mod)
-    @test isapprox(work.data, apply_ybus_modification(base, mod); atol = 1e-6)
+    @test work.data == apply_ybus_modification(base, mod)
     restore_ybus_modification!(work, base, mod)
     @test SparseArrays.nonzeros(work.data) == SparseArrays.nonzeros(base.data)
 end
@@ -668,8 +709,16 @@ end
     base = Ybus(sys; make_arc_admittance_matrices = true)
     work = Ybus(sys; make_arc_admittance_matrices = true)
     vptdf = VirtualPTDF(sys)
+    arc = PNM.get_arc_tuple(l1)
+    bus_lookup = PNM.get_bus_lookup(work)
+    f_ix = bus_lookup[arc[1]]
     mod = NetworkModification(vptdf, l1)
     apply_ybus_modification!(work, mod)
+    @test work.data == apply_ybus_modification(base, mod)
+    @test work.data != base.data
+    row = PNM.get_arc_lookup(work.arc_admittance_from_to)[arc]
+    @test !iszero(work.arc_admittance_from_to.data[row, f_ix])
+
     restore_ybus_modification!(work, base, mod)
     @test SparseArrays.nonzeros(work.data) == SparseArrays.nonzeros(base.data)
     @test SparseArrays.nonzeros(work.arc_admittance_from_to.data) ==

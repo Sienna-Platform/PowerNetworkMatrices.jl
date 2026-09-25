@@ -139,14 +139,8 @@ function union_sets!(uf::Vector{Int}, x::Int, y::Int)
     end
 end
 
-# A stored entry holding exact zero is no edge: callers that remove an edge in place keep the
-# sparsity pattern fixed and write zero instead of deleting the entry. Zeros are assumed
-# symmetric — both (i, j) and (j, i) are zero — because the matrix is used as an undirected
-# adjacency; `_repair_merged_adjacencies!` enforces this for reduced Ybus matrices. A
-# reduced off-diagonal that sums to a stored zero (e.g. a series capacitor cancelling a
-# line) is therefore treated as no edge here; that is an accepted S1 behavior change because
-# PTSA's working Ybus is not reduced. A consequence is that a bus whose own diagonal is
-# zero and that has exactly one non-zero off-diagonal neighbor counts as islanded.
+# In-place edits write exact zeros instead of deleting entries; the built Ybus is
+# `dropzeros!`-ed, so a stored zero is no edge. Zeros are assumed symmetric.
 _live_entry_count(vals::AbstractVector, r::AbstractUnitRange{Int}) =
     count(j -> !iszero(vals[j]), r)
 
@@ -268,14 +262,6 @@ a the ABA or Adjacency Matrix.
 - `subnetwork_algorithm::Function`:
         algorithm for computing subnetworks. Valid options are iterative_union_find (default) and depth_first_search
 
-# Notes
-A stored exact-zero entry is treated as no edge. This matches consumers that partition
-on a non-reduced `Ybus.data` matrix. A reduced off-diagonal that sums to exact zero
-(e.g. a series capacitor cancelling a line) would also be treated as no edge here; the
-`_repair_merged_adjacencies!` path re-imposes such an edge on the signed adjacency used by
-reduction algorithms, but that adjacency is not passed to this function. A bus whose own
-diagonal is zero and that has exactly one non-zero off-diagonal neighbor is reported as an
-island because `_live_entry_count` sees only one live entry.
 """
 function find_subnetworks(
     M::SparseArrays.SparseMatrixCSC,
