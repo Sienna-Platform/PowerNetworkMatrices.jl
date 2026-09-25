@@ -166,8 +166,9 @@ power flow analysis, sensitivity calculations, and linear power system studies.
         Mapping from reference bus numbers to their corresponding subnetwork axes
 - `ref_bus_position::Vector{Int}`:
         Vector containing the original indices of reference buses before matrix reduction
-- `K::F <: Union{Nothing, KLULinSolveCache{Float64}}`:
-        Optional KLU factorization object for efficient linear system solving. Nothing if unfactorized
+- `K::F <: Union{Nothing, KLULinSolveCache{Float64, Int64}, AAFactorCache}`:
+        Optional factorization: a `KLULinSolveCache{Float64, Int64}` (KLU) or `AAFactorCache`
+        (AppleAccelerate), per the constructor's `linear_solver`; `nothing` if unfactorized
 - `branch_catalog::BranchCatalog`:
         Container for network reduction information applied during matrix construction
 
@@ -186,7 +187,7 @@ power flow analysis, sensitivity calculations, and linear power system studies.
 struct ABA_Matrix{
     Ax <: NTuple{2, Vector},
     L <: NTuple{2, Dict},
-    F <: Union{Nothing, KLULinSolveCache{Float64, Int64}},
+    F <: Union{Nothing, KLULinSolveCache{Float64, Int64}, AAFactorCache},
 } <: PowerNetworkMatrix{Float64}
     data::SparseArrays.SparseMatrixCSC{Float64, Int}
     axes::Ax
@@ -217,10 +218,13 @@ for DC power flow analysis and power system sensitivity studies.
 
 # Keyword Arguments
 - `factorize::Bool = false`:
-        Whether to perform KLU factorization during construction for efficient linear system solving
+        Whether to perform factorization during construction for efficient linear system solving
+- `linear_solver::String = "KLU"`:
+        Backend for the factorization when `factorize = true`: "KLU" or "AppleAccelerateLU"
+        (macOS 15.5+). Other values raise an error. `LODF(A, ABA, BA)` requires "KLU".
 - `network_reductions::Vector{NetworkReduction} = NetworkReduction[]`:
         Vector of network reduction algorithms to apply before matrix construction
-- `include_constant_impedance_loads::Bool=true`: 
+- `include_constant_impedance_loads::Bool=true`:
         Whether to include constant impedance loads as shunt admittances in the network model
 - `subnetwork_algorithm=iterative_union_find`:
         Algorithm used for identifying electrical islands and connected components
@@ -230,7 +234,7 @@ for DC power flow analysis and power system sensitivity studies.
 - `ABA_Matrix`: The constructed ABA matrix structure containing:
   - Bus susceptance matrix data (excluding reference buses)
   - Network topology information and reference bus positions
-  - Optional KLU factorization for efficient solving
+  - Optional factorization for efficient solving
 
 # Mathematical Process
 1. **Ybus Construction**: Creates admittance matrix from system data
@@ -238,7 +242,7 @@ for DC power flow analysis and power system sensitivity studies.
 3. **BA Matrix**: Forms branch susceptance weighted incidence matrix
 4. **ABA Computation**: Calculates A^T * B * A (bus susceptance matrix)
 5. **Reference Bus Removal**: Excludes reference buses for invertibility
-6. **Optional Factorization**: Performs KLU decomposition if requested
+6. **Optional Factorization**: Performs the factorization with the selected backend if requested
 
 # Notes
 - Reference buses are automatically detected and excluded from the final matrix
@@ -248,6 +252,7 @@ for DC power flow analysis and power system sensitivity studies.
 """
 function ABA_Matrix(sys::PSY.System;
     factorize::Bool = false,
+    linear_solver::String = "KLU",
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
     kwargs...,
 )
@@ -256,11 +261,11 @@ function ABA_Matrix(sys::PSY.System;
         network_reductions = network_reductions,
         kwargs...,
     )
-    return ABA_Matrix(ymatrix; factorize = factorize)
+    return ABA_Matrix(ymatrix; factorize = factorize, linear_solver = linear_solver)
 end
 
 """
-    ABA_Matrix(ybus::Ybus; factorize::Bool = false)
+    ABA_Matrix(ybus::Ybus; factorize::Bool = false, linear_solver::String = "KLU")
 
 Construct an ABA_Matrix from a Ybus matrix by computing A^T * B * A where A is the
 incidence matrix and B is the branch susceptance matrix. The resulting matrix is fundamental
@@ -272,20 +277,23 @@ via the computed Ybus matrix.
 
 # Keyword Arguments
 - `factorize::Bool = false`:
-        Whether to perform KLU factorization during construction for efficient linear system solving
+        Whether to perform factorization during construction for efficient linear system solving
+- `linear_solver::String = "KLU"`:
+        Backend for the factorization when `factorize = true`: "KLU" or "AppleAccelerateLU"
+        (macOS 15.5+). Other values raise an error. `LODF(A, ABA, BA)` requires "KLU".
 
 # Returns
 - `ABA_Matrix`: The constructed ABA matrix structure containing:
   - Bus susceptance matrix data (excluding reference buses)
   - Network topology information and reference bus positions
-  - Optional KLU factorization for efficient solving
+  - Optional factorization for efficient solving
 
 # Mathematical Process
 1. **Incidence Matrix**: Computes bus-branch incidence matrix A (from Ybus matrix)
 2. **BA Matrix**: Forms branch susceptance weighted incidence matrix
 3. **ABA Computation**: Calculates A^T * B * A (bus susceptance matrix)
 4. **Reference Bus Removal**: Excludes reference buses for invertibility
-5. **Optional Factorization**: Performs KLU decomposition if requested
+5. **Optional Factorization**: Performs the factorization with the selected backend if requested
 
 # Notes
 - Reference buses are automatically detected and excluded from the final matrix
@@ -293,7 +301,8 @@ via the computed Ybus matrix.
 - Network reductions can dramatically improve computational efficiency for large systems
 - The resulting matrix supports PTDF, LODF, and other power system analysis calculations
 """
-function ABA_Matrix(ybus::Ybus; factorize::Bool = false)
+function ABA_Matrix(ybus::Ybus; factorize::Bool = false, linear_solver::String = "KLU")
+    solver = resolve_linear_solver(linear_solver)
     ref_bus_positions = get_ref_bus_position(ybus)
     A = IncidenceMatrix(ybus)
     BA = BA_Matrix(ybus)
@@ -302,7 +311,7 @@ function ABA_Matrix(ybus::Ybus; factorize::Bool = false)
     bus_ax_ref = make_ax_ref(axes[1])
     lookup = (bus_ax_ref, bus_ax_ref)
     if factorize
-        K = klu_factorize(ABA)
+        K = _create_factorization(solver, ABA)
     else
         K = nothing
     end
@@ -365,10 +374,10 @@ Check if an ABA_Matrix has been factorized (i.e., contains LU factorization matr
 # Returns
 - `Bool`: true if the matrix has been factorized, false otherwise
 """
-is_factorized(ABA::ABA_Matrix{Ax, L, Nothing}) where {Ax, L <: NTuple{2, Dict}} = false
 is_factorized(
-    ABA::ABA_Matrix{Ax, L, <:KLULinSolveCache{Float64, Int64}},
-) where {Ax, L <: NTuple{2, Dict}} = true
+    ABA::ABA_Matrix{Ax, L, Nothing},
+) where {Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} = false
+is_factorized(::ABA_Matrix) = true
 
 # get_index functions: BA_Matrix stores the transposed matrix, thus get index
 # must export values according to [branch, bus] indexing.

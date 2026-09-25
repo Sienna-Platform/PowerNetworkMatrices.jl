@@ -1,7 +1,7 @@
 const DC_ABA_Matrix_Factorized = ABA_Matrix{
     Tuple{Vector{Int64}, Vector{Int64}},
     Tuple{Dict{Int64, Int64}, Dict{Int64, Int64}},
-    KLULinSolveCache{Float64, Int64},
+    <:Union{KLULinSolveCache{Float64, Int64}, AAFactorCache},
 }
 const DC_ABA_Matrix_Unfactorized = ABA_Matrix{
     Tuple{Vector{Int64}, Vector{Int64}},

@@ -16,11 +16,12 @@ function _create_factorization(
 end
 
 function _create_factorization(
-    ::LinearSolverType,
+    solver::LinearSolverType,
     ::SparseArrays.SparseMatrixCSC{Float64, Int},
 )
     return error(
-        "Only KLU and AppleAccelerateLU solvers are supported for VirtualPTDF factorization.",
+        "Only KLU and AppleAccelerateLU solvers are supported for this factorization; " *
+        "got $(typeof(solver)).",
     )
 end
 

@@ -154,6 +154,20 @@ function _buildlodf(
     return error("Only KLU solver is implemented for this LODF construction path.")
 end
 
+function _buildlodf(
+    ::SparseArrays.SparseMatrixCSC{Int8, Int},
+    ::AAFactorCache,
+    ::SparseArrays.SparseMatrixCSC{Float64, Int},
+    ::Set{Int},
+    ::LinearSolverType,
+)
+    return error(
+        "LODF(A, ABA, BA) needs an ABA factorized with KLU; this ABA was factorized with " *
+        "AppleAccelerate. Build it with `ABA_Matrix(...; factorize = true, " *
+        "linear_solver = \"KLU\")`, or use `LODF(sys; linear_solver = \"AppleAccelerateLU\")`.",
+    )
+end
+
 function _calculate_LODF_matrix_KLU(
     a::SparseArrays.SparseMatrixCSC{Int8, Int},
     k::KLULinSolveCache{Float64},
@@ -432,9 +446,9 @@ efficient when the prerequisite matrices with factorization are already availabl
 
 # Keyword Arguments
 - `linear_solver::String = "KLU"`:
-        This constructor is intentionally KLU-only because `ABA.K` is always a
-        KLU factorization. The keyword is kept for API consistency; passing any
-        other value will error.
+        This constructor needs `ABA.K` to be a KLU factorization
+        (`ABA_Matrix(...; factorize = true, linear_solver = "KLU")`); an
+        AppleAccelerate-factorized ABA raises an error.
 - `tol::Float64 = eps()`:
         Sparsification tolerance for dropping small matrix elements
 
@@ -481,10 +495,9 @@ function LODF(
     linear_solver::String = "KLU",
     tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
 )
-    # NOTE: ABA.K is always a KLU factorization, so this constructor is
-    # KLU-only regardless of the `linear_solver` argument. The kwarg is kept
-    # for API consistency; passing anything other than "KLU" will error in
-    # `_buildlodf`.
+    # NOTE: this constructor needs `ABA.K` to be a KLU factorization; an
+    # AppleAccelerate-factorized ABA raises an error in `_buildlodf`
+    # regardless of the `linear_solver` argument passed here.
     if !(
         isequal(get_network_reduction_data(A), get_network_reduction_data(BA)) &&
         isequal(get_network_reduction_data(BA), get_network_reduction_data(ABA))
