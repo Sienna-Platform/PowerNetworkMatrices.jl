@@ -401,3 +401,43 @@ end
         @test length(PNM.find_subnetworks(B, [10, 20, 30]; subnetwork_algorithm = alg)) == 1
     end
 end
+
+@testset "all connectivity routines agree on stored exact zeros" begin
+    # Chain 1-2-3 whose 2-3 entries are stored but hold exact zero.
+    A = SparseArrays.sparse(
+        [1, 2, 1, 2, 3, 2, 3], [1, 1, 2, 2, 2, 3, 3], Int8[1, 1, 1, 1, 0, 0, 1], 3, 3)
+    lookup = Dict(10 => 1, 20 => 2, 30 => 3)
+    expected = Set([Set([10, 20]), Set([30])])
+    @test PNM.find_connected_components(A, lookup) == expected
+    for alg in (PNM.iterative_union_find, PNM.depth_first_search)
+        @test Set(
+            values(PNM.find_subnetworks(A, [10, 20, 30]; subnetwork_algorithm = alg)),
+        ) ==
+              expected
+    end
+    # Goderya: the 2x2 live block plus bus 3's diagonal is 5 reachable pairs, not all 9.
+    @test length(PNM._goderya(A)) == 5
+    B = copy(A)
+    B[3, 2] = 1
+    B[2, 3] = 1
+    @test length(PNM._goderya(B)) == 9
+    @test length(PNM.find_connected_components(B, lookup)) == 1
+end
+
+@testset "in-place zeroed Ybus off-diagonals island a bus for every routine" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    ybus = Ybus(sys)
+    Y = copy(ybus.data)
+    j = 1
+    nz = SparseArrays.nonzeros(Y)
+    for k in SparseArrays.nzrange(Y, j)
+        i = SparseArrays.rowvals(Y)[k]
+        i == j && continue
+        nz[PNM._stored_index(Y, i, j)] = zero(eltype(nz))
+        nz[PNM._stored_index(Y, j, i)] = zero(eltype(nz))
+    end
+    @test SparseArrays.nnz(Y) == SparseArrays.nnz(ybus.data)
+    bus_ax = PNM.get_bus_axis(ybus)
+    @test length(PNM.find_subnetworks(Y, bus_ax)) == 2
+    @test length(PNM.find_connected_components(Y, PNM.get_bus_lookup(ybus))) == 2
+end

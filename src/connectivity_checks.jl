@@ -2,7 +2,9 @@ function _goderya(ybus::SparseArrays.SparseMatrixCSC)
     node_count = size(ybus)[1]
     max_I = node_count^2
     I, J, val = SparseArrays.findnz(ybus)
-    T = SparseArrays.sparse(I, J, ones(Int, length(val)))
+    live = findall(!iszero, val)
+    T = SparseArrays.sparse(
+        I[live], J[live], ones(Int, length(live)), node_count, node_count)
     T_ = T * T
     for n in 1:(node_count - 1)
         I, _, _ = SparseArrays.findnz(T_)
@@ -84,7 +86,7 @@ function find_connected_components(sys::PSY.System)
 end
 
 # Group bus numbers into connected components of the graph whose edges are the
-# off-diagonal nonzeros of `M`.
+# off-diagonal entries of `M` holding a nonzero value.
 function find_connected_components(
     M::SparseArrays.SparseMatrixCSC,
     bus_lookup::Dict{Int64, Int64},
@@ -93,10 +95,11 @@ function find_connected_components(
     bus_decode = Dict(index => bus_number for (bus_number, index) in bus_lookup)
     uf = collect(1:n)
     rows = SparseArrays.rowvals(M)
+    vals = SparseArrays.nonzeros(M)
     for col in 1:n
         for k in SparseArrays.nzrange(M, col)
+            iszero(vals[k]) && continue
             row = rows[k]
-            # Any off-diagonal nonzero is an undirected edge; ignore self-loops.
             row != col && union_sets!(uf, col, row)
         end
     end
@@ -139,8 +142,11 @@ function union_sets!(uf::Vector{Int}, x::Int, y::Int)
     end
 end
 
-# In-place edits write exact zeros instead of deleting entries; the built Ybus is
-# `dropzeros!`-ed, so a stored zero is no edge. Zeros are assumed symmetric.
+# An edge is a stored entry holding a nonzero value; every routine in this file reads it
+# that way. In-place outage edits write exact zeros instead of deleting entries, and a
+# reduced Ybus can store a cancelled (zero) admittance: neither couples its buses. Topology
+# that must survive a cancellation lives in `adjacency_data` (±1, see
+# `_repair_merged_adjacencies!`). Zeros are assumed symmetric.
 _live_entry_count(vals::AbstractVector, r::AbstractUnitRange{Int}) =
     count(j -> !iszero(vals[j]), r)
 

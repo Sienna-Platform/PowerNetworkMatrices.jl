@@ -1355,7 +1355,9 @@ end
 # in-place merge (`_merge_ybus_buses!`) and the fused pure-merge rebuild so the two paths
 # cannot drift. A merged off-diagonal can sum to a stored zero (e.g. a series capacitor
 # cancelling a line of equal magnitude), but that still marks a real edge between the buses,
-# so it must produce an adjacency entry; do not drop those zeros.
+# so it must produce an adjacency entry; do not drop those zeros. The adjacency is topology;
+# value-based connectivity on `data` itself (see connectivity_checks.jl) correctly sees no
+# coupling there.
 function _repair_merged_adjacencies!(
     adjacency_data::SparseArrays.SparseMatrixCSC{Int8, Int},
     data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int},
