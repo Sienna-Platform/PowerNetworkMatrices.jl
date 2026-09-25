@@ -315,7 +315,9 @@ end
 The series-impedance multiplier `ict` prescribes for `circuit` at its present operating point.
 
 One method covers both arities: a transformer's tap and phase shift live on its
-`PSY.TransformerCircuit` regardless of winding count.
+`PSY.TransformerCircuit` regardless of winding count. The table's control mode selects its
+curve: a tap-ratio curve is read at `|tap|`, a phase-angle curve at `α`, both in the units
+PSY stores them (dimensionless, radians).
 """
 function _evaluate_correction_table(
     circuit::PSY.TransformerCircuit,
@@ -323,12 +325,17 @@ function _evaluate_correction_table(
 )
     mode = PSY.get_transformer_control_mode(ict)
     if mode == PSY.ImpedanceCorrectionTransformerControlMode.TAP_RATIO
-        x = abs(PSY.get_tap(circuit))
-    else
-        # The table's x-values are degrees; `α` is stored in radians.
-        x = rad2deg(PSY.get_α(circuit))
+        return _interpolate_correction_factor(
+            PSY.get_tap_ratio_correction_curve(ict),
+            abs(PSY.get_tap(circuit)),
+        )
+    elseif mode == PSY.ImpedanceCorrectionTransformerControlMode.PHASE_SHIFT_ANGLE
+        return _interpolate_correction_factor(
+            PSY.get_phase_angle_correction_curve(ict),
+            PSY.get_α(circuit),
+        )
     end
-    return _interpolate_correction_factor(PSY.get_impedance_correction_curve(ict), x)
+    error("unhandled ImpedanceCorrectionTransformerControlMode $mode")
 end
 
 # `WindingCategory` encodes the winding position directly (`TR2W_WINDING = 0`, then

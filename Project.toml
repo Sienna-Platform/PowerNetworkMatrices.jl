@@ -29,7 +29,7 @@ MKLPardisoExt = "Pardiso"
 
 [sources]
 InfrastructureSystems = {url = "https://github.com/Sienna-Platform/InfrastructureSystems.jl.git", rev = "IS4"}
-PowerSystems = {url = "https://github.com/Sienna-Platform/PowerSystems.jl.git", rev = "psy6"}
+PowerSystems = {url = "https://github.com/Sienna-Platform/PowerSystems.jl.git", rev = "ac/fixed-quantity-fields"}
 # PSY's own [sources] pins for these are ignored once PSY is a dependency rather than the
 # root project, so PNM needs its own pins for every unregistered OpenAPI package PSY depends
 # on. A `[sources]` entry is only honored when the package is also in `[deps]` — an `[extras]`
@@ -38,13 +38,13 @@ PowerSystems = {url = "https://github.com/Sienna-Platform/PowerSystems.jl.git", 
 # PowerOpenAPIModels umbrella, and [sources] are not inherited transitively, so this env must
 # pin them itself.
 # Branch pins until the OpenAPI packages are registered and the psy6-line branches merge.
-PowerCoreOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "main", subdir = "PowerCoreOpenAPIModels.jl"}
-InfrastructureTimeSeriesOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "main", subdir = "InfrastructureTimeSeriesOpenAPIModels.jl"}
-InfrastructureCoreOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "main", subdir = "InfrastructureCoreOpenAPIModels.jl"}
-PowerDynamicsOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "main", subdir = "PowerDynamicsOpenAPIModels.jl"}
-PowerInvestmentsOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "main", subdir = "PowerInvestmentsOpenAPIModels.jl"}
-PowerOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "main", subdir = "PowerOpenAPIModels.jl"}
-PowerOperationsOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "main", subdir = "PowerOperationsOpenAPIModels.jl"}
+PowerCoreOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "ac/fixed-quantity-fields", subdir = "PowerCoreOpenAPIModels.jl"}
+InfrastructureTimeSeriesOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "ac/fixed-quantity-fields", subdir = "InfrastructureTimeSeriesOpenAPIModels.jl"}
+InfrastructureCoreOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "ac/fixed-quantity-fields", subdir = "InfrastructureCoreOpenAPIModels.jl"}
+PowerDynamicsOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "ac/fixed-quantity-fields", subdir = "PowerDynamicsOpenAPIModels.jl"}
+PowerInvestmentsOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "ac/fixed-quantity-fields", subdir = "PowerInvestmentsOpenAPIModels.jl"}
+PowerOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "ac/fixed-quantity-fields", subdir = "PowerOpenAPIModels.jl"}
+PowerOperationsOpenAPIModels = {url = "https://github.com/Sienna-Platform/PowerOpenAPIModels.git", rev = "ac/fixed-quantity-fields", subdir = "PowerOperationsOpenAPIModels.jl"}
 
 [compat]
 DataStructures = "^0.19"

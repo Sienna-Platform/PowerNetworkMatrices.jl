@@ -349,7 +349,7 @@ end
     curve = IS.PiecewiseLinearData([(x = 0.5, y = 1.5), (x = 1.5, y = 1.5)])
     ict = ImpedanceCorrectionData(;
         table_number = 1,
-        impedance_correction_curve = curve,
+        tap_ratio_correction_curve = curve,
         transformer_winding = WindingCategory.PRIMARY_WINDING,
         transformer_control_mode = ImpedanceCorrectionTransformerControlMode.TAP_RATIO,
     )
@@ -362,12 +362,34 @@ end
     tr3 = first(get_components(ThreeWindingTransformer, sys3))
     bad = ImpedanceCorrectionData(;
         table_number = 99,
-        impedance_correction_curve = curve,
+        tap_ratio_correction_curve = curve,
         transformer_winding = WindingCategory.TR2W_WINDING,
         transformer_control_mode = ImpedanceCorrectionTransformerControlMode.TAP_RATIO,
     )
     add_supplemental_attribute!(sys3, tr3, bad)
     @test_throws ErrorException Ybus(sys3)
+end
+
+@testset "impedance correction: phase-angle tables read α in radians" begin
+    sys = deepcopy(build_system(PSITestSystems, "c_sys14"))
+    tr = first(get_components(TwoWindingTransformer, sys))
+    set_α!(get_circuit(tr), 0.1)
+    # Linear from 1.2 at -0.2 rad to 1.6 at 0.2 rad, so α = 0.1 rad sits at 1.5. Reading the
+    # curve at α in degrees (5.73) would clamp to the 1.6 end instead.
+    ict = ImpedanceCorrectionData(;
+        table_number = 1,
+        phase_angle_correction_curve = IS.PiecewiseLinearData([
+            (x = -0.2, y = 1.2),
+            (x = 0.2, y = 1.6),
+        ]),
+        transformer_winding = WindingCategory.TR2W_WINDING,
+        transformer_control_mode =
+        ImpedanceCorrectionTransformerControlMode.PHASE_SHIFT_ANGLE,
+    )
+    @test PNM._evaluate_correction_table(get_circuit(tr), ict) ≈ 1.5
+    add_supplemental_attribute!(sys, tr, ict)
+    nr = get_network_reduction_data(Ybus(sys))
+    @test PNM._impedance_correction_factor(tr, nr) ≈ 1.5
 end
 
 @testset "impedance correction: the nr contract" begin
@@ -380,7 +402,7 @@ end
         tr,
         ImpedanceCorrectionData(;
             table_number = 1,
-            impedance_correction_curve = IS.PiecewiseLinearData([
+            tap_ratio_correction_curve = IS.PiecewiseLinearData([
                 (x = 0.5, y = 1.5),
                 (x = 1.5, y = 1.5),
             ]),
