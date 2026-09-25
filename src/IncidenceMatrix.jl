@@ -18,7 +18,7 @@ each row corresponds to a branch and each column corresponds to a bus. Elements 
         Tuple of dictionaries providing fast lookup from arc/bus identifiers to matrix indices
 - `subnetwork_axes::Dict{Int, Ax}`:
         Mapping from reference bus numbers to their corresponding subnetwork axes
-- `network_reduction_data::NetworkReductionData`:
+- `branch_catalog::BranchCatalog`:
         Container for network reduction information applied during matrix construction
 
 # Mathematical Properties
@@ -46,14 +46,14 @@ struct IncidenceMatrix{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
     axes::Ax
     lookup::L
     subnetwork_axes::Dict{Int, Ax}
-    network_reduction_data::NetworkReductionData
+    branch_catalog::BranchCatalog
 end
 
 # functions to get stored data
 get_axes(M::IncidenceMatrix) = M.axes
 get_lookup(M::IncidenceMatrix) = M.lookup
 get_ref_bus(M::IncidenceMatrix) = sort!(collect(keys(M.subnetwork_axes)))
-get_network_reduction_data(M::IncidenceMatrix) = M.network_reduction_data
+get_branch_catalog(M::IncidenceMatrix) = M.branch_catalog
 get_arc_axis(M::IncidenceMatrix) = M.axes[1]
 get_arc_lookup(M::IncidenceMatrix) = M.lookup[1]
 get_bus_axis(M::IncidenceMatrix) = M.axes[2]
@@ -178,7 +178,7 @@ structure already captured in the Ybus matrix.
 - Essential for creating downstream matrices like BA_Matrix and ABA_Matrix from existing Ybus
 """
 function IncidenceMatrix(ybus::Ybus)
-    nr = ybus.network_reduction_data
+    nr = get_network_reduction_data(ybus)
     bus_ax = get_bus_axis(ybus)
     bus_lookup = ybus.lookup[1]
     arc_ax = get_arc_axis(nr)
@@ -210,7 +210,7 @@ function IncidenceMatrix(ybus::Ybus)
         axes,
         lookup,
         subnetwork_axes,
-        ybus.network_reduction_data,
+        get_branch_catalog(ybus),
     )
 end
 

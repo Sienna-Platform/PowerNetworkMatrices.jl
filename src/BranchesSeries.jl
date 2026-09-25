@@ -1,17 +1,50 @@
-mutable struct BranchesSeries <: PSY.ACTransmission
-    branches::Dict{DataType, Vector{<:PSY.ACTransmission}}
-    needs_insertion_order::Bool
+mutable struct BranchesSeries <: AbstractReductionAggregate
+    branches::Dict{DataType, Vector{PSY.ACTransmission}}
     insertion_order::Vector{Tuple{DataType, Int}}
     segment_orientations::Vector{Symbol}
-    equivalent_ybus::Union{Matrix{YBUS_ELTYPE}, Nothing}
+    # The chain's endpoints in original bus numbers, remapped with `nr` on read. A chain can be
+    # a member of a parallel group, where orientation is resolved against the group's frame.
+    arc_key::Tuple{Int, Int}
+    equivalent_ybus::CACHED_TWO_PORT
+    equivalent_ybus_populated::Bool
+
+    function BranchesSeries(
+        branches::Dict{DataType, Vector{PSY.ACTransmission}},
+        insertion_order::Vector{Tuple{DataType, Int}},
+        segment_orientations::Vector{Symbol},
+        arc_key::Tuple{Int, Int},
+        equivalent_ybus::CACHED_TWO_PORT,
+        equivalent_ybus_populated::Bool,
+    )
+        n_members = sum(length, values(branches); init = 0)
+        if length(insertion_order) != n_members
+            error(
+                "BranchesSeries on arc $arc_key: $n_members member(s) but " *
+                "$(length(insertion_order)) insertion_order entries. Build chains with " *
+                "BranchesSeries(arc_key) and add_branch!.",
+            )
+        end
+        return new(
+            branches,
+            insertion_order,
+            segment_orientations,
+            arc_key,
+            equivalent_ybus,
+            equivalent_ybus_populated,
+        )
+    end
 end
 
-BranchesSeries() = BranchesSeries(
-    Dict{DataType, Vector{<:PSY.ACTransmission}}(),
-    false,
+# More than one key means a chain mixing branch types.
+_has_mixed_types(bs::BranchesSeries) = length(bs.branches) > 1
+
+BranchesSeries(arc_key::Tuple{Int, Int}) = BranchesSeries(
+    Dict{DataType, Vector{PSY.ACTransmission}}(),
     Vector{Tuple{DataType, Int}}(),
     Vector{Symbol}(),
-    nothing,
+    arc_key,
+    EMPTY_TWO_PORT,
+    false,
 )
 
 function add_branch!(
@@ -19,107 +52,143 @@ function add_branch!(
     branch::T,
     orientation,
 ) where {T <: PSY.ACTransmission}
+    invalidate_equivalent_ybus!(bs)
     push!(bs.segment_orientations, orientation)
-    if isempty(bs.branches)
-        # add the branch just once and return
-        push!(get!(bs.branches, T, Vector{T}()), branch)
-        return
-    end
-
-    if haskey(bs.branches, T) && !bs.needs_insertion_order
-        push!(bs.branches[T], branch)
-    elseif !haskey(bs.branches, T) && isempty(bs.insertion_order)
-        bs.needs_insertion_order = true
-        @assert length(keys(bs.branches)) == 1
-        for (existing_type, existing_branches) in bs.branches
-            for i in eachindex(existing_branches)
-                push!(bs.insertion_order, (existing_type, i))
-            end
-        end
-        push!(get!(bs.branches, T, Vector{T}()), branch)
-        push!(bs.insertion_order, (T, 1))
-    elseif !haskey(bs.branches, T) && !isempty(bs.insertion_order)
-        push!(get!(bs.branches, T, Vector{T}()), branch)
-        push!(bs.insertion_order, (T, length(bs.branches[T])))
-    else
-        push!(bs.branches[T], branch)
-        push!(bs.insertion_order, (T, length(bs.branches[T])))
-    end
+    members = get!(() -> Vector{PSY.ACTransmission}(), bs.branches, T)
+    push!(members, branch)
+    push!(bs.insertion_order, (T, length(members)))
     return
 end
 
-# Iteration support
-function Base.iterate(bs::BranchesSeries)
-    if isempty(bs.branches)
+# Integer position over `insertion_order` keeps chain sums inferable.
+function Base.iterate(bs::BranchesSeries, position::Int = 1)
+    if position > length(bs.insertion_order)
         return nothing
     end
-
-    # Single key case - iterate over the single vector directly
-    if bs.needs_insertion_order
-        # Multi-key case - use insertion_order
-        if isempty(bs.insertion_order)
-            return nothing
-        end
-
-        type, idx = bs.insertion_order[1]
-        branch = bs.branches[type][idx]
-        return (branch, (1, nothing))
-    else
-        single_vector = first(values(bs.branches))
-        if isempty(single_vector)
-            return nothing
-        end
-        return (single_vector[1], (1, single_vector))
-    end
+    type, idx = bs.insertion_order[position]
+    return (bs.branches[type][idx], position + 1)
 end
 
-function Base.iterate(bs::BranchesSeries, state)
-    position, vector_cache = state
-
-    if bs.needs_insertion_order
-        # Multi-key iteration using insertion_order
-        next_position = position + 1
-        if next_position > length(bs.insertion_order)
-            return nothing
-        end
-        type, idx = bs.insertion_order[next_position]
-        branch = bs.branches[type][idx]
-        return (branch, (next_position, nothing))
-    else
-        # Single key iteration
-        next_idx = position + 1
-        if next_idx > length(vector_cache)
-            return nothing
-        end
-        return (vector_cache[next_idx], (next_idx, vector_cache))
-    end
-end
-
-Base.length(bs::BranchesSeries) =
-    if bs.needs_insertion_order
-        length(bs.insertion_order)
-    else
-        sum(length(v) for v in values(bs.branches))
-    end
+Base.length(bs::BranchesSeries) = length(bs.insertion_order)
 
 Base.eltype(::Type{BranchesSeries}) = PSY.ACTransmission
 
-function get_series_susceptance(series_chain::BranchesSeries)
-    series_susceptances_sum = sum(inv(get_series_susceptance(x)) for x in series_chain)
-    total_susceptance = 1 / series_susceptances_sum
-    return total_susceptance
+# Chain segments can themselves be parallel groups, so this recurses through
+# `_is_phase_shifting(::AbstractBranchesParallel)` (BranchesParallel.jl).
+function _is_phase_shifting(bs::BranchesSeries)
+    return any(_is_phase_shifting, bs)
+end
+
+get_arc_key(bs::BranchesSeries) = bs.arc_key
+
+"""
+Per-segment orientation, in the chain's own iteration order, relative to its `arc_key`:
+`:FromTo` when the segment's arc runs along the chain's traversal direction, `:ToFrom` when
+it runs against it.
+
+Recorded by `add_branch!` while `_build_chain_segments!` walks the chain from `arc_key[1]` to
+`arc_key[2]`, so the vector is only meaningful in that frame. A caller holding an equivalent
+arc from elsewhere should use the two-argument method, which checks the frame.
+"""
+get_segment_orientations(bs::BranchesSeries) = bs.segment_orientations
+
+function _reverse_orientation(orientation::Symbol)
+    if orientation === :FromTo
+        return :ToFrom
+    elseif orientation === :ToFrom
+        return :FromTo
+    end
+    return error(
+        "Unknown segment orientation $orientation; expected :FromTo or :ToFrom.",
+    )
 end
 
 """
-    get_equivalent_rating(bs::BranchesSeries)
+Per-segment orientation of `bs` expressed relative to `equivalent_arc`, in the chain's own
+iteration order.
+
+`equivalent_arc` may be the chain's `arc_key` or its reverse. The reverse is a routine
+request, not an error: `DegreeTwoReduction` groups sibling chains that resolve to the same
+*unordered* endpoint pair into one `BranchesParallel` framed on the seed chain's key, so a
+sibling legitimately keeps the opposite key while consumers reach it through the group and
+hold only the group's frame. Reframing is well defined — traversing from the other endpoint
+flips every segment's relation to the traversal, so each orientation negates while the
+segment order is preserved, which is what callers zipping this against the chain's members
+require. This mirrors `_subset_two_port`, which transposes an anti-frame member rather than
+refusing it.
+
+Returns a fresh vector; the one-argument method exposes the stored field and must be treated
+as read-only.
+"""
+function get_segment_orientations(bs::BranchesSeries, equivalent_arc::Tuple{Int, Int})
+    key = get_arc_key(bs)
+    orientations = get_segment_orientations(bs)
+    equivalent_arc == key && return copy(orientations)
+    if equivalent_arc == reverse(key)
+        return [_reverse_orientation(o) for o in orientations]
+    end
+    return error(
+        "Chain orientations are recorded against arc $key, but were requested against " *
+        "$equivalent_arc, which is neither that arc nor its reverse.",
+    )
+end
+
+"""
+A chain's name is its arc, spelled `series_<from>_<to>`. See the `AbstractBranchesParallel`
+method (BranchesParallel.jl) for why the aggregate spells its own key and the catalog spells
+the indexed one.
+
+A nested chain keeps its own frame, so two siblings in one group can name themselves from
+opposite endpoint orders -- they are not indexed, and a nested chain's `arc_key` is a traversal
+frame rather than an identity.
+"""
+get_name(bs::BranchesSeries) = "series_$(bs.arc_key[1])_$(bs.arc_key[2])"
+
+function get_series_susceptance(
+    series_chain::BranchesSeries,
+    units::IS.AbstractUnitSystem,
+)
+    v = _series_susceptance_raw(series_chain, units)
+    isfinite(v) || _throw_non_finite_susceptance(series_chain, v)
+    return v
+end
+
+# Series segments add impedance. Reading a leaf's `tap * x` directly lets a zero-impedance
+# segment contribute exactly 0.0, with no transient `Inf` for the sum to absorb.
+_series_reactance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem) =
+    PSY.get_x(b, units)
+_series_reactance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem) =
+    _series_reactance(PSY.get_circuit(t), units)
+_series_reactance(w::ThreeWindingTransformerCircuit, units::IS.AbstractUnitSystem) =
+    _series_reactance(w.circuit, units)
+_series_reactance(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem) =
+    PSY.get_x(c, units) * PSY.get_tap(c)
+# A parallel group has no single reactance, so invert its susceptance sum; an all-zero
+# group gives `Inf` there and `inv(Inf) = 0.0` is the correct contribution.
+_series_reactance(seg::AbstractReductionAggregate, units::IS.AbstractUnitSystem) =
+    inv(_series_susceptance_raw(seg, units))
+
+function _series_susceptance_raw(
+    series_chain::BranchesSeries,
+    units::IS.AbstractUnitSystem,
+)::Float64
+    return 1 / sum(_series_reactance(x, units) for x in series_chain)
+end
+
+"""
+    get_equivalent_rating(bs::BranchesSeries) -> Union{Nothing, Float64}
 
 Calculate the rating for branches in series.
 Series chains can be composed of PSY.ACTransmission branches and parallel groups.
 For series circuits, the rating is limited by the weakest link: Rating_total = min(Rating1, Rating2, ..., Ratingn).
 Parallel members contribute their N-1 single-element-contingency rating.
+
+Members with no known rating (transformer circuits carry `rating::Union{Nothing, Float64}`)
+do not bind the minimum and are skipped; returns `nothing` only when no member has a known
+rating.
 """
 function get_equivalent_rating(bs::BranchesSeries)
-    return minimum(_series_member_rating(branch) for branch in bs)
+    return _aggregate_known_ratings(minimum, _series_member_rating, bs)
 end
 
 _series_member_rating(branch::PSY.ACTransmission) = get_equivalent_rating(branch)
@@ -130,7 +199,17 @@ _series_member_rating(branch::PSY.ACTransmission) = get_equivalent_rating(branch
 Return the rating for PSY.ACTransmission branches.
 """
 function get_equivalent_rating(bs::PSY.ACTransmission)
-    return PSY.get_rating(bs)
+    return PSY.get_rating(bs, PSY.CU)
+end
+
+"""
+    get_equivalent_rating(bs::PSY.TwoWindingTransformer) -> Union{Nothing, Float64}
+
+A `TwoWindingTransformer` has no parent rating (there is no `get_rating(::TwoWindingTransformer)`);
+the rating lives on its single winding and may be `nothing`. Mirrors `branch_flow_limits`.
+"""
+function get_equivalent_rating(bs::PSY.TwoWindingTransformer)
+    return PSY.get_rating(PSY.get_circuit(bs), PSY.CU)
 end
 
 """
@@ -139,18 +218,21 @@ end
 Rating is assumed to be max_flow for GenericArcImpedance.
 """
 function get_equivalent_rating(bs::PSY.GenericArcImpedance)
-    return PSY.get_max_flow(bs)
+    # Detached synthetic ward equivalent: read the stored value with device base.
+    return PSY.get_max_flow(bs, PSY.CU)
 end
 
 """
-    get_equivalent_emergency_rating(bs::BranchesSeries)
+    get_equivalent_emergency_rating(bs::BranchesSeries) -> Union{Nothing, Float64}
 
 Calculate the emergency rating for branches in series.
 For series circuits, the emergency rating is limited by the weakest link: Rating_total = min(Rating1, Rating2, ..., Ratingn)
+
+Members with no known rating do not bind the minimum and are skipped; returns `nothing` only
+when no member has a known rating (see [`get_equivalent_rating`](@ref)).
 """
 function get_equivalent_emergency_rating(bs::BranchesSeries)
-    # Minimum emergency rating for series branches (weakest link)
-    return minimum(get_equivalent_emergency_rating(branch) for branch in bs)
+    return _aggregate_known_ratings(minimum, get_equivalent_emergency_rating, bs)
 end
 
 """
@@ -159,13 +241,23 @@ end
 Return the emergency rating for PSY.ACTransmission branches.
 """
 function get_equivalent_emergency_rating(branch::PSY.ACTransmission)
-    if isnothing(PSY.get_rating_b(branch))
+    if isnothing(PSY.get_rating_b(branch, PSY.CU))
         @debug "Branch $(get_name(branch)) has no 'rating_b' defined. Post-contingency limit is going to be set using normal-operation rating.
             \n Consider including post-contingency limits using set_rating_b!()."
-        return PSY.get_rating(branch)
+        return PSY.get_rating(branch, PSY.CU)
     end
-    return PSY.get_rating_b(branch)
+    return PSY.get_rating_b(branch, PSY.CU)
 end
+
+"""
+    get_equivalent_emergency_rating(branch::PSY.TwoWindingTransformer) -> Union{Nothing, Float64}
+
+`TwoWindingTransformer` carries its ratings on the winding (no parent
+`get_rating`/`get_rating_b`); falls back to the winding's normal-operation rating when
+`rating_b` is unset. May return `nothing` when the winding has neither rating.
+"""
+get_equivalent_emergency_rating(branch::PSY.TwoWindingTransformer) =
+    _circuit_emergency_rating(PSY.get_circuit(branch), "Winding of $(PSY.get_name(branch))")
 
 """
     get_equivalent_emergency_rating(bs<:PSY.ACTransmission)
@@ -174,59 +266,17 @@ Return the emergency rating for PSY.GenericArcImpedance.
 """
 function get_equivalent_emergency_rating(branch::PSY.GenericArcImpedance)
     @debug "GenericArcImpedance $(get_name(branch)) has no emergency rating. Using max_flow as a proxy instead."
-    return PSY.get_max_flow(branch)
+    return PSY.get_max_flow(branch, PSY.CU)
 end
 
-"""
-    get_equivalent_available(bs::BranchesSeries)
-
-Get the availability status for series branches.
-All branches in series must be available for the series circuit to be available.
-"""
-function get_equivalent_available(bs::BranchesSeries)
-    # All branches must be available
-    return all(PSY.get_available(branch) for branch in bs)
-end
-
-PSY.get_available(bs::BranchesSeries) = get_equivalent_available(bs)
-
-"""
-    get_equivalent_α(bs::BranchesSeries)
-
-Get the phase angle shift for series branches.
-Returns the sum of phase angle shifts across all series branches.
-Returns 0.0 if branches don't support phase angle shift (e.g., lines).
-"""
-function get_equivalent_α(bs::BranchesSeries)
-    # Need to check how to develop this one
-end
-
-function add_to_map(series_circuit::BranchesSeries, filters::Dict)
-    if isempty(filters)
-        return true
+# Indexed only when EVERY segment is: a chain missing one is not a valid representation of
+# the path between its endpoints.
+# Recursive: might be nested, have BranchesParallel as link in degree 2 chain.
+function _entry_matches(chain::BranchesSeries, predicate)
+    if _has_mixed_types(chain) && !_is_unfiltered(predicate)
+        _warn_mixed_group("Series circuit", _get_segment_components(chain))
     end
-
-    if series_circuit.needs_insertion_order
-        if isempty(intersect(keys(series_circuit.branches), keys(filters)))
-            return true
-        end
-
-        @warn "Series circuit contains mixed branch types, filters might be applied to more components than intended. Use Logging.Debug for additional information."
-        @debug "Series circuit branch types: $(keys(series_circuit.branches))"
-        for (branch_type, branch_list) in series_circuit.branches
-            filter = get(filters, branch_type, x -> true)
-            for device in branch_list
-                if !filter(device)
-                    return false
-                end
-            end
-        end
-        return true
-    else
-        filter = get(filters, first(keys(series_circuit.branches)), x -> true)
-        return all([filter(device) for device in first(values(series_circuit.branches))])
-    end
-    error("Invalid condition reached in add_to_map for BranchesSeries")
+    return all(_entry_matches(segment, predicate)::Bool for segment in chain)
 end
 
 function Base.:(==)(a::BranchesSeries, b::BranchesSeries)
@@ -236,5 +286,3 @@ end
 function Base.show(io::IO, x::MIME{Symbol("text/plain")}, y::BranchesSeries)
     show(io, x, y.branches)
 end
-
-is_a_reduction(::BranchesSeries) = true

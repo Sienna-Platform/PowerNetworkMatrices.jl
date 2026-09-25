@@ -30,10 +30,10 @@ end
     M = Ybus(sys10)
     subnetworks_m = find_subnetworks(M)
     @test length(subnetworks_m) == 2
-    @test all([6, 1] .∈ keys(subnetworks_m))
+    @test issubset([6, 1], keys(subnetworks_m))
 
     subnetworks_sys = find_subnetworks(sys10)
-    @test all([4, 9] .∈ keys(subnetworks_sys))
+    @test issubset([4, 9], keys(subnetworks_sys))
 end
 
 @testset "Test find subnetworks" begin
@@ -130,7 +130,9 @@ end
     # The three construction paths are electrically equivalent but not bitwise identical:
     # each reduction leaves a different `valid_ix` ordering, so the factorization sums the
     # same terms in a different order and results drift by a few ULP. Compare with a
-    # tolerance -- exact `==` here makes the testset flaky against any reordering.
+    # tolerance -- exact `==` here makes the testset flaky against any reordering. The
+    # tolerance is absolute: many entries are physically zero, where a relative one
+    # says nothing.
     reduction_path_atol = 1e-10
     for i in ptdf_1.axes[1], j in ptdf_1.axes[2]
         @test isapprox(ptdf_1[j, i], ptdf_2[j, i]; atol = reduction_path_atol)
@@ -353,7 +355,8 @@ end
 @testset "get_ref_bus_position survives a ZIBR merge on the sibling matrix constructors" begin
     # Same fixture and defect class as the Ybus testset above, exercised through the other
     # PowerNetworkMatrix subtypes that share the generic get_ref_bus_position(M::PowerNetworkMatrix)
-    # method (PowerNetworkMatrix.jl): each must resolve the removed representative through
+    # method (PowerNetworkMatrix.jl) or delegate to the VirtualFactorCore equivalent
+    # (virtual_factor_core.jl): each must resolve the removed representative through
     # reverse_bus_search_map instead of throwing.
     #
     # LODF, VirtualLODF, and ArcAdmittanceMatrix are excluded here: they already throw

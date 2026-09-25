@@ -26,12 +26,12 @@ end
 
     for e in 1:n_arcs
         b_e = vmodf.arc_susceptances[e]
-        ctg_uuid = Base.UUID(UInt128(e))
+        ctg_id = e
         ctg = ContingencySpec(
-            ctg_uuid,
+            ctg_id,
             NetworkModification("outage_arc_$e", [ArcModification(e, -b_e)]),
         )
-        vmodf.contingency_cache[ctg_uuid] = ctg
+        vmodf.contingency_cache[ctg_id] = ctg
 
         for m in 1:n_arcs
             # Post-contingency PTDF from VirtualMODF
@@ -53,12 +53,12 @@ end
     # Register a manual contingency
     e = 1
     b_e = vmodf.arc_susceptances[e]
-    ctg_uuid = Base.UUID(UInt128(999))
+    ctg_id = 999
     ctg = ContingencySpec(
-        ctg_uuid,
+        ctg_id,
         NetworkModification("test_outage", [ArcModification(e, -b_e)]),
     )
-    vmodf.contingency_cache[ctg_uuid] = ctg
+    vmodf.contingency_cache[ctg_id] = ctg
 
     # Query by integer monitored index + ContingencySpec
     # Row length equals the number of buses in VirtualMODF's bus axis (non-reference buses)
@@ -82,12 +82,12 @@ end
 
     e = 1
     b_e = vmodf.arc_susceptances[e]
-    ctg_uuid = Base.UUID(UInt128(998))
+    ctg_id = 998
     ctg = ContingencySpec(
-        ctg_uuid,
+        ctg_id,
         NetworkModification("test_outage_tuple", [ArcModification(e, -b_e)]),
     )
-    vmodf.contingency_cache[ctg_uuid] = ctg
+    vmodf.contingency_cache[ctg_id] = ctg
 
     # Query using arc tuple
     arc_tuple = vmodf.axes[1][1]
@@ -111,12 +111,12 @@ end
     # Register a contingency and compute a row
     e = 1
     b_e = vmodf.arc_susceptances[e]
-    ctg_uuid = Base.UUID(UInt128(500))
+    ctg_id = 500
     ctg = ContingencySpec(
-        ctg_uuid,
+        ctg_id,
         NetworkModification("cache_test", [ArcModification(e, -b_e)]),
     )
-    vmodf.contingency_cache[ctg_uuid] = ctg
+    vmodf.contingency_cache[ctg_id] = ctg
 
     _ = vmodf[1, ctg]  # Triggers computation + caching
 
@@ -150,7 +150,7 @@ end
     # Test show on non-empty vmodf (register a contingency)
     e = 1
     b_e = vmodf.arc_susceptances[e]
-    ctg_uuid_show = Base.UUID(UInt128(9999))
+    ctg_uuid_show = 9999
     ctg_show = ContingencySpec(
         ctg_uuid_show,
         NetworkModification("show_test", [ArcModification(e, -b_e)]),
@@ -183,12 +183,12 @@ end
     # Register a single-arc full outage
     e = 1
     b_e = vmodf.arc_susceptances[e]
-    ctg_uuid = Base.UUID(UInt128(8888))
+    ctg_id = 8888
     ctg = ContingencySpec(
-        ctg_uuid,
+        ctg_id,
         NetworkModification("public_api_test", [ArcModification(e, -b_e)]),
     )
-    vmodf.contingency_cache[ctg_uuid] = ctg
+    vmodf.contingency_cache[ctg_id] = ctg
 
     # Verify all monitored arcs through the public getindex API
     for m in 1:n_arcs
@@ -210,12 +210,12 @@ end
 
     e = 1
     b_e = vmodf.arc_susceptances[e]
-    ctg_uuid = Base.UUID(UInt128(700))
+    ctg_id = 700
     ctg = ContingencySpec(
-        ctg_uuid,
+        ctg_id,
         NetworkModification("reuse_test", [ArcModification(e, -b_e)]),
     )
-    vmodf.contingency_cache[ctg_uuid] = ctg
+    vmodf.contingency_cache[ctg_id] = ctg
 
     # First query: computes Woodbury factors + row
     row1 = vmodf[1, ctg]
@@ -235,13 +235,7 @@ end
 @testset "Compare MODF entries with and without degree-2 reduction" begin
     sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
     valid_outage_branches = get_available_components(
-        x -> !(
-            typeof(x) <: Union{
-                ThreeWindingTransformer,
-                DiscreteControlledACBranch,
-                PhaseShiftingTransformer,
-            }
-        ),
+        x -> !(typeof(x) <: ThreeWindingTransformer),
         ACTransmission,
         sys,
     )
@@ -254,10 +248,10 @@ end
     end
     vmodf = VirtualMODF(sys)
     bus_lookup = PNM.get_bus_lookup(vmodf)
-    nrd = vmodf.network_reduction_data
+    nrd = get_network_reduction_data(vmodf)
     vmodf_d2 = VirtualMODF(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
     bus_lookup_d2 = PNM.get_bus_lookup(vmodf_d2)
-    nrd_d2 = vmodf_d2.network_reduction_data
+    nrd_d2 = get_network_reduction_data(vmodf_d2)
     # Compare results for arcs that are present in the reduced system.
     arcs_to_compare = vcat(
         collect(keys(nrd_d2.direct_branch_map)),
@@ -267,12 +261,12 @@ end
     buses_to_compare = collect(keys(nrd_d2.bus_reduction_map))
     for branch in valid_outage_branches
         outage = get_supplemental_attributes(branch)[1]
-        ctg_uuid = outage.internal.uuid
+        ctg_id = IS.get_id(outage)
         # Skip branches not registered as contingencies in either system
-        haskey(get_registered_contingencies(vmodf), ctg_uuid) || continue
-        haskey(get_registered_contingencies(vmodf_d2), ctg_uuid) || continue
-        ctg = get_registered_contingencies(vmodf)[ctg_uuid]
-        ctg_d2 = get_registered_contingencies(vmodf_d2)[ctg_uuid]
+        haskey(get_registered_contingencies(vmodf), ctg_id) || continue
+        haskey(get_registered_contingencies(vmodf_d2), ctg_id) || continue
+        ctg = get_registered_contingencies(vmodf)[ctg_id]
+        ctg_d2 = get_registered_contingencies(vmodf_d2)[ctg_id]
         for arc in arcs_to_compare
             ix_arc = PNM.get_arc_lookup(vmodf)[arc]
             ix_arc_d2 = PNM.get_arc_lookup(vmodf_d2)[arc]
@@ -338,12 +332,12 @@ end
     for e in 1:n_arcs
         e == flip_arc && continue
         b_e = vmodf.arc_susceptances[e]
-        ctg_uuid = Base.UUID(UInt128(30000 + e))
+        ctg_id = 30000 + e
         ctg = ContingencySpec(
-            ctg_uuid,
+            ctg_id,
             NetworkModification("sign_ctg_$e", [ArcModification(e, -b_e)]),
         )
-        vmodf.contingency_cache[ctg_uuid] = ctg
+        vmodf.contingency_cache[ctg_id] = ctg
 
         modf_row = PNM._compute_modf_entry(vmodf, flip_arc, ctg.modification)
         expected = ptdf_ref[flip_arc, :] .+ vlodf[flip_arc, e] .* ptdf_ref[e, :]
@@ -355,7 +349,6 @@ end
 @testset "test delta b positive for registered outages" begin
     sys = PSB.build_system(PSB.PSITestSystems, "test_RTS_GMLC_sys")
     for branch in get_components(ACTransmission, sys)
-        typeof(branch) <: PhaseShiftingTransformer && continue
         outage = GeometricDistributionForcedOutage(;
             mean_time_to_recovery = 0.0,
             outage_transition_probability = 0.0,
@@ -366,8 +359,8 @@ end
     for branch in get_components(ACTransmission, sys)
         !has_supplemental_attributes(branch) && continue
         outage = get_supplemental_attributes(branch)[1]
-        ctg_uuid = outage.internal.uuid
-        ctg = get_registered_contingencies(vmodf)[ctg_uuid]
+        ctg_id = IS.get_id(outage)
+        ctg = get_registered_contingencies(vmodf)[ctg_id]
         @test ctg.modification.arc_modifications[1].delta_b <= 0.0
     end
 end
@@ -536,7 +529,7 @@ end
     # LODF formula is undefined; skip those pairs.
     n2_is_islanding(e1, e2) = abs(1 - vlodf[e1, e2] * vlodf[e2, e1]) < 1e-6
 
-    uuid_counter = UInt128(10_000)
+    ctg_counter = 10_000
     for e1 in 1:n_arcs
         is_bridge(e1) && continue
         for e2 in (e1 + 1):n_arcs
@@ -546,16 +539,16 @@ end
             b_e1 = vmodf.arc_susceptances[e1]
             b_e2 = vmodf.arc_susceptances[e2]
 
-            ctg_uuid = Base.UUID(uuid_counter)
-            uuid_counter += 1
+            ctg_id = ctg_counter
+            ctg_counter += 1
             ctg = ContingencySpec(
-                ctg_uuid,
+                ctg_id,
                 NetworkModification(
                     "n2_outage_$(e1)_$(e2)",
                     [ArcModification(e1, -b_e1), ArcModification(e2, -b_e2)],
                 ),
             )
-            vmodf.contingency_cache[ctg_uuid] = ctg
+            vmodf.contingency_cache[ctg_id] = ctg
 
             for m in 1:n_arcs
                 modf_row = PNM._compute_modf_entry(vmodf, m, ctg.modification)
@@ -574,14 +567,16 @@ end
     vmodf = VirtualMODF(sys5)
     n_arcs = length(PNM.get_arc_axis(vmodf))
 
-    # `getfield` bypasses the `getproperty` hook under test.
-    @test isempty(getfield(vmodf, :PTDF_A_diag))
+    # `PTDF_A_diag` is lazily stored on the shared core; read it directly off
+    # the core's field, which bypasses the wrapper's `getproperty` hook under
+    # test (the core is a plain struct, so `.PTDF_A_diag` is a direct field read).
+    @test isempty(PNM.get_core(vmodf).PTDF_A_diag)
 
     diag1 = @test_logs (:info, r"Computing.*PTDF_A_diag.*first access") (
         :info, r"Computed.*PTDF_A_diag",
     ) vmodf.PTDF_A_diag
     @test length(diag1) == n_arcs
-    @test !isempty(getfield(vmodf, :PTDF_A_diag))
+    @test !isempty(PNM.get_core(vmodf).PTDF_A_diag)
 
     # Second read is a cache hit: same identity, no further logs.
     diag2 = @test_logs min_level = Logging.Info vmodf.PTDF_A_diag
@@ -624,15 +619,15 @@ end
 
     b_e1 = vmodf.arc_susceptances[e1]
     b_e2 = vmodf.arc_susceptances[e2]
-    ctg_uuid = Base.UUID(UInt128(88_000))
+    ctg_id = 88_000
     ctg = ContingencySpec(
-        ctg_uuid,
+        ctg_id,
         NetworkModification(
             "n2_island_B34_B30",
             [ArcModification(e1, -b_e1), ArcModification(e2, -b_e2)],
         ),
     )
-    vmodf.contingency_cache[ctg_uuid] = ctg
+    vmodf.contingency_cache[ctg_id] = ctg
 
     # Rebuild the PTDF with both lines disabled — gold-standard ground truth.
     sys_mod = PSB.build_system(PSB.PSITestSystems, "test_RTS_GMLC_sys")
@@ -703,11 +698,11 @@ end
     # Register the same N-1 contingency on both and compare one MODF row.
     e = 1
     b_e = vmodf_klu.arc_susceptances[e]
-    ctg_uuid = Base.UUID(UInt128(424242))
+    ctg_id = 424242
     mod = NetworkModification("aa_parity_outage", [ArcModification(e, -b_e)])
-    ctg = ContingencySpec(ctg_uuid, mod)
-    vmodf_klu.contingency_cache[ctg_uuid] = ctg
-    vmodf_aa.contingency_cache[ctg_uuid] = ctg
+    ctg = ContingencySpec(ctg_id, mod)
+    vmodf_klu.contingency_cache[ctg_id] = ctg
+    vmodf_aa.contingency_cache[ctg_id] = ctg
 
     row_klu = vmodf_klu[2, ctg]
     row_aa = vmodf_aa[2, ctg]
@@ -721,21 +716,27 @@ end
     # Moving sparsification ahead of the solve would amplify it by ||W_inv|| (~190x).
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
 
-    function _register_ctg!(v, arcs, uuidint)
+    function _register_ctg!(v, arcs, ctgint)
         mods = [ArcModification(e, -v.arc_susceptances[e]) for e in arcs]
-        u = Base.UUID(UInt128(uuidint))
-        ctg = ContingencySpec(u, NetworkModification("r2_$(uuidint)", mods))
+        u = ctgint
+        ctg = ContingencySpec(u, NetworkModification("r2_$(ctgint)", mods))
         v.contingency_cache[u] = ctg
         return ctg
     end
 
-    # arc 9 -> islanding bridge (pinv branch, infinite amplification);
-    # arcs [1, 19] -> near-singular W (||W_inv||_2 ~ 190), with tau large enough
+    # (7, 8) -> islanding bridge (pinv branch, infinite amplification);
+    # [(4, 5), (2, 4)] -> near-singular W (||W_inv||_2 ~ 190), with tau large enough
     # to actually drop entries so the bound is exercised rather than vacuous.
-    for (arcs, uid, tau) in (([9], 1, 1e-3), ([1, 19], 2, 5e-2))
+    # Named by endpoints, not by position: the arc axis follows component iteration
+    # order, which is not stable across Julia versions, so fixed indices silently
+    # select different branches and the near-critical precondition stops holding.
+    for (arc_ids, uid, tau) in ((((7, 8),), 1, 1e-3), ((((4, 5), (2, 4))), 2, 5e-2))
         vexact = VirtualMODF(sys; tol = eps())
         vtau = VirtualMODF(sys; tol = tau)
-        n_arcs = length(PNM.get_arc_axis(vexact))
+        arc_axis = PNM.get_arc_axis(vexact)
+        n_arcs = length(arc_axis)
+        arcs = [findfirst(==(a), arc_axis) for a in arc_ids]
+        @test !any(isnothing, arcs)
 
         ce = _register_ctg!(vexact, arcs, uid)
         ct = _register_ctg!(vtau, arcs, uid)

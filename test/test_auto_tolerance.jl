@@ -180,14 +180,18 @@ end
     sys = PSB.build_system(PSB.MatpowerTestSystems, "matpower_ACTIVSg2000_sys")
 
     v_exact = VirtualPTDF(sys; tol = eps())
-    arc = first(PNM.get_arc_axis(v_exact))
+    # The sparsification check needs a meshed arc: a radial stub's row is a single unit
+    # entry with the rest at numerical noise straddling `eps()`, so nothing is left to drop.
+    arc_ax = PNM.get_arc_axis(v_exact)
+    arc = arc_ax[findfirst(a -> count(>(1e-9), abs.(v_exact[a, :])) > 1, arc_ax)]
     nnz_dense = count(!iszero, v_exact[arc, :])
 
     v_auto = VirtualPTDF(sys)                           # default, below gate
     @test v_auto.tol isa PNM.AbsoluteCutoff
     @test PNM.get_tol(v_auto) == eps()
-    # No entries dropped.
+    # No entries dropped; the `count` is what proves nothing was sparsified away.
     @test isapprox(v_auto[arc, :], v_exact[arc, :]; atol = NO_OP_BUILD_ATOL)
+    @test count(!iszero, v_auto[arc, :]) == nnz_dense
 
     # Explicit Float64 -> absolute cutoff -> genuinely sparse, faithful column.
     v_num = VirtualPTDF(sys; tol = 1e-2)

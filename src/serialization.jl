@@ -78,7 +78,7 @@ function from_hdf5(::Type{PTDF}, filename::AbstractString)
             lookup,
             subnetwork_axes,
             tol,
-            NetworkReductionData(),
+            BranchCatalog(NetworkReductionData()),
         )
     end
 end

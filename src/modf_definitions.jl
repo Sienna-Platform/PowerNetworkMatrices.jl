@@ -1,12 +1,15 @@
 """
     ArcModification
 
-A susceptance change on a single aggregated arc, with optional Ybus Pi-model deltas.
+A susceptance change on a single aggregated arc, with the matching change in the arc's DC
+phase-shift injection and optional Ybus Pi-model deltas.
 Full outage: `delta_b = -b_arc`. Single circuit on double-circuit: `delta_b = -b_circuit`.
 
 # Fields
 - `arc_index::Int`: Index of the modified arc in the network matrix.
 - `delta_b::Float64`: Change in susceptance (negative for an outage or reduction).
+- `delta_shift_injection::Float64`: Change in the arc's DC shift injection `b·α`, oriented
+  to the arc, system base. Zero for every unshifted circuit.
 - `delta_y11::ComplexF32`: Change in Pi-model self-admittance at the from bus.
 - `delta_y12::ComplexF32`: Change in Pi-model mutual admittance (from -> to).
 - `delta_y21::ComplexF32`: Change in Pi-model mutual admittance (to -> from).
@@ -15,6 +18,7 @@ Full outage: `delta_b = -b_arc`. Single circuit on double-circuit: `delta_b = -b
 struct ArcModification
     arc_index::Int
     delta_b::Float64
+    delta_shift_injection::Float64
     delta_y11::ComplexF32
     delta_y12::ComplexF32
     delta_y21::ComplexF32
@@ -22,11 +26,11 @@ struct ArcModification
 end
 
 """
-Backward-compatible constructor that sets all Pi-model ΔY fields to zero.
+Convenience constructor for an unshifted arc with no Pi-model deltas.
 """
 function ArcModification(arc_index::Int, delta_b::Float64)
     z = zero(YBUS_ELTYPE)
-    return ArcModification(arc_index, delta_b, z, z, z, z)
+    return ArcModification(arc_index, delta_b, 0.0, z, z, z, z)
 end
 
 """
@@ -50,29 +54,39 @@ Merge ArcModifications that target the same arc index.
 """
 function _merge_arc_modifications(mods::Vector{ArcModification})
     length(mods) <= 1 && return mods
-    by_arc = Dict{Int, Tuple{Float64, ComplexF64, ComplexF64, ComplexF64, ComplexF64}}()
+    by_arc =
+        Dict{Int, Tuple{Float64, Float64, ComplexF64, ComplexF64, ComplexF64, ComplexF64}}()
     for m in mods
         prev = get(
             by_arc,
             m.arc_index,
-            (0.0, zero(ComplexF64), zero(ComplexF64), zero(ComplexF64), zero(ComplexF64)),
+            (
+                0.0,
+                0.0,
+                zero(ComplexF64),
+                zero(ComplexF64),
+                zero(ComplexF64),
+                zero(ComplexF64),
+            ),
         )
         by_arc[m.arc_index] = (
             prev[1] + m.delta_b,
-            prev[2] + m.delta_y11,
-            prev[3] + m.delta_y12,
-            prev[4] + m.delta_y21,
-            prev[5] + m.delta_y22,
+            prev[2] + m.delta_shift_injection,
+            prev[3] + m.delta_y11,
+            prev[4] + m.delta_y12,
+            prev[5] + m.delta_y21,
+            prev[6] + m.delta_y22,
         )
     end
     return [
         ArcModification(
             idx,
             vals[1],
-            YBUS_ELTYPE(vals[2]),
+            vals[2],
             YBUS_ELTYPE(vals[3]),
             YBUS_ELTYPE(vals[4]),
             YBUS_ELTYPE(vals[5]),
+            YBUS_ELTYPE(vals[6]),
         ) for (idx, vals) in sort!(collect(by_arc); by = first)
     ]
 end
@@ -147,6 +161,7 @@ function Base.hash(m::NetworkModification, h::UInt)
     for mod in m.arc_modifications
         h = hash(mod.arc_index, h)
         h = hash(mod.delta_b, h)
+        h = hash(mod.delta_shift_injection, h)
         h = hash(mod.delta_y11, h)
         h = hash(mod.delta_y12, h)
         h = hash(mod.delta_y21, h)
@@ -169,15 +184,15 @@ Base.:(==)(a::NetworkModification, b::NetworkModification) =
     ContingencySpec
 
 A resolved, self-contained contingency specification backed by a
-[`NetworkModification`](@ref). The UUID links back to the source
+[`NetworkModification`](@ref). The id links back to the source
 `PSY.Outage` supplemental attribute for caching purposes.
 
 # Fields
-- `uuid::Base.UUID`: Unique identifier matching the source Outage supplemental attribute.
+- `id::Int`: IS id matching the source Outage supplemental attribute.
 - `modification::NetworkModification`: The network topology change.
 """
 struct ContingencySpec
-    uuid::Base.UUID
+    id::Int
     modification::NetworkModification
 end
 

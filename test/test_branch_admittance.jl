@@ -1,0 +1,675 @@
+# Tests for the π-model branch admittance helpers (`equivalent_branch`, `branch_admittance`,
+# `reduced_arc_admittance`, `arc_equivalent_branch`, `three_winding_arcs`, `branch_flow_limits`).
+
+@testset "branch_admittance primitives" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    line = first(PSY.get_components(PSY.Line, sys))
+    a = PNM.branch_admittance(line, PNM.NetworkReductionData())
+    r, x = PSY.get_r(line, PSY.SU), PSY.get_x(line, PSY.SU)
+    y = inv(complex(r, x))
+    @test a.g ≈ real(y)
+    @test a.b ≈ imag(y)
+    @test a.tap == 1.0
+    @test a.shift == 0.0
+end
+
+@testset "_reduced_arc_equivalent_branch: reverse-keyed group shadows direct arc" begin
+    # (1,2) is a lone direct line; the two (2,1) lines form a parallel group keyed at (2,1).
+    edges = [
+        (1, 2, 0.0, 0.10, 0.0, 0.0), (2, 1, 0.0, 0.20, 0.0, 0.0),
+        (2, 3, 0.0, 0.10, 0.0, 0.0), (3, 1, 0.0, 0.10, 0.0, 0.0),
+    ]
+    sys = _build_degree_two_chain_system(edges)
+    arc21 = PSY.get_arc(PSY.get_component(Line, sys, "L_2_1"))
+    PSY.add_component!(
+        sys,
+        Line("L_2_1_b", true, 0.0, 0.0, arc21, 0.0, 0.30, (from = 0.0, to = 0.0), 2.0,
+            (-1.6, 1.6)),
+    )
+    nr = get_network_reduction_data(Ybus(sys))
+    @test haskey(PNM.get_direct_branch_map(nr), (1, 2))
+    @test haskey(PNM.get_parallel_branch_map(nr), (2, 1))
+
+    @test PNM._reduced_arc_equivalent_branch(nr, (1, 2)) === nothing
+    @test PNM.reduced_arc_admittance(nr, 1, 2) === nothing
+    @test PNM._reduced_arc_equivalent_branch(nr, (2, 1)) !== nothing
+end
+
+@testset "branch_flow_limits MonitoredLine" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
+    ml = first(PSY.get_components(PSY.MonitoredLine, sys))
+    fl = PNM.branch_flow_limits(ml)
+    psy_fl = PSY.get_flow_limits(ml, PSY.CU)
+    @test fl.from_to == psy_fl.from_to
+    @test fl.to_from == psy_fl.to_from
+end
+
+@testset "branch_flow_limits on a reduction aggregate" begin
+    # Detached on purpose: branch_flow_limits reads PSY.CU only. An asymmetric member must
+    # keep its own reverse limit.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
+    buses = collect(PSY.get_components(PSY.ACBus, sys))
+    arc = PSY.Arc(; from = buses[1], to = buses[2])
+    function bfl_line(name)
+        return PSY.Line(; input_basis = PSY.CU,
+            name = name,
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            arc = arc,
+            r = 0.1,
+            x = 0.2,
+            b = (from = 0.01, to = 0.01),
+            g = (from = 0.0, to = 0.0),
+            rating = 100.0,
+            angle_limits = (min = -pi / 2, max = pi / 2),
+        )
+    end
+    plain = bfl_line("bfl_line_1")
+    monitored = PSY.MonitoredLine(; input_basis = PSY.CU,
+        name = "bfl_monitored",
+        available = true,
+        active_power_flow = 0.0,
+        reactive_power_flow = 0.0,
+        arc = arc,
+        r = 0.1,
+        x = 0.2,
+        b = (from = 0.01, to = 0.01),
+        g = (from = 0.0, to = 0.0),
+        flow_limits = (from_to = 200.0, to_from = 120.0),
+        rating = 200.0,
+        angle_limits = (min = -pi / 2, max = pi / 2),
+    )
+
+    symmetric = PNM.BranchesParallel([plain, bfl_line("bfl_line_2")])
+    @test PNM.branch_flow_limits(symmetric).from_to == 200.0
+    @test PNM.branch_flow_limits(symmetric).to_from == 200.0
+
+    group = PNM.MixedBranchesParallel(PSY.ACTransmission[plain, monitored])
+    @test_throws ErrorException PNM.branch_flow_limits(group)
+
+    chain = PNM.BranchesSeries(PNM.get_arc_tuple(plain))
+    PNM.add_branch!(chain, plain, :FromTo)
+    PNM.add_branch!(chain, monitored, :FromTo)
+    @test_throws ErrorException PNM.branch_flow_limits(chain)
+end
+
+@testset "reduced arc admittance uses PNM series equivalent, not original branch" begin
+    # `case10_radial_series_reductions` is purpose-built to produce series arcs under the
+    # radial + degree-two reduction, exercising the same NetworkReductionData the build path
+    # stores on the network model.
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    ybus = PNM.Ybus(
+        sys;
+        network_reductions = PNM.NetworkReduction[
+            PNM.RadialReduction(),
+            PNM.DegreeTwoReduction(),
+        ],
+    )
+    nr = deepcopy(PNM.get_network_reduction_data(ybus))
+    @test !isempty(nr)
+
+    series_map = PNM.get_series_branch_map(nr)
+    @test !isempty(series_map)  # degree-2 reduction produces series arcs
+
+    (from_no, to_no), chain = first(series_map)
+    resolved = PNM.reduced_arc_admittance(nr, from_no, to_no)
+    @test resolved !== nothing
+    expected = PNM.branch_admittance(chain, nr)
+    @test isapprox(resolved.b, expected.b; atol = 1e-9)
+
+    # Non-triviality: the series equivalent is the MERGED admittance of the chain, so it must
+    # differ from any single constituent branch's own admittance. This is the whole point of
+    # leveraging the reduction-aware equivalent rather than a single branch's value. Compare
+    # against a plain `Line` member — PNM wrapper members (nested parallel/series segments,
+    # 3W windings) resolve through their own `branch_admittance` methods, not the
+    # physical-branch one.
+    members = collect(chain)
+    @test length(members) >= 2
+    line_members = filter(m -> m isa PSY.Line, members)
+    if !isempty(line_members)
+        member_b = PNM.branch_admittance(line_members[1], nr).b
+        @test !isapprox(resolved.b, member_b; rtol = 1e-3)
+    end
+
+    # Reversed-orientation arc exercises the `_reverse_equivalent_branch` path: series b is symmetric,
+    # from/to shunts swap, and any phase shift negates.
+    if !haskey(series_map, (to_no, from_no))
+        reversed = PNM.reduced_arc_admittance(nr, to_no, from_no)
+        @test reversed !== nothing
+        @test isapprox(reversed.b, resolved.b; atol = 1e-9)
+        @test isapprox(reversed.b_fr, resolved.b_to; atol = 1e-9)
+        @test isapprox(reversed.shift, -resolved.shift; atol = 1e-12)
+    end
+
+    # A direct (un-reduced) arc resolves to `nothing` — the caller falls back to the branch's
+    # own admittance.
+    @test PNM.reduced_arc_admittance(nr, -1, -2) === nothing
+end
+
+@testset "ThreeWindingTransformer branch_admittance and three_winding_arcs decomposition" begin
+    # Unit test the per-circuit admittance helper against a real PNM
+    # `ThreeWindingTransformerCircuit`: for a circuit whose derived star-leg impedance is
+    # R + jX the helper must return the series admittance 1/(R + jX), the parent's PNM shunt
+    # on the from/to sides, no phase shift, and (here) a unit tap. R/X are read back through
+    # PNM so the assertion is robust to per-unit base conversions.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
+    busD = PSY.get_component(PSY.ACBus, sys, "nodeD")
+    sec_bus, ter_bus, star_bus = _add_star_buses!(sys, busD)
+    transformer3w = _add_three_winding_transformer!(
+        sys, busD, sec_bus, ter_bus, star_bus; name = "Transformer3W_busD",
+    )
+
+    w = PNM.ThreeWindingTransformerCircuit(transformer3w, 1)
+    adm = PNM.branch_admittance(w, PNM.NetworkReductionData())
+
+    r = PNM.get_equivalent_r(w)
+    x = PNM.get_equivalent_x(w)
+    y = inv(complex(r, x))
+    @test isapprox(adm.g, real(y); atol = 1e-12)
+    @test isapprox(adm.b, imag(y); atol = 1e-12)
+
+    eb = PNM.equivalent_branch(w)
+    @test adm.g_fr == 0.0
+    @test adm.b_fr == PNM.get_equivalent_b_from(eb)
+    @test adm.g_to == 0.0
+    @test adm.b_to == PNM.get_equivalent_b_to(eb)
+    @test adm.tap == 1.0
+
+    # `three_winding_arcs` decomposes the device into its three circuits, exposing the
+    # star-point arc, rating, and circuit object the native builders consume.
+    arcs = PNM.three_winding_arcs(transformer3w)
+    circuits = PSY.get_circuits(transformer3w)
+    @test length(arcs) == 3
+    @test [a.suffix for a in arcs] == ["winding_1", "winding_2", "winding_3"]
+    @test arcs[1].arc == PSY.get_arc(circuits[1])
+    @test arcs[2].arc == PSY.get_arc(circuits[2])
+    @test arcs[3].arc == PSY.get_arc(circuits[3])
+    # Circuit admittance computed from the decomposition matches the standalone helper.
+    @test PNM.branch_admittance(arcs[1].circuit, PNM.NetworkReductionData()).b ≈ adm.b
+end
+
+@testset "PST-3W winding series susceptance (pinned behavior)" begin
+    # `pti_case14_with_pst3w_sys` is the only fixture with a genuine phase-shifting
+    # ThreeWindingTransformer (nonzero winding α parsed from PSS/E ANG1/ANG2/ANG3 fields).
+    # This testset pins the wrapper's `get_series_susceptance` model — `(1/x)/tap` on the
+    # derived star leg, uniform with the `TwoWindingTransformer` and `ACTransmission`
+    # conventions in BranchAdmittance.jl — against silent drift.
+    sys = PSB.build_system(
+        PSSEParsingTestSystems,
+        "pti_case14_with_pst3w_sys";
+        force_build = true,
+        skip_serialization = true,
+    )
+    # Both 3W transformers in this fixture are phase-shifting, and component iteration
+    # order is not stable across Julia versions, so pick by name rather than by whichever
+    # comes first: the taps asserted below are this transformer's (1.0/1.0/1.05), not the
+    # other's (0.95/0.9/1.0).
+    t = only(
+        Iterators.filter(
+            t -> PSY.get_name(t) == "BUS 109-BUS 104-BUS 107-i_1",
+            PSY.get_components(PSY.ThreeWindingTransformer, sys),
+        ),
+    )
+    @test PSY.is_phase_shifting(t)
+    windings = PSY.get_circuits(t)
+    winding_number = findfirst(w -> !iszero(PSY.get_α(w)), windings)
+    @test winding_number !== nothing
+    tw = PNM.ThreeWindingTransformerCircuit(t, winding_number)
+    @test !iszero(PSY.get_α(PSY.get_circuits(t)[winding_number]))
+
+    # (a) Pinned model: reactance-only `1/x` of the winding's star leg, divided by the
+    # winding tap, read back through the wrapper.
+    tap = PSY.get_tap(windings[winding_number])
+    pinned = (1 / PNM.get_equivalent_x(tw)) / tap
+    @test PNM.get_series_susceptance(tw, PSY.SU) ≈ pinned
+
+    # (b) Independent hand-derivation from the fixture's raw pairwise data, so (a) is not
+    # purely self-referential. `case14_with_pst3w.raw`'s two 3W transformers both carry
+    # r_12 = r_23 = r_31 = 0.0, x_12 = x_23 = x_31 = 0.0002 pu on their own (100 MVA) base,
+    # which equals the system base here, so SU reads back the raw values unchanged. The
+    # standard delta->star identity (applied by PFFP at parse) gives every star leg
+    # r = (0+0-0)/2 = 0.0, x = (0.0002+0.0002-0.0002)/2 = 0.0001 (independent of which
+    # winding). The phase-shifting winding carries tap = 1.0, so the susceptance is
+    # (1/0.0001)/1.0 = +10000.0 exactly. Note the sign: `1/x` is positive for x > 0, whereas
+    # the r-aware complex form `imag(1/(j*x)) = -1/x` is negative — the two forms are NOT
+    # interchangeable.
+    r12, x12 = PSY.get_r_12(t, PSY.SU), PSY.get_x_12(t, PSY.SU)
+    r23, x23 = PSY.get_r_23(t, PSY.SU), PSY.get_x_23(t, PSY.SU)
+    r31, x31 = PSY.get_r_31(t, PSY.SU), PSY.get_x_31(t, PSY.SU)
+    z12, z23, z31 = complex(r12, x12), complex(r23, x23), complex(r31, x31)
+    z_by_winding = (
+        (z12 + z31 - z23) / 2,
+        (z12 + z23 - z31) / 2,
+        (z31 + z23 - z12) / 2,
+    )
+    z_star = z_by_winding[winding_number]
+    hand_derived_susceptance = (1 / imag(z_star)) / tap
+    @test hand_derived_susceptance ≈ 10000.0
+    @test PNM.get_series_susceptance(tw, PSY.SU) ≈ hand_derived_susceptance
+
+    # (c) Tap division: winding 3 of this transformer carries a non-unit tap (1.05) on the
+    # same star-leg reactance (0.0001), so its susceptance must be 10000/1.05.
+    tap3 = PSY.get_tap(windings[3])
+    @test tap3 == 1.05
+    tw3 = PNM.ThreeWindingTransformerCircuit(t, 3)
+    @test PNM.get_series_susceptance(tw3, PSY.SU) ≈ 10000.0 / 1.05
+
+    # (d) `units` selects the reactance base, matching the `TwoWindingTransformer` and
+    # generic `ACTransmission` methods. It was previously accepted and ignored, so a CU
+    # request silently returned the SU value.
+    circuit3 = PSY.get_circuits(t)[3]
+    @test PNM.get_series_susceptance(tw3, PSY.CU) ≈
+          (1 / PSY.get_x(circuit3, PSY.CU)) / tap3
+end
+
+@testset "branch_admittance applies the winding tap for all 3W windings" begin
+    # !!! note "Tap contract"
+    #     `branch_admittance` reads `get_equivalent_tap(w)` (== the winding's own
+    #     `PSY.get_tap`) for all 3W windings, phase-shifting or not. This test pins that a
+    #     plain (non-phase-shifting) winding with a non-unit tap flows its real tap through
+    #     `branch_admittance`.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
+    busD = PSY.get_component(PSY.ACBus, sys, "nodeD")
+    sec_bus, ter_bus, star_bus = _add_star_buses!(sys, busD; numbers = (501, 502, 503))
+    t3w = _add_three_winding_transformer!(
+        sys, busD, sec_bus, ter_bus, star_bus;
+        name = "T3W_nonunit_tap",
+    )
+    winding1 = PSY.get_circuits(t3w)[1]
+    PSY.set_tap!(winding1, 1.05)
+    w1 = PNM.ThreeWindingTransformerCircuit(t3w, 1)
+    adm = PNM.branch_admittance(w1, PNM.NetworkReductionData())
+    @test adm.tap == 1.05
+    @test adm.tap != 1.0
+end
+
+@testset "ThreeWindingTransformerCircuit lookup identity" begin
+    # Lookup identity is `{parent, winding_number}`: two wrappers for the same winding of the
+    # same parent are `==`/`hash`-equal, so a fresh wrapper resolves a Dict/Set entry keyed by
+    # an earlier-built one.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
+    busD = PSY.get_component(PSY.ACBus, sys, "nodeD")
+    sec_bus, ter_bus, star_bus = _add_star_buses!(sys, busD; numbers = (401, 402, 403))
+    t3w = _add_three_winding_transformer!(
+        sys, busD, sec_bus, ter_bus, star_bus;
+        name = "T3W_identity",
+    )
+
+    w1_a = PNM.ThreeWindingTransformerCircuit(t3w, 1)
+    w1_b = PNM.ThreeWindingTransformerCircuit(t3w, 1)
+
+    # Same parent + winding number: equal and hash-equal.
+    @test w1_a == w1_b
+    @test hash(w1_a) == hash(w1_b)
+
+    # Different winding number on the same parent: unequal.
+    w2 = PNM.ThreeWindingTransformerCircuit(t3w, 2)
+    @test w1_a != w2
+    @test hash(w1_a) != hash(w2)
+
+    # Dict lookup round-trip: a fresh wrapper must resolve the same map entry as the wrapper
+    # originally used as the key.
+    d = Dict(w1_a => "winding_1")
+    w1_rebuilt = PNM.ThreeWindingTransformerCircuit(t3w, 1)
+    @test d[w1_rebuilt] == "winding_1"
+end
+
+@testset "TwoWindingTransformer series susceptance divides by the winding tap" begin
+    sys = PSY.System(100.0)
+    busA = PSY.ACBus(;
+        number = 1,
+        name = "busA",
+        available = true,
+        bustype = PSY.ACBusTypes.REF,
+        angle = 0.0,
+        magnitude = 1.0,
+        voltage_limits = (min = 0.9, max = 1.1),
+        base_voltage = 138.0,
+    )
+    busB = PSY.ACBus(;
+        number = 2,
+        name = "busB",
+        available = true,
+        bustype = PSY.ACBusTypes.PV,
+        angle = 0.0,
+        magnitude = 1.0,
+        voltage_limits = (min = 0.9, max = 1.1),
+        base_voltage = 138.0,
+    )
+    PSY.add_component!(sys, busA)
+    PSY.add_component!(sys, busB)
+    arc = PSY.Arc(; from = busA, to = busB)
+    PSY.add_component!(sys, arc)
+    t = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        name = "T2W",
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            arc = arc,
+            tap = 1.0,
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            rating = 1.0,
+            base_power = 100.0,
+            base_voltage_primary = 138.0,
+            r = 0.01,
+            x = 0.1,
+        ),
+    )
+    PSY.add_component!(sys, t)
+
+    # circuit base_power (100.0) == system base, so CU == SU here.
+    @test PNM.get_series_susceptance(t, PSY.SU) ≈ 1 / 0.1
+    PSY.set_tap!(PSY.get_circuit(t), 1.05)
+    @test PNM.get_series_susceptance(t, PSY.SU) ≈ (1 / 0.1) / 1.05
+    @test PNM.get_series_susceptance(t, PSY.SU) ≈ 9.523809523809524
+end
+
+@testset "Magnetizing shunt placement (2W enum + 3W enum, parent-resident)" begin
+    # Nonzero conductance (not just susceptance), to exercise the g-side of the shunt split.
+    # r = 0.01, x = 0.1 for both transformer types below (2W directly; 3W via symmetric
+    # pairwise legs r12 = r23 = r31 = 0.02, x12 = x23 = x31 = 0.2, which derive every star
+    # leg to (0.02 + 0.02 - 0.02)/2 = 0.01, (0.2 + 0.2 - 0.2)/2 = 0.1), so `Y_t` is identical
+    # in both cases. The magnetizing shunt and its location are PARENT-transformer
+    # fields; the 2W and 3W enums are distinct types.
+    y_shunt = 0.005 + 0.012im
+    r, x = 0.01, 0.1
+    Y_t = inv(complex(r, x))
+
+    # 2W: PRIMARY -> from side, SECONDARY -> to side, SPLIT -> full value both sides.
+    twoW_locations = (
+        (location = PSY.TwoWindingTransformerShuntLocation.PRIMARY, fr = true, to = false),
+        (
+            location = PSY.TwoWindingTransformerShuntLocation.SECONDARY,
+            fr = false,
+            to = true,
+        ),
+        (location = PSY.TwoWindingTransformerShuntLocation.SPLIT, fr = true, to = true),
+    )
+
+    function _t2w_with_shunt(shunt_location)
+        sys = PSY.System(100.0)
+        busA = PSY.ACBus(;
+            number = 1,
+            name = "busA",
+            available = true,
+            bustype = PSY.ACBusTypes.REF,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 138.0,
+        )
+        busB = PSY.ACBus(;
+            number = 2,
+            name = "busB",
+            available = true,
+            bustype = PSY.ACBusTypes.PV,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 138.0,
+        )
+        PSY.add_component!(sys, busA)
+        PSY.add_component!(sys, busB)
+        arc = PSY.Arc(; from = busA, to = busB)
+        PSY.add_component!(sys, arc)
+        t = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+            name = "T2W_shunt",
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+                arc = arc,
+                available = true,
+                rating = 1.0,
+                base_power = 100.0,
+                base_voltage_primary = 138.0,
+                r = r,
+                x = x,
+            ),
+            magnetizing_shunt = y_shunt,
+            shunt_location = shunt_location,
+        )
+        PSY.add_component!(sys, t)
+        return t
+    end
+
+    for (location, fr, to) in twoW_locations
+        t = _t2w_with_shunt(location)
+        (Y11, Y12, Y21, Y22) = PNM.ybus_branch_entries(t, PNM.NetworkReductionData())
+        @test isapprox(Y11, Y_t + (fr ? y_shunt : 0.0 + 0.0im); atol = 1e-12)
+        @test isapprox(Y22, Y_t + (to ? y_shunt : 0.0 + 0.0im); atol = 1e-12)
+        @test isapprox(Y12, -Y_t; atol = 1e-12)
+        @test isapprox(Y21, -Y_t; atol = 1e-12)
+
+        adm = PNM.branch_admittance(t, PNM.NetworkReductionData())
+        @test adm.g_fr == (fr ? real(y_shunt) : 0.0)
+        @test adm.b_fr == (fr ? imag(y_shunt) : 0.0)
+        @test adm.g_to == (to ? real(y_shunt) : 0.0)
+        @test adm.b_to == (to ? imag(y_shunt) : 0.0)
+    end
+
+    # SPLIT applies the FULL value on both sides -- not halved.
+    t_split = _t2w_with_shunt(PSY.TwoWindingTransformerShuntLocation.SPLIT)
+    (Y11, _, _, Y22) = PNM.ybus_branch_entries(t_split, PNM.NetworkReductionData())
+    @test isapprox(Y11 - Y_t, y_shunt; atol = 1e-12)
+    @test isapprox(Y22 - Y_t, y_shunt; atol = 1e-12)
+    @test !isapprox(Y11 - Y_t, y_shunt / 2; atol = 1e-9)
+
+    # 3W: the parent shunt lands on circuit 1 only. PRIMARY places it on the terminal (from)
+    # side, STAR on the star-node (to) side; circuits 2 and 3 never carry it.
+    threeW_locations = (
+        (
+            location = PSY.ThreeWindingTransformerShuntLocation.PRIMARY,
+            fr = true,
+            to = false,
+        ),
+        (location = PSY.ThreeWindingTransformerShuntLocation.STAR, fr = false, to = true),
+    )
+
+    function _t3w_with_shunt(shunt_location, suffix)
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
+        busD = PSY.get_component(PSY.ACBus, sys, "nodeD")
+        sec_bus, ter_bus, star_bus =
+            _add_star_buses!(
+                sys,
+                busD;
+                numbers = (601 + suffix, 602 + suffix, 603 + suffix),
+            )
+        return _add_three_winding_transformer!(
+            sys, busD, sec_bus, ter_bus, star_bus;
+            name = "T3W_shunt_$suffix",
+            r12 = 0.02, x12 = 0.2, r23 = 0.02, x23 = 0.2, r31 = 0.02, x31 = 0.2,
+            magnetizing_shunt = y_shunt,
+            shunt_location = shunt_location,
+        )
+    end
+
+    for (i, (location, fr, to)) in enumerate(threeW_locations)
+        t3w = _t3w_with_shunt(location, i)
+        w1 = PNM.ThreeWindingTransformerCircuit(t3w, 1)
+        (Y11, Y12, Y21, Y22) = PNM.ybus_branch_entries(w1, PNM.NetworkReductionData())
+        # STAR lands the shunt on the star-bus diagonal (circuit-1 Y22); PRIMARY on the
+        # terminal-bus diagonal (Y11). Hand-computed: the whole value, on one side only.
+        @test isapprox(Y11, Y_t + (fr ? y_shunt : 0.0 + 0.0im); atol = 1e-12)
+        @test isapprox(Y22, Y_t + (to ? y_shunt : 0.0 + 0.0im); atol = 1e-12)
+
+        adm = PNM.branch_admittance(w1, PNM.NetworkReductionData())
+        @test adm.g_fr == (fr ? real(y_shunt) : 0.0)
+        @test adm.b_fr == (fr ? imag(y_shunt) : 0.0)
+        @test adm.g_to == (to ? real(y_shunt) : 0.0)
+        @test adm.b_to == (to ? imag(y_shunt) : 0.0)
+
+        # Circuits 2 and 3 carry no shunt regardless of the parent location: their Ybus
+        # diagonals stay at the bare series admittance (unit tap here).
+        for cn in (2, 3)
+            wc = PNM.ThreeWindingTransformerCircuit(t3w, cn)
+            (c11, _, _, c22) =
+                PNM.ybus_branch_entries(wc, PNM.NetworkReductionData())
+            @test isapprox(c11, Y_t; atol = 1e-12)
+            @test isapprox(c22, Y_t; atol = 1e-12)
+            cadm = PNM.branch_admittance(wc, PNM.NetworkReductionData())
+            @test cadm.g_fr == 0.0 && cadm.b_fr == 0.0
+            @test cadm.g_to == 0.0 && cadm.b_to == 0.0
+        end
+    end
+end
+
+@testset "arc_equivalent_branch resolves every arc in the reduction maps" begin
+    # A reduced system exercises the direct, parallel and series arms in one pass: every arc
+    # on the matrix's arc axis must resolve, and the resolved parameters must agree with the
+    # map entry the arc actually came from.
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    ybus = PNM.Ybus(
+        sys;
+        network_reductions = PNM.NetworkReduction[
+            PNM.RadialReduction(),
+            PNM.DegreeTwoReduction(),
+        ],
+    )
+    nr = PNM.get_network_reduction_data(ybus)
+    arc_ax = PNM.get_arc_axis(nr)
+    @test !isempty(arc_ax)
+
+    direct_map = PNM.get_direct_branch_map(nr)
+    series_map = PNM.get_series_branch_map(nr)
+    @test !isempty(series_map)  # the fixture must actually produce series arcs
+
+    n_direct = 0
+    n_reduced = 0
+    for arc in arc_ax
+        eb = PNM.arc_equivalent_branch(nr, arc)
+        # Total: every arc on the axis resolves to a finite series impedance.
+        @test isfinite(PNM.get_equivalent_r(eb))
+        @test isfinite(PNM.get_equivalent_x(eb))
+        if haskey(direct_map, arc)
+            n_direct += 1
+            # A direct arc resolves to exactly the branch's own equivalent_branch.
+            expected = PNM.equivalent_branch(direct_map[arc])
+            @test PNM.get_equivalent_r(eb) == PNM.get_equivalent_r(expected)
+            @test PNM.get_equivalent_x(eb) == PNM.get_equivalent_x(expected)
+            @test PNM.get_equivalent_tap(eb) == PNM.get_equivalent_tap(expected)
+        else
+            n_reduced += 1
+        end
+    end
+    @test n_direct > 0
+    @test n_reduced > 0
+
+    @test_throws ErrorException PNM.arc_equivalent_branch(nr, (-1, -2))
+end
+
+@testset "equivalent_branch is the impedance view of branch_admittance" begin
+    # `branch_admittance` is derived from `equivalent_branch` by inverting r + im*x, so the
+    # two must agree exactly for lines and for transformer circuits of both arities.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    line = first(PSY.get_components(PSY.Line, sys))
+    eb = PNM.equivalent_branch(line)
+    adm = PNM.branch_admittance(line, PNM.NetworkReductionData())
+    ys = inv(complex(PNM.get_equivalent_r(eb), PNM.get_equivalent_x(eb)))
+    @test adm.g == real(ys)
+    @test adm.b == imag(ys)
+    # The line's real conductance now flows through, rather than being zeroed.
+    g_psy = PSY.get_g(line, PSY.SU)
+    @test PNM.get_equivalent_g_from(eb) == g_psy.from
+    @test PNM.get_equivalent_g_to(eb) == g_psy.to
+end
+
+@testset "raw susceptance layer matches the public accessor on finite data" begin
+    # A pure extraction: every branch kind must agree with the public accessor wherever the
+    # stored reactance is non-zero.
+    sys, buses = _mk_bus_system(3)
+    arc = Arc(; from = buses[1], to = buses[2])
+    add_component!(sys, arc)
+    _add_test_line!(sys, "L12", arc, 0.01, 0.1)
+    line = PSY.get_component(Line, sys, "L12")
+    @test PNM._series_susceptance_raw(line, PSY.SU) ==
+          PNM.get_series_susceptance(line, PSY.SU)
+
+    arc2 = Arc(; from = buses[1], to = buses[3])
+    add_component!(sys, arc2)
+    t = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        name = "T13",
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            arc = arc2, tap = 1.05, α = 0.0, available = true,
+            active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
+            base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.2,
+        ),
+        magnetizing_shunt = Complex(0.0, 0.0),
+    )
+    add_component!(sys, t)
+    @test PNM._series_susceptance_raw(t, PSY.SU) == PNM.get_series_susceptance(t, PSY.SU)
+    # A circuit is a delegation target, not a segment: the raw layer answers for it, the
+    # public accessor takes only the transformer.
+    @test PNM._series_susceptance_raw(PSY.get_circuit(t), PSY.SU) ==
+          PNM._series_susceptance_raw(t, PSY.SU)
+    @test_throws MethodError PNM.get_series_susceptance(PSY.get_circuit(t), PSY.SU)
+
+    # Only the raw layer may answer for a degenerate branch.
+    PSY.set_x!(line, 0.0 * PSY.SU)
+    PSY.set_r!(line, 0.0 * PSY.SU)
+    @test PNM._series_susceptance_raw(line, PSY.SU) == Inf
+end
+
+@testset "get_series_susceptance rejects a non-finite result" begin
+    sys, buses = _mk_bus_system(2)
+    arc = Arc(; from = buses[1], to = buses[2])
+    add_component!(sys, arc)
+    _add_test_line!(sys, "ZI", arc, 0.0, 0.0)
+    zi = PSY.get_component(Line, sys, "ZI")
+
+    err = try
+        PNM.get_series_susceptance(zi, PSY.SU)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("ZI", err.msg)
+    @test occursin("x == 0", err.msg) || occursin("non-finite", err.msg)
+
+    # The substituting accessor answers where the public one refuses.
+    ybus = Ybus(sys)
+    nr = get_network_reduction_data(ybus)
+    @test get_effective_series_susceptance(zi, nr) ≈ 1 / PNM.ZERO_IMPEDANCE_X_EPSILON
+end
+
+@testset "zero-impedance transformer substitutes through the tap" begin
+    # The substituted reactance is still tap-divided, so the component value keeps agreeing
+    # with BA. Existing tests cover tap and zero impedance separately, never together.
+    tap = 1.05
+    sys, buses = _mk_bus_system(3)
+    zi_arc = Arc(; from = buses[2], to = buses[3])
+    add_component!(sys, zi_arc)
+    add_component!(
+        sys,
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+            name = "ZI_TAP",
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+                arc = zi_arc, tap = tap, α = 0.0, available = true,
+                active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
+                base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
+            ),
+            magnetizing_shunt = Complex(0.0, 0.0),
+        ),
+    )
+    for (f, t) in ((1, 2), (1, 3))
+        arc = Arc(; from = buses[f], to = buses[t])
+        add_component!(sys, arc)
+        _add_test_line!(sys, "L$(f)$(t)", arc, 0.0, 0.1)
+    end
+
+    ybus = Ybus(sys)
+    nr = get_network_reduction_data(ybus)
+    tr = PSY.get_component(PSY.TwoWindingTransformer, sys, "ZI_TAP")
+    b_expected = (1 / PNM.ZERO_IMPEDANCE_X_EPSILON) / tap
+    @test get_effective_series_susceptance(tr, nr) ≈ b_expected
+
+    # Dropping the tap would give 1/ZERO_IMPEDANCE_X_EPSILON, off by the tap factor.
+    @test !isapprox(get_effective_series_susceptance(tr, nr),
+        1 / PNM.ZERO_IMPEDANCE_X_EPSILON)
+
+    # BA derives its susceptance from Ybus, so it is the independent oracle: for a symmetric
+    # arc `imag(1/Y_ft) == x * tap`, which is the reciprocal of the tap-divided value.
+    bus_lookup = PNM.get_bus_lookup(ybus)
+    i = PNM.get_bus_index(2, bus_lookup, nr)
+    ix = findfirst(==((2, 3)), PNM.get_arc_axis(nr))
+    @test BA_Matrix(ybus).data[i, ix] ≈ b_expected rtol = 1e-5
+end

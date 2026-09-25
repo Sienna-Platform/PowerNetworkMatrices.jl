@@ -486,7 +486,7 @@ function build_hvdc_with_single_bus_island()
         base_voltage = 69.0,
     )
     add_component!(sys, bus15)
-    load15 = PowerLoad(;
+    load15 = PowerLoad(; input_basis = PSY.CU,
         name = "Load_15",
         available = true,
         bus = bus15,
@@ -497,10 +497,10 @@ function build_hvdc_with_single_bus_island()
         max_reactive_power = 0.0,
     )
     add_component!(sys, load15)
-    gen15 = ThermalStandard(;
+    gen15 = ThermalStandard(; input_basis = PSY.CU,
         name = "Gen_15",
         available = true,
-        status = true,
+        status = OperationalStates.ONLINE,
         bus = bus15,
         active_power = 0.0, # Per-unitized by device base_power
         reactive_power = 0.0, # Per-unitized by device base_power
@@ -511,13 +511,12 @@ function build_hvdc_with_single_bus_island()
         operation_cost = ThermalGenerationCost(nothing),
         base_power = 30.0, # MVA
         time_limits = (up = 8.0, down = 8.0), # Hours
-        must_run = false,
         prime_mover_type = PrimeMovers.CC,
         fuel = ThermalFuels.NATURAL_GAS,
     )
     add_component!(sys, gen15)
     bus14 = get_component(ACBus, sys, "Bus 14")
-    hvdc1 = TwoTerminalHVDCLine(;
+    hvdc1 = TwoTerminalGenericHVDCLine(; input_basis = PSY.CU,
         name = "Line18",
         available = true,
         active_power_flow = 0.0,
@@ -567,7 +566,7 @@ function build_hvdc_with_small_island()
     add_component!(sys, bus16)
     add_component!(sys, bus17)
 
-    line17 = Line(;
+    line17 = Line(; input_basis = PSY.CU,
         name = "Line17",
         available = true,
         active_power_flow = 0.0,
@@ -580,7 +579,7 @@ function build_hvdc_with_small_island()
         angle_limits = (min = -0.7, max = 0.7),
     )
     add_component!(sys, line17)
-    line18 = Line(;
+    line18 = Line(; input_basis = PSY.CU,
         name = "Line18",
         available = true,
         active_power_flow = 0.0,
@@ -593,7 +592,7 @@ function build_hvdc_with_small_island()
         angle_limits = (min = -0.7, max = 0.7),
     )
     add_component!(sys, line18)
-    load16 = PowerLoad(;
+    load16 = PowerLoad(; input_basis = PSY.CU,
         name = "Bus16",
         available = true,
         bus = bus16,
@@ -604,10 +603,10 @@ function build_hvdc_with_small_island()
         max_reactive_power = 0.0,
     )
     add_component!(sys, load16)
-    gen17 = ThermalStandard(;
+    gen17 = ThermalStandard(; input_basis = PSY.CU,
         name = "Bus17",
         available = true,
-        status = true,
+        status = OperationalStates.ONLINE,
         bus = bus17,
         active_power = 0.0, # Per-unitized by device base_power
         reactive_power = 0.0, # Per-unitized by device base_power
@@ -618,13 +617,12 @@ function build_hvdc_with_small_island()
         operation_cost = ThermalGenerationCost(nothing),
         base_power = 30.0, # MVA
         time_limits = (up = 8.0, down = 8.0), # Hours
-        must_run = false,
         prime_mover_type = PrimeMovers.CC,
         fuel = ThermalFuels.NATURAL_GAS,
     )
     add_component!(sys, gen17)
     bus14 = get_component(ACBus, sys, "Bus 14")
-    hvdc1 = TwoTerminalHVDCLine(;
+    hvdc1 = TwoTerminalGenericHVDCLine(; input_basis = PSY.CU,
         name = "Line18",
         available = true,
         active_power_flow = 0.0,
@@ -636,4 +634,541 @@ function build_hvdc_with_small_island()
     )
     add_component!(sys, hvdc1)
     return sys
+end
+
+"""
+Build a system on the buses named by an edge list of `(from, to, r, x, b_from, b_to)` tuples,
+with buses 1-4 forming the meshed core and higher numbers the chain interiors. A generator sits
+on bus 1 and a load on `load_bus`, so those are the only injector-pinned buses and every other
+bus is a reduction candidate. Shared by the chain fixtures below, which differ only in their
+edge lists.
+"""
+function _build_degree_two_chain_system(edges; load_bus::Int = 3)
+    sys = PSY.System(100.0)
+    buses = Dict{Int, ACBus}()
+    bus_numbers = sort!(unique!(reduce(vcat, [[e[1], e[2]] for e in edges])))
+    for n in bus_numbers
+        b = ACBus(;
+            number = n,
+            name = "Bus $n",
+            available = true,
+            bustype = n == 1 ? ACBusTypes.REF : ACBusTypes.PQ,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        PSY.add_component!(sys, b)
+        buses[n] = b
+    end
+    for (f, t, r, x, b_from, b_to) in edges
+        arc = Arc(buses[f], buses[t])
+        PSY.add_component!(sys, arc)
+        PSY.add_component!(
+            sys,
+            Line("L_$(f)_$(t)", true, 0.0, 0.0, arc, r, x,
+                (from = b_from, to = b_to), 2.0, (-1.6, 1.6)),
+        )
+    end
+    PSY.add_component!(
+        sys,
+        ThermalStandard(; input_basis = PSY.CU, name = "G1", available = true,
+            status = OperationalStates.ONLINE,
+            bus = buses[1],
+            active_power = 1.0, reactive_power = 0.0, rating = 2.0,
+            prime_mover_type =
+            PSY.PrimeMovers.OT, fuel = PSY.ThermalFuels.OTHER,
+            active_power_limits = (min = 0.0, max = 2.0),
+            reactive_power_limits = nothing, ramp_limits = nothing,
+            time_limits = nothing, base_power = 100.0,
+            operation_cost = ThermalGenerationCost(nothing)),
+    )
+    PSY.add_component!(
+        sys,
+        PowerLoad(; input_basis = PSY.CU, name = "D3", available = true,
+            bus = buses[load_bus],
+            active_power = 1.0,
+            reactive_power = 0.0, base_power = 100.0, max_active_power = 1.0,
+            max_reactive_power = 0.0),
+    )
+    return sys
+end
+
+"""
+Meshed core on buses 1-4 (a ring plus a 2-4 tie, so every core bus has degree three or more)
+plus two independent degree-two chains between buses 1 and 3 (interiors 10-11 and 20-21).
+Buses 1 and 3 keep degree four so they are chain terminals, and the two chains form the
+sibling pair that must collapse into one parallel group. Only the chain interiors are
+degree two, so they are the only buses a `DegreeTwoReduction` eliminates. No injectors on
+the interior buses, so nothing pins them irreducible.
+
+Both chains are written from bus 1 towards bus 3, and every branch is lossless with no
+charging, so the reduction is exactly a Schur complement onto the core.
+"""
+function build_two_parallel_degree_two_chains()
+    # (from, to, r, x, b_from, b_to) — distinct reactances so the chains are not degenerate.
+    edges = [
+        (1, 2, 0.0, 0.05, 0.0, 0.0), (2, 3, 0.0, 0.06, 0.0, 0.0),   # ring core
+        (3, 4, 0.0, 0.07, 0.0, 0.0), (4, 1, 0.0, 0.08, 0.0, 0.0),
+        (2, 4, 0.0, 0.09, 0.0, 0.0),                                # core tie
+        (1, 10, 0.0, 0.10, 0.0, 0.0), (10, 11, 0.0, 0.11, 0.0, 0.0),  # chain A
+        (11, 3, 0.0, 0.12, 0.0, 0.0),
+        (1, 20, 0.0, 0.20, 0.0, 0.0), (20, 21, 0.0, 0.21, 0.0, 0.0),  # chain B
+        (21, 3, 0.0, 0.22, 0.0, 0.0),
+    ]
+    return _build_degree_two_chain_system(edges)
+end
+
+"""
+Same topology as `build_two_parallel_degree_two_chains`, with two changes that exercise
+the orientation-swap arm of the grouped composite-arc arithmetic.
+
+  - Chain B is written from bus 3 towards bus 1 (`3-20-21-1`), and its interior numbering makes
+    the traversal terminate at bus 1, so the discovered chain's `arc_key` is `(3, 1)` while its
+    sibling's is `(1, 3)`. The group's arc frame is therefore the opposite of one member's, which
+    is the only condition under which a member's two-port is transposed.
+  - Every chain branch is lossy and carries asymmetric charging, so each chain's equivalent
+    two-port has `Y11 != Y22`. A transposed 2x2 is then numerically distinguishable, which a
+    lossless shunt-free chain (whose equivalent is a plain series admittance) never is.
+"""
+function build_reversed_asymmetric_degree_two_chains()
+    edges = [
+        (1, 2, 0.0, 0.05, 0.0, 0.0), (2, 3, 0.0, 0.06, 0.0, 0.0),   # ring core
+        (3, 4, 0.0, 0.07, 0.0, 0.0), (4, 1, 0.0, 0.08, 0.0, 0.0),
+        (2, 4, 0.0, 0.09, 0.0, 0.0),                                # core tie
+        # Chain A: 1 -> 3, lossy, mildly asymmetric charging.
+        (1, 10, 0.010, 0.10, 0.02, 0.03), (10, 11, 0.012, 0.11, 0.03, 0.01),
+        (11, 3, 0.008, 0.12, 0.04, 0.02),
+        # Chain B: 3 -> 1, lossy, strongly asymmetric charging.
+        (3, 20, 0.020, 0.20, 0.30, 0.05), (20, 21, 0.030, 0.21, 0.25, 0.02),
+        (21, 1, 0.015, 0.22, 0.20, 0.01),
+    ]
+    return _build_degree_two_chain_system(edges)
+end
+
+"""
+Ring `1-2-3-4` plus a degree-two chain `1-10-11-3` plus a stub `1-5`, no injectors, bus 1 = REF.
+Buses 2, 4 and the 10-11 pair are each degree-two chains between buses 1 and 3, so sibling
+grouping collapses all three into one composite arc `(1,3)`. Buses 1, 3 and 5 survive; bus 5's
+edge is untouched, so it distinguishes a targeted adjacency defect from a blanket one.
+"""
+function build_composite_arc_adjacency_system()
+    sys = PSY.System(100.0)
+    buses = Dict{Int, ACBus}()
+    for n in (1, 2, 3, 4, 5, 10, 11)
+        b = ACBus(;
+            number = n,
+            name = "Bus $n",
+            available = true,
+            bustype = n == 1 ? ACBusTypes.REF : ACBusTypes.PQ,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        PSY.add_component!(sys, b)
+        buses[n] = b
+    end
+    edges = [
+        (1, 2, 0.05), (2, 3, 0.06), (3, 4, 0.07), (4, 1, 0.08),
+        (1, 10, 0.10), (10, 11, 0.11), (11, 3, 0.12),
+        (1, 5, 0.09),
+    ]
+    for (f, t, x) in edges
+        arc = Arc(buses[f], buses[t])
+        PSY.add_component!(sys, arc)
+        PSY.add_component!(
+            sys,
+            Line("L_$(f)_$(t)", true, 0.0, 0.0, arc, 0.0, x,
+                (from = 0.0, to = 0.0), 100.0, (-1.6, 1.6)),
+        )
+    end
+    return sys
+end
+
+"""
+Same ring-plus-chain-plus-stub island as `build_composite_arc_adjacency_system` (buses
+`1,2,3,4,5,10,11`, bus 1 = REF, degree-two reduction collapses it to a composite arc `(1,3)`),
+plus a second, genuinely disconnected island (`200`-`201`, bus 200 = REF) with no shared bus and
+no degree-two chain of its own. Two reference buses give the two islands independent subnetwork
+keys, so a composite arc created in one island's reduction can be checked against both: it must
+appear in its own island's arc list and must not appear in the other island's.
+"""
+function build_multi_island_composite_arc_system()
+    sys = PSY.System(100.0)
+    buses = Dict{Int, ACBus}()
+    for n in (1, 2, 3, 4, 5, 10, 11, 200, 201)
+        b = ACBus(;
+            number = n,
+            name = "Bus $n",
+            available = true,
+            bustype = n in (1, 200) ? ACBusTypes.REF : ACBusTypes.PQ,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        PSY.add_component!(sys, b)
+        buses[n] = b
+    end
+    edges = [
+        (1, 2, 0.05), (2, 3, 0.06), (3, 4, 0.07), (4, 1, 0.08),
+        (1, 10, 0.10), (10, 11, 0.11), (11, 3, 0.12),
+        (1, 5, 0.09),
+        (200, 201, 0.15),
+    ]
+    for (f, t, x) in edges
+        arc = Arc(buses[f], buses[t])
+        PSY.add_component!(sys, arc)
+        PSY.add_component!(
+            sys,
+            Line("L_$(f)_$(t)", true, 0.0, 0.0, arc, 0.0, x,
+                (from = 0.0, to = 0.0), 100.0, (-1.6, 1.6)),
+        )
+    end
+    return sys
+end
+
+"""
+Meshed core on buses 1-4 (a ring plus a 2-4 tie) plus a degree-two chain `1-10-3` whose second
+segment is an **anti-parallel pair**: one line is written `10 -> 3` and its twin `3 -> 10`.
+
+The pair is the point of the fixture. Both twins hold their own key in `direct_branch_map`, because
+arc keys are the raw (from, to) tuple, while the adjacency matrix holds one entry per bus *pair*.
+Bus 10 therefore reads degree two and is folded, and every probe that resolves a chain segment to
+"the" entry on its bus pair sees only one of the twins.
+
+The twins carry different impedances and asymmetric charging, so omitting either one is
+numerically unmistakable rather than a rounding difference.
+"""
+function build_antiparallel_chain_segment_system()
+    edges = [
+        (1, 2, 0.0, 0.05, 0.0, 0.0), (2, 3, 0.0, 0.06, 0.0, 0.0),   # ring core
+        (3, 4, 0.0, 0.07, 0.0, 0.0), (4, 1, 0.0, 0.08, 0.0, 0.0),
+        (2, 4, 0.0, 0.09, 0.0, 0.0),                                # core tie
+        (1, 10, 0.010, 0.10, 0.02, 0.03),                           # chain segment 1
+        (10, 3, 0.012, 0.11, 0.03, 0.01),                           # chain segment 2
+        (3, 10, 0.008, 0.17, 0.05, 0.02),                           # its anti-parallel twin
+    ]
+    return _build_degree_two_chain_system(edges)
+end
+
+"""
+`build_antiparallel_chain_segment_system` plus a second 10→3 line, so segment 2 is
+MixedBranchesParallel[Line, BranchesParallel{Line}].
+"""
+function build_antiparallel_chain_segment_nested_parallel_system()
+    sys = build_antiparallel_chain_segment_system()
+    arc = PSY.get_arc(PSY.get_component(Line, sys, "L_10_3"))
+    PSY.add_component!(
+        sys,
+        Line("L_10_3_b", true, 0.0, 0.0, arc, 0.015, 0.13,
+            (from = 0.01, to = 0.01), 2.0, (-1.6, 1.6)),
+    )
+    return sys
+end
+
+##############################################################################
+###################### Branch index fingerprinting ###########################
+##############################################################################
+
+"""
+Stable, order-independent summary of a branch index. Two indexes with equal fingerprints
+agree on every (map kind, branch type, arc) => entry-name association, which is what the
+downstream axis and lookup code actually depends on. Types and map-kind tags are stringified
+so an index keying them by `Symbol` compares equal to one keying them by `String`.
+"""
+function branch_index_fingerprint(
+    maps_by_type::PNM.BranchMapsByType,
+    name_to_arc::Dict,
+    component_to_entry::Dict,
+)
+    by_type = Tuple{String, String, Tuple{Int, Int}, String}[]
+    for (kind, per_type) in maps_by_type
+        for (T, submap) in per_type
+            for (key, value) in submap
+                # Forward maps are arc-keyed with an entry value; reverse maps are
+                # entry-keyed with an arc value.
+                arc, entry = key isa Tuple{Int, Int} ? (key, value) : (value, key)
+                push!(by_type, (String(kind), string(T), arc, PNM.get_name(entry)))
+            end
+        end
+    end
+    sort!(by_type)
+
+    # No map-of-origin column: an entry is identified by its arc, and which reduction map
+    # holds it is answered by `arc_provenance` off the entry rather than stored alongside.
+    names = Tuple{String, String, Tuple{Int, Int}}[]
+    for (T, submap) in name_to_arc
+        for (name, arc) in submap
+            push!(names, (string(T), name, arc))
+        end
+    end
+    sort!(names)
+
+    redirects = Tuple{String, String, String}[]
+    for (T, submap) in component_to_entry
+        for (component, entry) in submap
+            push!(redirects, (string(T), component, entry))
+        end
+    end
+    sort!(redirects)
+
+    return (; by_type, names, redirects)
+end
+
+"""
+The reduction fixtures worth testing a branch index against. `c_sys5`/`c_sys14` reduce
+nothing (empty series/parallel maps), so they are deliberately absent: a passing reduction
+test on them proves nothing.
+"""
+function branch_catalog_test_cases()
+    cases = Tuple{String, PSY.System, Vector{PNM.NetworkReduction}}[]
+    for (label, sys) in (
+        (
+            "psse14",
+            PSB.build_system(PSSEParsingTestSystems,
+                "psse_14_network_reduction_test_system"),
+        ),
+        ("case10", PSB.build_system(PSB.PSITestSystems,
+            "case10_radial_series_reductions")),
+        ("antiparallel", build_antiparallel_chain_segment_system()),
+    )
+        for reductions in (
+            PNM.NetworkReduction[],
+            PNM.NetworkReduction[PNM.RadialReduction()],
+            PNM.NetworkReduction[PNM.DegreeTwoReduction()],
+            PNM.NetworkReduction[PNM.RadialReduction(), PNM.DegreeTwoReduction()],
+        )
+            push!(cases, (label, sys, reductions))
+        end
+    end
+    return cases
+end
+
+"Order-independent fingerprint of a `BranchCatalog`."
+catalog_fingerprint(c::PNM.BranchCatalog) = branch_index_fingerprint(
+    PNM.get_all_branch_maps_by_type(c),
+    PNM.get_name_to_arc_maps(c),
+    PNM.get_component_to_reduction_name_map(c),
+)
+
+# Fresh System with `n` buses (bus 1 REF, the rest PV); returns the system and the buses.
+function _mk_bus_system(n::Int)
+    sys = System(100.0)
+    buses = ACBus[]
+    for i in 1:n
+        if i == 1
+            bustype = ACBusTypes.REF
+        else
+            bustype = ACBusTypes.PV
+        end
+        b = ACBus(;
+            number = i,
+            name = "b$i",
+            available = true,
+            bustype = bustype,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        add_component!(sys, b)
+        push!(buses, b)
+    end
+    return sys, buses
+end
+
+# Add a `Line` named `name` on `arc` with series impedance `(r, x)` and no charging.
+function _add_test_line!(sys, name, arc, r, x)
+    add_component!(
+        sys,
+        Line(; input_basis = PSY.CU,
+            name = name,
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            arc = arc,
+            r = r,
+            x = x,
+            b = (from = 0.0, to = 0.0),
+            rating = 1.0,
+            angle_limits = (min = -1.5, max = 1.5),
+        ),
+    )
+end
+
+# Detached components suffice for map-filing tests: `add_to_branch_maps!` only reads arc bus
+# numbers, never impedances (which require an attached system).
+function _mk_detached_pst_fixture()
+    b1 = ACBus(;
+        number = 1, name = "b1", available = true, bustype = ACBusTypes.REF,
+        angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
+        base_voltage = 230.0,
+    )
+    b2 = ACBus(;
+        number = 2, name = "b2", available = true, bustype = ACBusTypes.PV,
+        angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
+        base_voltage = 230.0,
+    )
+    function _mk_fixture_line(name)
+        return Line(; input_basis = PSY.CU,
+            name = name, available = true, active_power_flow = 0.0,
+            reactive_power_flow = 0.0, arc = Arc(; from = b1, to = b2),
+            r = 0.0, x = 0.1, b = (from = 0.0, to = 0.0), rating = 1.0,
+            angle_limits = (min = -1.5, max = 1.5),
+        )
+    end
+    function _mk_fixture_pst(name, α)
+        return PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+            name = name,
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+                arc = Arc(; from = b1, to = b2), tap = 1.0, α = α,
+                available = true, active_power_flow = 0.0, reactive_power_flow = 0.0,
+                rating = 1.0, base_power = 100.0, base_voltage_primary = 230.0,
+                r = 0.0, x = 0.2,
+            ),
+            magnetizing_shunt = Complex(0.0, 0.0),
+        )
+    end
+    return (
+        _mk_fixture_line("L1"),
+        _mk_fixture_line("L2"),
+        _mk_fixture_pst("PST1", 0.15),
+        _mk_fixture_pst("PST2", 0.10),
+    )
+end
+
+# Build a minimal 3-bus system (bus 1 REF) wired so that the parallel arc (2, 3)
+# carries the supplied (r, x) pairs; lines 1-2 and 1-3 keep the network connected.
+function _mk_zi_parallel_sys(rx_pairs::Vector{Tuple{Float64, Float64}})
+    sys, buses = _mk_bus_system(3)
+    # Parallel members share a single Arc (2, 3), as real parallel branches do.
+    zi_arc = Arc(; from = buses[2], to = buses[3])
+    add_component!(sys, zi_arc)
+    for (k, (r, x)) in enumerate(rx_pairs)
+        _add_test_line!(sys, "ZI$k", zi_arc, r, x)
+    end
+    for (f, t) in ((1, 2), (1, 3))
+        arc = Arc(; from = buses[f], to = buses[t])
+        add_component!(sys, arc)
+        _add_test_line!(sys, "L$f$t", arc, 0.0, 0.1)
+    end
+    return sys
+end
+
+# Attached 3-bus system with L1 ∥ PST on (1, 2) and L2 on (2, 3). Attached (not detached, as
+# in `_mk_detached_pst_fixture`) because impedance reads need `base_value`, which only
+# `add_component!` populates.
+function _mk_line_pst_parallel_system(; pst_r = 0.0, pst_x = 0.2)
+    sys, buses = _mk_bus_system(3)
+    function _mk_sys_line(name, f, t)
+        arc = Arc(; from = buses[f], to = buses[t])
+        add_component!(sys, arc)
+        add_component!(
+            sys,
+            Line(; input_basis = PSY.CU,
+                name = name, available = true, active_power_flow = 0.0,
+                reactive_power_flow = 0.0, arc = arc, r = 0.0, x = 0.1,
+                b = (from = 0.0, to = 0.0), rating = 1.0,
+                angle_limits = (min = -1.5, max = 1.5),
+            ),
+        )
+        return arc
+    end
+    pst_arc = _mk_sys_line("L1", 1, 2)
+    _mk_sys_line("L2", 2, 3)
+    # PST shares L1's Arc — a second `Arc(; from = buses[1], to = buses[2])` collides on the
+    # auto-derived component name ("b1 -> b2"), same reasoning as `_mk_zi_parallel_sys` above.
+    add_component!(
+        sys,
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+            name = "PST",
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+                arc = pst_arc, tap = 1.0, α = 0.15, available = true,
+                active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
+                base_power = 100.0, base_voltage_primary = 230.0,
+                r = pst_r, x = pst_x,
+            ),
+            magnetizing_shunt = Complex(0.0, 0.0),
+        ),
+    )
+    return sys
+end
+
+# ThreeWindingTransformer on three terminal buses → star_bus; star-leg impedances derived
+# from pairwise data, system base (SU == CU).
+function _add_three_winding_transformer!(
+    sys,
+    busP,
+    busS,
+    busT,
+    star_bus;
+    name = "T3W",
+    r12 = 0.01, x12 = 0.1,
+    r23 = 0.01, x23 = 0.1,
+    r31 = 0.01, x31 = 0.1,
+    bp = 100.0,
+    magnetizing_shunt = 0.0 + 0.0im,
+    shunt_location = PSY.ThreeWindingTransformerShuntLocation.PRIMARY,
+    ratings = (1.0, 1.0, 0.5),
+)
+    arcs = (
+        PSY.Arc(; from = busP, to = star_bus),
+        PSY.Arc(; from = busS, to = star_bus),
+        PSY.Arc(; from = busT, to = star_bus),
+    )
+    foreach(a -> PSY.add_component!(sys, a), arcs)
+    z12, z23, z31 = complex(r12, x12), complex(r23, x23), complex(r31, x31)
+    legs = (
+        (z12 + z31 - z23) / 2,
+        (z12 + z23 - z31) / 2,
+        (z31 + z23 - z12) / 2,
+    )
+    circuits = ntuple(
+        i -> PSY.TransformerCircuit(; input_basis = PSY.CU,
+            arc = arcs[i],
+            available = true,
+            base_power = bp,
+            base_voltage_primary = PSY.get_base_voltage(PSY.get_from(arcs[i])),
+            r = real(legs[i]),
+            x = imag(legs[i]),
+            rating = ratings[i],
+        ),
+        3,
+    )
+    t3w = PSY.ThreeWindingTransformer(; input_basis = PSY.CU,
+        name = name,
+        primary_circuit = circuits[1],
+        secondary_circuit = circuits[2],
+        tertiary_circuit = circuits[3],
+        star_bus = star_bus,
+        r_12 = r12, x_12 = x12,
+        r_23 = r23, x_23 = x23,
+        r_31 = r31, x_31 = x31,
+        base_power_12 = bp, base_power_23 = bp, base_power_31 = bp,
+        magnetizing_shunt = magnetizing_shunt,
+        shunt_location = shunt_location,
+    )
+    PSY.add_component!(sys, t3w)
+    return t3w
+end
+
+function _add_star_buses!(sys, busD; numbers = (101, 102, 103))
+    return map(numbers) do n
+        b = PSY.ACBus(;
+            number = n,
+            name = "Bus3WT_$n",
+            available = true,
+            bustype = PSY.ACBusTypes.PQ,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.95, max = 1.05),
+            base_voltage = 230.0,
+            area = PSY.get_area(busD),
+            load_zone = PSY.get_load_zone(busD),
+        )
+        PSY.add_component!(sys, b)
+        b
+    end
 end

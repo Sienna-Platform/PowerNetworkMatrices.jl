@@ -102,10 +102,11 @@ end
     _basic_test_ward_reduction(sys, study_buses)
     _test_matrices_ward_reduction(sys, study_buses)
 
-    sys = PSB.build_system(PSB.PSIDTestSystems, "psid_test_ieee_9bus")
-    study_buses = [1, 2, 5, 4, 7]
-    _basic_test_ward_reduction(sys, study_buses)
-    _test_matrices_ward_reduction(sys, study_buses)
+    # Parked: `psid_test_ieee_9bus` predates IS4 integer ids and has no raw source. Restore with the dynamics campaign.
+    # sys = PSB.build_system(PSB.PSIDTestSystems, "psid_test_ieee_9bus")
+    # study_buses = [1, 2, 5, 4, 7]
+    # _basic_test_ward_reduction(sys, study_buses)
+    # _test_matrices_ward_reduction(sys, study_buses)
 
     sys = PSB.build_system(PSB.PSISystems, "RTS_GMLC_DA_sys")
     bus_numbers = [get_number(x) for x in get_components(ACBus, sys)]
@@ -129,11 +130,15 @@ end
         sys;
         network_reductions = NetworkReduction[WardReduction([101, 102])],
     )
-    existing_line_susceptance = PSY.get_series_susceptance(
-        ptdf_2.network_reduction_data.direct_branch_map[(101, 102)],
+    existing_line_susceptance = PNM.get_series_susceptance(
+        get_network_reduction_data(ptdf_2).direct_branch_map[(101, 102)],
+        PSY.SU,
     )
-    ward_line_susceptance = PSY.get_series_susceptance(
-        ptdf_2.network_reduction_data.added_arc_impedance_map[(101, 102)],
+    # The ward equivalent is a detached synthetic branch storing system-base
+    # impedance; read it back with device base (identity).
+    ward_line_susceptance = PNM.get_series_susceptance(
+        get_network_reduction_data(ptdf_2).added_arc_impedance_map[(101, 102)],
+        PSY.CU,
     )
     ward_multiplier =
         existing_line_susceptance / (existing_line_susceptance + ward_line_susceptance)
@@ -157,11 +162,14 @@ end
     @test length(wr.added_arc_impedance_map) == 0
     @test length(wr.added_admittance_map) == 1
 
-    wr =
-        @test_logs (:error, r"The study buses comprise an entire island") match_mode = :any get_network_reduction_data(
-            Ybus(sys; network_reductions = NetworkReduction[WardReduction([15, 16, 17])]),
-        )
+    # Study buses covering one island entirely: Ward cannot reduce inside it, but the other
+    # islands are still eliminated, so this is legitimate and only warns. Asserted by
+    # behavior; `@test_logs` MethodErrors on failure in this suite.
+    wr = get_network_reduction_data(
+        Ybus(sys; network_reductions = NetworkReduction[WardReduction([15, 16, 17])]),
+    )
     @test isa(wr, NetworkReductionData)
+    @test !isempty(PNM.get_removed_buses(wr))
     @test length(wr.added_arc_impedance_map) == 0
     @test length(wr.added_admittance_map) == 0
 
@@ -197,7 +205,7 @@ end
     )
     add_component!(sys_with_isolated, bus6)
     bus5 = get_component(ACBus, sys_with_isolated, "nodeD")
-    hvdc1 = TwoTerminalHVDCLine(;
+    hvdc1 = TwoTerminalGenericHVDCLine(; input_basis = PSY.CU,
         name = "Line18",
         available = true,
         active_power_flow = 0.0,
@@ -216,4 +224,157 @@ end
     @test ybus.data == ybus_with_isolated.data
     # Building PTDF tests handling of subnetwork_axes when an entire subnetwork is eliminated during reduction:
     @test isa(PTDF(ybus_with_isolated), PTDF)
+end
+
+@testset "Ward: a total no-op is rejected rather than silently recorded" begin
+    # A study area covering the whole of the only island leaves Ward nothing to do: no
+    # bus is eliminated inside it, and there is no other island to drop. Recording the
+    # reduction as applied would let every downstream consumer believe the network was
+    # reduced when it was not.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    ybus = Ybus(sys)
+    all_buses = collect(PNM.get_bus_axis(ybus))
+    @test length(ybus.subnetwork_axes) == 1
+
+    @test_throws IS.DataFormatError Ybus(
+        sys;
+        network_reductions = NetworkReduction[WardReduction(all_buses)],
+    )
+end
+
+@testset "Ward: study buses covering one island still drops the others" begin
+    # The same condition is legitimate when other islands exist: Ward cannot reduce inside
+    # the study island but does eliminate every other one, so it must not throw. The extra
+    # island is a bus reachable only over an HVDC line, which the AC Ybus never sees.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    bus6 = ACBus(;
+        number = 6, name = "Bus 6", available = true, bustype = ACBusTypes.REF,
+        angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.05),
+        base_voltage = 69.0,
+    )
+    add_component!(sys, bus6)
+    add_component!(
+        sys,
+        TwoTerminalGenericHVDCLine(; input_basis = PSY.CU,
+            name = "Line18", available = true, active_power_flow = 0.0,
+            arc = Arc(; from = get_component(ACBus, sys, "nodeD"), to = bus6),
+            active_power_limits_from = (min = -100.0, max = 100.0),
+            active_power_limits_to = (min = -100.0, max = 100.0),
+            reactive_power_limits_from = (min = -100.0, max = 100.0),
+            reactive_power_limits_to = (min = -100.0, max = 100.0),
+        ),
+    )
+
+    ybus = Ybus(sys)
+    @test length(ybus.subnetwork_axes) > 1
+    main = [b for b in PNM.get_bus_axis(ybus) if b != 6]
+
+    reduced = Ybus(sys; network_reductions = NetworkReduction[WardReduction(main)])
+    @test Set(PNM.get_bus_axis(reduced)) == Set(main)
+    @test 6 ∉ PNM.get_bus_axis(reduced)
+end
+
+@testset "Ward: an outaged branch outside the study area is rejected" begin
+    # Ward's `study_buses` defines the retained network, so a contingency on a branch
+    # outside it can never be represented: after the reduction that arc is gone and the
+    # MODF would silently return the base-case row. Reject at specification time rather
+    # than quietly widening the study area to swallow it.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    nums = sort([PSY.get_number(b) for b in PSY.get_components(PSY.ACBus, sys)])
+    study = nums[1:5]
+    sset = Set(study)
+
+    external = nothing
+    for br in PSY.get_components(PSY.ACTransmission, sys)
+        (fb, tb) = PNM.get_arc_tuple(br)
+        if !(fb in sset) && !(tb in sset)
+            external = br
+            break
+        end
+    end
+    @test external !== nothing
+    PSY.add_supplemental_attribute!(
+        sys, external, PSY.FixedForcedOutage(; outage_status = 1.0),
+    )
+
+    @test_throws IS.ConflictingInputsError VirtualMODF(
+        sys;
+        network_reductions = NetworkReduction[WardReduction(study)],
+    )
+end
+
+@testset "Ward: an outaged branch inside the study area is accepted" begin
+    # The complement of the case above: a contingency wholly inside the study area
+    # survives the reduction, so the specification is consistent and the build proceeds.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    nums = sort([PSY.get_number(b) for b in PSY.get_components(PSY.ACBus, sys)])
+    study = nums[1:8]
+    sset = Set(study)
+
+    internal = nothing
+    for br in PSY.get_components(PSY.ACTransmission, sys)
+        (fb, tb) = PNM.get_arc_tuple(br)
+        if fb in sset && tb in sset
+            internal = br
+            break
+        end
+    end
+    @test internal !== nothing
+    PSY.add_supplemental_attribute!(
+        sys, internal, PSY.FixedForcedOutage(; outage_status = 1.0),
+    )
+
+    vmodf = VirtualMODF(
+        sys;
+        network_reductions = NetworkReduction[WardReduction(study)],
+    )
+    nrd = PNM.get_network_reduction_data(vmodf)
+    # Ward actually reduced: the retained bus set is the study area, not the whole system.
+    @test Set(keys(PNM.get_bus_reduction_map(nrd))) == sset
+    @test length(nums) > length(study)
+end
+
+@testset "Ward: added arcs answer get_effective_series_susceptance" begin
+    # Added Ward arcs are detached; their r/x are already system base, so read PSY.CU.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    ybus = Ybus(sys; network_reductions = NetworkReduction[WardReduction([1, 2, 3, 4, 5])])
+    nr = get_network_reduction_data(ybus)
+    added = nr.added_arc_impedance_map
+    @test !isempty(added)
+    for (arc, component) in added
+        b = PNM.get_effective_series_susceptance(component, nr)
+        @test isfinite(b)
+        @test b ≈ 1 / PSY.get_x(component, PSY.CU)
+    end
+end
+
+@testset "Ward: BA combines both two-ports on an arc shared with the equivalent" begin
+    # 101-102 carries an existing line and gets a Ward equivalent filed under the same key
+    # (`ward_reduction.jl`); BA must reflect both two-ports, not just the co-keyed entry.
+    sys = PSB.build_system(PSB.PSIDSystems, "3 Bus Inverter Base")
+    ybus = @test_logs (
+        :warn,
+        r"Equivalent arc impedance computed during Ward reduction is in parallel with existing system arc.",
+    ) match_mode = :any Ybus(
+        sys;
+        network_reductions = NetworkReduction[WardReduction([101, 102])],
+    )
+    nr = get_network_reduction_data(ybus)
+    arc = (101, 102)
+    @test haskey(PNM.get_added_arc_impedance_map(nr), arc)
+    @test haskey(PNM.get_direct_branch_map(nr), arc)
+
+    line = PNM.get_direct_branch_map(nr)[arc]
+    b_direct_only = PNM.get_effective_series_susceptance(line, nr)
+
+    bus_lookup = PNM.get_bus_lookup(ybus)
+    ix_from = PNM.get_bus_index(101, bus_lookup, nr)
+    ix_arc = findfirst(==(arc), PNM.get_arc_axis(nr))
+    b_BA = BA_Matrix(ybus).data[ix_from, ix_arc]
+
+    Y_ft = -ybus.data[bus_lookup[101], bus_lookup[102]]
+    b_expected = PNM._symmetric_arc_dc_susceptance(Complex{Float64}(Y_ft))
+
+    @test b_BA ≈ b_expected rtol = 1e-5
+    @test !isapprox(b_BA, b_direct_only; rtol = 1e-3)
 end

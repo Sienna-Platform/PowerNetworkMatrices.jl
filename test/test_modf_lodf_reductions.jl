@@ -1,7 +1,7 @@
 """
-    _clone_transformer_with_name(xfmr, new_name) -> TapTransformer
+    _clone_transformer_with_name(xfmr, new_name) -> TwoWindingTransformer
 
-Clone a TapTransformer with a new name, sharing the same buses and identical
+Clone a TwoWindingTransformer with a new name, sharing the same buses and identical
 electrical parameters (R, X, tap, primary_shunt, rating, base_power,
 base_voltage_primary, base_voltage_secondary). The returned object has no
 supplemental attributes and is not attached to any system.
@@ -9,24 +9,16 @@ supplemental attributes and is not attached to any system.
 Used to create a second circuit on a bus pair so that `BA_Matrix` treats that
 pair as a 2-circuit parallel group, enabling N-2 parallel-circuit tests.
 """
-function _clone_transformer_with_name(xfmr::PSY.TapTransformer, new_name::String)
+function _clone_transformer_with_name(xfmr::PSY.TwoWindingTransformer, new_name::String)
     old_arc = PSY.get_arc(xfmr)
-    new_arc = PSY.Arc(; from = old_arc.from, to = old_arc.to)
-    return PSY.TapTransformer(;
-        name = new_name,
-        available = PSY.get_available(xfmr),
-        active_power_flow = PSY.get_active_power_flow(xfmr),
-        reactive_power_flow = PSY.get_reactive_power_flow(xfmr),
-        arc = new_arc,
-        r = PSY.get_r(xfmr),
-        x = PSY.get_x(xfmr),
-        primary_shunt = PSY.get_primary_shunt(xfmr),
-        tap = PSY.get_tap(xfmr),
-        rating = PSY.get_rating(xfmr),
-        base_power = PSY.get_base_power(xfmr),
-        base_voltage_primary = PSY.get_base_voltage_primary(xfmr),
-        base_voltage_secondary = PSY.get_base_voltage_secondary(xfmr),
-    )
+    # Deep-copy to reproduce every electrical parameter exactly (avoids re-reading
+    # each field in a particular unit basis), then give it a fresh identity, name,
+    # and an arc that shares the original buses rather than the deep-copied ones.
+    clone = deepcopy(xfmr)
+    clone.internal = IS.InfrastructureSystemsInternal()
+    PSY.set_name!(clone, new_name)
+    PSY.set_arc!(clone, PSY.Arc(; from = old_arc.from, to = old_arc.to))
+    return clone
 end
 
 """
@@ -93,12 +85,12 @@ function verify_modf_lodf_identity(
     b_arc = vmodf.arc_susceptances[arc_idx]
 
     # Build and register ContingencySpec
-    ctg_uuid = Base.UUID(UInt128(hash((arc_idx, delta_b))))
+    ctg_id = Int(hash((arc_idx, delta_b)) & 0x7fffffffffffffff)
     ctg = ContingencySpec(
-        ctg_uuid,
+        ctg_id,
         NetworkModification("test_arc_$(arc_idx)", [ArcModification(arc_idx, delta_b)]),
     )
-    vmodf.contingency_cache[ctg_uuid] = ctg
+    vmodf.contingency_cache[ctg_id] = ctg
 
     # LODF reference: standard column for full outage, partial otherwise
     is_full_outage = isapprox(delta_b, -b_arc; atol = 1e-12)
@@ -164,15 +156,15 @@ function verify_modf_n2_lodf_identity(
             "Arc pair ($arc_idx1, $arc_idx2) is an N-2 islanding pair (denom=$denom); use a non-islanding pair",
         )
 
-    ctg_uuid = Base.UUID(UInt128(hash((arc_idx1, arc_idx2, :n2))))
+    ctg_id = Int(hash((arc_idx1, arc_idx2, :n2)) & 0x7fffffffffffffff)
     ctg = ContingencySpec(
-        ctg_uuid,
+        ctg_id,
         NetworkModification(
             "n2_test_$(arc_idx1)_$(arc_idx2)",
             [ArcModification(arc_idx1, -b_arc1), ArcModification(arc_idx2, -b_arc2)],
         ),
     )
-    vmodf.contingency_cache[ctg_uuid] = ctg
+    vmodf.contingency_cache[ctg_id] = ctg
 
     for m in 1:n_arcs
         Lm1 = vlodf[m, arc_idx1]
@@ -244,7 +236,7 @@ end
     @testset "parallel single-circuit" begin
         arc_tuple, arc_idx = _find_non_islanding_arc(vmodf, nrd.parallel_branch_map)
         parallel = nrd.parallel_branch_map[arc_tuple]
-        b_circuit = PSY.get_series_susceptance(first(parallel.branches))
+        b_circuit = PNM.get_series_susceptance(first(parallel.branches), PSY.SU)
         delta_b = -b_circuit
         verify_modf_lodf_identity(vmodf, vlodf, ptdf, arc_idx, delta_b)
     end
@@ -267,7 +259,7 @@ end
     @testset "parallel single-circuit" begin
         arc_tuple, arc_idx = _find_non_islanding_arc(vmodf, nrd.parallel_branch_map)
         parallel = nrd.parallel_branch_map[arc_tuple]
-        b_circuit = PSY.get_series_susceptance(first(parallel.branches))
+        b_circuit = PNM.get_series_susceptance(first(parallel.branches), PSY.SU)
         delta_b = -b_circuit
         verify_modf_lodf_identity(vmodf, vlodf, ptdf, arc_idx, delta_b)
     end
@@ -291,7 +283,7 @@ end
     @testset "parallel single-circuit" begin
         arc_tuple, arc_idx = _find_non_islanding_arc(vmodf, nrd.parallel_branch_map)
         parallel = nrd.parallel_branch_map[arc_tuple]
-        b_circuit = PSY.get_series_susceptance(first(parallel.branches))
+        b_circuit = PNM.get_series_susceptance(first(parallel.branches), PSY.SU)
         delta_b = -b_circuit
         verify_modf_lodf_identity(vmodf, vlodf, ptdf, arc_idx, delta_b)
     end
@@ -300,7 +292,7 @@ end
         arc_tuple, arc_idx = _find_non_islanding_arc(vmodf, nrd.series_branch_map)
         series_chain = nrd.series_branch_map[arc_tuple]
         segment = first(series_chain)
-        delta_b = PNM._compute_series_outage_delta_b(series_chain, segment)
+        delta_b = PNM._compute_series_outage_delta_b(series_chain, segment, nrd)
         verify_modf_lodf_identity(vmodf, vlodf, ptdf, arc_idx, delta_b)
     end
 end
@@ -323,7 +315,7 @@ end
     @testset "parallel single-circuit" begin
         arc_tuple, arc_idx = _find_non_islanding_arc(vmodf, nrd.parallel_branch_map)
         parallel = nrd.parallel_branch_map[arc_tuple]
-        b_circuit = PSY.get_series_susceptance(first(parallel.branches))
+        b_circuit = PNM.get_series_susceptance(first(parallel.branches), PSY.SU)
         delta_b = -b_circuit
         verify_modf_lodf_identity(vmodf, vlodf, ptdf, arc_idx, delta_b)
     end
@@ -332,7 +324,7 @@ end
         arc_tuple, arc_idx = _find_non_islanding_arc(vmodf, nrd.series_branch_map)
         series_chain = nrd.series_branch_map[arc_tuple]
         segment = first(series_chain)
-        delta_b = PNM._compute_series_outage_delta_b(series_chain, segment)
+        delta_b = PNM._compute_series_outage_delta_b(series_chain, segment, nrd)
         verify_modf_lodf_identity(vmodf, vlodf, ptdf, arc_idx, delta_b)
     end
 end
@@ -354,7 +346,7 @@ end
     # Shared fixture: RTS-GMLC system augmented with a second circuit on the A14
     # transformer (bus 109 → 111) to create a 2-circuit parallel group.
     sys = PSB.build_system(PSB.PSITestSystems, "test_RTS_GMLC_sys")
-    xfmr_a14 = PSY.get_component(PSY.TapTransformer, sys, "A14")
+    xfmr_a14 = PSY.get_component(PSY.TwoWindingTransformer, sys, "A14")
     PSY.add_component!(sys, _clone_transformer_with_name(xfmr_a14, "A14_b"))
 
     # Resolve the canonical arc key for the parallel group once.  A lightweight
@@ -385,7 +377,7 @@ end
         #   |vlodf[(111,114), par_arc_idx]| ≈ 0.2310
         sel_line_name = "A18"
 
-        A14_b_branch = PSY.get_component(PSY.TapTransformer, sys, "A14_b")
+        A14_b_branch = PSY.get_component(PSY.TwoWindingTransformer, sys, "A14_b")
         line_branch = PSY.get_component(PSY.Line, sys, sel_line_name)
 
         mod_a14b = NetworkModification(vmodf, A14_b_branch)
@@ -397,14 +389,14 @@ end
         )
         n2_mod = NetworkModification("n2_parallel_xfmr_plus_line", n2_mods)
 
-        ctg_uuid = Base.UUID(UInt128(515151))
-        ctg = ContingencySpec(ctg_uuid, n2_mod)
-        vmodf.contingency_cache[ctg_uuid] = ctg
+        ctg_id = 515151
+        ctg = ContingencySpec(ctg_id, n2_mod)
+        vmodf.contingency_cache[ctg_id] = ctg
 
         sys_post = deepcopy(sys)
         PSY.remove_component!(
             sys_post,
-            PSY.get_component(PSY.TapTransformer, sys_post, "A14_b"),
+            PSY.get_component(PSY.TwoWindingTransformer, sys_post, "A14_b"),
         )
         PSY.remove_component!(
             sys_post,
@@ -444,7 +436,7 @@ end
         @test haskey(nrd.parallel_branch_map, par_key)
         @test length(nrd.parallel_branch_map[par_key].branches) == 2
 
-        A14_b_branch = PSY.get_component(PSY.TapTransformer, sys, "A14_b")
+        A14_b_branch = PSY.get_component(PSY.TwoWindingTransformer, sys, "A14_b")
         a18_branch = PSY.get_component(PSY.Line, sys, "A18")
         a19_branch = PSY.get_component(PSY.Line, sys, "A19")
 
@@ -459,14 +451,14 @@ end
         )
         n3_mod = NetworkModification("n3_parallel_xfmr_plus_two_lines", n3_mods)
 
-        ctg_uuid = Base.UUID(UInt128(515251))
-        ctg = ContingencySpec(ctg_uuid, n3_mod)
-        vmodf.contingency_cache[ctg_uuid] = ctg
+        ctg_id = 515251
+        ctg = ContingencySpec(ctg_id, n3_mod)
+        vmodf.contingency_cache[ctg_id] = ctg
 
         sys_post = deepcopy(sys)
         PSY.remove_component!(
             sys_post,
-            PSY.get_component(PSY.TapTransformer, sys_post, "A14_b"),
+            PSY.get_component(PSY.TwoWindingTransformer, sys_post, "A14_b"),
         )
         PSY.remove_component!(sys_post, PSY.get_component(PSY.Line, sys_post, "A18"))
         PSY.remove_component!(sys_post, PSY.get_component(PSY.Line, sys_post, "A19"))
@@ -526,9 +518,9 @@ end
         )
         n3_mod = NetworkModification("n3_three_regular_lines", n3_mods)
 
-        ctg_uuid = Base.UUID(UInt128(515252))
-        ctg = ContingencySpec(ctg_uuid, n3_mod)
-        vmodf.contingency_cache[ctg_uuid] = ctg
+        ctg_id = 515252
+        ctg = ContingencySpec(ctg_id, n3_mod)
+        vmodf.contingency_cache[ctg_id] = ctg
 
         sys_post = deepcopy(sys)
         PSY.remove_component!(sys_post, PSY.get_component(PSY.Line, sys_post, "A23"))
@@ -572,12 +564,7 @@ end
 end
 
 @testset "MODF empty modification returns base PTDF row (Woodbury M=0)" begin
-    # A contingency whose branch was eliminated by the zero-impedance reduction
-    # resolves to no arc modifications (M = 0), so the Woodbury W matrix is 0×0.
-    # Regression: `inv` on that 0×0 matrix raised
-    # `ArgumentError: invalid argument #6 to LAPACK call` (LAPACK getri!). The empty
-    # modification must instead return the unmodified base PTDF row — the documented
-    # behavior in `_warn_if_transmission_dropped`.
+    # Hand-built empty modification must return the base PTDF row.
     sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
     reductions = NetworkReduction[]
     ptdf = PTDF(sys; network_reductions = reductions)
@@ -587,4 +574,18 @@ end
         modf_row = vmodf[m, empty_mod]            # pre-fix: throws LAPACK getri! error
         @test isapprox(modf_row, ptdf[m, :]; atol = 1e-6)
     end
+end
+
+@testset "virtual factor member weights are finite for a zero-impedance member" begin
+    sys = _mk_zi_parallel_sys([(0.0, 0.0), (0.0, 0.1)])
+    ybus = Ybus(sys; irreducible_buses = [2, 3])
+    nr = get_network_reduction_data(ybus)
+    ba = BA_Matrix(ybus)
+    arc_ax = PNM.get_arc_axis(nr)
+    weights = PNM._extract_branch_susceptances_by_arc(ba.data, arc_ax, nr)
+    ix = findfirst(==((2, 3)), arc_ax)
+    @test all(isfinite, weights[ix])
+    @test length(weights[ix]) == 2
+    # The zero-impedance member takes the substituted weight, the line its own.
+    @test sort(weights[ix]) ≈ sort([10.0, 1 / PNM.ZERO_IMPEDANCE_X_EPSILON])
 end

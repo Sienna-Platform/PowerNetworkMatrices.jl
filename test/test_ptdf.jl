@@ -186,7 +186,7 @@ end
 
     add_component!(
         sys_2,
-        PSY.Line(;
+        PSY.Line(; input_basis = PSY.CU,
             name = "7",
             available = branch_2.available,
             active_power_flow = branch_2.active_power_flow,
@@ -198,7 +198,7 @@ end
             r = branch_2.r,
             x = branch_2.x,
             b = branch_2.b,
-            rating = get_rating(branch_2),
+            rating = get_rating(branch_2, PSY.CU),
             angle_limits = get_angle_limits(branch_2),
         ),
     )

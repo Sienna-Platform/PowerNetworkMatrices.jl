@@ -95,11 +95,9 @@ end
     @test PNM.get_ref_bus(ybus_single) == [5]
 end
 
-@testset "Test modification of units base when constructing Ybus" begin
-    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
-    PSY.set_units_base_system!(sys, "NATURAL_UNITS")
-    ybus = @test_logs (
-        :warn,
-        r"Setting the system unit base from NATURAL_UNITS to SYSTEM_BASE for matrix construction",
-    ) match_mode = :any Ybus(sys)
-end
+# The "modification of units base when constructing Ybus" testset was removed with the IS4
+# stateless-units migration. It asserted that Ybus assembly flipped the system's ambient units
+# base to SYSTEM_BASE and warned while doing so. There is no ambient state to flip now:
+# assembly reads every value with an explicit unit argument (`PSY.get_r(br, PSY.SU)`), so the
+# guarantee it protected — Ybus entries are in system base — is enforced at each call site
+# instead, and `set_units_base_system!` no longer exists in PSY.

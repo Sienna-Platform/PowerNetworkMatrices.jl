@@ -3,7 +3,7 @@
         sys = PSB.build_system(PSB.PSITestSystems, name)
         BA = BA_Matrix(sys)
         BA_rad = BA_Matrix(sys; network_reductions = NetworkReduction[RadialReduction()])
-        nr = BA_rad.network_reduction_data
+        nr = get_network_reduction_data(BA_rad)
         bus_numbers = []
         for i in keys(nr.bus_reduction_map)
             append!(bus_numbers, collect(nr.bus_reduction_map[i]))
@@ -35,7 +35,7 @@ end
             network_reductions = NetworkReduction[RadialReduction()],
         )
 
-        nr = A_rad.network_reduction_data
+        nr = get_network_reduction_data(A_rad)
         # check if the same angles and flows are computed with the matrices of the reduced systems
         # get the indices for the reduced system
         bus_numbers = []
@@ -78,7 +78,7 @@ end
             !PSY.get_available(source) && continue
             bus = PSY.get_bus(source)
             bus_ix = bus_lookup[PSY.get_number(bus)]
-            bus_activepower_injection[bus_ix] += PSY.get_active_power(source)
+            bus_activepower_injection[bus_ix] += PSY.get_active_power(source, PSY.SU)
         end
         bus_activepower_withdrawals = zeros(Float64, n_buses)
         loads = PSY.get_components(x -> !isa(x, PSY.FixedAdmittance), PSY.ElectricLoad, sys)
@@ -86,7 +86,7 @@ end
             !PSY.get_available(l) && continue
             bus = PSY.get_bus(l)
             bus_ix = bus_lookup[PSY.get_number(bus)]
-            bus_activepower_withdrawals[bus_ix] += PSY.get_active_power(l)
+            bus_activepower_withdrawals[bus_ix] += PSY.get_active_power(l, PSY.SU)
         end
         power_injection =
             deepcopy(bus_activepower_injection - bus_activepower_withdrawals)

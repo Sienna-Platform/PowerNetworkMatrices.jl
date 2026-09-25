@@ -24,7 +24,7 @@ function _build_reactive_only_degree2_system()
         push!(buses, bus)
     end
     for (i, (b_from, b_to)) in enumerate([(1, 2), (2, 3), (3, 4)])
-        line = Line(;
+        line = Line(; input_basis = PSY.CU,
             name = "Line $i",
             available = true,
             active_power_flow = 0.0,
@@ -39,10 +39,10 @@ function _build_reactive_only_degree2_system()
         add_component!(sys, line)
     end
     for (bus, name) in [(buses[1], "Gen 1"), (buses[4], "Gen 4")]
-        gen = ThermalStandard(;
+        gen = ThermalStandard(; input_basis = PSY.CU,
             name = name,
             available = true,
-            status = true,
+            status = OperationalStates.ONLINE,
             bus = bus,
             active_power = 0.0,
             reactive_power = 0.0,
@@ -53,13 +53,12 @@ function _build_reactive_only_degree2_system()
             operation_cost = ThermalGenerationCost(nothing),
             base_power = 100.0,
             time_limits = (up = 1.0, down = 1.0),
-            must_run = false,
             prime_mover_type = PrimeMovers.CC,
             fuel = ThermalFuels.NATURAL_GAS,
         )
         add_component!(sys, gen)
     end
-    condenser = SynchronousCondenser(;
+    condenser = SynchronousCondenser(; input_basis = PSY.CU,
         name = "Cond 2",
         available = true,
         bus = buses[2],

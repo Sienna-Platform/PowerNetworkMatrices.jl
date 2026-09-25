@@ -17,7 +17,7 @@ change in flow on line i due to a unit power injection at bus j, under DC power 
         Mapping from reference bus numbers to their corresponding subnetwork axes
 - `tol::Base.RefValue{Float64}`:
         Tolerance threshold used for matrix sparsification (elements below this value are dropped)
-- `network_reduction_data::NetworkReductionData`:
+- `branch_catalog::BranchCatalog`:
         Container for network reduction information applied during matrix construction
 
 # Mathematical Properties
@@ -54,13 +54,13 @@ struct PTDF{Ax, L <: NTuple{2, Dict}, M <: AbstractArray{Float64, 2}} <:
     lookup::L
     subnetwork_axes::Dict{Int, Ax}
     tol::Base.RefValue{Float64}
-    network_reduction_data::NetworkReductionData
+    branch_catalog::BranchCatalog
 end
 
 get_axes(M::PTDF) = M.axes
 get_lookup(M::PTDF) = M.lookup
 get_ref_bus(M::PTDF) = sort!(collect(keys(M.subnetwork_axes)))
-get_network_reduction_data(M::PTDF) = M.network_reduction_data
+get_branch_catalog(M::PTDF) = M.branch_catalog
 get_bus_axis(M::PTDF) = M.axes[1]
 get_bus_lookup(M::PTDF) = M.lookup[1]
 get_arc_axis(M::PTDF) = M.axes[2]
@@ -522,12 +522,12 @@ function PTDF(
     tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
 )
     dist_slack_vector = if !(isempty(dist_slack))
-        redistribute_dist_slack(dist_slack, A, A.network_reduction_data)
+        redistribute_dist_slack(dist_slack, A, get_network_reduction_data(A))
     else
         Float64[]
     end
     solver = resolve_linear_solver(linear_solver)
-    if !isequal(A.network_reduction_data, BA.network_reduction_data)
+    if !isequal(get_network_reduction_data(A), get_network_reduction_data(BA))
         error("A and BA matrices have non-equivalent network reductions.")
     end
     axes = BA.axes
@@ -550,7 +550,7 @@ function PTDF(
             lookup,
             subnetwork_axes,
             Ref(tol_value),
-            BA.network_reduction_data,
+            get_branch_catalog(BA),
         )
     else
         return PTDF(
@@ -559,7 +559,7 @@ function PTDF(
             lookup,
             subnetwork_axes,
             Ref(tol_value),
-            BA.network_reduction_data,
+            get_branch_catalog(BA),
         )
     end
 end

@@ -8,7 +8,8 @@ License, v. 2.0.
 """
 
 """ Type PowerNetworkMatrix gathers all the different types of Matrices considered in this package """
-abstract type PowerNetworkMatrix{T} <: AbstractArray{T, 2} end
+abstract type PowerNetworkMatrix{T} <:
+              IS.InfrastructureMatrices.AbstractInfrastructureNetworkMatrix{T} end
 
 """
 Evaluates the map linking the system's buses and branches.
@@ -57,8 +58,10 @@ Base.eachindex(A::PowerNetworkMatrix) = CartesianIndices(size(A.data))
 Gets the matrix index corresponding to a given key (arc tuple, bus number, etc.)
 """
 function lookup_index(i, lookup::Dict)
-    return isa(i, Colon) ? Colon() : lookup[i]
+    return lookup[i]
 end
+
+lookup_index(::Colon, ::Dict) = Colon()
 
 """
 Gets the matrix index for a `PSY.Arc`, converting it to an arc tuple first.
@@ -70,7 +73,7 @@ Gets the matrix index for a `PSY.Arc`, converting it to an arc tuple first.
         Dictionary mapping arc tuples or bus numbers to matrix indices
 """
 function lookup_index(i::PSY.Arc, lookup::Dict)
-    return isa(i, Colon) ? Colon() : lookup[Base.to_index(i)]
+    return lookup[Base.to_index(i)]
 end
 
 """
@@ -83,7 +86,7 @@ Gets the matrix index for a `PSY.ACBus`, converting it to a bus number first.
         Dictionary mapping arc tuples or bus numbers to matrix indices
 """
 function lookup_index(i::PSY.ACBus, lookup::Dict)
-    return isa(i, Colon) ? Colon() : lookup[Base.to_index(i)]
+    return lookup[Base.to_index(i)]
 end
 
 # Lisp-y tuple recursion trick to handle indexing in a nice type-
@@ -122,7 +125,11 @@ to_index(A::PowerNetworkMatrix, idx...) = _to_index_tuple(idx, A.lookup)
 # a non-unrolled loop through the `idx` tuple which may be of
 # varying element type. Another lisp-y recursion trick fixes that
 has_colon(idx::Tuple{}) = false
-has_colon(idx::Tuple) = isa(first(idx), Colon) || has_colon(Base.tail(idx))
+
+_is_colon(::Colon) = true
+_is_colon(::Any) = false
+
+has_colon(idx::Tuple) = _is_colon(first(idx)) || has_colon(Base.tail(idx))
 
 # TODO: better error (or just handle correctly) when user tries to index with a range like a:b
 # overloading other methods to consider PowerNetworkMatrix
@@ -320,6 +327,10 @@ if the matrix type does not track system origin.
 """
 get_system_uuid(::PowerNetworkMatrix) = nothing
 
+"""Get the [`NetworkReduction`](@ref) data applied to this matrix, via its branch catalog."""
+get_network_reduction_data(M::PowerNetworkMatrix) =
+    get_network_reduction_data(get_branch_catalog(M))
+
 """
     _validate_system_uuid(mat::PowerNetworkMatrix, sys::PSY.System)
 
@@ -329,10 +340,10 @@ the UUID of `sys`. No-op when the matrix does not track system origin.
 """
 function _validate_system_uuid(mat::PowerNetworkMatrix, sys::PSY.System)
     mat_uuid = get_system_uuid(mat)
-    if !isnothing(mat_uuid) && mat_uuid != IS.get_uuid(sys)
+    if !isnothing(mat_uuid) && mat_uuid != PSY.get_system_uuid(sys)
         error(
             "System UUID mismatch: the matrix was constructed from a system with " *
-            "UUID $mat_uuid, but the provided system has UUID $(IS.get_uuid(sys)). " *
+            "UUID $mat_uuid, but the provided system has UUID $(PSY.get_system_uuid(sys)). " *
             "Ensure the matrix and system originate from the same source.",
         )
     end
@@ -356,36 +367,49 @@ function get_ref_bus_position(M::PowerNetworkMatrix)
     return [get_bus_index(x, bus_lookup, nr) for x in keys(M.subnetwork_axes)]
 end
 
+"""
+    get_branch_multiplier(A::PowerNetworkMatrix, branch_name::String) -> (Float64, Tuple{Int, Int})
+
+Resolve a branch name to the retained arc that carries it, plus the factor by which matrix
+entries retrieved for that arc must be scaled to represent the named branch. A branch that
+owns its arc one-to-one (direct map) scales by `1.0`; a member of a parallel group scales by
+its susceptance-fraction share of the group flow (`compute_parallel_multiplier`). Name-based
+indexing into PTDF/LODF/VirtualPTDF uses this so per-branch values can be read from matrices
+whose rows are per-arc.
+
+Throws when the name matches no retained branch, or matches more than one component under
+that name — collisions across unrelated branch types are just as ambiguous as collisions
+within one parallel group.
+"""
 function get_branch_multiplier(A::T, branch_name::String) where {T <: PowerNetworkMatrix}
-    nr = A.network_reduction_data
-    if isempty(nr.direct_branch_name_map)
-        populate_direct_branch_name_map!(nr)
+    catalog = get_branch_catalog(A)
+    index = get_component_name_index(catalog)
+    if !haskey(index, branch_name)
+        error(
+            "Branch $branch_name resolves to no indexed branch: absent, absorbed into a " *
+            "series chain, a member of a grouped chain, or excluded by the catalog filter.",
+        )
     end
-    if haskey(nr.direct_branch_name_map, branch_name)
-        arc_tuple = nr.direct_branch_name_map[branch_name]
-        return 1.0, arc_tuple
+    candidates = index[branch_name]
+    if length(candidates) > 1
+        listed = join(
+            ("$(component_type) on arc $(arc)" for (component_type, arc) in candidates),
+            ", ",
+        )
+        error(
+            "Branch name $(branch_name) is claimed by $(length(candidates)) components " *
+            "($(listed)); a bare name cannot resolve between them because component " *
+            "names are unique only per type.",
+        )
     end
-
-    if !isempty(nr.reverse_parallel_branch_map)
-        for (k, v) in nr.reverse_parallel_branch_map
-            if branch_name == PSY.get_name(k)
-                parallel_branch_set = nr.parallel_branch_map[v]
-                multiplier = compute_parallel_multiplier(parallel_branch_set, branch_name)
-                return multiplier, v
-            end
-        end
-    end
-
-    if !isempty(nr.reverse_transformer3W_map)
-        if branch_name in PSY.get_name.(keys(nr.reverse_transformer3W_map))
-            throw(
-                IS.ConflictingInputsError(
-                    "Branch $branch_name is a three-winding transformer, it can't be used to index directly in to a $T.",
-                ),
-            )
-        end
-    end
-
-    error("Branch $branch_name not found in the network reduction data.")
-    return
+    (_, arc_tuple) = only(candidates)
+    entry = get_reduction_entry(catalog, arc_tuple)
+    multiplier = _branch_multiplier(
+        arc_provenance(entry),
+        entry,
+        branch_name,
+        arc_tuple,
+        get_network_reduction_data(catalog),
+    )
+    return multiplier, arc_tuple
 end

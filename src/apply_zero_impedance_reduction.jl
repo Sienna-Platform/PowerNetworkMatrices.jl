@@ -3,9 +3,12 @@
 # dispatch (which needs `Ybus`) follows it.
 
 _is_transformer(::PSY.TwoWindingTransformer) = true
+# Three-winding transformer windings are one-to-one arcs in `direct_branch_map`; they are
+# transformer arcs and must be excluded from zero-impedance bus merging like any transformer.
+_is_transformer(::ThreeWindingTransformerCircuit) = true
 _is_transformer(::PSY.ACTransmission) = false
-_any_transformer(parallel_br::AbstractBranchesParallel) =
-    any(_is_transformer(br) for br in parallel_br)
+# Without this, aggregates hit the blanket `false`; recursive for nesting.
+_is_transformer(seg::AbstractReductionAggregate) = any(_is_transformer, seg)
 
 # Series admittance `Y_l = 1 / (r + x im)` from a branch's `(r, x)`, with the
 # `r == x == 0` -> `min_x_eps` substitution applied during Ybus assembly so the
@@ -24,16 +27,28 @@ end
 # exact `r == 0`) whose series admittance reaches the threshold (`|y| >= susceptance_threshold`).
 # Reads `(r, x)` once and bails on a too-large resistance before touching `x`.
 function _is_zero_impedance_branch(
-    br,
+    br::PSY.ACTransmission,
     susceptance_threshold::Float64,
     min_x_eps::Float64,
     resistance_tolerance::Float64,
 )
-    r = PSY.get_r(br)
+    r = PSY.get_r(br, PSY.SU)
     abs(r) <= resistance_tolerance || return false
-    x = PSY.get_x(br)
+    x = PSY.get_x(br, PSY.SU)
     return abs(_series_admittance(r, x, min_x_eps)) >= susceptance_threshold
 end
+
+# An aggregate has no `(r, x)` of its own, and merging the endpoints of a composite arc would
+# discard its interior. ZIBR runs before every other reduction, so nothing routes one here.
+_is_zero_impedance_branch(
+    seg::AbstractReductionAggregate,
+    ::Float64,
+    ::Float64,
+    ::Float64,
+) = error(
+    "Zero-impedance eligibility is a per-branch property, but $(get_name(seg)) is a " *
+    "reduction aggregate; judge its members individually.",
+)
 
 # An arc is zero-impedance iff some individual non-transformer branch on it qualifies; the
 # parallel combination is never considered. So an `r ≈ 0` jumper in parallel with a normal
@@ -57,7 +72,7 @@ function _is_zero_impedance_arc(
     resistance_tolerance::Float64,
 )
     # Transformer-bearing arcs are excluded from zero-impedance bus merging.
-    _any_transformer(parallel_br) && return false
+    _is_transformer(parallel_br) && return false
     return any(
         _is_zero_impedance_branch(
             br,
@@ -69,11 +84,7 @@ function _is_zero_impedance_arc(
     )
 end
 
-function get_reduction(
-    ybus::Ybus,
-    sys::PSY.System,
-    reduction::ZeroImpedanceBranchReduction,
-)
+function get_reduction(ybus::Ybus, sys::PSY.System, reduction::ZeroImpedanceBranchReduction)
     nr = NetworkReductionData()
     nrd = get_network_reduction_data(ybus)
     user_irreducible = get_user_irreducible_buses(get_reductions(nrd))
@@ -90,10 +101,16 @@ function get_reduction(
         for (arc_key, br) in branch_map
             _is_zero_impedance_arc(
                 br, susceptance_threshold, min_x_eps, resistance_tolerance) || continue
-            from_no, to_no = arc_key
+            from_no = get(nr.reverse_bus_search_map, arc_key[1], arc_key[1])
+            to_no = get(nr.reverse_bus_search_map, arc_key[2], arc_key[2])
             from_irred = from_no ∈ user_irreducible
             to_irred = to_no ∈ user_irreducible
-            if from_irred && to_irred
+            if from_no == to_no
+                # Both endpoints already resolve into the same merged group: the arc is a
+                # self-loop, not a skipped merge, so it still has to be dropped.
+                push!(nr.removed_arcs, arc_key)
+                continue
+            elseif from_irred && to_irred
                 @warn "Zero-impedance branch between two irreducible buses $from_no and $to_no; skipping merge."
                 continue
             elseif to_irred

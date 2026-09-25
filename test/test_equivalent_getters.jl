@@ -7,7 +7,7 @@
     bus2 = collect(PSY.get_components(PSY.ACBus, sys))[2]
 
     # Create test branches with specific values
-    line1 = PSY.Line(;
+    line1 = PSY.Line(; input_basis = PSY.CU,
         name = "test_line_1",
         available = true,
         active_power_flow = 0.0,
@@ -21,7 +21,7 @@
         angle_limits = (min = -π / 2, max = π / 2),
     )
 
-    line2 = PSY.Line(;
+    line2 = PSY.Line(; input_basis = PSY.CU,
         name = "test_line_2",
         available = true,
         active_power_flow = 0.0,
@@ -34,6 +34,12 @@
         rating = 150.0,  # rating
         angle_limits = (min = -π / 2, max = π / 2),
     )
+    # Attach the branches so the system-base getters (e.g. the susceptance
+    # weighting in get_impedance_averaged_rating) can resolve the system base.
+    # These lines carry round, illustrative values, so skip data validation.
+    PSY.add_component!(sys, line1; skip_validation = true)
+    PSY.add_component!(sys, line2; skip_validation = true)
+
     # Create BranchesParallel
     bp = PNM.BranchesParallel([line1, line2])
 
@@ -52,7 +58,21 @@
     emergency_rating_eq = PNM.get_equivalent_emergency_rating(bp)
     @test emergency_rating_eq ≈ 250.0 atol = 1e-6
 
-    bs = PNM.BranchesSeries()
+    # `get_equivalent_rating` is the unexported in-PNM fallback and sums its members: every
+    # circuit on the arc carries flow at once. It is not what consumers get by default — a
+    # series chain applies the N-1 value to an embedded parallel block
+    # (`_series_member_rating`), and POM selects the aggregate per `DeviceModel`, also
+    # defaulting to N-1.
+    @test PNM.get_equivalent_rating(bp) ≈ 250.0 atol = 1e-6
+    @test PNM.get_single_element_contingency_rating(bp) ≈ 100.0 atol = 1e-6
+
+    # Regression: `branch_flow_limits` used to reach a `get_equivalent_rating` with no
+    # parallel-group method and raise a MethodError.
+    fl_bp = PNM.branch_flow_limits(bp)
+    @test fl_bp.from_to ≈ 250.0 atol = 1e-6
+    @test fl_bp.to_from ≈ 250.0 atol = 1e-6
+
+    bs = PNM.BranchesSeries((PSY.get_number(bus1), PSY.get_number(bus2)))
     PNM.add_branch!(bs, line1, :FromTo)
     PNM.add_branch!(bs, line2, :FromTo)
     # Series weakest-link rule: min(100, 150) = 100.0
@@ -64,7 +84,7 @@
 
     # Series chain containing a parallel block: the block contributes its N-1
     # single-element-contingency rating (100.0), so min(100, 150) = 100.0.
-    bs = PNM.BranchesSeries()
+    bs = PNM.BranchesSeries((PSY.get_number(bus1), PSY.get_number(bus2)))
     PNM.add_branch!(bs, bp, :FromTo)
     PNM.add_branch!(bs, line2, :FromTo)
     rating_eq = PNM.get_equivalent_rating(bs)
@@ -78,22 +98,21 @@
     @test PSY.get_available(bs) == true
 end
 
-@testset "Equivalent getters for ThreeWindingTransformerWinding" begin
+@testset "Equivalent getters for ThreeWindingTransformerCircuit" begin
     # Create a test system with three-winding transformers
     sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
 
     # Get a three-winding transformer from the system
     trf = first(collect(PSY.get_components(PSY.ThreeWindingTransformer, sys)))
 
-    rating3 = PNM.get_equivalent_rating(PNM.ThreeWindingTransformerWinding(trf, 3))
-    # Should return winding-specific rating if non-zero, else transformer rating
-    expected_rating3 =
-        trf.rating_tertiary == 0.0 ? PSY.get_rating(trf) : trf.rating_tertiary
+    rating3 = PNM.get_equivalent_rating(PNM.ThreeWindingTransformerCircuit(trf, 3))
+    # The circuit's own rating (device base); there is no parent-level rating to fall back to.
+    expected_rating3 = PSY.get_rating(PSY.get_tertiary_circuit(trf), PSY.CU)
     @test rating3 == expected_rating3
 
-    set_available_secondary!(trf, false)
-    @test PNM.get_equivalent_available(PNM.ThreeWindingTransformerWinding(trf, 3)) == true
-    @test PNM.get_equivalent_available(PNM.ThreeWindingTransformerWinding(trf, 2)) == false
+    PSY.set_available!(PSY.get_secondary_circuit(trf), false)
+    @test PNM.get_equivalent_available(PNM.ThreeWindingTransformerCircuit(trf, 3)) == true
+    @test PNM.get_equivalent_available(PNM.ThreeWindingTransformerCircuit(trf, 2)) == false
 end
 
 function test_ybus_equivalence_branches_parallel(vector_branches)
@@ -131,7 +150,7 @@ function test_ybus_equivalence_branches_parallel(vector_branches)
         add_component!(sys, br_copy)
     end
     ybus = Ybus(sys)
-    branches_parallel = ybus.network_reduction_data.parallel_branch_map[(1, 2)]
+    branches_parallel = get_network_reduction_data(ybus).parallel_branch_map[(1, 2)]
     sys_equivalent = deepcopy(sys)
     for l in get_components(ACTransmission, sys_equivalent)
         remove_component!(sys_equivalent, l)
@@ -141,10 +160,10 @@ function test_ybus_equivalence_branches_parallel(vector_branches)
     equivalent_pbranch =
         PNM.get_equivalent_physical_branch_parameters(
             branches_parallel,
-            ybus.network_reduction_data,
+            get_network_reduction_data(ybus),
         )
     if PNM.get_equivalent_shift(equivalent_pbranch) == 0.0
-        equivalent_branch = PSY.Line(;
+        equivalent_branch = PSY.Line(; input_basis = PSY.CU,
             name = "equivalent_line",
             available = true,
             active_power_flow = 0.0,
@@ -165,22 +184,25 @@ function test_ybus_equivalence_branches_parallel(vector_branches)
         )
         add_component!(sys_equivalent, equivalent_branch)
     else
-        equivalent_transformer = PSY.PhaseShiftingTransformer(;
+        equivalent_transformer = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "equivalent_transformer",
-            available = true,
-            active_power_flow = 0.0,
-            reactive_power_flow = 0.0,
-            arc = PSY.Arc(; from = bus1, to = bus2),
-            r = PNM.get_equivalent_r(equivalent_pbranch),  # resistance
-            x = PNM.get_equivalent_x(equivalent_pbranch),   # reactance
-            primary_shunt = Complex(
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+                arc = PSY.Arc(; from = bus1, to = bus2),
+                tap = PNM.get_equivalent_tap(equivalent_pbranch),
+                α = PNM.get_equivalent_shift(equivalent_pbranch),
+                available = true,
+                active_power_flow = 0.0,
+                reactive_power_flow = 0.0,
+                rating = 80.0,
+                base_power = 100.0,
+                base_voltage_primary = 1.0,
+                r = PNM.get_equivalent_r(equivalent_pbranch),  # resistance
+                x = PNM.get_equivalent_x(equivalent_pbranch),   # reactance
+            ),
+            magnetizing_shunt = Complex(
                 PNM.get_equivalent_g_from(equivalent_pbranch),
                 PNM.get_equivalent_b_from(equivalent_pbranch),
             ),
-            tap = PNM.get_equivalent_tap(equivalent_pbranch),
-            α = PNM.get_equivalent_shift(equivalent_pbranch),
-            rating = 80.0,  # rating
-            base_power = 100.0,
         )
         equivalent_admittance = PSY.FixedAdmittance(;
             name = "equivalent_admittance",
@@ -230,7 +252,7 @@ function test_ybus_equivalence_branches_series(vector_branches)
         add_component!(sys, br_copy)
     end
     ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
-    branches_series = ybus.network_reduction_data.series_branch_map[(1, n_buses)]
+    branches_series = get_network_reduction_data(ybus).series_branch_map[(1, n_buses)]
     sys_equivalent = deepcopy(sys)
     for l in get_components(ACTransmission, sys_equivalent)
         remove_component!(sys_equivalent, l)
@@ -244,10 +266,10 @@ function test_ybus_equivalence_branches_series(vector_branches)
     equivalent_pbranch =
         PNM.get_equivalent_physical_branch_parameters(
             branches_series,
-            ybus.network_reduction_data,
+            get_network_reduction_data(ybus),
         )
     if PNM.get_equivalent_shift(equivalent_pbranch) == 0.0
-        equivalent_branch = PSY.Line(;
+        equivalent_branch = PSY.Line(; input_basis = PSY.CU,
             name = "equivalent_line",
             available = true,
             active_power_flow = 0.0,
@@ -268,23 +290,25 @@ function test_ybus_equivalence_branches_series(vector_branches)
         )
         add_component!(sys_equivalent, equivalent_branch)
     else
-        equivalent_transformer = PSY.PhaseShiftingTransformer(;
+        equivalent_transformer = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "equivalent_transformer",
-            available = true,
-            active_power_flow = 0.0,
-            reactive_power_flow = 0.0,
-            arc = PSY.Arc(; from = bus1, to = bus2),
-            r = PNM.get_equivalent_r(equivalent_pbranch),  # resistance
-            x = PNM.get_equivalent_x(equivalent_pbranch),   # reactance
-            primary_shunt = Complex(
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+                arc = PSY.Arc(; from = bus1, to = bus2),
+                tap = PNM.get_equivalent_tap(equivalent_pbranch),
+                α = PNM.get_equivalent_shift(equivalent_pbranch),
+                available = true,
+                active_power_flow = 0.0,
+                reactive_power_flow = 0.0,
+                rating = 80.0,
+                base_power = 100.0,
+                base_voltage_primary = 1.0,
+                r = PNM.get_equivalent_r(equivalent_pbranch),  # resistance
+                x = PNM.get_equivalent_x(equivalent_pbranch),   # reactance
+            ),
+            magnetizing_shunt = Complex(
                 PNM.get_equivalent_g_from(equivalent_pbranch),
                 PNM.get_equivalent_b_from(equivalent_pbranch),
             ),
-            tap = PNM.get_equivalent_tap(equivalent_pbranch),
-            α = PNM.get_equivalent_shift(equivalent_pbranch),
-            rating = 80.0,  # rating
-            base_power = 100.0,
-            #angle_limits = (min = -π / 2, max = π / 2),
         )
         equivalent_admittance = PSY.FixedAdmittance(;
             name = "equivalent_admittance",
@@ -304,7 +328,7 @@ function test_ybus_equivalence_branches_series(vector_branches)
     @test all(isapprox.(ybus.data, ybus_equivalent.data; atol = 1e-5))
 end
 @testset "Ybus correctness for equivalent parameters of BranchesSeries and BranchesParallel" begin
-    l1 = PSY.Line(;
+    l1 = PSY.Line(; input_basis = PSY.CU,
         name = "line_1",
         available = true,
         active_power_flow = 0.0,
@@ -317,7 +341,7 @@ end
         rating = 100.0,  # rating
         angle_limits = (min = -π / 2, max = π / 2),
     )
-    l2 = PSY.Line(;
+    l2 = PSY.Line(; input_basis = PSY.CU,
         name = "line_2",
         available = true,
         active_power_flow = 0.0,
@@ -330,7 +354,7 @@ end
         rating = 80.0,  # rating
         angle_limits = (min = -π / 2, max = π / 2),
     )
-    l3 = PSY.Line(;
+    l3 = PSY.Line(; input_basis = PSY.CU,
         name = "line_3",
         available = true,
         active_power_flow = 0.0,
@@ -343,47 +367,57 @@ end
         rating = 80.0,  # rating
         angle_limits = (min = -π / 2, max = π / 2),
     )
-    t1 = PSY.TapTransformer(;
+    t1 = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
         name = "tfw_1",
-        available = true,
-        active_power_flow = 0.0,
-        reactive_power_flow = 0.0,
-        arc = PSY.Arc(nothing),
-        r = 0.122,  # resistance
-        x = 0.1,   # reactance
-        primary_shunt = 0.01 + im * 0.02,
-        tap = 1.0,
-        rating = 80.0,  # rating
-        base_power = 100.0,
-        winding_group_number = WindingGroupNumber.GROUP_11,
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            arc = PSY.Arc(nothing),
+            tap = 1.0,
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            rating = 80.0,
+            base_power = 100.0,
+            base_voltage_primary = 1.0,
+            base_voltage_secondary = 1.0,
+            r = 0.122,  # resistance
+            x = 0.1,   # reactance
+        ),
+        magnetizing_shunt = 0.01 + im * 0.02,
     )
-    t2 = PSY.TapTransformer(;
+    t2 = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
         name = "tfw_2",
-        available = true,
-        active_power_flow = 0.0,
-        reactive_power_flow = 0.0,
-        arc = PSY.Arc(nothing),
-        r = 0.3,  # resistance
-        x = 0.13,   # reactance
-        primary_shunt = 0.02 + im * 0.021,
-        tap = 1.0,
-        rating = 80.0,  # rating
-        base_power = 100.0,
-        winding_group_number = WindingGroupNumber.GROUP_11,
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            arc = PSY.Arc(nothing),
+            tap = 1.0,
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            rating = 80.0,
+            base_power = 100.0,
+            base_voltage_primary = 1.0,
+            base_voltage_secondary = 1.0,
+            r = 0.3,  # resistance
+            x = 0.13,   # reactance
+        ),
+        magnetizing_shunt = 0.02 + im * 0.021,
     )
-    t3 = PSY.PhaseShiftingTransformer(;
+    t3 = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
         name = "tfw_3",
-        available = true,
-        active_power_flow = 0.0,
-        reactive_power_flow = 0.0,
-        arc = PSY.Arc(nothing),
-        r = 0.3,  # resistance
-        x = 0.13,   # reactance
-        primary_shunt = 0.02 + im * 0.021,
-        tap = 1.0,
-        α = 0.2,
-        rating = 80.0,  # rating
-        base_power = 100.0,
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            arc = PSY.Arc(nothing),
+            tap = 1.0,
+            α = 0.2,
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            rating = 80.0,
+            base_power = 100.0,
+            base_voltage_primary = 1.0,
+            base_voltage_secondary = 1.0,
+            r = 0.3,  # resistance
+            x = 0.13,   # reactance
+        ),
+        magnetizing_shunt = 0.02 + im * 0.021,
     )
     # Two lines in parallel:
     test_ybus_equivalence_branches_parallel([l1, l2])
@@ -401,10 +435,54 @@ end
     test_ybus_equivalence_branches_series([t1, t3])
 end
 
+@testset "grouped chains rate as the sum of each chain's weakest link" begin
+    sys = build_two_parallel_degree_two_chains()
+    # Distinct per-link ratings so minimum, maximum, and the cross-chain sum cannot
+    # be confused with each other: chain A carries 8.0/3.0/5.0 (min 3.0, max 8.0),
+    # chain B carries 9.0/4.0/6.0 (min 4.0, max 9.0), and the group must report
+    # 3.0 + 4.0 = 7.0, a value that matches none of the individual link or
+    # per-chain numbers above.
+    #
+    # Each chain's minimum sits in the middle segment, not the first or last, so the
+    # assertion holds regardless of which direction chain discovery traverses the
+    # chain: under either direction the middle segment is still neither the first
+    # nor the last one visited, so an aggregate that (wrongly) returned the first-
+    # or last-visited segment's rating, instead of the true minimum, would be caught.
+    chain_a_ratings = Dict("L_1_10" => 8.0, "L_10_11" => 3.0, "L_11_3" => 5.0)
+    chain_b_ratings = Dict("L_1_20" => 9.0, "L_20_21" => 4.0, "L_21_3" => 6.0)
+    for (name, rating) in merge(chain_a_ratings, chain_b_ratings)
+        PSY.set_rating!(PSY.get_component(PSY.Line, sys, name), rating * PSY.CU)
+    end
+
+    ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+    nrd = get_network_reduction_data(ybus)
+    arc = only(
+        k for (k, v) in PNM.get_parallel_branch_map(nrd)
+        if all(m isa PNM.BranchesSeries for m in v)
+    )
+    group = PNM.get_parallel_branch_map(nrd)[arc]
+
+    per_chain = [PNM.get_equivalent_rating(chain) for chain in group]
+    @test sort(per_chain) == [3.0, 4.0]
+    for chain in group
+        # min of the links in that chain: a wrong aggregate (e.g. max or sum)
+        # would return 8.0/9.0 or 16.0/19.0 instead, none of which equal 3.0/4.0.
+        @test PNM.get_equivalent_rating(chain) ==
+              minimum(PNM.get_equivalent_rating(seg) for seg in chain)
+    end
+    # The group sums its two chains' weakest-link ratings: 3.0 + 4.0 = 7.0, a value
+    # distinct from every link rating and from both chains' individual minima/maxima.
+    @test PNM.get_equivalent_rating(group) == 7.0
+    @test PNM.get_equivalent_rating(group) == sum(per_chain)
+end
+
+# The mirror case — a parallel block nested inside a chain contributes its N-1 rating via
+# `_series_member_rating(::AbstractBranchesParallel)`, not covered by the testset above.
+
 @testset "Compute equivalent physical parameters for WECC 240 bus" begin
     sys = PSB.build_system(PSYTestSystems, "psse_240_parsing_sys"; runchecks = false)
     ybus = Ybus(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
-    nr = ybus.network_reduction_data
+    nr = get_network_reduction_data(ybus)
     for branches_parallel in values(nr.parallel_branch_map)
         @test isa(
             PNM.get_equivalent_physical_branch_parameters(branches_parallel, nr),
@@ -417,4 +495,55 @@ end
             PNM.EquivalentBranch,
         )
     end
+end
+
+@testset "N-1 rating is unknown while any member's rating is" begin
+    # One unknown member makes N-1 unknown, not the survivors' sum.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    line = first(PSY.get_components(PSY.Line, sys))
+    transformer = first(PSY.get_components(PSY.TwoWindingTransformer, sys))
+    PSY.set_rating!(PSY.get_circuit(transformer), nothing)
+    @test isnothing(PNM.get_equivalent_rating(transformer))
+
+    group = PNM.MixedBranchesParallel(PSY.ACTransmission[line, transformer])
+    @test isnothing(PNM.get_single_element_contingency_rating(group))
+    # The sum-style aggregates still skip the unknown member.
+    @test PNM.get_sum_of_max_rating(group) == PSY.get_rating(line, PSY.CU)
+end
+
+@testset "Aggregate availability follows the topology" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    lines = collect(PSY.get_components(PSY.Line, sys))
+    first_line, second_line = lines[1], lines[2]
+
+    group = PNM.BranchesParallel([first_line, second_line])
+    chain = PNM.BranchesSeries(PNM.get_arc_tuple(first_line))
+    PNM.add_branch!(chain, first_line, :FromTo)
+    PNM.add_branch!(chain, second_line, :FromTo)
+    @test PNM.get_equivalent_available(group)
+    @test PNM.get_equivalent_available(chain)
+
+    # A parallel corridor survives on its remaining circuit; a chain does not.
+    PSY.set_available!(second_line, false)
+    @test PNM.get_equivalent_available(group)
+    @test !PNM.get_equivalent_available(chain)
+
+    PSY.set_available!(first_line, false)
+    @test !PNM.get_equivalent_available(group)
+end
+
+@testset "Three-winding circuit emergency rating reads rating_b" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
+    tertiary = PSY.get_tertiary_circuit(trf)
+    circuit = PNM.ThreeWindingTransformerCircuit(trf, 3)
+
+    @test isnothing(PSY.get_rating_b(tertiary, PSY.CU))
+    @test PNM.get_equivalent_emergency_rating(circuit) == PNM.get_equivalent_rating(circuit)
+
+    PSY.set_rating_b!(tertiary, 1.25 * PSY.get_rating(tertiary, PSY.CU) * PSY.CU)
+    @test PNM.get_equivalent_emergency_rating(circuit) ==
+          PSY.get_rating_b(tertiary, PSY.CU)
+    @test PNM.get_equivalent_emergency_rating(circuit) >
+          PNM.get_equivalent_rating(circuit)
 end

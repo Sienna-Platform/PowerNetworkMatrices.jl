@@ -4,11 +4,11 @@
 #   - `klu_*`   / `klu_z_*`  for `int`              (Int32) indices
 #
 # Each ccall is wrapped in `@klu_lock` so that all libklu activity in the
-# process serializes through `_LIBKLU_LOCK`. This includes finalizer paths
-# (`klu_*_free_*`), which can fire on any thread at any safepoint and would
-# otherwise race against in-flight `solve!` calls on a different cache. See
-# `_LIBKLU_LOCK` in `KLUWrapper.jl` for the empirical evidence (intermittent
-# `KLU_INVALID` return; SEGV at `klu_solve.c:118`).
+# process serializes through `_LIBKLU_LOCK`; see it in `KLUWrapper.jl` for the
+# evidence. The `klu_*_free_*` calls are the exception: they run from GC
+# finalizers, which cannot wait on a lock (a contended wait throws "task switch
+# not allowed from inside gc finalizer", leaking the handle and eventually
+# killing the process), and a free touches only the handle it releases.
 
 import LinearAlgebra
 import SuiteSparse_jll: libklu
@@ -84,7 +84,7 @@ function klu_l_free_symbolic!(
     symbolic_ref::Ref{SymbolicPtr},
     common::Ref{KluLCommon},
 )
-    return @klu_lock ccall(
+    return ccall(
         (:klu_l_free_symbolic, libklu),
         Cint,
         (Ptr{SymbolicPtr}, Ptr{KluLCommon}),
@@ -166,7 +166,7 @@ function klu_l_free_numeric!(
     numeric_ref::Ref{NumericPtr},
     common::Ref{KluLCommon},
 )
-    return @klu_lock ccall(
+    return ccall(
         (:klu_l_free_numeric, libklu),
         Cint,
         (Ptr{NumericPtr}, Ptr{KluLCommon}),
@@ -313,7 +313,7 @@ function klu_zl_free_numeric!(
     numeric_ref::Ref{NumericPtr},
     common::Ref{KluLCommon},
 )
-    return @klu_lock ccall(
+    return ccall(
         (:klu_zl_free_numeric, libklu),
         Cint,
         (Ptr{NumericPtr}, Ptr{KluLCommon}),
@@ -383,7 +383,7 @@ function klu_free_symbolic!(
     symbolic_ref::Ref{SymbolicPtr32},
     common::Ref{KluCommon},
 )
-    return @klu_lock ccall(
+    return ccall(
         (:klu_free_symbolic, libklu),
         Cint,
         (Ptr{SymbolicPtr32}, Ptr{KluCommon}),
@@ -465,7 +465,7 @@ function klu_free_numeric!(
     numeric_ref::Ref{NumericPtr32},
     common::Ref{KluCommon},
 )
-    return @klu_lock ccall(
+    return ccall(
         (:klu_free_numeric, libklu),
         Cint,
         (Ptr{NumericPtr32}, Ptr{KluCommon}),
@@ -607,7 +607,7 @@ function klu_z_free_numeric!(
     numeric_ref::Ref{NumericPtr32},
     common::Ref{KluCommon},
 )
-    return @klu_lock ccall(
+    return ccall(
         (:klu_z_free_numeric, libklu),
         Cint,
         (Ptr{NumericPtr32}, Ptr{KluCommon}),

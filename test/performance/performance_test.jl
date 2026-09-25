@@ -117,7 +117,6 @@ for (group, name) in systems
         max_ctgs = is_large ? MAX_LARGE_SYSTEM_CONTINGENCIES : typemax(Int)
         added = 0
         for branch in get_components(ACTransmission, modf_sys)
-            typeof(branch) <: PhaseShiftingTransformer && continue
             added >= max_ctgs && break
             outage = FixedForcedOutage(; outage_status = 1.0)
             add_supplemental_attribute!(modf_sys, branch, outage)

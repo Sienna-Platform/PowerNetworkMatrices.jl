@@ -45,11 +45,9 @@ end
     network_reductions = NetworkReduction[RadialReduction()]
     Y = test_all_subtypes(sys, network_reductions)
     # test that the 3WT arc was actually reduced
-    trf = first(get_components(PSY.Transformer3W, sys))
+    trf = first(get_components(PSY.ThreeWindingTransformer, sys))
     trf_arcs = Tuple{Int, Int}[
-        PNM.get_arc_tuple(PSY.get_primary_star_arc(trf)),
-        PNM.get_arc_tuple(PSY.get_secondary_star_arc(trf)),
-        PNM.get_arc_tuple(PSY.get_tertiary_star_arc(trf)),
+        PNM.get_arc_tuple(PSY.get_arc(w)) for w in PSY.get_circuits(trf)
     ]
     nrd = PNM.get_network_reduction_data(Y)
     @test any(arc in PNM.get_removed_arcs(nrd) for arc in trf_arcs) ||
@@ -62,7 +60,7 @@ end
     Y = test_all_subtypes(sys, network_reductions)
     # test that the 3WT arc was actually reduced
     nrd = PNM.get_network_reduction_data(Y)
-    @test PNM.ThreeWindingTransformerWinding{Transformer3W} in
+    @test PNM.ThreeWindingTransformerCircuit in
           types_in_series_reduction(nrd)
 end
 
@@ -106,7 +104,7 @@ end
         voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 230.0,
     )
-    line = PSY.Line(;
+    line = PSY.Line(; input_basis = PSY.CU,
         name = "mixed_line",
         available = true,
         active_power_flow = 0.0,
@@ -119,20 +117,30 @@ end
         rating = 100.0,
         angle_limits = (min = -π / 2, max = π / 2),
     )
-    tap = PSY.TapTransformer(;
+    tap = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
         name = "mixed_tap",
-        available = true,
-        active_power_flow = 0.0,
-        reactive_power_flow = 0.0,
-        arc = PSY.Arc(; from = bus1, to = bus2),
-        r = 0.122,
-        x = 0.10,
-        primary_shunt = 0.01 + im * 0.02,
-        tap = 1.0,
-        rating = 80.0,
-        base_power = 100.0,
-        winding_group_number = WindingGroupNumber.GROUP_11,
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            arc = PSY.Arc(; from = bus1, to = bus2),
+            tap = 1.0,
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            rating = 80.0,
+            base_power = 100.0,
+            base_voltage_primary = 230.0,
+            r = 0.122,
+            x = 0.10,
+        ),
+        magnetizing_shunt = 0.01 + im * 0.02,
     )
+
+    # Attach the branches to a system so the unit-aware getters used by
+    # ybus_branch_entries can resolve the system base.
+    sys = System(100.0)
+    add_component!(sys, bus1)
+    add_component!(sys, bus2)
+    add_component!(sys, line)
+    add_component!(sys, tap)
 
     # Homogeneous group dispatches to BranchesParallel{Line}.
     bp_homog = PNM.BranchesParallel([line])
@@ -143,7 +151,8 @@ end
     @test_throws ErrorException PNM.BranchesParallel{PSY.ACTransmission}(
         PSY.ACTransmission[line, tap],
         (1, 2),
-        nothing,
+        PNM.EMPTY_TWO_PORT,
+        false,
     )
 
     # MixedBranchesParallel holds heterogeneous branches.
@@ -154,8 +163,9 @@ end
     @test eltype(mbp.branches) === PSY.ACTransmission
 
     # ybus_branch_entries on the mixed group should equal the sum of the parts.
-    Y11_l, Y12_l, Y21_l, Y22_l = PNM.ybus_branch_entries(line)
-    Y11_t, Y12_t, Y21_t, Y22_t = PNM.ybus_branch_entries(tap)
+    Y11_l, Y12_l, Y21_l, Y22_l =
+        PNM.ybus_branch_entries(line, PNM.NetworkReductionData())
+    Y11_t, Y12_t, Y21_t, Y22_t = PNM.ybus_branch_entries(tap, PNM.NetworkReductionData())
     Y11_m, Y12_m, Y21_m, Y22_m =
         PNM.ybus_branch_entries(mbp, PNM.NetworkReductionData())
     @test Y11_m ≈ Y11_l + Y11_t
@@ -168,14 +178,15 @@ end
     @test PNM.get_single_element_contingency_rating(mbp) ≈ 80.0
     @test PNM.get_equivalent_emergency_rating(mbp) ≈ 100.0 + 80.0
 
-    # add_to_map: empty filters short-circuit (no warning).
-    @test PNM.add_to_map(mbp, Dict{DataType, Function}()) == true
+    # The unfiltered path short-circuits: every entry is indexed, and no warning fires.
+    @test PNM._entry_matches(mbp, PNM._keep_all) == true
 
-    # add_to_map: non-empty filters trigger the mixed-type warning.
-    filters = Dict{DataType, Function}(PSY.Line => x -> true)
+    # A real predicate on a heterogeneous group warns that it may reach more components
+    # than intended. A mixed group is indexed only when EVERY member passes.
     @test_logs (:warn, r"mixed branch types") match_mode = :any begin
-        @test PNM.add_to_map(mbp, filters) == true
+        @test PNM._entry_matches(mbp, (T, component) -> true) == true
     end
+    @test PNM._entry_matches(mbp, (T, component) -> T !== PSY.Line) == false
 end
 
 @testset "Test Reductions with filters" begin
@@ -188,12 +199,29 @@ end
             DegreeTwoReduction(),
         ],
     )
-    PowerNetworkMatrices.populate_branch_maps_by_type!(PNM.get_network_reduction_data(ptdf),
-        Dict(Line => x -> occursin("B", get_name(x)),
-            TapTransformer => x -> occursin("B", get_name(x))))
-    @test PNM.has_filtered_branches(PNM.get_network_reduction_data(ptdf))
-    for k in keys(PNM.get_network_reduction_data(ptdf).name_to_arc_map[Line])
-        @test occursin("B", k)
+    # The optimization-side filter is a predicate over (branch type, component); the base
+    # catalog on the matrix stays complete.
+    filtered = PNM.BranchCatalog(
+        PNM.get_network_reduction_data(ptdf),
+        (T, component) ->
+            if T in (Line, TwoWindingTransformer)
+                occursin("B", get_name(component))
+            else
+                true
+            end,
+    )
+    line_entries = PNM.get_name_to_arc_map(filtered, Line)
+    @test !isempty(line_entries)
+    # A composite entry is named for its arc, not its members, so the filter's effect is
+    # asserted on what it admitted rather than on how the entry is spelled. `any`, not `all`:
+    # `_entry_matches` indexes a homogeneous parallel group when *any* member qualifies, so a
+    # kept group can legitimately carry a member the predicate rejected. What must never
+    # happen is an entry admitted with no qualifying member at all.
+    for arc in values(line_entries)
+        @test any(
+            l -> occursin("B", PNM.get_name(l)),
+            PNM.get_arc_leaves(filtered, arc),
+        )
     end
     PNM.empty!(PNM.get_network_reduction_data(ptdf))
     @test isempty(PNM.get_network_reduction_data(ptdf))
