@@ -407,3 +407,41 @@ end
     )
     @test _partition_exactness_residual(bp, nr) < 1e-9
 end
+
+# Three lossy lines sharing one arc, with impedance angles spaced by 0.6 * PARTITION_ANGLE_ATOL:
+# adjacent pairs are within tolerance, the outer pair is not.
+function _mk_near_angle_parallel_lines_system(θs; x = 0.1)
+    sys, buses = _mk_bus_system(2)
+    arc = Arc(; from = buses[1], to = buses[2])
+    add_component!(sys, arc)
+    for (i, θ) in enumerate(θs)
+        add_component!(
+            sys,
+            Line(; input_basis = PSY.CU,
+                name = "L$i", available = true, active_power_flow = 0.0,
+                reactive_power_flow = 0.0, arc = arc, r = x / tan(θ), x = x,
+                b = (from = 0.0, to = 0.0), rating = 1.0,
+                angle_limits = (min = -1.5, max = 1.5),
+            ),
+        )
+    end
+    return sys
+end
+
+@testset "impedance-angle partition is independent of member order" begin
+    step = 0.6 * PNM.PARTITION_ANGLE_ATOL
+    sys = _mk_near_angle_parallel_lines_system(π / 4 .+ (0:2) .* step)
+    lines = [PSY.get_component(PSY.Line, sys, "L$i") for i in 1:3]
+
+    partition_names(order) = Set(
+        Set(PSY.get_name.(bucket)) for
+        bucket in
+        PNM._partition_members_by_impedance_angle(PNM.BranchesParallel(lines[order]))
+    )
+    orders = [[1, 2, 3], [1, 3, 2], [2, 1, 3], [2, 3, 1], [3, 1, 2], [3, 2, 1]]
+    expected = partition_names(first(orders))
+    @test all(order -> partition_names(order) == expected, orders)
+    @test length(expected) == 2
+    # No bucket may span more than the tolerance, or its single-π guarantee is lost.
+    @test all(b -> !("L1" in b && "L3" in b), expected)
+end
