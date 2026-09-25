@@ -7,69 +7,48 @@ Implements van Dijk et al. Eq. 29:
 """
 
 """
-    _invert_woodbury_W(W_mat, ::Val{M}) -> (W_inv::Matrix{Float64}, is_islanding::Bool)
+    _invert_woodbury_W(W_mat, M) -> (W_inv::Matrix{Float64}, is_islanding::Bool)
 
-Invert the M×M Woodbury W matrix. Dispatches on `Val{M}` so the compiler
-can specialize each case. Analytical formulas for M=1 and M=2 avoid LU
-factorization overhead. Falls back to LU for M > 2.
+Invert the M×M Woodbury W; closed form for M ≤ 2, LU otherwise.
 """
 function _invert_woodbury_W(
     W_mat::Matrix{Float64},
-    ::Val{1},
+    M::Int,
 )::Tuple{Matrix{Float64}, Bool}
-    w = W_mat[1, 1]
-    is_island = abs(w) < MODF_ISLANDING_TOLERANCE
-    W_inv = Matrix{Float64}(undef, 1, 1)
-    if is_island
-        W_inv[1, 1] = 0.0
-    else
-        W_inv[1, 1] = 1.0 / w
-    end
-    return W_inv, is_island
-end
-
-function _invert_woodbury_W(
-    W_mat::Matrix{Float64},
-    ::Val{2},
-)::Tuple{Matrix{Float64}, Bool}
-    a, b, c, d = W_mat[1, 1], W_mat[1, 2], W_mat[2, 1], W_mat[2, 2]
-    det_W = a * d - b * c
-    is_island = abs(det_W) < MODF_ISLANDING_TOLERANCE
-    if is_island
-        W_inv = LinearAlgebra.pinv(W_mat; atol = MODF_ISLANDING_TOLERANCE)
-    else
+    if iszero(M)
+        # M = 0 (hand-built modifications only; registration rejects it): getri! rejects 0×0.
+        return Matrix{Float64}(undef, 0, 0), false
+    elseif M == 1
+        w = W_mat[1, 1]
+        is_island = abs(w) < MODF_ISLANDING_TOLERANCE
+        W_inv = Matrix{Float64}(undef, 1, 1)
+        if is_island
+            W_inv[1, 1] = 0.0
+        else
+            W_inv[1, 1] = 1.0 / w
+        end
+        return W_inv, is_island
+    elseif M == 2
+        a, b, c, d = W_mat[1, 1], W_mat[1, 2], W_mat[2, 1], W_mat[2, 2]
+        det_W = a * d - b * c
+        is_island = abs(det_W) < MODF_ISLANDING_TOLERANCE
+        if is_island
+            return LinearAlgebra.pinv(W_mat; atol = MODF_ISLANDING_TOLERANCE), is_island
+        end
         inv_det = 1.0 / det_W
         W_inv = Matrix{Float64}(undef, 2, 2)
         W_inv[1, 1] = d * inv_det
         W_inv[1, 2] = -b * inv_det
         W_inv[2, 1] = -c * inv_det
         W_inv[2, 2] = a * inv_det
+        return W_inv, is_island
     end
-    return W_inv, is_island
-end
-
-# Empty modification (M = 0): a contingency whose branch was eliminated by the
-# zero-impedance reduction resolves to no arc modifications, so W is 0×0. LAPACK's
-# getri! (reached via `inv`) rejects a 0×0 argument ("invalid argument #6"), so
-# return the empty inverse directly. `_apply_woodbury_correction_impl` then adds no
-# correction and yields the unmodified base PTDF row — the documented behavior for
-# such contingencies (see `_warn_if_transmission_dropped`).
-_invert_woodbury_W(::Matrix{Float64}, ::Val{0})::Tuple{Matrix{Float64}, Bool} =
-    (Matrix{Float64}(undef, 0, 0), false)
-
-function _invert_woodbury_W(
-    W_mat::Matrix{Float64},
-    ::Val{M},
-)::Tuple{Matrix{Float64}, Bool} where {M}
     W_lu = LinearAlgebra.lu(W_mat; check = false)
     is_island = any(i -> abs(W_lu.U[i, i]) < MODF_ISLANDING_TOLERANCE, 1:M)
-    W_inv =
-        if is_island
-            LinearAlgebra.pinv(W_mat; atol = MODF_ISLANDING_TOLERANCE)
-        else
-            LinearAlgebra.inv(W_lu)
-        end
-    return W_inv, is_island
+    if is_island
+        return LinearAlgebra.pinv(W_mat; atol = MODF_ISLANDING_TOLERANCE), is_island
+    end
+    return LinearAlgebra.inv(W_lu), is_island
 end
 
 # --- Islanding zero-forcing (shared by VirtualPTDF and VirtualMODF) -----------
@@ -135,6 +114,118 @@ function _zero_islanded_entries!(
 end
 
 """
+    _woodbury_factors_from_Z(Z, BA, arc_sus, modifications) -> WoodburyFactors
+
+Assemble the Woodbury factors from an already-resolved `Z`, whose column `j` is
+`B⁻¹ν_j` for the `j`-th modified arc in full-bus space. The callers differ only
+in how they obtain `Z`: one solve per arc in the kernel path, a lookup into the
+batched pre-contingency solves in `populate_cache`.
+"""
+function _woodbury_factors_from_Z(
+    Z::Matrix{Float64},
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    arc_sus::Vector{Float64},
+    modifications::Tuple{Vararg{ArcModification}},
+)::WoodburyFactors
+    M = length(modifications)
+    n_bus = size(Z, 1)
+
+    arc_indices = Vector{Int}(undef, M)
+    delta_b_vec = Vector{Float64}(undef, M)
+    for (j, mod) in enumerate(modifications)
+        arc_indices[j] = mod.arc_index
+        delta_b_vec[j] = mod.delta_b
+    end
+
+    # K_mat[i,j] = ν_i⊤ B⁻¹ ν_j
+    # Use BA[:,arc]/b instead of A[arc,:] for consistent sign convention.
+    # Iterate sparse BA columns (typically 2 nonzeros per arc).
+    ba_nzv = SparseArrays.nonzeros(BA)
+    ba_rv = SparseArrays.rowvals(BA)
+    K_mat = zeros(M, M)
+    for i in 1:M
+        e_i = arc_indices[i]
+        b_i = arc_sus[e_i]
+        for j in 1:M
+            val = 0.0
+            @inbounds for nz_idx in nzrange(BA, e_i)
+                row = ba_rv[nz_idx]
+                val += (ba_nzv[nz_idx] / b_i) * Z[row, j]
+            end
+            K_mat[i, j] = val
+        end
+    end
+
+    # W = diag(1/Δb) + K_mat
+    W_mat = LinearAlgebra.diagm(1.0 ./ delta_b_vec) + K_mat
+    W_inv, is_island = _invert_woodbury_W(W_mat, M)
+
+    # Label post-contingency components only when islanding, so the correction can
+    # force entries of disconnected buses to exactly zero (see _zero_islanded_entries!).
+    labels = Int[]
+    if is_island
+        @debug "Contingency islands the network; using pinv-based Woodbury correction."
+        labels = _post_contingency_bus_labels(BA, arc_sus, modifications, n_bus)
+    end
+
+    return WoodburyFactors(Z, W_inv, arc_indices, delta_b_vec, is_island, labels)
+end
+
+# Susceptance of the monitored arc once the modifications are applied.
+function _post_modification_susceptance(
+    arc_sus::Vector{Float64},
+    monitored_idx::Int,
+    wf::WoodburyFactors,
+)::Float64
+    b_mon = arc_sus[monitored_idx]
+    for (j, idx) in enumerate(wf.arc_indices)
+        if idx == monitored_idx
+            b_mon += wf.delta_b[j]
+        end
+    end
+    return b_mon
+end
+
+"""
+    _woodbury_correction!(z_m, BA, b_mon_pre, b_mon_post, monitored_idx, wf) -> Vector{Float64}
+
+Turn `z_m` — `B⁻¹ν_m / b_mon_pre` in full-bus space — into the post-modification
+PTDF row of the monitored arc, in place.
+"""
+function _woodbury_correction!(
+    z_m::Vector{Float64},
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    b_mon_pre::Float64,
+    b_mon_post::Float64,
+    monitored_idx::Int,
+    wf::WoodburyFactors,
+)::Vector{Float64}
+    M = length(wf.arc_indices)
+
+    # ν_m⊤ · Z  (1 × M vector)
+    # Use BA[:,m]/b instead of A[m,:] for consistent sign convention.
+    ba_nzv = SparseArrays.nonzeros(BA)
+    ba_rv = SparseArrays.rowvals(BA)
+    zm_Z = zeros(M)
+    @inbounds for nz_idx in nzrange(BA, monitored_idx)
+        row = ba_rv[nz_idx]
+        coeff = ba_nzv[nz_idx] / b_mon_pre
+        for j in 1:M
+            zm_Z[j] += coeff * wf.Z[row, j]
+        end
+    end
+
+    # Woodbury correction: z_m -= Z · (W⁻¹ · zm_Z), then scale by b_mon_post.
+    correction_coeff = wf.W_inv * zm_Z
+    LinearAlgebra.mul!(z_m, wf.Z, correction_coeff, -1.0, 1.0)
+    z_m .*= b_mon_post
+    # Under islanding, force buses disconnected from the monitored arc to exactly
+    # zero (no-op when not islanding: `bus_island_labels` is empty).
+    _zero_islanded_entries!(z_m, BA, monitored_idx, wf.bus_island_labels)
+    return z_m
+end
+
+"""
     _compute_woodbury_factors_impl(K, work_ba_col, temp_data, BA, arc_sus,
                                    valid_ix, modifications) -> WoodburyFactors
 
@@ -156,71 +247,18 @@ function _compute_woodbury_factors_impl(
     M = length(modifications)
     n_bus = length(temp_data)
 
-    arc_indices = Vector{Int}(undef, M)
-    delta_b_vec = Vector{Float64}(undef, M)
-    for (j, mod) in enumerate(modifications)
-        arc_indices[j] = mod.arc_index
-        delta_b_vec[j] = mod.delta_b
-    end
-
     # Compute Z[:,j] = B⁻¹ν_j for each modified arc
     Z = Matrix{Float64}(undef, n_bus, M)
-    ba_rv_outer = SparseArrays.rowvals(BA)
-    ba_nz_outer = SparseArrays.nonzeros(BA)
 
     for (j, mod) in enumerate(modifications)
         e = mod.arc_index
         b_e = arc_sus[e]
 
-        # Sparse-only extraction of BA[:, e] into work_ba_col.
-        fill!(work_ba_col, 0.0)
-        @inbounds for k in SparseArrays.nzrange(BA, e)
-            valid_i = bus_to_valid_idx[ba_rv_outer[k]]
-            valid_i > 0 || continue
-            work_ba_col[valid_i] = ba_nz_outer[k]
-        end
-        lin_solve = _solve_factorization(K, work_ba_col)
-
-        fill!(view(Z, :, j), 0.0)
-        @inbounds for i in eachindex(valid_ix)
-            Z[valid_ix[i], j] = lin_solve[i] / b_e
-        end
+        lin_solve = _solve_ba_column!(K, work_ba_col, BA, bus_to_valid_idx, e)
+        _gather_to_buses!(view(Z, :, j), valid_ix, lin_solve, b_e)
     end
 
-    # K_mat[i,j] = ν_i⊤ B⁻¹ ν_j
-    # Use BA[:,arc]/b instead of A[arc,:] for consistent sign convention (issue #278).
-    # Iterate sparse BA columns (typically 2 nonzeros per arc).
-    ba_nzv = SparseArrays.nonzeros(BA)
-    ba_rv = SparseArrays.rowvals(BA)
-    K_mat = zeros(M, M)
-    for i in 1:M
-        e_i = arc_indices[i]
-        b_i = arc_sus[e_i]
-        for j in 1:M
-            val = 0.0
-            @inbounds for nz_idx in nzrange(BA, e_i)
-                row = ba_rv[nz_idx]
-                val += (ba_nzv[nz_idx] / b_i) * Z[row, j]
-            end
-            K_mat[i, j] = val
-        end
-    end
-
-    # W = diag(1/Δb) + K_mat
-    W_mat = LinearAlgebra.diagm(1.0 ./ delta_b_vec) + K_mat
-
-    # Pre-invert W (Val dispatch lets the compiler specialize M=1,2)
-    W_inv, is_island = _invert_woodbury_W(W_mat, Val(M))
-
-    # Label post-contingency components only when islanding, so the correction can
-    # force entries of disconnected buses to exactly zero (see _zero_islanded_entries!).
-    labels = Int[]
-    if is_island
-        @debug "Contingency islands the network; using pinv-based Woodbury correction."
-        labels = _post_contingency_bus_labels(BA, arc_sus, modifications, n_bus)
-    end
-
-    return WoodburyFactors(Z, W_inv, arc_indices, delta_b_vec, is_island, labels)
+    return _woodbury_factors_from_Z(Z, BA, arc_sus, modifications)
 end
 
 """
@@ -243,59 +281,17 @@ function _apply_woodbury_correction_impl(
 )::Vector{Float64}
     n_bus = length(temp_data)
 
-    M = length(wf.arc_indices)
-
-    # Effective susceptance of monitored arc after modifications
-    b_mon = arc_sus[monitored_idx]
-    for (j, idx) in enumerate(wf.arc_indices)
-        if idx == monitored_idx
-            b_mon += wf.delta_b[j]
-        end
-    end
+    b_mon = _post_modification_susceptance(arc_sus, monitored_idx, wf)
     if abs(b_mon) < eps()
         return zeros(n_bus)
     end
 
-    # z_m = B⁻¹ν_m / b_mon_pre via sparse-only BA-column extraction + solve.
+    # z_m = B⁻¹ν_m / b_mon_pre.
     b_mon_pre = arc_sus[monitored_idx]
-    fill!(work_ba_col, 0.0)
-    ba_rv_mon = SparseArrays.rowvals(BA)
-    ba_nz_mon = SparseArrays.nonzeros(BA)
-    @inbounds for k in SparseArrays.nzrange(BA, monitored_idx)
-        valid_i = bus_to_valid_idx[ba_rv_mon[k]]
-        valid_i > 0 || continue
-        work_ba_col[valid_i] = ba_nz_mon[k]
-    end
-    lin_solve = _solve_factorization(K, work_ba_col)
+    lin_solve = _solve_ba_column!(K, work_ba_col, BA, bus_to_valid_idx, monitored_idx)
+    _gather_to_buses!(temp_data, valid_ix, lin_solve, b_mon_pre)
 
-    # Build z_m into temp_data
-    fill!(temp_data, 0.0)
-    @inbounds for i in eachindex(valid_ix)
-        temp_data[valid_ix[i]] = lin_solve[i] / b_mon_pre
-    end
-
-    # ν_m⊤ · Z  (1 × M vector)
-    # Use BA[:,m]/b instead of A[m,:] for consistent sign convention (issue #278).
-    ba_nzv = SparseArrays.nonzeros(BA)
-    ba_rv = SparseArrays.rowvals(BA)
-    zm_Z = zeros(M)
-    @inbounds for nz_idx in nzrange(BA, monitored_idx)
-        row = ba_rv[nz_idx]
-        coeff = ba_nzv[nz_idx] / b_mon_pre
-        for j in 1:M
-            zm_Z[j] += coeff * wf.Z[row, j]
-        end
-    end
-
-    # Woodbury correction: temp_data -= Z · (W⁻¹ · zm_Z)
-    correction_coeff = wf.W_inv * zm_Z
-    LinearAlgebra.mul!(temp_data, wf.Z, correction_coeff, -1.0, 1.0)
-
-    # Post-modification PTDF row = b_mon_post · (z_m - correction)
-    temp_data .*= b_mon
-    # Under islanding, force buses disconnected from the monitored arc to exactly
-    # zero (no-op when not islanding: `bus_island_labels` is empty).
-    _zero_islanded_entries!(temp_data, BA, monitored_idx, wf.bus_island_labels)
+    _woodbury_correction!(temp_data, BA, b_mon_pre, b_mon, monitored_idx, wf)
     return copy(temp_data)
 end
 

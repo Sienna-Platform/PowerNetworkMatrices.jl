@@ -70,16 +70,20 @@ end
 @testset "Catalog closure holds over nested aggregates" begin
     _, nrd, catalog = _nested_aggregate_catalog()
 
-    # A degree-two reduction folds; it does not absorb. So every arc must still be reachable
-    # by component type.
+    # Every arc in the three forward maps got a `name_to_arc` row, so none of the nested
+    # aggregates named no branch type and no two collided on one name.
     @test PNM._validate_catalog_closure(nrd, PNM.get_name_to_arc_maps(catalog)) === nothing
 
-    # Same check reached through the opt-in construction path.
-    @test PNM.BranchCatalog(nrd; validate = true) isa PNM.BranchCatalog
+    # Every unfiltered catalog runs it on construction, and the folded arc is indexed.
+    rebuilt = PNM.BranchCatalog(nrd)
+    @test _composite_arc(nrd) in
+          Set(values(PNM.get_name_to_arc_map(rebuilt, PSY.Line)))
 
-    # Refused on a filtered catalog: the invariant does not hold there by design, so
-    # answering "valid" would report a guarantee the check cannot give.
-    @test_throws ArgumentError PNM.BranchCatalog(nrd, (T, c) -> true; validate = true)
+    # Skipped on a filtered catalog: the invariant does not hold there by design. This filter
+    # keeps everything, so the arc is still indexed.
+    filtered = PNM.BranchCatalog(nrd, (T, c) -> true)
+    @test _composite_arc(nrd) in
+          Set(values(PNM.get_name_to_arc_map(filtered, PSY.Line)))
 end
 
 @testset "Filters see PSY components, never aggregate wrappers" begin

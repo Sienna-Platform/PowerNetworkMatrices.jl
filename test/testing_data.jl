@@ -486,7 +486,7 @@ function build_hvdc_with_single_bus_island()
         base_voltage = 69.0,
     )
     add_component!(sys, bus15)
-    load15 = PowerLoad(;
+    load15 = PowerLoad(; input_basis = PSY.CU,
         name = "Load_15",
         available = true,
         bus = bus15,
@@ -497,7 +497,7 @@ function build_hvdc_with_single_bus_island()
         max_reactive_power = 0.0,
     )
     add_component!(sys, load15)
-    gen15 = ThermalStandard(;
+    gen15 = ThermalStandard(; input_basis = PSY.CU,
         name = "Gen_15",
         available = true,
         status = OperationalStates.ONLINE,
@@ -516,7 +516,7 @@ function build_hvdc_with_single_bus_island()
     )
     add_component!(sys, gen15)
     bus14 = get_component(ACBus, sys, "Bus 14")
-    hvdc1 = TwoTerminalGenericHVDCLine(;
+    hvdc1 = TwoTerminalGenericHVDCLine(; input_basis = PSY.CU,
         name = "Line18",
         available = true,
         active_power_flow = 0.0,
@@ -566,7 +566,7 @@ function build_hvdc_with_small_island()
     add_component!(sys, bus16)
     add_component!(sys, bus17)
 
-    line17 = Line(;
+    line17 = Line(; input_basis = PSY.CU,
         name = "Line17",
         available = true,
         active_power_flow = 0.0,
@@ -579,7 +579,7 @@ function build_hvdc_with_small_island()
         angle_limits = (min = -0.7, max = 0.7),
     )
     add_component!(sys, line17)
-    line18 = Line(;
+    line18 = Line(; input_basis = PSY.CU,
         name = "Line18",
         available = true,
         active_power_flow = 0.0,
@@ -592,7 +592,7 @@ function build_hvdc_with_small_island()
         angle_limits = (min = -0.7, max = 0.7),
     )
     add_component!(sys, line18)
-    load16 = PowerLoad(;
+    load16 = PowerLoad(; input_basis = PSY.CU,
         name = "Bus16",
         available = true,
         bus = bus16,
@@ -603,7 +603,7 @@ function build_hvdc_with_small_island()
         max_reactive_power = 0.0,
     )
     add_component!(sys, load16)
-    gen17 = ThermalStandard(;
+    gen17 = ThermalStandard(; input_basis = PSY.CU,
         name = "Bus17",
         available = true,
         status = OperationalStates.ONLINE,
@@ -622,7 +622,7 @@ function build_hvdc_with_small_island()
     )
     add_component!(sys, gen17)
     bus14 = get_component(ACBus, sys, "Bus 14")
-    hvdc1 = TwoTerminalGenericHVDCLine(;
+    hvdc1 = TwoTerminalGenericHVDCLine(; input_basis = PSY.CU,
         name = "Line18",
         available = true,
         active_power_flow = 0.0,
@@ -672,7 +672,8 @@ function _build_degree_two_chain_system(edges; load_bus::Int = 3)
     end
     PSY.add_component!(
         sys,
-        ThermalStandard(; name = "G1", available = true, status = OperationalStates.ONLINE,
+        ThermalStandard(; input_basis = PSY.CU, name = "G1", available = true,
+            status = OperationalStates.ONLINE,
             bus = buses[1],
             active_power = 1.0, reactive_power = 0.0, rating = 2.0,
             prime_mover_type =
@@ -684,7 +685,8 @@ function _build_degree_two_chain_system(edges; load_bus::Int = 3)
     )
     PSY.add_component!(
         sys,
-        PowerLoad(; name = "D3", available = true, bus = buses[load_bus],
+        PowerLoad(; input_basis = PSY.CU, name = "D3", available = true,
+            bus = buses[load_bus],
             active_power = 1.0,
             reactive_power = 0.0, base_power = 100.0, max_active_power = 1.0,
             max_reactive_power = 0.0),
@@ -851,6 +853,21 @@ function build_antiparallel_chain_segment_system()
     return _build_degree_two_chain_system(edges)
 end
 
+"""
+`build_antiparallel_chain_segment_system` plus a second 10→3 line, so segment 2 is
+MixedBranchesParallel[Line, BranchesParallel{Line}].
+"""
+function build_antiparallel_chain_segment_nested_parallel_system()
+    sys = build_antiparallel_chain_segment_system()
+    arc = PSY.get_arc(PSY.get_component(Line, sys, "L_10_3"))
+    PSY.add_component!(
+        sys,
+        Line("L_10_3_b", true, 0.0, 0.0, arc, 0.015, 0.13,
+            (from = 0.01, to = 0.01), 2.0, (-1.6, 1.6)),
+    )
+    return sys
+end
+
 ##############################################################################
 ###################### Branch index fingerprinting ###########################
 ##############################################################################
@@ -935,3 +952,223 @@ catalog_fingerprint(c::PNM.BranchCatalog) = branch_index_fingerprint(
     PNM.get_name_to_arc_maps(c),
     PNM.get_component_to_reduction_name_map(c),
 )
+
+# Fresh System with `n` buses (bus 1 REF, the rest PV); returns the system and the buses.
+function _mk_bus_system(n::Int)
+    sys = System(100.0)
+    buses = ACBus[]
+    for i in 1:n
+        if i == 1
+            bustype = ACBusTypes.REF
+        else
+            bustype = ACBusTypes.PV
+        end
+        b = ACBus(;
+            number = i,
+            name = "b$i",
+            available = true,
+            bustype = bustype,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.9, max = 1.1),
+            base_voltage = 230.0,
+        )
+        add_component!(sys, b)
+        push!(buses, b)
+    end
+    return sys, buses
+end
+
+# Add a `Line` named `name` on `arc` with series impedance `(r, x)` and no charging.
+function _add_test_line!(sys, name, arc, r, x)
+    add_component!(
+        sys,
+        Line(; input_basis = PSY.CU,
+            name = name,
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            arc = arc,
+            r = r,
+            x = x,
+            b = (from = 0.0, to = 0.0),
+            rating = 1.0,
+            angle_limits = (min = -1.5, max = 1.5),
+        ),
+    )
+end
+
+# Detached components suffice for map-filing tests: `add_to_branch_maps!` only reads arc bus
+# numbers, never impedances (which require an attached system).
+function _mk_detached_pst_fixture()
+    b1 = ACBus(;
+        number = 1, name = "b1", available = true, bustype = ACBusTypes.REF,
+        angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
+        base_voltage = 230.0,
+    )
+    b2 = ACBus(;
+        number = 2, name = "b2", available = true, bustype = ACBusTypes.PV,
+        angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
+        base_voltage = 230.0,
+    )
+    function _mk_fixture_line(name)
+        return Line(; input_basis = PSY.CU,
+            name = name, available = true, active_power_flow = 0.0,
+            reactive_power_flow = 0.0, arc = Arc(; from = b1, to = b2),
+            r = 0.0, x = 0.1, b = (from = 0.0, to = 0.0), rating = 1.0,
+            angle_limits = (min = -1.5, max = 1.5),
+        )
+    end
+    function _mk_fixture_pst(name, α)
+        return PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+            name = name,
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+                arc = Arc(; from = b1, to = b2), tap = 1.0, α = α,
+                available = true, active_power_flow = 0.0, reactive_power_flow = 0.0,
+                rating = 1.0, base_power = 100.0, base_voltage_primary = 230.0,
+                r = 0.0, x = 0.2,
+            ),
+            magnetizing_shunt = Complex(0.0, 0.0),
+        )
+    end
+    return (
+        _mk_fixture_line("L1"),
+        _mk_fixture_line("L2"),
+        _mk_fixture_pst("PST1", 0.15),
+        _mk_fixture_pst("PST2", 0.10),
+    )
+end
+
+# Build a minimal 3-bus system (bus 1 REF) wired so that the parallel arc (2, 3)
+# carries the supplied (r, x) pairs; lines 1-2 and 1-3 keep the network connected.
+function _mk_zi_parallel_sys(rx_pairs::Vector{Tuple{Float64, Float64}})
+    sys, buses = _mk_bus_system(3)
+    # Parallel members share a single Arc (2, 3), as real parallel branches do.
+    zi_arc = Arc(; from = buses[2], to = buses[3])
+    add_component!(sys, zi_arc)
+    for (k, (r, x)) in enumerate(rx_pairs)
+        _add_test_line!(sys, "ZI$k", zi_arc, r, x)
+    end
+    for (f, t) in ((1, 2), (1, 3))
+        arc = Arc(; from = buses[f], to = buses[t])
+        add_component!(sys, arc)
+        _add_test_line!(sys, "L$f$t", arc, 0.0, 0.1)
+    end
+    return sys
+end
+
+# Attached 3-bus system with L1 ∥ PST on (1, 2) and L2 on (2, 3). Attached (not detached, as
+# in `_mk_detached_pst_fixture`) because impedance reads need `base_value`, which only
+# `add_component!` populates.
+function _mk_line_pst_parallel_system(; pst_r = 0.0, pst_x = 0.2)
+    sys, buses = _mk_bus_system(3)
+    function _mk_sys_line(name, f, t)
+        arc = Arc(; from = buses[f], to = buses[t])
+        add_component!(sys, arc)
+        add_component!(
+            sys,
+            Line(; input_basis = PSY.CU,
+                name = name, available = true, active_power_flow = 0.0,
+                reactive_power_flow = 0.0, arc = arc, r = 0.0, x = 0.1,
+                b = (from = 0.0, to = 0.0), rating = 1.0,
+                angle_limits = (min = -1.5, max = 1.5),
+            ),
+        )
+        return arc
+    end
+    pst_arc = _mk_sys_line("L1", 1, 2)
+    _mk_sys_line("L2", 2, 3)
+    # PST shares L1's Arc — a second `Arc(; from = buses[1], to = buses[2])` collides on the
+    # auto-derived component name ("b1 -> b2"), same reasoning as `_mk_zi_parallel_sys` above.
+    add_component!(
+        sys,
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+            name = "PST",
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+                arc = pst_arc, tap = 1.0, α = 0.15, available = true,
+                active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
+                base_power = 100.0, base_voltage_primary = 230.0,
+                r = pst_r, x = pst_x,
+            ),
+            magnetizing_shunt = Complex(0.0, 0.0),
+        ),
+    )
+    return sys
+end
+
+# ThreeWindingTransformer on three terminal buses → star_bus; star-leg impedances derived
+# from pairwise data, system base (SU == CU).
+function _add_three_winding_transformer!(
+    sys,
+    busP,
+    busS,
+    busT,
+    star_bus;
+    name = "T3W",
+    r12 = 0.01, x12 = 0.1,
+    r23 = 0.01, x23 = 0.1,
+    r31 = 0.01, x31 = 0.1,
+    bp = 100.0,
+    magnetizing_shunt = 0.0 + 0.0im,
+    shunt_location = PSY.ThreeWindingTransformerShuntLocation.PRIMARY,
+    ratings = (1.0, 1.0, 0.5),
+)
+    arcs = (
+        PSY.Arc(; from = busP, to = star_bus),
+        PSY.Arc(; from = busS, to = star_bus),
+        PSY.Arc(; from = busT, to = star_bus),
+    )
+    foreach(a -> PSY.add_component!(sys, a), arcs)
+    z12, z23, z31 = complex(r12, x12), complex(r23, x23), complex(r31, x31)
+    legs = (
+        (z12 + z31 - z23) / 2,
+        (z12 + z23 - z31) / 2,
+        (z31 + z23 - z12) / 2,
+    )
+    circuits = ntuple(
+        i -> PSY.TransformerCircuit(; input_basis = PSY.CU,
+            arc = arcs[i],
+            available = true,
+            base_power = bp,
+            base_voltage_primary = PSY.get_base_voltage(PSY.get_from(arcs[i])),
+            r = real(legs[i]),
+            x = imag(legs[i]),
+            rating = ratings[i],
+        ),
+        3,
+    )
+    t3w = PSY.ThreeWindingTransformer(; input_basis = PSY.CU,
+        name = name,
+        primary_circuit = circuits[1],
+        secondary_circuit = circuits[2],
+        tertiary_circuit = circuits[3],
+        star_bus = star_bus,
+        r_12 = r12, x_12 = x12,
+        r_23 = r23, x_23 = x23,
+        r_31 = r31, x_31 = x31,
+        base_power_12 = bp, base_power_23 = bp, base_power_31 = bp,
+        magnetizing_shunt = magnetizing_shunt,
+        shunt_location = shunt_location,
+    )
+    PSY.add_component!(sys, t3w)
+    return t3w
+end
+
+function _add_star_buses!(sys, busD; numbers = (101, 102, 103))
+    return map(numbers) do n
+        b = PSY.ACBus(;
+            number = n,
+            name = "Bus3WT_$n",
+            available = true,
+            bustype = PSY.ACBusTypes.PQ,
+            angle = 0.0,
+            magnitude = 1.0,
+            voltage_limits = (min = 0.95, max = 1.05),
+            base_voltage = 230.0,
+            area = PSY.get_area(busD),
+            load_zone = PSY.get_load_zone(busD),
+        )
+        PSY.add_component!(sys, b)
+        b
+    end
+end

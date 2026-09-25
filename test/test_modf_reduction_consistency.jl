@@ -197,8 +197,9 @@ end
     @test haskey(arc_lookup, (mfb, mtb)) || haskey(arc_lookup, (mtb, mfb))
 end
 
-# Minimal capturing logger: ReTest cannot `record` a `@test_logs` failure, so we
-# capture log records directly and assert on them.
+# Minimal capturing logger: keeps every emitted record so the assertion below can be an
+# ordinary predicate over them rather than a log-pattern match. Used by the out-of-service
+# no-op test.
 mutable struct _CollectLogs <: Logging.AbstractLogger
     records::Vector{Tuple{Any, String}}
 end
@@ -220,7 +221,7 @@ function Logging.handle_message(
     return
 end
 
-@testset "VirtualMODF warns only when a transmission outage is dropped, not for generators" begin
+@testset "VirtualMODF errors only when a transmission outage is dropped, not for generators" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     line = PSY.get_component(PSY.ACTransmission, sys, "1")
     line_outage = _fixed_outage()
@@ -229,31 +230,78 @@ end
     gen_outage = _fixed_outage()
     PSY.add_supplemental_attribute!(sys, gen, gen_outage)
 
-    # A transmission outage whose arc was dropped (empty modification) MUST warn.
+    # A transmission outage whose arc was dropped (empty modification) MUST error.
     empty_mod = NetworkModification("dropped_line", ArcModification[])
-    collector = _CollectLogs(Tuple{Any, String}[])
-    Logging.with_logger(collector) do
-        PNM._warn_if_transmission_dropped(sys, line_outage, empty_mod)
+    @test_throws IS.ConflictingInputsError PNM._validate_transmission_survived(
+        sys,
+        line_outage,
+        empty_mod,
+    )
+
+    # A generator-only outage with an empty modification is benign.
+    @test PNM._validate_transmission_survived(sys, gen_outage, empty_mod) === nothing
+
+    # A transmission outage that DID resolve to an arc modification is fine.
+    real_mod = NetworkModification("real_line", [ArcModification(1, -1.0)])
+    @test PNM._validate_transmission_survived(sys, line_outage, real_mod) === nothing
+end
+
+# First branch the reduction leaves on no map; series-map membership counts as surviving.
+function _branch_off_every_map(sys, nrd)
+    for br in PSY.get_components(PSY.ACTransmission, sys)
+        tag, _ = PNM._resolve_branch_arc(nrd, br)
+        tag in (:direct, :parallel, :series) || return br
     end
+    return error(
+        "No branch of this system is off every reduction map; the fixture no longer " *
+        "reproduces a reduction-eliminated outage.",
+    )
+end
+
+@testset "VirtualMODF: out-of-service outage is a no-op" begin
+    # available = false: never entered Ybus, so a no-op.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    line = PSY.get_component(PSY.ACTransmission, sys, "1")
+    PSY.set_available!(line, false)
+    PSY.add_supplemental_attribute!(sys, line, _fixed_outage())
+
+    collector = _CollectLogs(Tuple{Any, String}[])
+    vmodf = Logging.with_logger(collector) do
+        VirtualMODF(sys)
+    end
+    @test length(PNM.get_registered_contingencies(vmodf)) == 1
+    # Legitimate, but not silent: the contingency screens nothing.
     @test any(
-        r -> r[1] == Logging.Warn && occursin("transmission components", r[2]),
+        r -> r[1] == Logging.Warn && occursin("out-of-service transmission", r[2]),
         collector.records,
     )
 
-    # A generator-only outage with an empty modification is benign — NO warning.
-    collector_gen = _CollectLogs(Tuple{Any, String}[])
-    Logging.with_logger(collector_gen) do
-        PNM._warn_if_transmission_dropped(sys, gen_outage, empty_mod)
-    end
-    @test !any(r -> r[1] == Logging.Warn, collector_gen.records)
+    # The same empty modification from an in-service branch is still rejected.
+    in_service = PSY.get_component(PSY.ACTransmission, sys, "2")
+    @test PSY.get_available(in_service)
+    live_outage = _fixed_outage()
+    PSY.add_supplemental_attribute!(sys, in_service, live_outage)
+    @test_throws IS.ConflictingInputsError PNM._validate_transmission_survived(
+        sys,
+        live_outage,
+        NetworkModification("dropped", ArcModification[]),
+    )
+end
 
-    # A transmission outage that DID resolve to an arc modification must NOT warn.
-    real_mod = NetworkModification("real_line", [ArcModification(1, -1.0)])
-    collector_ok = _CollectLogs(Tuple{Any, String}[])
-    Logging.with_logger(collector_ok) do
-        PNM._warn_if_transmission_dropped(sys, line_outage, real_mod)
-    end
-    @test !any(r -> r[1] == Logging.Warn, collector_ok.records)
+@testset "VirtualMODF over a shared core rejects an outage branch reduced away" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "test_RTS_GMLC_sys")
+    reductions = NetworkReduction[RadialReduction(), DegreeTwoReduction()]
+
+    # A reduced-before-outages core cannot protect the branch.
+    vptdf = VirtualPTDF(sys; network_reductions = reductions)
+    target = _branch_off_every_map(sys, get_network_reduction_data(vptdf))
+    PSY.add_supplemental_attribute!(sys, target, _fixed_outage())
+
+    @test_throws IS.ConflictingInputsError VirtualMODF(vptdf, sys)
+
+    # Building from the system protects the branch, so the same reductions succeed.
+    protected = VirtualMODF(sys; network_reductions = reductions)
+    @test !isempty(PNM.get_registered_contingencies(protected))
 end
 
 @testset "VirtualMODF tuple getindex gives a clear error for a reduced arc" begin

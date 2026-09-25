@@ -58,13 +58,16 @@ function check_arc_validity(arc::PSY.Arc, name::String)
     return
 end
 
-function get_arc_tuple(arc::PSY.Arc, nr::NetworkReductionData)
+function _remap_pair(nr::NetworkReductionData, bus_pair::Tuple{Int, Int})
     reverse_bus_search_map = get_reverse_bus_search_map(nr)
-    arc_tuple_original = get_arc_tuple(arc)
     return (
-        get(reverse_bus_search_map, arc_tuple_original[1], arc_tuple_original[1]),
-        get(reverse_bus_search_map, arc_tuple_original[2], arc_tuple_original[2]),
+        get(reverse_bus_search_map, bus_pair[1], bus_pair[1]),
+        get(reverse_bus_search_map, bus_pair[2], bus_pair[2]),
     )
+end
+
+function get_arc_tuple(arc::PSY.Arc, nr::NetworkReductionData)
+    return _remap_pair(nr, get_arc_tuple(arc))
 end
 
 function get_arc_tuple(br::PSY.ACTransmission, nr::NetworkReductionData)
@@ -74,11 +77,7 @@ end
 # Canonical orientation is the stored `arc_key` (set at construction), remapped through `nr`;
 # anti-parallel members may exist post-merge, so do not rely on member order.
 function get_arc_tuple(br::AbstractReductionAggregate, nr::NetworkReductionData)
-    reverse_bus_search_map = get_reverse_bus_search_map(nr)
-    return (
-        get(reverse_bus_search_map, br.arc_key[1], br.arc_key[1]),
-        get(reverse_bus_search_map, br.arc_key[2], br.arc_key[2]),
-    )
+    return _remap_pair(nr, get_arc_tuple(br))
 end
 
 function get_arc_tuple(br::AbstractReductionAggregate)
@@ -422,12 +421,19 @@ function _member_shift_injection(
     nr::NetworkReductionData,
     br::PSY.ACTransmission,
 )
+    # A nested branch would get a sign-flipped angle.
+    if !_entry_carries(bp, br)
+        error(
+            "$(typeof(br)) $(get_name(br)) is not a direct member of parallel group " *
+            "$(get_name(bp)); resolve it to its carrying member first.",
+        )
+    end
     α = _oriented_member_phase_shift(br, bp, nr)
     iszero(α) && return 0.0
     return _finite_series_susceptance(br, nr) * α
 end
 
-# The substituted susceptance for an `r == x == 0` branch, matching what `equivalent_branch`
+# The substituted susceptance for an `x == 0` branch, matching what `equivalent_branch`
 # uses in Ybus assembly. Such branches normally merge away, but a pair between two
 # irreducible buses survives as a `BranchesParallel`.
 _zero_impedance_susceptance(::PSY.ACTransmission, min_x_eps::Float64) = 1 / min_x_eps
@@ -438,9 +444,9 @@ _zero_impedance_susceptance(w::ThreeWindingTransformerCircuit, min_x_eps::Float6
 # Only the susceptance form is tap-divided, matching `get_series_susceptance`.
 _zero_impedance_susceptance(c::PSY.TransformerCircuit, min_x_eps::Float64) =
     (1 / min_x_eps) / PSY.get_tap(c)
-_zero_impedance_susceptance(bp::AbstractBranchesParallel, min_x_eps::Float64) =
+_zero_impedance_susceptance(bp::AbstractBranchesParallel, min_x_eps::Float64)::Float64 =
     sum(_finite_series_susceptance(br, min_x_eps) for br in bp)
-_zero_impedance_susceptance(bs::BranchesSeries, min_x_eps::Float64) =
+_zero_impedance_susceptance(bs::BranchesSeries, min_x_eps::Float64)::Float64 =
     1 / sum(inv(_finite_series_susceptance(seg, min_x_eps)) for seg in bs)
 
 # A guard on the raw layer, not a parallel implementation: non-degenerate branches keep one
@@ -467,17 +473,66 @@ function _symmetric_arc_dc_susceptance(Y_ft::Complex)
     return 1 / x_eq
 end
 
-# The susceptance `BA_Matrix` assigns to an arc, from the same 2x2 it reads off Ybus. A
-# phase-shifting arc (asymmetric off-diagonals) takes the phase-independent component value.
-function _ba_arc_susceptance(
+# Shared Y_ft/Y_tf split: a symmetric two-port collapses to one DC value; an asymmetric
+# (phase-shifting) one falls back to the component susceptance the two-port can't represent
+# as a single number.
+function _ba_arc_susceptance(entries::NTuple{4, <:Complex}, fallback::Float64)
+    _, Y12, Y21, _ = entries
+    Y_ft = -Y12
+    Y_tf = -Y21
+    Y_ft != Y_tf && return fallback
+    return _symmetric_arc_dc_susceptance(Y_ft)
+end
+
+# BA's susceptance for one arc key: the entry's own two-port, never the summed Ybus
+# off-diagonal (an anti-parallel pair holds both twins). Phase-shifting arcs take the
+# component value; α enters as an injection.
+_ba_arc_susceptance(
     entries::NTuple{4, <:Complex},
     segment::PSY.ACTransmission,
     nr::NetworkReductionData,
+) = _ba_arc_susceptance(entries, _finite_series_susceptance(segment, nr))
+
+_ba_arc_susceptance(segment::PSY.ACTransmission, nr::NetworkReductionData) =
+    _ba_arc_susceptance(ybus_branch_entries(segment, nr), segment, nr)
+
+# A lone chain takes its susceptance from components (lower DC error than its Kron two-port).
+_ba_arc_susceptance(
+    ::NTuple{4, <:Complex},
+    segment::BranchesSeries,
+    nr::NetworkReductionData,
+) = _finite_series_susceptance(segment, nr)
+
+_ba_arc_susceptance(segment::BranchesSeries, nr::NetworkReductionData) =
+    _finite_series_susceptance(segment, nr)
+
+# Ward may file its equivalent on an arc that already has a physical two-port; sum both, as
+# Ybus does.
+function _ba_arc_susceptance(
+    entry::PSY.ACTransmission,
+    added::PSY.GenericArcImpedance,
+    nr::NetworkReductionData,
 )
-    Y_ft = -entries[2]
-    Y_tf = -entries[3]
-    Y_ft != Y_tf && return _finite_series_susceptance(segment, nr)
-    return _symmetric_arc_dc_susceptance(Y_ft)
+    entries = ybus_branch_entries(entry, nr) .+ ybus_branch_entries(added, nr)
+    fallback = _finite_series_susceptance(entry, nr) + _finite_series_susceptance(added, nr)
+    return _ba_arc_susceptance(entries, fallback)
+end
+
+_ba_arc_susceptance(
+    segment::BranchesSeries,
+    added::PSY.GenericArcImpedance,
+    nr::NetworkReductionData,
+) =
+    _finite_series_susceptance(segment, nr) + _finite_series_susceptance(added, nr)
+
+function _ba_arc_susceptance(nr::NetworkReductionData, arc::Tuple{Int, Int})
+    entry, _ = _resolve_arc_entry(nr, arc)
+    added_map = get_added_arc_impedance_map(nr)
+    if haskey(added_map, arc) && added_map[arc] !== entry
+        return _ba_arc_susceptance(entry, added_map[arc], nr)
+    else
+        return _ba_arc_susceptance(entry, nr)
+    end
 end
 
 """
@@ -498,6 +553,28 @@ Ybus-derived value for a symmetric arc (`_ba_arc_susceptance`).
 """
 get_effective_series_susceptance(segment::PSY.ACTransmission, nr::NetworkReductionData) =
     _finite_series_susceptance(segment, nr)
+
+"""
+    compute_parallel_multiplier(bp::AbstractBranchesParallel, branch, nr) -> Float64
+
+Susceptance fraction of one member of a parallel group, taking the substitute reactance for a
+zero-impedance member from `nr`'s configured `minimum_retained_impedance` — the value the
+matrices the share scales were assembled with.
+"""
+compute_parallel_multiplier(
+    bp::AbstractBranchesParallel,
+    branch::Union{PSY.ACTransmission, String},
+    nr::NetworkReductionData,
+) = _parallel_multiplier(bp, branch, _minimum_retained_impedance(nr))
+
+"""
+    get_impedance_averaged_rating(bp::AbstractBranchesParallel, nr) -> Union{Nothing, Float64}
+
+`get_impedance_averaged_rating` with the susceptance weights taken on `nr`'s configured
+`minimum_retained_impedance`, which a group mixing zero-impedance and finite members needs.
+"""
+get_impedance_averaged_rating(bp::AbstractBranchesParallel, nr::NetworkReductionData) =
+    _impedance_averaged_rating(bp, _minimum_retained_impedance(nr))
 
 """
     get_series_phase_shift(bp::AbstractBranchesParallel, nr) -> Float64
@@ -529,20 +606,27 @@ end
 # is load-bearing: a direct branch must win over a composite arc on the same key. `reversed` is
 # true only for a group found under the opposite orientation — the direct and added maps are
 # probed forward only, matching the pre-consolidation behavior pinned in
-# `test_arc_resolution_characterization.jl`.
-function _resolve_arc_entry(nr::NetworkReductionData, arc::Tuple{Int, Int})
+# `test_arc_resolution_characterization.jl`. Non-throwing: callers gate on `found`, not on the
+# placeholder entry.
+function _probe_arc_entry(nr::NetworkReductionData, arc::Tuple{Int, Int})
     direct = get(get_direct_branch_map(nr), arc, nothing)
-    isnothing(direct) || return (direct, false)
+    isnothing(direct) || return (true, direct, false)
     rev = (arc[2], arc[1])
     for map in (get_series_branch_map(nr), get_parallel_branch_map(nr))
         forward = get(map, arc, nothing)
-        isnothing(forward) || return (forward, false)
+        isnothing(forward) || return (true, forward, false)
         reversed = get(map, rev, nothing)
-        isnothing(reversed) || return (reversed, true)
+        isnothing(reversed) || return (true, reversed, true)
     end
     added = get(get_added_arc_impedance_map(nr), arc, nothing)
-    isnothing(added) || return (added, false)
-    return error("Arc $(arc) not found in any network reduction map.")
+    isnothing(added) || return (true, added, false)
+    return (false, direct, false)
+end
+
+function _resolve_arc_entry(nr::NetworkReductionData, arc::Tuple{Int, Int})
+    found, entry, reversed = _probe_arc_entry(nr, arc)
+    found || return error("Arc $(arc) not found in any network reduction map.")
+    return (entry, reversed)
 end
 
 _segment_phase_shift(seg::PSY.ACTransmission, ::NetworkReductionData) =
@@ -577,7 +661,7 @@ Equivalent DC phase-shift angle α of the retained `arc`, resolved through which
 reduction map owns it and oriented to match `arc` (a reverse-keyed hit negates). Total on
 every mapped arc -- added Ward-equivalent arcs shift by 0.0. Throws if `arc` is in no map.
 This is the α that `BA_Matrix` deliberately excludes from its susceptances
-(`_arc_component_susceptance`); the DC solver applies it as the injection
+(`_ba_arc_susceptance`); the DC solver applies it as the injection
 [`arc_dc_shift_injection`](@ref).
 """
 function arc_dc_phase_shift(nr::NetworkReductionData, arc::Tuple{Int, Int})
@@ -635,9 +719,11 @@ end
 
 DC circulating-flow component of one member of a parallel group, `bₘ·(α_eq − αₘ)` in the
 group's arc frame (per unit, system base). The member's total DC flow is
-`compute_parallel_multiplier(bp, branch)·f_arc + compute_parallel_circulating_flow(bp, nr, branch)`;
-the circulating components sum to zero over the group. Member resolved by object identity;
-a non-member is an error.
+`compute_parallel_multiplier(bp, branch, nr)·f_arc + compute_parallel_circulating_flow(bp, nr, branch)`;
+the circulating components sum to zero over the group. Take the share on `nr` as written: the
+`nr`-less method cannot see the reduction's configured substitute reactance, so its share
+disagrees with the matrix `f_arc` came from whenever the group holds a zero-impedance member.
+Member resolved by object identity; a non-member is an error.
 """
 function compute_parallel_circulating_flow(
     bp::AbstractBranchesParallel,
@@ -674,11 +760,16 @@ function _dc_series_impedance(tw::ThreeWindingTransformerCircuit)
     return _dc_series_impedance(tw.circuit)
 end
 
-function _dc_series_impedance(bp::AbstractBranchesParallel)
+# A `BranchesParallel` can hold a `BranchesSeries` member and vice versa, so these two methods
+# call each other through mutual recursion with no static base case; Julia's inference can't
+# resolve a concrete return type across that cycle and falls back to `Any`. The `::ComplexF64`
+# annotations are function barriers that break the cycle at the one place the answer is known:
+# both sides always reduce to a scalar impedance.
+function _dc_series_impedance(bp::AbstractBranchesParallel)::ComplexF64
     return inv(sum(inv(_dc_series_impedance(br)) for br in bp))
 end
 
-function _dc_series_impedance(bs::BranchesSeries)
+function _dc_series_impedance(bs::BranchesSeries)::ComplexF64
     return sum(_dc_series_impedance(seg) for seg in bs)
 end
 
@@ -772,7 +863,7 @@ otherwise one element per impedance-angle partition. The partitions' π-models s
 `ybus_branch_entries(bp, nr)` exactly, which is the invariant the tests pin.
 
 This is the total counterpart of `get_equivalent_physical_branch_parameters`, which can only
-return a single π and therefore throws on lossy shifted groups (PNM issue #231).
+return a single π and therefore throws on lossy shifted groups.
 """
 function equivalent_partitions(bp::AbstractBranchesParallel, nr::NetworkReductionData)
     reference = get_arc_tuple(bp, nr)
@@ -810,8 +901,9 @@ end
 """
     get_partition_rating(pe::ParallelEquivalent) -> Union{Nothing, Float64}
 
-Summed rating of the partition's members, or `nothing` when any member's rating is unknown —
-matching `get_equivalent_rating(::AbstractBranchesParallel)` semantics for a subset.
+Summed rating of the partition's members, matching
+`get_equivalent_rating(::AbstractBranchesParallel)` semantics for a subset: members with no
+known rating are skipped, and the result is `nothing` only when no member has a known rating.
 """
 function get_partition_rating(pe::ParallelEquivalent)
     return _aggregate_known_ratings(sum, get_equivalent_rating, get_members(pe))
@@ -835,6 +927,18 @@ function has_single_pi_equivalent(bs::BranchesSeries, nr::NetworkReductionData)
         _segment_has_single_pi(seg, nr) || return false
     end
     return true
+end
+
+"""
+    has_single_pi_equivalent(nr::NetworkReductionData, arc::Tuple{Int, Int}) -> Bool
+
+Whether the branch or reduction aggregate on `arc` collapses to one π-model, i.e. whether
+[`arc_equivalent_branches`](@ref) returns a single branch that reproduces the arc's two-port.
+Orientation does not matter. Throws if `arc` is in no reduction map.
+"""
+function has_single_pi_equivalent(nr::NetworkReductionData, arc::Tuple{Int, Int})
+    entry, _ = _resolve_arc_entry(nr, arc)
+    return _segment_has_single_pi(entry, nr)
 end
 
 _arc_equivalents(br::PSY.ACTransmission, nr::NetworkReductionData) =
@@ -864,7 +968,7 @@ end
 Every π branch needed to represent the retained `arc` exactly, oriented `from -> to` to match
 `arc`. One element for a direct branch, a Ward-added impedance, a single-π-representable group,
 or a representable chain; more than one only for a parallel group that mixes phase-shift angles
-with impedance angles (PNM issue #231). Prefer this over [`arc_equivalent_branch`](@ref) in any
+with impedance angles. Prefer this over [`arc_equivalent_branch`](@ref) in any
 consumer that can emit several branches between one bus pair — PowerModels keys branches by
 index, so it can.
 
@@ -893,13 +997,6 @@ function _dc_equivalent_resistance(
     return real(_dc_series_impedance(group))
 end
 
-"""
-    arc_dc_resistance(nr::NetworkReductionData, arc::Tuple{Int, Int}) -> Float64
-
-Equivalent series resistance of the retained `arc` for DC loss estimation (`r·P²`),
-system base. Total on every mapped arc -- including lossy shifted parallel groups, where
-[`arc_equivalent_branch`](@ref) has no single-π equivalent and throws.
-"""
 # Resistance is orientation-symmetric. Single branches (direct and added-Ward alike) take their
 # own equivalent; aggregates go through the shifted-group-aware combination.
 # Deliberately the uncorrected value: the DC model does not apply impedance correction.
@@ -909,17 +1006,34 @@ _dc_entry_resistance(group::AbstractReductionAggregate, nr::NetworkReductionData
     _dc_equivalent_resistance(group, nr)
 
 """
-    get_equivalent_available(seg::AbstractReductionAggregate) -> Bool
+    get_equivalent_available(bs::BranchesSeries) -> Bool
 
-Availability of a reduction aggregate: every member must be available for the equivalent arc to
-be. Parallel groups and series chains share the rule, so both dispatch here.
+Availability of a series chain: every segment must be available, since one outaged segment
+breaks the path the equivalent arc stands for.
 """
-function get_equivalent_available(seg::AbstractReductionAggregate)
-    return all(PSY.get_available(branch) for branch in seg)
+function get_equivalent_available(bs::BranchesSeries)
+    return all(PSY.get_available(segment) for segment in bs)
+end
+
+"""
+    get_equivalent_available(bp::AbstractBranchesParallel) -> Bool
+
+Availability of a parallel group: the equivalent arc survives while any member is in service,
+so this is `any`, not `all`. Nested chain members answer with their own `all` rule.
+"""
+function get_equivalent_available(bp::AbstractBranchesParallel)
+    return any(PSY.get_available(branch) for branch in bp)
 end
 
 PSY.get_available(seg::AbstractReductionAggregate) = get_equivalent_available(seg)
 
+"""
+    arc_dc_resistance(nr::NetworkReductionData, arc::Tuple{Int, Int}) -> Float64
+
+Equivalent series resistance of the retained `arc` for DC loss estimation (`r·P²`),
+system base. Total on every mapped arc -- including lossy shifted parallel groups, where
+[`arc_equivalent_branch`](@ref) has no single-π equivalent and throws.
+"""
 function arc_dc_resistance(nr::NetworkReductionData, arc::Tuple{Int, Int})
     entry, _ = _resolve_arc_entry(nr, arc)
     return _dc_entry_resistance(entry, nr)
@@ -1012,6 +1126,58 @@ function _resolve_branch_arc(
     end
 end
 
+# Susceptance one parallel-group member contributes once `tripped_set` is applied.
+function _member_susceptance_after_outage(
+    member::PSY.ACTransmission,
+    tripped_set::Set{<:PSY.ACTransmission},
+    nr::NetworkReductionData,
+)::Float64
+    member ∈ tripped_set && return 0.0
+    return _finite_series_susceptance(member, nr)
+end
+
+# A non-chain aggregate (e.g. a `BranchesParallel` nested in a `MixedBranchesParallel`) is
+# all-or-none over its leaves; `BranchesSeries` overrides this below with the series rule.
+function _member_susceptance_after_outage(
+    member::AbstractReductionAggregate,
+    tripped_set::Set{<:PSY.ACTransmission},
+    nr::NetworkReductionData,
+)::Float64
+    leaves = leaf_components(member)
+    n_tripped = count(in(tripped_set), leaves)
+    iszero(n_tripped) && return _finite_series_susceptance(member, nr)
+    n_tripped == length(leaves) && return 0.0
+    branch = first(Iterators.filter(in(tripped_set), leaves))
+    return error(
+        "Tripping $(typeof(branch)) $(get_name(branch)) leaves $(typeof(member)) " *
+        "$(get_name(member)) partly in service on arc $(get_arc_tuple(member, nr)), and " *
+        "a partial susceptance delta is not supported on the nested aggregate it sits on.",
+    )
+end
+
+# A series chain opens the moment any leaf trips, mirroring `_member_outage_delta_b`'s series
+# rule; a nested aggregate segment only partly tripped is not representable, same as there.
+function _member_susceptance_after_outage(
+    member::BranchesSeries,
+    tripped_set::Set{<:PSY.ACTransmission},
+    nr::NetworkReductionData,
+)::Float64
+    tripped_leaves = filter(in(tripped_set), leaf_components(member))
+    isempty(tripped_leaves) && return _finite_series_susceptance(member, nr)
+    b_old = _finite_series_susceptance(member, nr)
+    delta_b = _compute_series_outage_delta_b(member, tripped_leaves, nr)
+    if !_is_full_outage(delta_b, b_old)
+        branch = first(tripped_leaves)
+        error(
+            "Tripping $(typeof(branch)) $(get_name(branch)) leaves series chain " *
+            "$(get_name(member)) partly in service on arc $(get_arc_tuple(member, nr)), " *
+            "and a partial susceptance delta is not supported on the nested aggregate it " *
+            "sits on.",
+        )
+    end
+    return 0.0
+end
+
 """
     _segment_susceptance_after_outage(segment, tripped_set, nr::NetworkReductionData) -> Float64
 
@@ -1039,9 +1205,7 @@ function _segment_susceptance_after_outage(
 )::Float64
     b_remaining = 0.0
     for branch in segment.branches
-        if branch ∉ tripped_set
-            b_remaining += _finite_series_susceptance(branch, nr)
-        end
+        b_remaining += _member_susceptance_after_outage(branch, tripped_set, nr)
     end
     return b_remaining
 end
@@ -1112,8 +1276,8 @@ function _segment_phase_shift_after_outage(
     b_total = 0.0
     b_alpha = 0.0
     for br in segment.branches
-        br ∈ tripped_set && continue
-        b = _finite_series_susceptance(br, nr)
+        b = _member_susceptance_after_outage(br, tripped_set, nr)
+        iszero(b) && continue
         b_total += b
         b_alpha += b * _oriented_member_phase_shift(br, segment, nr)
     end

@@ -17,15 +17,6 @@ end
 
 Base.length(::BranchMapsByType) = length(_BRANCH_MAPS_BY_TYPE_FIELDS)
 
-function Base.getindex(b::BranchMapsByType, key::String)
-    return getfield(b, Symbol(key))
-end
-
-# `BranchCatalog` tags each entry with its map of origin as a `Symbol`.
-function Base.getindex(b::BranchMapsByType, key::Symbol)
-    return getfield(b, key)
-end
-
 function Base.isempty(b::BranchMapsByType)
     for f in _BRANCH_MAPS_BY_TYPE_FIELDS
         isempty(getfield(b, f)) || return false
@@ -47,67 +38,6 @@ function Base.:(==)(a::BranchMapsByType, b::BranchMapsByType)
     return true
 end
 
-# Typed accessors for BranchMapsByType — function barriers that recover concrete types.
-function get_typed_direct_branch_map(
-    b::BranchMapsByType,
-    ::Type{T},
-) where {T <: PSY.ACTransmission}
-    return b.direct_branch_map[T]::Dict{Tuple{Int, Int}, T}
-end
-
-# `ThreeWindingTransformerCircuit` is non-parametric (one concrete parent type), so the
-# per-type bucket is keyed by the parent transformer type and holds the wrapper. `T`
-# (a concrete `PSY.ThreeWindingTransformer` subtype) selects that bucket.
-function get_typed_direct_branch_map(
-    b::BranchMapsByType,
-    ::Type{T},
-) where {T <: PSY.ThreeWindingTransformer}
-    return b.direct_branch_map[T]::Dict{Tuple{Int, Int}, ThreeWindingTransformerCircuit}
-end
-
-function get_typed_reverse_direct_branch_map(
-    b::BranchMapsByType,
-    ::Type{T},
-) where {T <: PSY.ACTransmission}
-    return b.reverse_direct_branch_map[T]::Dict{T, Tuple{Int, Int}}
-end
-
-function get_typed_reverse_direct_branch_map(
-    b::BranchMapsByType,
-    ::Type{T},
-) where {T <: PSY.ThreeWindingTransformer}
-    return b.reverse_direct_branch_map[T]::Dict{
-        ThreeWindingTransformerCircuit,
-        Tuple{Int, Int},
-    }
-end
-
-# Per-type bucket is widened to `AbstractBranchesParallel` so that a
-# `MixedBranchesParallel` group is reachable under each of its underlying
-# branch types (e.g. both `parallel_branch_map[Line]` and
-# `parallel_branch_map[MonitoredLine]` see the same group). Pure
-# `BranchesParallel{T}` groups remain assignment-compatible.
-function get_typed_parallel_branch_map(
-    b::BranchMapsByType,
-    ::Type{T},
-) where {T <: PSY.ACTransmission}
-    return b.parallel_branch_map[T]::Dict{Tuple{Int, Int}, AbstractBranchesParallel}
-end
-
-function get_typed_reverse_parallel_branch_map(
-    b::BranchMapsByType,
-    ::Type{T},
-) where {T <: PSY.ACTransmission}
-    return b.reverse_parallel_branch_map[T]::Dict{T, Tuple{Int, Int}}
-end
-
-function get_typed_series_branch_map(
-    b::BranchMapsByType,
-    ::Type{T},
-) where {T <: PSY.ACTransmission}
-    return b.series_branch_map[T]::Dict{Tuple{Int, Int}, BranchesSeries}
-end
-
 """
     NetworkReductionData
 
@@ -124,7 +54,7 @@ network reduction algorithms.
 - `parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel}`: Parallel branch combinations (homogeneous `BranchesParallel{T}` or `MixedBranchesParallel`)
 - `reverse_parallel_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}}`: Reverse parallel mappings
 - `series_branch_map::Dict{Tuple{Int, Int}, BranchesSeries}`: Series branch combinations
-- `reverse_series_branch_map::Dict{Any, Tuple{Int, Int}}`: Reverse series mappings
+- `reverse_series_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}}`: Reverse series mappings
 - `removed_buses::Set{Int}`: Set of buses eliminated from the network
 - `removed_arcs::Set{Tuple{Int, Int}}`: Set of arcs eliminated from the network
 - `merged_bus_pairs::Dict{Int, Int}`: Maps removed bus number to surviving bus number for zero-impedance branch bus merges; drives row/column summation in `_merge_ybus_buses!`
@@ -146,11 +76,11 @@ network reduction algorithms.
         Dict{PSY.ACTransmission, Tuple{Int, Int}}()
     parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel} =
         Dict{Tuple{Int, Int}, AbstractBranchesParallel}()
-    reverse_parallel_branch_map::Dict{<:PSY.ACTransmission, Tuple{Int, Int}} =
+    reverse_parallel_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}} =
         Dict{PSY.ACTransmission, Tuple{Int, Int}}()
     series_branch_map::Dict{Tuple{Int, Int}, BranchesSeries} =
         Dict{Tuple{Int, Int}, BranchesSeries}()
-    reverse_series_branch_map::Dict{<:PSY.ACTransmission, Tuple{Int, Int}} =
+    reverse_series_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}} =
         Dict{PSY.ACTransmission, Tuple{Int, Int}}()
     removed_buses::Set{Int} = Set{Int}()
     removed_arcs::Set{Tuple{Int, Int}} = Set{Tuple{Int, Int}}()
@@ -194,6 +124,11 @@ typically be small: 2, 3, *maybe* 4.
 leaf_components(branch::PSY.ACTransmission) = PSY.ACTransmission[branch]
 leaf_components(entry::AbstractReductionAggregate) =
     _collect_leaves!(PSY.ACTransmission[], entry)
+
+# Whether `br` is a leaf of `x`, without allocating the full `leaf_components` vector.
+_has_leaf(x::PSY.ACTransmission, br::PSY.ACTransmission) = x === br
+_has_leaf(x::AbstractReductionAggregate, br::PSY.ACTransmission) =
+    any(m -> _has_leaf(m, br), x)
 
 _get_segment_components(x) = leaf_components(x)
 _get_segment_type(::T) where {T <: PSY.ACBranch} = T
@@ -321,6 +256,9 @@ end
 _is_three_winding_circuit(::PSY.ACTransmission) = false
 _is_three_winding_circuit(::ThreeWindingTransformerCircuit) = true
 
+_ac_transmission_type(x::PSY.ACTransmission) = typeof(x)
+_ac_transmission_type(w::ThreeWindingTransformerCircuit) = get_transformer_type(w)
+
 """
    get_ac_transmission_types(network_reduction_data::NetworkReductionData)
 
@@ -332,10 +270,6 @@ Gets the concrete types of all AC transmission branches included in an instance 
 # Returns
 - `Set{DataType}`: Vector of the retained branch types.
 """
-# A `ThreeWindingTransformerCircuit` reports the parent transformer type; every other branch
-# reports its own concrete type.
-_ac_transmission_type(x::PSY.ACTransmission) = typeof(x)
-_ac_transmission_type(w::ThreeWindingTransformerCircuit) = get_transformer_type(w)
 function get_ac_transmission_types(network_reduction_data::NetworkReductionData)
     direct_types = Set{DataType}(
         _ac_transmission_type.(keys(network_reduction_data.reverse_direct_branch_map)),
@@ -386,25 +320,18 @@ end
 Interface to obtain the arc axis based on the network reduction data
 """
 function get_arc_axis(nr::NetworkReductionData)
-    direct_arcs = collect(keys(nr.direct_branch_map))
-    parallel_arcs = collect(keys(nr.parallel_branch_map))
-    series_arcs = collect(keys(nr.series_branch_map))
-    additional_arcs = collect(keys(nr.added_arc_impedance_map))
-    arc_ax = unique(vcat(direct_arcs, parallel_arcs, series_arcs, additional_arcs))
-    return arc_ax
-end
-
-function is_arc_in_series_map(nr::NetworkReductionData, arc::Tuple{Int64, Int64})
-    return haskey(nr.series_branch_map, arc)
-end
-
-function get_mapped_series_branch(nr::NetworkReductionData, arc::Tuple{Int64, Int64})
-    if is_arc_in_series_map(nr, arc)
-        return nr.series_branch_map[arc]
-    else
-        error("Arc $arc not found in series branch map")
+    maps = (
+        nr.direct_branch_map,
+        nr.parallel_branch_map,
+        nr.series_branch_map,
+        nr.added_arc_impedance_map,
+    )
+    arc_ax = Vector{Tuple{Int, Int}}()
+    sizehint!(arc_ax, sum(length, maps))
+    for m in maps
+        append!(arc_ax, keys(m))
     end
-    return
+    return unique!(arc_ax)
 end
 
 function Base.show(io::IO, ::MIME{Symbol("text/plain")}, nrd::NetworkReductionData)

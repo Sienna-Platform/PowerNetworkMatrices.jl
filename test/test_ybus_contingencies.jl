@@ -241,7 +241,7 @@ end
     sys, buses = _mk_bus_system(2)
     arc = Arc(; from = buses[1], to = buses[2])
     add_component!(sys, arc)
-    line = Line(;
+    line = Line(; input_basis = PSY.CU,
         name = "L1",
         available = true,
         active_power_flow = 0.0,
@@ -254,9 +254,9 @@ end
         angle_limits = (min = -1.5, max = 1.5),
     )
     add_component!(sys, line)
-    pst = PSY.TwoWindingTransformer(;
+    pst = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
         name = "PSTx01",
-        circuit = PSY.TransformerCircuit(;
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
             arc = arc,
             tap = 1.0,
             α = 0.15,
@@ -281,7 +281,7 @@ end
     # Identity-resolved delta for tripping the line: the negated LINE pi-model
     # (symmetric), never the PST's asymmetric one.
     dy = PNM._compute_arc_ybus_delta(nr, (1, 2), -b_line, line)
-    expected = PNM.ybus_branch_entries(line)
+    expected = PNM.ybus_branch_entries(line, nr)
     @test dy[1] ≈ -expected[1]
     @test dy[2] ≈ -expected[2]
     @test dy[3] ≈ -expected[3]
@@ -321,7 +321,8 @@ end
     m = mod.arc_modifications[1]
     @test m.delta_b == -PNM.get_series_susceptance(line, PSY.SU)
     @test m.delta_y12 ≈ m.delta_y21
-    @test m.delta_y11 ≈ -PNM.ybus_branch_entries(line)[1]
+    @test m.delta_y11 ≈
+          -PNM.ybus_branch_entries(line, PNM.get_network_reduction_data(vptdf))[1]
 end
 
 @testset "ArcModification stores correct Ybus delta entries" begin
@@ -377,7 +378,7 @@ end
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(;
+            Line(; input_basis = PSY.CU,
                 name = name,
                 available = true,
                 active_power_flow = 0.0,
@@ -398,9 +399,9 @@ end
     add_component!(sys, arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(;
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "PST",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = arc,
                 tap = 1.05,
                 α = 0.0,
@@ -433,7 +434,7 @@ end
     # Oracle: removal delta == (remaining member alone) - (full group), both already
     # oriented in the key frame (L1 seeds the key, so no swap on the survivor).
     group_entries = PNM.ybus_branch_entries(bp, nr)
-    remaining_entries = PNM.ybus_branch_entries(l1)
+    remaining_entries = PNM.ybus_branch_entries(l1, nr)
     m = only(mod.arc_modifications)
     @test m.delta_y11 ≈ remaining_entries[1] - group_entries[1] atol = 1e-5
     @test m.delta_y12 ≈ remaining_entries[2] - group_entries[2] atol = 1e-5
@@ -449,9 +450,9 @@ end
     add_component!(sys, zi_arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(;
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "ZI_T",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = zi_arc, tap = 1.0, α = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
@@ -503,9 +504,9 @@ end
     add_component!(sys, zi_arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(;
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "ZI_T",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = zi_arc, tap = 1.0, α = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,

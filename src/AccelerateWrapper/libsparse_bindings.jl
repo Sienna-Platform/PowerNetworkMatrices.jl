@@ -102,22 +102,24 @@ struct SparseSymbolicFactorOptions
     reportError::Ptr{Cvoid}
 end
 
-# `reportError` is fired by libSparse before it returns a failure status. The
-# inline `error(unsafe_string(text))` matches AppleAccelerate.jl's pattern: it
-# propagates the libSparse message as a Julia exception that unwinds back
-# through the originating ccall. Avoids `@error`'s allocator/logger overhead,
-# which is fragile when libSparse invokes the callback from its own threads.
-# Passing libc malloc/free explicitly (the C_NULL "use Apple defaults" path is
-# documented but unreliable from a non-Obj-C caller).
+# No Julia code may sit behind these callbacks. libSparse calls them from its
+# dispatch worker threads while the calling Julia thread is blocked inside a
+# non-GC-safe ccall; a Julia callback adopts the worker, allocates, triggers
+# GC, and `jl_gc_wait_for_the_world` then waits forever on the blocked caller.
+# So malloc/free are libc's own symbols, and `reportError` is libc `puts`
+# (ABI-compatible with `void (*)(const char *)` on every macOS target): it
+# prints the message and returns, and the caller turns the returned status
+# into a Julia exception. `C_NULL` is not an option for `reportError` —
+# libSparse then halts the process with `__builtin_trap()`.
 function SparseSymbolicFactorOptions()
     return SparseSymbolicFactorOptions(
         SparseDefaultControl,
         SparseOrderDefault,
         C_NULL,
         C_NULL,
-        @cfunction(Libc.malloc, Ptr{Cvoid}, (Csize_t,)),
-        @cfunction(Libc.free, Cvoid, (Ptr{Cvoid},)),
-        @cfunction(text -> error(unsafe_string(text)), Cvoid, (Cstring,)),
+        cglobal(:malloc),
+        cglobal(:free),
+        cglobal(:puts),
     )
 end
 

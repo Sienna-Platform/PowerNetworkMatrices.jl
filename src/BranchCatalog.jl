@@ -22,18 +22,12 @@ get_entry(e::ArcEntry) = e.entry
 get_name(e::ArcEntry) = e.name
 get_leaves(e::ArcEntry) = e.leaves
 
-# The arc alone: concrete and isbits, 16 bytes. This carried a `Symbol` naming the
-# `BranchMapsByType` field that held the entry, so consumers could navigate back to it; that
-# is now `get_reduction_entry`, and the arc is the whole identity.
+# The arc is the whole identity; `get_reduction_entry` recovers the entry.
 const ARC_ENTRY = Tuple{Int, Int}
 const ARC_TABLE = Dict{ARC_ENTRY, ArcEntry}
 const NAME_TO_ARC = Dict{DataType, DataStructures.SortedDict{String, ARC_ENTRY}}
 const COMPONENT_TO_ENTRY = Dict{DataType, Dict{String, String}}
 const COMPONENT_NAME_INDEX = Dict{String, Vector{Tuple{DataType, ARC_ENTRY}}}
-
-# Shared empty-map sentinels returned on a miss; callers must never mutate these.
-const EMPTY_NAME_TO_ARC_MAP = DataStructures.SortedDict{String, ARC_ENTRY}()
-const EMPTY_COMPONENT_TO_ENTRY_MAP = Dict{String, String}()
 
 """
     BranchCatalog
@@ -72,19 +66,10 @@ get_component_name_index(c::BranchCatalog) = c.component_name_index
 
 """
     get_reduction_entry(c::BranchCatalog, arc) -> PSY.ACTransmission
-    get_reduction_entry(c::BranchCatalog, ::Type{T}, name) -> PSY.ACTransmission
 
 The entry occupying `arc` -- a single branch, or the aggregate a reduction folded onto it.
 """
 get_reduction_entry(c::BranchCatalog, arc::ARC_ENTRY) = get_entry(c.arcs[arc])
-
-function get_reduction_entry(
-    c::BranchCatalog,
-    ::Type{T},
-    name::AbstractString,
-) where {T <: PSY.ACTransmission}
-    return get_reduction_entry(c, get_name_to_arc_map(c, T)[name])
-end
 
 """
 Every physical branch at the leaves of the entry on `arc`, precomputed at build time.
@@ -94,9 +79,11 @@ get_arc_leaves(c::BranchCatalog, arc::ARC_ENTRY) = get_leaves(c.arcs[arc])
 """
 Entries for branch type `T`. An absent `T` yields an empty map: a type is legitimately
 missing when every branch of it was absorbed by a reduction.
+
+A miss returns a fresh map; a shared empty would be mutable across every catalog.
 """
 get_name_to_arc_map(c::BranchCatalog, ::Type{T}) where {T <: PSY.ACTransmission} =
-    get(c.name_to_arc, T, EMPTY_NAME_TO_ARC_MAP)
+    get(() -> DataStructures.SortedDict{String, ARC_ENTRY}(), c.name_to_arc, T)
 
 # 3W windings are filed under the parent transformer type, so the wrapper key translates.
 get_name_to_arc_map(c::BranchCatalog, ::Type{ThreeWindingTransformerCircuit}) =
@@ -106,7 +93,7 @@ get_component_to_reduction_name_map(
     c::BranchCatalog,
     ::Type{T},
 ) where {T <: PSY.ACTransmission} =
-    get(c.component_to_entry_name, T, EMPTY_COMPONENT_TO_ENTRY_MAP)
+    get(() -> Dict{String, String}(), c.component_to_entry_name, T)
 
 get_component_to_reduction_name_map(
     c::BranchCatalog,
@@ -205,12 +192,18 @@ arc_provenance(c::BranchCatalog, arc::ARC_ENTRY) =
     arc_provenance(get_reduction_entry(c, arc))
 
 """
-    _branch_multiplier(provenance, entry, branch_name, arc) -> Float64
+    _branch_multiplier(provenance, entry, branch_name, arc, nr) -> Float64
 
 Factor scaling a per-arc matrix entry to the named branch's share of it, dispatched on how
 the arc came to exist. Backs [`get_branch_multiplier`](@ref).
 """
-_branch_multiplier(::DirectArc, ::PSY.ACTransmission, ::AbstractString, ::ARC_ENTRY) = 1.0
+_branch_multiplier(
+    ::DirectArc,
+    ::PSY.ACTransmission,
+    ::AbstractString,
+    ::ARC_ENTRY,
+    ::NetworkReductionData,
+) = 1.0
 
 # Backed by no component, so nothing shares it.
 _branch_multiplier(
@@ -218,6 +211,7 @@ _branch_multiplier(
     ::PSY.GenericArcImpedance,
     ::AbstractString,
     ::ARC_ENTRY,
+    ::NetworkReductionData,
 ) = 1.0
 
 # A member carries its susceptance-fraction share of the group flow.
@@ -226,10 +220,11 @@ function _branch_multiplier(
     group::AbstractBranchesParallel,
     branch_name::AbstractString,
     arc::ARC_ENTRY,
+    nr::NetworkReductionData,
 )
     for member in group
         get_name(member) == branch_name || continue
-        return compute_parallel_multiplier(group, member)
+        return compute_parallel_multiplier(group, member, nr)
     end
     return error(
         "Branch $branch_name is indexed on arc $(arc) but no member of the group there " *
@@ -244,6 +239,7 @@ _branch_multiplier(
     ::BranchesSeries,
     branch_name::AbstractString,
     arc::ARC_ENTRY,
+    ::NetworkReductionData,
 ) = error(
     "Branch $branch_name is a segment of the series chain on arc $(arc). A chain's flow " *
     "does not decompose into per-segment shares of one matrix row, so it has no " *
@@ -410,10 +406,16 @@ Component-name index for name-based matrix indexing (`get_branch_multiplier`), w
 a bare name.
 
 Built from the component-keyed maps rather than `name_to_arc`, which holds *entry* names: an
-aggregate's entry name is the group's, not any component's. Series-chain members are absent;
-name-based matrix indexing does not resolve them.
+aggregate's entry name is the group's, not any component's.
+
+A name is indexed only where `_branch_multiplier` can answer: the arc's entry or one of its
+direct members. Chain members, standalone or grouped, are never indexed.
 """
-function _build_component_name_index(nrd::NetworkReductionData, predicate)
+function _build_component_name_index(
+    nrd::NetworkReductionData,
+    arcs::ARC_TABLE,
+    predicate,
+)
     index = COMPONENT_NAME_INDEX()
     for (arc, entry) in nrd.direct_branch_map
         _entry_matches(entry, predicate) || continue
@@ -424,6 +426,9 @@ function _build_component_name_index(nrd::NetworkReductionData, predicate)
     end
     for (member, arc) in nrd.reverse_parallel_branch_map
         _entry_matches(member, predicate) || continue
+        # Same forward-pass verdict as `_index_reverse!` (MixedBranchesParallel matches `all`).
+        haskey(arcs, arc) || continue
+        _entry_carries(get_entry(arcs[arc]), member) || continue
         push!(
             _name_candidates(index, get_name(member)),
             (typeof(member), arc),
@@ -433,19 +438,10 @@ function _build_component_name_index(nrd::NetworkReductionData, predicate)
 end
 
 """
-Throws unless every arc the reduction *folded* is still reachable by component type. Opt-in:
-pass `validate = true` to [`BranchCatalog`](@ref), or call this directly on a catalog under
-test. Construction does not run it by default.
-
-Radial reduction legitimately removes a branch: its arc leaves the network and leaves these
-maps, so there is nothing left to index. Series and parallel reductions remove nothing --
-they fold branches into a composite arc that still exists and still carries flow, so it must
-stay reachable. This checks that the distinction held.
-
-The two are indistinguishable to a consumer, which is why the check is worth writing: an arc
-is reached only by asking for a PSY component type, and a type that indexes nothing returns
-an empty map rather than an error. A folded arc that lost its entry is therefore invisible --
-no flow variable, no rating constraint, no nodal-balance term, and no complaint.
+Throws when an arc in `nrd`'s direct, parallel or series map has no row in `name_to_arc`. It
+catches two silent losses: an aggregate with no leaf components (it registers under no type),
+and an entry-name collision inside one type bucket (the later arc overwrites the earlier one).
+Either leaves an arc that carries flow but that no component-type query can reach.
 """
 function _validate_catalog_closure(nrd::NetworkReductionData, name_to_arc::NAME_TO_ARC)
     indexed = Set{Tuple{Int, Int}}()
@@ -475,26 +471,23 @@ function _validate_catalog_closure(nrd::NetworkReductionData, name_to_arc::NAME_
 end
 
 """
-    BranchCatalog(nrd::NetworkReductionData; validate = false)
+    BranchCatalog(nrd::NetworkReductionData)
 
-The complete index over `nrd`. See `validate` on the filtered method below.
+The complete index over `nrd`.
 """
-BranchCatalog(nrd::NetworkReductionData; validate::Bool = false) =
-    BranchCatalog(nrd, _keep_all; validate = validate)
+BranchCatalog(nrd::NetworkReductionData) = BranchCatalog(nrd, _keep_all)
 
 """
-    BranchCatalog(nrd::NetworkReductionData, predicate; validate = false)
+    BranchCatalog(nrd::NetworkReductionData, predicate)
 
 Index over `nrd` holding only entries `predicate` accepts, where `predicate(T, component)`
 returns whether a component of branch type `T` should be indexed. An aggregate is judged by
 `_entry_matches`, which applies the predicate to every physical branch at its leaves.
 
-`validate` runs [`_validate_catalog_closure`](@ref) before returning. It is off by default so
-that indexing stays a pure build step; turn it on in tests, or wherever a caller wants the
-folded-arc invariant enforced rather than assumed. It is rejected for a filtered catalog,
-where the invariant does not hold by design.
+Only an unfiltered catalog runs [`_validate_catalog_closure`](@ref); a filter drops arcs by
+design.
 """
-function BranchCatalog(nrd::NetworkReductionData, predicate; validate::Bool = false)
+function BranchCatalog(nrd::NetworkReductionData, predicate)
     maps = BranchMapsByType()
     arcs = ARC_TABLE()
     name_to_arc = NAME_TO_ARC()
@@ -530,16 +523,7 @@ function BranchCatalog(nrd::NetworkReductionData, predicate; validate::Bool = fa
         maps.reverse_series_branch_map, nrd.reverse_series_branch_map, predicate,
     )
 
-    if validate
-        # Refused rather than skipped: a filter drops arcs by design, so an unreachable arc
-        # there is a filter decision, not a lost entry. Silently answering "valid" would
-        # report a guarantee this cannot give.
-        _is_unfiltered(predicate) || throw(
-            ArgumentError(
-                "validate = true applies only to an unfiltered catalog; a filtered one \
-                 omits arcs by design.",
-            ),
-        )
+    if _is_unfiltered(predicate)
         _validate_catalog_closure(nrd, name_to_arc)
     end
 
@@ -549,6 +533,6 @@ function BranchCatalog(nrd::NetworkReductionData, predicate; validate::Bool = fa
         maps,
         name_to_arc,
         component_to_entry,
-        _build_component_name_index(nrd, predicate),
+        _build_component_name_index(nrd, arcs, predicate),
     )
 end

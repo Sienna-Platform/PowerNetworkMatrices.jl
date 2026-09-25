@@ -36,7 +36,7 @@ serializes through the process-wide `_LIBKLU_LOCK`.
         Resolved contingencies keyed by outage UUID.
 - `woodbury_cache::Dict{NetworkModification, WoodburyFactors}`:
         Precomputed Woodbury factors keyed by modification.
-- `row_caches::Dict{NetworkModification, RowCache}`:
+- `row_caches::Dict{NetworkModification, RowCache{RowCacheValue}}`:
         One `RowCache` per modification.
 - `max_cache_size_bytes::Int`:
         Max cache size in bytes per contingency.
@@ -47,7 +47,7 @@ struct VirtualMODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}, K} <:
     dist_slack::Vector{Float64}
     contingency_cache::Dict{Int, ContingencySpec}
     woodbury_cache::Dict{NetworkModification, WoodburyFactors}
-    row_caches::Dict{NetworkModification, RowCache}
+    row_caches::Dict{NetworkModification, RowCache{RowCacheValue}}
     max_cache_size_bytes::Int
 end
 
@@ -260,8 +260,12 @@ end
     VirtualMODF(core::VirtualFactorCore, sys::PSY.System; kwargs...) -> VirtualMODF
 
 Wrap an existing [`VirtualFactorCore`](@ref) in a VirtualMODF and register the
-system's outages. Use this (or `VirtualMODF(vptdf, sys)`) to share one
-factorization across multiple virtual matrices.
+system's outages, sharing one factorization across multiple virtual matrices.
+
+The core arrives already reduced and factorized, so this path cannot protect the outaged
+and monitored buses the way `VirtualMODF(sys; ...)` does. Registration therefore validates
+each outage against the core's surviving arcs and errors when a reduction ate one. Reduce
+the core with those buses in `irreducible_buses`, or build from the system instead.
 """
 function VirtualMODF(
     core::VirtualFactorCore,
@@ -276,7 +280,7 @@ function VirtualMODF(
         dist_slack,
         Dict{Int, ContingencySpec}(),
         Dict{NetworkModification, WoodburyFactors}(),
-        Dict{NetworkModification, RowCache}(),
+        Dict{NetworkModification, RowCache{RowCacheValue}}(),
         max_cache_bytes,
     )
 
@@ -291,32 +295,51 @@ end
 
 Build a VirtualMODF that reuses an existing `VirtualPTDF`'s factorization. The
 two objects share the same [`VirtualFactorCore`](@ref), so the ABA matrix is
-factorized only once.
+factorized only once. Same reduction caveat as VirtualMODF(core, sys).
 """
 function VirtualMODF(vptdf::VirtualPTDF, sys::PSY.System; kwargs...)
     return VirtualMODF(get_core(vptdf), sys; kwargs...)
 end
 
 """
-    _warn_if_transmission_dropped(sys, outage, mod)
+    _validate_transmission_survived(sys, outage, mod)
 
-Warn when an outage references `ACTransmission` components but its modification has
-no arc modifications — those branches were eliminated by reduction, so the
-contingency would silently return the unmodified base row.
+For an outage whose ACTransmission components resolved to no arc modifications: throw when
+any is in service (a reduction eliminated it, so every query would return the base-case row);
+warn when all are out of service (a legitimate no-op). This is the only survive-check
+possible on a core that was reduced before outages were known.
 """
-function _warn_if_transmission_dropped(
+function _validate_transmission_survived(
     sys::PSY.System,
     outage::PSY.Outage,
     mod::NetworkModification,
 )
     isempty(mod.arc_modifications) || return
     transmission =
-        PSY.get_associated_components(sys, outage; component_type = PSY.ACTransmission)
+        collect(
+            PSY.get_associated_components(sys, outage; component_type = PSY.ACTransmission),
+        )
     isempty(transmission) && return
-    @warn "Outage (label=$(mod.label)) references transmission components but " *
-          "resolved to no arc modifications; they were eliminated by a network " *
-          "reduction. Querying this contingency returns the unmodified PTDF row."
-    return
+    # `get_available` is derived for a ThreeWindingTransformer, so this one predicate covers
+    # every transmission type without a type check.
+    in_service = filter(PSY.get_available, transmission)
+    if isempty(in_service)
+        @warn "Outage (label=$(mod.label)) references only out-of-service transmission " *
+              "component(s) $(join(sort!([PSY.get_name(c) for c in transmission]), ", ")); " *
+              "they carry no flow, so this contingency is a no-op and every query returns " *
+              "the base-case row." maxlog = 5
+        return
+    end
+    names = sort!([PSY.get_name(c) for c in in_service])
+    throw(
+        IS.ConflictingInputsError(
+            "Outage (label=$(mod.label)) references in-service transmission component(s) \
+            $(join(names, ", ")) that a network reduction eliminated; every query would \
+            return the base-case row. Build with \
+            VirtualMODF(sys; network_reductions = ...) or put their buses in \
+            irreducible_buses.",
+        ),
+    )
 end
 
 # --- Outage registration ---
@@ -365,9 +388,8 @@ function _register_outage!(vmodf::VirtualMODF, sys::PSY.System, outage::PSY.Outa
         return
     end
     mod = NetworkModification(vmodf, sys, outage)
-    ctg = ContingencySpec(outage_id, mod)
-    contingency_cache[outage_id] = ctg
-    _warn_if_transmission_dropped(sys, outage, mod)
+    _validate_transmission_survived(sys, outage, mod)
+    contingency_cache[outage_id] = ContingencySpec(outage_id, mod)
     return
 end
 

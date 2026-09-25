@@ -34,7 +34,7 @@ function _mk_pst_triangle_system(; alpha = 0.15)
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(;
+            Line(; input_basis = PSY.CU,
                 name = name, available = true, active_power_flow = 0.0,
                 reactive_power_flow = 0.0, arc = arc, r = 0.0, x = 0.1,
                 b = (from = 0.0, to = 0.0), rating = 1.0,
@@ -49,9 +49,9 @@ function _mk_pst_triangle_system(; alpha = 0.15)
     add_component!(sys, pst_arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(;
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "PST",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = pst_arc, tap = 1.0, α = alpha, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0,
@@ -74,9 +74,9 @@ function _mk_pst_series_system(; parallel_segment::Bool = false)
         add_component!(sys, arc)
         add_component!(
             sys,
-            PSY.TwoWindingTransformer(;
+            PSY.TwoWindingTransformer(; input_basis = PSY.CU,
                 name = name,
-                circuit = PSY.TransformerCircuit(;
+                circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                     arc = arc, tap = 1.0, α = α, available = true,
                     active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                     base_power = 100.0, base_voltage_primary = 230.0,
@@ -92,7 +92,7 @@ function _mk_pst_series_system(; parallel_segment::Bool = false)
     if parallel_segment
         add_component!(
             sys,
-            Line(;
+            Line(; input_basis = PSY.CU,
                 name = "L23", available = true, active_power_flow = 0.0,
                 reactive_power_flow = 0.0, arc = t3_arc, r = 0.0, x = 0.1,
                 b = (from = 0.0, to = 0.0), rating = 1.0,

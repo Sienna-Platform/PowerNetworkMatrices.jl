@@ -17,6 +17,7 @@ end
         PSSEParsingTestSystems,
         "pti_case14_with_pst3w_sys";
         force_build = true,
+        skip_serialization = true,
     )
     shifters = collect(
         Iterators.filter(
@@ -105,7 +106,7 @@ end
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(;
+            Line(; input_basis = PSY.CU,
                 name = name,
                 available = true,
                 active_power_flow = 0.0,
@@ -125,9 +126,9 @@ end
     add_component!(sys, arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(;
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "PST",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = arc,
                 tap = 1.05,
                 α = 0.15,
@@ -161,9 +162,9 @@ end
 @testset "dc phase shift: series chain sums segment angles" begin
     # Copy of the "Two transformers in series with different phase angle" construction
     # (test/test_equivalent_getters.jl:401-432): t1 α=0, t3 α=0.2, joined by a degree-two bus.
-    t1 = PSY.TwoWindingTransformer(;
+    t1 = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
         name = "tfw_1",
-        circuit = PSY.TransformerCircuit(;
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
             arc = PSY.Arc(nothing),
             tap = 1.0,
             available = true,
@@ -178,9 +179,9 @@ end
         ),
         magnetizing_shunt = 0.01 + im * 0.02,
     )
-    t3 = PSY.TwoWindingTransformer(;
+    t3 = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
         name = "tfw_3",
-        circuit = PSY.TransformerCircuit(;
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
             arc = PSY.Arc(nothing),
             tap = 1.0,
             α = 0.2,
@@ -305,9 +306,9 @@ end
     # A shifted member in the same degenerate group still yields a finite injection.
     sys_shifted = _mk_zi_parallel_sys([(0.0, 0.0), (0.0, 0.1)])
     zi_arc = PSY.get_component(Line, sys_shifted, "ZI2")
-    pst = PSY.TwoWindingTransformer(;
+    pst = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
         name = "PST_ZI",
-        circuit = PSY.TransformerCircuit(;
+        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
             arc = PSY.get_arc(zi_arc), tap = 1.0, α = 0.15, available = true,
             active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
             base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.2,
@@ -335,9 +336,9 @@ end
     add_component!(sys, pst_arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(;
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "PST_ZI",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 arc = pst_arc, tap = 1.0, α = 0.15, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,

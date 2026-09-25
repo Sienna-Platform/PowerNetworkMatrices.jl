@@ -139,7 +139,7 @@ end
     end
     add_component!(
         sys,
-        PowerLoad(;
+        PowerLoad(; input_basis = PSY.CU,
             name = "Leaf1_load",
             available = true,
             bus = get_component(ACBus, sys, "Leaf1"),

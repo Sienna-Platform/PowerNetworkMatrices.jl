@@ -225,6 +225,22 @@ function _push_parallel_branch_dispatch!(
     return
 end
 
+function _promote_pair_to_parallel!(
+    parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel},
+    arc_tuple::Tuple{Int, Int},
+    first_branch::PSY.ACTransmission,
+    second_branch::PSY.ACTransmission,
+)
+    if haskey(parallel_branch_map, arc_tuple)
+        _push_parallel_branch!(parallel_branch_map, arc_tuple, first_branch)
+        _push_parallel_branch!(parallel_branch_map, arc_tuple, second_branch)
+    else
+        parallel_branch_map[arc_tuple] =
+            _make_parallel_branch_pair(first_branch, second_branch, arc_tuple)
+    end
+    return
+end
+
 """
     add_to_branch_maps!(nr::NetworkReductionData, arc::PSY.Arc, br::PSY.ACTransmission)
 
@@ -246,8 +262,7 @@ reverse lookup dictionaries for efficient access.
   (`_make_parallel_branch_pair`): homogeneous `BranchesParallel{T}` when types match,
   `MixedBranchesParallel` with a `@warn` otherwise
 - Otherwise creates a new direct mapping
-- Phase-shifting members are grouped like any other branch — never dropped or forced direct
-  (issue #305)
+- Phase-shifting members are grouped like any other branch
 - Maintains reverse lookup consistency
 """
 function add_to_branch_maps!(
@@ -267,8 +282,12 @@ function add_to_branch_maps!(
         corresponding_branch = direct_branch_map[arc_tuple]
         delete!(direct_branch_map, arc_tuple)
         delete!(reverse_direct_branch_map, corresponding_branch)
-        parallel_branch_map[arc_tuple] =
-            _make_parallel_branch_pair(corresponding_branch, br, arc_tuple)
+        _promote_pair_to_parallel!(
+            parallel_branch_map,
+            arc_tuple,
+            corresponding_branch,
+            br,
+        )
         reverse_parallel_branch_map[corresponding_branch] = arc_tuple
         reverse_parallel_branch_map[br] = arc_tuple
     else
@@ -354,10 +373,9 @@ function add_branch_entries_to_ybus!(
     y22::Vector{YBUS_ELTYPE},
     branch_ix::Int,
     br::PSY.ACTransmission,
-    nr::NetworkReductionData;
-    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+    nr::NetworkReductionData,
 )
-    Y11, Y12, Y21, Y22 = ybus_branch_entries(br, nr; min_x_eps = min_x_eps)
+    Y11, Y12, Y21, Y22 = ybus_branch_entries(br, nr)
     y11[branch_ix] = Y11
     y12[branch_ix] = Y12
     y21[branch_ix] = Y21
@@ -409,11 +427,8 @@ function add_branch_entries_to_indexing_maps!(
     return
 end
 
-"""Ybus 2x2 for any single branch — line, Ward equivalent, or transformer circuit of either
-arity. The π-model comes from [`equivalent_branch`](@ref), the single source of truth;
-`min_x_eps` substitutes for `x` when `r == x == 0`. Aggregates (parallel groups, series
-chains) have their own methods below: for those Ybus is the primitive and the π-model is
-derived from it, not the reverse."""
+"""Ybus 2x2 of a single branch on its own terms (no correction, `min_x_eps` substitute); see
+[`equivalent_branch`](@ref). Use the `nr` form when an `nr` exists."""
 function ybus_branch_entries(
     br::PSY.ACTransmission;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
@@ -421,16 +436,11 @@ function ybus_branch_entries(
     return _equivalent_to_ybus(br, equivalent_branch(br; min_x_eps = min_x_eps))
 end
 
-# The corrected form: `equivalent_branch(br, nr)` applies the impedance correction cached on
-# the reduction data, and the shared `nr` signature lets callers iterating heterogeneous
-# segments (single branches and aggregates) dispatch uniformly. Prefer it wherever `nr` is in
-# scope — the bare method builds an *uncorrected* π-model.
-function ybus_branch_entries(
-    br::PSY.ACTransmission,
-    nr::NetworkReductionData;
-    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
-)
-    return _equivalent_to_ybus(br, equivalent_branch(br, nr; min_x_eps = min_x_eps))
+"""Ybus 2x2 of a single branch as assembled: `nr` supplies the impedance correction and the
+zero-impedance substitute. Aggregates have their own methods below, where Ybus is the
+primitive and the π-model is derived from it."""
+function ybus_branch_entries(br::PSY.ACTransmission, nr::NetworkReductionData)
+    return _equivalent_to_ybus(br, equivalent_branch(br, nr))
 end
 
 function _equivalent_to_ybus(br::PSY.ACTransmission, eb::EquivalentBranch)
@@ -447,20 +457,12 @@ end
 
 function ybus_branch_entries(
     parallel_br::AbstractBranchesParallel,
-    nr::NetworkReductionData;
-    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
+    nr::NetworkReductionData,
 )
-    # Pass the group itself, not `collect(parallel_br)`: `collect` yields a `Vector{Any}`
-    # (only `BranchesSeries` defines `eltype`), which both allocates per call on the Ybus
-    # assembly path and forces the loop's calls dynamic.
     return _subset_two_port(parallel_br, get_arc_tuple(parallel_br, nr), nr)
 end
 
-function ybus_branch_entries(
-    br::BranchesSeries,
-    nr::NetworkReductionData;
-    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
-)
+function ybus_branch_entries(br::BranchesSeries, nr::NetworkReductionData)
     ybus_chain = _build_chain_ybus(br, nr)
     ybus_reduced = _reduce_internal_nodes(ybus_chain)
     return ybus_reduced[1, 1], ybus_reduced[1, 2], ybus_reduced[2, 1], ybus_reduced[2, 2]
@@ -491,10 +493,7 @@ function _ybus!(
     nr::NetworkReductionData,
 )
     add_branch_entries_to_indexing_maps!(num_bus, branch_ix, nr, fb, tb, br)
-    add_branch_entries_to_ybus!(
-        y11, y12, y21, y22, branch_ix, br, nr;
-        min_x_eps = _minimum_retained_impedance(nr),
-    )
+    add_branch_entries_to_ybus!(y11, y12, y21, y22, branch_ix, br, nr)
     return
 end
 
@@ -512,18 +511,14 @@ function _ybus!(
     nr::NetworkReductionData,
 )
     add_to_branch_maps!(nr, br)
-    min_x_eps = _minimum_retained_impedance(nr)
     n_entries = 0
     for (i, circuit) in enumerate(PSY.get_circuits(br))
         PSY.get_available(circuit) || continue
         term_ix, star_ix = get_bus_indices(PSY.get_arc(circuit), num_bus, nr)
         fb[offset_ix + ix + n_entries] = term_ix
         tb[offset_ix + ix + n_entries] = star_ix
-        (Y11, Y12, Y21, Y22) = ybus_branch_entries(
-            ThreeWindingTransformerCircuit(br, circuit, i),
-            nr;
-            min_x_eps = min_x_eps,
-        )
+        (Y11, Y12, Y21, Y22) =
+            ybus_branch_entries(ThreeWindingTransformerCircuit(br, circuit, i), nr)
         y11[offset_ix + ix + n_entries] = Y11
         y12[offset_ix + ix + n_entries] = Y12
         y21[offset_ix + ix + n_entries] = Y21
@@ -1632,41 +1627,43 @@ function _apply_bus_reductions!(nr::NetworkReductionData, nr_new::NetworkReducti
     return bus_numbers_to_remove
 end
 
+_dropped_entry_label(br::PSY.ACTransmission) = "branch $(get_name(br))"
+_dropped_entry_label(bp::AbstractBranchesParallel) =
+    "parallel group $(get_name(bp)) with $(length(bp)) branch(es)"
+
+# Pop entries touching a merged bus, drop self-loops, return survivors by new arc; collecting
+# first keeps the apply phase off its own writes.
+function _collect_remapped_entries!(
+    branch_map::Dict{Tuple{Int, Int}, V},
+    merged_bus_pairs::Dict{Int, Int},
+) where {V}
+    collected = Pair{Tuple{Int, Int}, V}[]
+    for arc in collect(keys(branch_map))
+        new_from = get(merged_bus_pairs, arc[1], arc[1])
+        new_to = get(merged_bus_pairs, arc[2], arc[2])
+        (new_from == arc[1] && new_to == arc[2]) && continue
+        val = pop!(branch_map, arc)
+        if new_from == new_to
+            @debug "Bus merge collapsed $(_dropped_entry_label(val)) (arc $arc) into a self-loop; dropping."
+            continue
+        end
+        push!(collected, (new_from, new_to) => val)
+    end
+    return collected
+end
+
 function _remap_merged_bus_in_branch_maps!(
     nr::NetworkReductionData,
     merged_bus_pairs::Dict{Int, Int},
 )
-    # All four maps use a two-phase collect-then-apply loop. The collect phase pops every
-    # entry whose arc touches a removed bus and records the resolved new arc alongside the
-    # value. The apply phase re-inserts with map-specific collision handling. Using two
-    # phases avoids visiting entries that were just inserted during the apply phase.
-
     # --- direct_branch_map: collision → parallel-group promotion ---
-    arcs_to_insert = Pair{Tuple{Int, Int}, PSY.ACTransmission}[]
-    for arc in collect(keys(nr.direct_branch_map))
-        new_from = get(merged_bus_pairs, arc[1], arc[1])
-        new_to = get(merged_bus_pairs, arc[2], arc[2])
-        (new_from == arc[1] && new_to == arc[2]) && continue
-        val = pop!(nr.direct_branch_map, arc)
-        new_arc = (new_from, new_to)
-        if new_arc[1] == new_arc[2]
-            @debug "Bus merge collapsed direct branch $(get_name(val)) (arc $arc) into a self-loop; dropping."
-            continue
-        end
-        push!(arcs_to_insert, new_arc => val)
-    end
+    arcs_to_insert = _collect_remapped_entries!(nr.direct_branch_map, merged_bus_pairs)
     for (new_arc, val) in arcs_to_insert
         reverse_new_arc = (new_arc[2], new_arc[1])
         if haskey(nr.direct_branch_map, new_arc)
             existing = pop!(nr.direct_branch_map, new_arc)
             @debug "Bus merge collision on direct arc $new_arc: promoting $(get_name(existing)) and $(get_name(val)) to a parallel group."
-            if haskey(nr.parallel_branch_map, new_arc)
-                _push_parallel_branch!(nr.parallel_branch_map, new_arc, existing)
-                _push_parallel_branch!(nr.parallel_branch_map, new_arc, val)
-            else
-                nr.parallel_branch_map[new_arc] =
-                    _make_parallel_branch_pair(existing, val, new_arc)
-            end
+            _promote_pair_to_parallel!(nr.parallel_branch_map, new_arc, existing, val)
         elseif haskey(nr.parallel_branch_map, new_arc)
             @debug "Bus merge collision on direct arc $new_arc: adding $(get_name(val)) to existing parallel group."
             _push_parallel_branch!(nr.parallel_branch_map, new_arc, val)
@@ -1675,13 +1672,12 @@ function _remap_merged_bus_in_branch_maps!(
             # Normalize to the already-established key so the pair is stored as a single parallel group.
             existing = pop!(nr.direct_branch_map, reverse_new_arc)
             @debug "Bus merge created anti-parallel collision: remapped arc $new_arc conflicts with existing $reverse_new_arc; promoting $(get_name(existing)) and $(get_name(val)) to a parallel group under $reverse_new_arc."
-            if haskey(nr.parallel_branch_map, reverse_new_arc)
-                _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, existing)
-                _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, val)
-            else
-                nr.parallel_branch_map[reverse_new_arc] =
-                    _make_parallel_branch_pair(existing, val, reverse_new_arc)
-            end
+            _promote_pair_to_parallel!(
+                nr.parallel_branch_map,
+                reverse_new_arc,
+                existing,
+                val,
+            )
         elseif haskey(nr.parallel_branch_map, reverse_new_arc)
             @debug "Bus merge created anti-parallel collision: remapped arc $new_arc conflicts with existing parallel group at $reverse_new_arc; adding $(get_name(val)) to that group."
             _push_parallel_branch!(nr.parallel_branch_map, reverse_new_arc, val)
@@ -1691,19 +1687,8 @@ function _remap_merged_bus_in_branch_maps!(
     end
 
     # --- parallel_branch_map: collision → merge both groups into one ---
-    parallel_to_insert = Pair{Tuple{Int, Int}, AbstractBranchesParallel}[]
-    for arc in collect(keys(nr.parallel_branch_map))
-        new_from = get(merged_bus_pairs, arc[1], arc[1])
-        new_to = get(merged_bus_pairs, arc[2], arc[2])
-        (new_from == arc[1] && new_to == arc[2]) && continue
-        val = pop!(nr.parallel_branch_map, arc)
-        new_arc = (new_from, new_to)
-        if new_arc[1] == new_arc[2]
-            @debug "Bus merge collapsed parallel group at arc $arc into a self-loop; dropping $(length(val)) branch(es)."
-            continue
-        end
-        push!(parallel_to_insert, new_arc => val)
-    end
+    parallel_to_insert =
+        _collect_remapped_entries!(nr.parallel_branch_map, merged_bus_pairs)
     for (new_arc, val) in parallel_to_insert
         # A re-keyed group keeps its `arc_key`, but `get_arc_tuple(bp, nr)` resolves that through
         # the bus map this remap just changed — so any cached two-port is now in a stale frame.
@@ -2229,7 +2214,7 @@ end
 
 """
     add_segment_to_ybus!(
-        segment::AbstractBranchesParallel,
+        segment::AbstractReductionAggregate,
         y11::Vector{YBUS_ELTYPE},
         y12::Vector{YBUS_ELTYPE},
         y21::Vector{YBUS_ELTYPE},
@@ -2237,17 +2222,18 @@ end
         fb::Vector{Int},
         tb::Vector{Int},
         ix::Int,
-        segment_orientation::Symbol
+        segment_orientation::Symbol,
+        nr::NetworkReductionData,
     )
 
-Add multiple parallel branches as a single segment to Y-bus vectors.
+Add a reduction aggregate — a parallel group or a series chain — as a single segment to Y-bus
+vectors during series chain reduction.
 
-Handles the case where a segment in a series chain consists of multiple parallel
-branches between the same pair of buses. Each branch in the set is added to the
-same Y-bus position, effectively combining their admittances.
+Uses the aggregate's own two-port (`ybus_branch_entries(segment, nr)`); summing members under
+one orientation mis-handles an anti-parallel asymmetric member.
 
 # Arguments
-- `segment::AbstractBranchesParallel`: Set of parallel AC transmission branches
+- `segment::AbstractReductionAggregate`: parallel group or series chain to add
 - `y11::Vector{YBUS_ELTYPE}`: Vector for from-bus self admittances
 - `y12::Vector{YBUS_ELTYPE}`: Vector for from-to mutual admittances
 - `y21::Vector{YBUS_ELTYPE}`: Vector for to-from mutual admittances
@@ -2258,19 +2244,13 @@ same Y-bus position, effectively combining their admittances.
 - `segment_orientation::Symbol`: `:FromTo` or `:ToFrom` orientation
 
 # Implementation Details
-- Iterates through all branches in the parallel set
-- Calls single-branch `add_segment_to_ybus!()` for each branch
-- Y-bus entries are accumulated at the same index position
-- Results in equivalent admittance of parallel combination
+- Handles orientation by swapping entries for `:ToFrom`
+- Sets bus indices to consecutive values (ix, ix+1) for chain building
 
 # See Also
 - [`add_segment_to_ybus!`](@ref): Single branch variant
 - [`DegreeTwoReduction`](@ref): Series chain elimination
 """
-# A chain reached as another chain's segment enters as its own two-port, which is both what a
-# composite arc contributes to Ybus and what `_composite_raw_two_port` backs out for it. Resolving
-# it through `nr` keeps those two agreeing; the one-argument form has no method for an aggregate
-# and would fall through to the single-branch path.
 function add_segment_to_ybus!(
     segment::AbstractReductionAggregate,
     y11::Vector{YBUS_ELTYPE},
@@ -2283,8 +2263,6 @@ function add_segment_to_ybus!(
     segment_orientation::Symbol,
     nr::NetworkReductionData,
 )
-    # For a parallel group this is the orientation-correct equivalent block rather than a sum of
-    # members under one shared orientation, which mis-handles an anti-parallel asymmetric member.
     (Y11, Y12, Y21, Y22) = ybus_branch_entries(segment, nr)
     push!(fb, ix)
     push!(tb, ix + 1)

@@ -50,7 +50,7 @@ end
 # Kept out of line so the error body does not count against the caller's inlining budget.
 @noinline function _throw_non_finite_susceptance(segment::PSY.ACTransmission, b::Float64)
     error(
-        "Series susceptance of $(get_name(segment)) is $(b): the branch has r == x == 0. " *
+        "Series susceptance of $(get_name(segment)) is $(b): the branch has x == 0. " *
         "Ybus assembly substitutes the reduction's minimum retained impedance for such a " *
         "branch, so a consumer that needs the value the matrices use should call " *
         "`get_effective_series_susceptance(segment, nr)` instead.",
@@ -97,6 +97,10 @@ end
 # `get_series_susceptance` rejects that, `_finite_series_susceptance` substitutes.
 _series_susceptance_raw(b::PSY.ACTransmission, units::IS.AbstractUnitSystem) =
     1 / PSY.get_x(b, units)
+# Detached Ward equivalents can't resolve system base; their r/x are already system-base,
+# which `PSY.CU` returns unchanged.
+_series_susceptance_raw(b::PSY.GenericArcImpedance, ::IS.AbstractUnitSystem) =
+    1 / PSY.get_x(b, PSY.CU)
 _series_susceptance_raw(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem) =
     _series_susceptance_raw(PSY.get_circuit(t), units)
 _series_susceptance_raw(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem) =
@@ -159,6 +163,12 @@ The π-model of a single branch in **impedance** form: `(r, x, g_from, b_from, g
 tap, shift)`. This is PNM's single source of truth for branch electrical parameters — both
 [`branch_admittance`](@ref) (admittance form) and `ybus_branch_entries` (Ybus 2×2) are
 derived from it, and [`arc_equivalent_branch`](@ref) resolves any arc to one.
+
+This is the component's **own** π-model: no impedance correction, and `min_x_eps` rather
+than a reduction's configured substitute. The `nr` methods of `equivalent_branch`,
+`branch_admittance` and `ybus_branch_entries` report what the AC matrices carry; never mix
+the two families over one network. DC has its own mixed contract; see
+`_warn_impedance_correction_in_dc`.
 
 Methods exist for lines, `GenericArcImpedance` Ward equivalents, and transformer circuits of
 either arity — a transformer's series data lives on its `PSY.TransformerCircuit`, so 2W and
@@ -257,9 +267,9 @@ end
 """
     branch_admittance(b; min_x_eps) -> NamedTuple
 
-π-model admittance `(g, b, g_fr, b_fr, g_to, b_to, tap, shift)` for any single branch, where
-`g + im*b == 1 / (r + im*x)` is the series admittance. The admittance-form view of
-[`equivalent_branch`](@ref); see it for the shunt and unit conventions.
+π-model admittance `(g, b, g_fr, b_fr, g_to, b_to, tap, shift)` of a branch on its own terms;
+the admittance view of [`equivalent_branch`](@ref). Use `branch_admittance(b, nr)` when an
+`nr` exists.
 """
 function branch_admittance(
     b::PSY.ACTransmission;
@@ -397,20 +407,18 @@ _impedance_correction_factor(w::ThreeWindingTransformerCircuit, nr::NetworkReduc
     )
 
 """
-    equivalent_branch(b, nr::NetworkReductionData; min_x_eps) -> EquivalentBranch
+    equivalent_branch(b, nr::NetworkReductionData) -> EquivalentBranch
 
 The π-model of any arc entry as the assembled matrices see it: [`equivalent_branch`](@ref) of
 a single branch with the impedance correction `nr` caches for it applied to the series
 impedance, or the reduction-aware equivalent of an aggregate. The `nr`-less method is the
-uncorrected component value. Correction scales the impedance rather than the admittance so
-it composes with the tap, shift and shunt terms as PSS/E defines it.
+uncorrected component value on the default epsilon; here the zero-impedance substitute is
+the reduction's configured `minimum_retained_impedance`. Correction scales the impedance
+rather than the admittance so it composes with the tap, shift and shunt terms as PSS/E
+defines it.
 """
-function equivalent_branch(
-    b::PSY.ACTransmission,
-    nr::NetworkReductionData;
-    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
-)
-    eb = equivalent_branch(b; min_x_eps = min_x_eps)
+function equivalent_branch(b::PSY.ACTransmission, nr::NetworkReductionData)
+    eb = equivalent_branch(b; min_x_eps = _minimum_retained_impedance(nr))
     factor = _impedance_correction_factor(b, nr)
     isone(factor) && return eb
     return EquivalentBranch(
@@ -425,23 +433,31 @@ function equivalent_branch(
     )
 end
 
-function equivalent_branch(
-    group::AbstractReductionAggregate,
-    nr::NetworkReductionData;
-    min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
-)
+function equivalent_branch(group::AbstractReductionAggregate, nr::NetworkReductionData)
     return get_equivalent_physical_branch_parameters(group, nr)
 end
 
 """
-    branch_admittance(segment, nr::NetworkReductionData) -> NamedTuple
+    branch_admittance(b::PSY.ACTransmission, nr::NetworkReductionData) -> NamedTuple
 
-π-model admittance for a reduction-aggregated arc (a `BranchesSeries` chain or
-`BranchesParallel` group), built from PNM's reduction-aware equivalent physical branch
+π-model admittance `(g, b, g_fr, b_fr, g_to, b_to, tap, shift)` of a single branch as the
+assembled matrices carry it, where `g + im*b == 1 / (r + im*x)` is the series admittance.
+The admittance-form view of [`equivalent_branch`](@ref); see it for the shunt and unit
+conventions, and for what `nr` contributes.
+"""
+function branch_admittance(b::PSY.ACTransmission, nr::NetworkReductionData)
+    return _to_admittance(equivalent_branch(b, nr))
+end
+
+"""
+    branch_admittance(segment::AbstractReductionAggregate, nr::NetworkReductionData) -> NamedTuple
+
+π-model admittance of a reduction-aggregated arc — a `BranchesSeries` chain or a
+`BranchesParallel` group — from PNM's reduction-aware equivalent physical branch
 parameters. Series/parallel equivalents of lines carry `tap == 1`.
 """
 function branch_admittance(segment::AbstractReductionAggregate, nr::NetworkReductionData)
-    return _to_admittance(get_equivalent_physical_branch_parameters(segment, nr))
+    return _to_admittance(equivalent_branch(segment, nr))
 end
 
 """
@@ -499,24 +515,26 @@ function arc_equivalent_branch(nr::NetworkReductionData, arc::Tuple{Int, Int})
 end
 
 # Parallel/series equivalent for `arc`, oriented to match it. A group may be keyed by the
-# opposite orientation to the one asked for, so probe both and reorient on a reverse hit.
-# Returns `nothing` when the arc is not aggregated. `get` is a single probe per key, unlike
-# haskey-then-index.
+# opposite orientation to the one asked for, so `_reduced_equivalent` reorients on a reverse
+# hit. Returns `nothing` when the arc is not aggregated (a direct entry, or not in any map).
 function _reduced_arc_equivalent_branch(nr::NetworkReductionData, arc::Tuple{Int, Int})
-    rev = (arc[2], arc[1])
-    for map in (get_series_branch_map(nr), get_parallel_branch_map(nr))
-        forward = get(map, arc, nothing)
-        if !isnothing(forward)
-            return get_equivalent_physical_branch_parameters(forward, nr)
-        end
-        reversed = get(map, rev, nothing)
-        if !isnothing(reversed)
-            return _reverse_equivalent_branch(
-                get_equivalent_physical_branch_parameters(reversed, nr),
-            )
-        end
-    end
-    return nothing
+    found, entry, reversed = _probe_arc_entry(nr, arc)
+    found || return nothing
+    return _reduced_equivalent(entry, reversed, nr)
+end
+
+# A direct branch (including a 3W circuit or an added Ward GenericArcImpedance) has no
+# aggregate equivalent to report.
+_reduced_equivalent(::PSY.ACTransmission, ::Bool, ::NetworkReductionData) = nothing
+
+function _reduced_equivalent(
+    entry::AbstractReductionAggregate,
+    reversed::Bool,
+    nr::NetworkReductionData,
+)
+    equivalent = get_equivalent_physical_branch_parameters(entry, nr)
+    reversed && return _reverse_equivalent_branch(equivalent)
+    return equivalent
 end
 
 # ── Three-winding transformer admittance ─────────────────────────────────────
@@ -585,6 +603,9 @@ branches both fields equal the branch's [`get_equivalent_rating`](@ref); `Monito
 carries asymmetric limits and has its own method. Branches whose rating lives on a
 transformer circuit — and reduction groups containing them — may carry `nothing` in both
 fields when no rating is known; `Line`/`MonitoredLine` limits are always `Float64`.
+
+A reduction aggregate answers with its equivalent rating in both directions, and throws when
+any member carries asymmetric limits.
 """
 function branch_flow_limits(b::PSY.ACTransmission)
     r = get_equivalent_rating(b)
@@ -594,4 +615,28 @@ end
 function branch_flow_limits(b::PSY.MonitoredLine)
     fl = PSY.get_flow_limits(b, PSY.CU)
     return (from_to = fl.from_to, to_from = fl.to_from)
+end
+
+_has_asymmetric_flow_limits(::PSY.ACTransmission) = false
+
+function _has_asymmetric_flow_limits(b::PSY.MonitoredLine)
+    fl = PSY.get_flow_limits(b, PSY.CU)
+    return fl.from_to != fl.to_from
+end
+
+_has_asymmetric_flow_limits(seg::AbstractReductionAggregate) =
+    any(_has_asymmetric_flow_limits, seg)
+
+# Orienting an asymmetric member against the group frame needs `nr` (see `_subset_two_port`),
+# which this accessor lacks, so reject rather than guess.
+function branch_flow_limits(seg::AbstractReductionAggregate)
+    if _has_asymmetric_flow_limits(seg)
+        error(
+            "Reduction aggregate $(get_name(seg)) has a member with asymmetric flow " *
+            "limits; read each member's branch_flow_limits and orient it with " *
+            "get_arc_tuple(member, nr).",
+        )
+    end
+    r = get_equivalent_rating(seg)
+    return (from_to = r, to_from = r)
 end

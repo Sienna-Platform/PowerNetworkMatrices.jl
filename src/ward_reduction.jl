@@ -133,6 +133,7 @@ function get_ward_reduction(
                         arc = PSY.Arc(nothing),
                         r = real(arc_impedance),
                         x = imag(arc_impedance),
+                        input_basis = PSY.CU,
                     )
                     Y11, Y12, _, Y22 = ybus_branch_entries(generic_arc_impedance)
                     @assert isapprox(-1.0 * Y12, y_eq[ix, jx])

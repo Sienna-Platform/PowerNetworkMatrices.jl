@@ -36,7 +36,7 @@ every libklu solve runs under `_LIBKLU_LOCK` (process-wide) and the core's
         Tuple of two dictionaries mapping arc identifiers to row/column indices.
 - `subnetwork_axes::Dict{Int, Ax}`:
         Per-reference-bus subnetwork axes in arc×arc form.
-- `cache::RowCache`:
+- `cache::RowCache{RowCacheValue}`:
         Cache where LODF rows are stored.
 - `cache_lock::ReentrantLock`:
         Guards `cache` reads/writes for parallel `getindex` callers.
@@ -55,7 +55,7 @@ struct VirtualLODF{
     axes::Ax
     lookup::L
     subnetwork_axes::Dict{Int, Ax}
-    cache::RowCache
+    cache::RowCache{RowCacheValue}
     cache_lock::ReentrantLock
 end
 
@@ -162,6 +162,16 @@ function VirtualLODF(
     )
 end
 
+# A bridge arc islands the network when it is outaged, so `1 - H[e,e]` collapses and the
+# LODF scaling is undefined. Both LODF paths clamp such a diagonal to zero — a denominator
+# of exactly 1 — instead of dividing by a vanishing number.
+function _clamped_ptdf_a_diag(h_ee::Float64)
+    if h_ee > 1 - LODF_ENTRY_TOLERANCE
+        return 0.0
+    end
+    return h_ee
+end
+
 """
 Builds a VirtualLODF that wraps an existing [`VirtualFactorCore`](@ref). Forces
 the core's `PTDF_A_diag` computation (needed for the LODF scaling) and derives
@@ -175,9 +185,7 @@ function VirtualLODF(
 )
     # Force the (shared, cached) raw H[e,e] on the core; clamp a copy for the
     # LODF scaling so the core's raw value stays available to MODF/PTDF.
-    raw_diag = get_PTDF_A_diag(core)
-    clamped = copy(raw_diag)
-    clamped[clamped .> 1 - LODF_ENTRY_TOLERANCE] .= 0.0
+    clamped = _clamped_ptdf_a_diag.(get_PTDF_A_diag(core))
     inv_PTDF_A_diag = 1.0 ./ (1.0 .- clamped)
 
     arc_ax = core.axes[1]
@@ -192,18 +200,8 @@ function VirtualLODF(
     end
 
     bus_ax = core.axes[2]
-    if isempty(persistent_arcs)
-        empty_cache =
-            RowCache(max_cache_size * MiB, Set{Int}(), length(bus_ax) * sizeof(Float64))
-    else
-        init_persistent_dict = Set{Int}(look_up[1][k] for k in persistent_arcs)
-        empty_cache =
-            RowCache(
-                max_cache_size * MiB,
-                init_persistent_dict,
-                length(bus_ax) * sizeof(Float64),
-            )
-    end
+    empty_cache =
+        _persistent_row_cache(max_cache_size, look_up, persistent_arcs, length(bus_ax))
 
     return VirtualLODF(
         core,
@@ -275,26 +273,13 @@ function _compute_lodf_row(vlodf::VirtualLODF, row::Int)::Vector{Float64}
     return with_solver(
         core.K, core.work_ba_col, core.temp_data, core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
-        # Sparse-only extraction: iterate BA[:, row] non-zeros (typically
-        # 2 per arc) instead of scanning the full bus axis.
-        fill!(work_ba_col, 0.0)
-        BA = core.BA
-        bus_to_valid_idx = core.bus_to_valid_idx
-        ba_rv = SparseArrays.rowvals(BA)
-        ba_nz = SparseArrays.nonzeros(BA)
-        @inbounds for k in SparseArrays.nzrange(BA, row)
-            valid_i = bus_to_valid_idx[ba_rv[k]]
-            valid_i > 0 || continue
-            work_ba_col[valid_i] = ba_nz[k]
-        end
-        lin_solve = _solve_factorization(K_solver, work_ba_col)
+        lin_solve =
+            _solve_ba_column!(K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, row)
 
-        fill!(temp_data, 0.0)
-        @inbounds for i in eachindex(core.valid_ix)
-            temp_data[core.valid_ix[i]] = lin_solve[i]
-        end
+        _gather_to_buses!(temp_data, core.valid_ix, lin_solve)
 
-        lodf_row = (core.A * temp_data) .* inv_PTDF_A_diag
+        lodf_row = core.A * temp_data
+        lodf_row .*= inv_PTDF_A_diag
         lodf_row[row] = -1.0
         return lodf_row
     end
@@ -370,9 +355,10 @@ Uses the Sherman-Morrison (matrix inversion lemma) formula:
 
     partial_LODF[ℓ, e] = α · (b_ℓ / b_e) · H[ℓ,e] / (1 - α · H[e,e])
 
-where α = -Δb / b_e, H[e,e] = PTDF_A_diag[e]. When `delta_b = -b_e` (full
-outage) this reduces to the standard LODF column; the self-element is overridden
-to -1.0 for a full outage.
+where α = -Δb / b_e and H[e,e] is `PTDF_A_diag[e]` clamped by
+`_clamped_ptdf_a_diag`, the same clamp `inv_PTDF_A_diag` carries. When
+`delta_b = -b_e` (full outage) this reduces to the standard LODF column; the
+self-element is overridden to -1.0 for a full outage.
 """
 function _getindex_partial(
     vlodf::VirtualLODF,
@@ -398,37 +384,27 @@ function _getindex_partial(
     return with_solver(
         core.K, core.work_ba_col, core.temp_data, core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
-        # Steps 1-2: Compute B⁻¹(b_e · ν_e) via sparse-only BA-column
-        # extraction + solve.
-        fill!(work_ba_col, 0.0)
-        BA = core.BA
-        bus_to_valid_idx = core.bus_to_valid_idx
-        ba_rv = SparseArrays.rowvals(BA)
-        ba_nz = SparseArrays.nonzeros(BA)
-        @inbounds for k in SparseArrays.nzrange(BA, arc_idx)
-            valid_i = bus_to_valid_idx[ba_rv[k]]
-            valid_i > 0 || continue
-            work_ba_col[valid_i] = ba_nz[k]
-        end
-        lin_solve = _solve_factorization(K_solver, work_ba_col)
+        # Steps 1-2: Compute B⁻¹(b_e · ν_e).
+        lin_solve = _solve_ba_column!(
+            K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, arc_idx,
+        )
 
         # Step 3: Map solution back to full bus space.
-        fill!(temp_data, 0.0)
-        @inbounds for i in eachindex(core.valid_ix)
-            temp_data[core.valid_ix[i]] = lin_solve[i]
-        end
+        _gather_to_buses!(temp_data, core.valid_ix, lin_solve)
 
         # Step 4: H_col[ℓ] = b_e · C[e,ℓ] for all monitoring arcs ℓ.
         H_col = core.A * temp_data
 
         # Step 5: Scalar denominator: 1 - α · H[e,e].
-        H_ee = ptdf_a_diag[arc_idx]
+        H_ee = _clamped_ptdf_a_diag(ptdf_a_diag[arc_idx])
         alpha = -delta_b / b_arc
         denom = 1.0 - alpha * H_ee
 
-        # Step 6: Partial LODF column scaled by b_ℓ/b_e.
-        partial_lodf =
-            (alpha / (denom * b_arc)) .* (core.arc_susceptances .* H_col)
+        # Step 6: Partial LODF column scaled by b_ℓ/b_e, in place on the fresh `H_col`. The
+        # operand order is load-bearing: float multiply does not reassociate, and `s * (a * h)`
+        # is what every stored reference row was produced with.
+        partial_lodf = H_col
+        partial_lodf .= (alpha / (denom * b_arc)) .* (core.arc_susceptances .* partial_lodf)
 
         # Full-outage self-element convention: -1.0.
         if abs(delta_b + b_arc) < eps() * b_arc

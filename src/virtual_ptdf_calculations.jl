@@ -31,7 +31,7 @@ simultaneously; their libklu work runs one at a time, while the JuMP-side work
         Vector of weights to be used as distributed slack bus.
 - `dist_slack_normalized::Vector{Float64}`:
         Pre-normalized distributed slack weights.
-- `cache::RowCache`:
+- `cache::RowCache{RowCacheValue}`:
         Cache where PTDF rows are stored.
 - `cache_lock::ReentrantLock`:
         Guards `cache` reads/writes for parallel `getindex` callers.
@@ -44,7 +44,7 @@ struct VirtualPTDF{Ax, L <: NTuple{2, Dict}, K} <:
     core::VirtualFactorCore{Ax, L, K}
     dist_slack::Vector{Float64}
     dist_slack_normalized::Vector{Float64}
-    cache::RowCache
+    cache::RowCache{RowCacheValue}
     cache_lock::ReentrantLock
 end
 
@@ -217,18 +217,8 @@ function VirtualPTDF(
         dist_slack_vector = redistribute_dist_slack(dist_slack, core)
     end
 
-    if isempty(persistent_arcs)
-        empty_cache =
-            RowCache(max_cache_size * MiB, Set{Int}(), length(bus_ax) * sizeof(Float64))
-    else
-        init_persistent_dict = Set{Int}(look_up[1][k] for k in persistent_arcs)
-        empty_cache =
-            RowCache(
-                max_cache_size * MiB,
-                init_persistent_dict,
-                length(bus_ax) * sizeof(Float64),
-            )
-    end
+    empty_cache =
+        _persistent_row_cache(max_cache_size, look_up, persistent_arcs, length(bus_ax))
 
     if !isempty(dist_slack_vector)
         dist_slack_normalized = dist_slack_vector / sum(dist_slack_vector)
@@ -271,44 +261,39 @@ if isdefined(Base, :print_array) # 0.7 and later
     Base.print_array(io::IO, X::VirtualPTDF) = "VirtualPTDF"
 end
 
-function _compute_ptdf_row(vptdf::VirtualPTDF, row::Int)::Vector{Float64}
-    core = get_core(vptdf)
+"""
+    _use_dist_slack(vptdf::VirtualPTDF) -> Bool
+
+Validate the distributed-slack specification and report whether it applies.
+Counts `subnetwork_axes` rather than calling `get_ref_bus_position`, which
+allocates one position per subnetwork on a per-row hot path.
+"""
+function _use_dist_slack(vptdf::VirtualPTDF)::Bool
     dist_slack = get_dist_slack(vptdf)
-    dist_slack_normalized = get_dist_slack_normalized(vptdf)
-    buscount = size(core.BA, 1)
-    ref_bus_positions = get_ref_bus_position(core)
-    if !isempty(dist_slack) && length(ref_bus_positions) != 1
+    isempty(dist_slack) && return false
+    core = get_core(vptdf)
+    if length(core.subnetwork_axes) != 1
         error(
             "Distributed slack is not supported for systems with multiple reference buses.",
         )
     end
-    use_dist_slack = length(dist_slack) == buscount
-    if !use_dist_slack && !isempty(dist_slack)
+    if length(dist_slack) != size(core.BA, 1)
         error("Distributed bus specification doesn't match the number of buses.")
     end
+    return true
+end
+
+function _compute_ptdf_row(vptdf::VirtualPTDF, row::Int)::Vector{Float64}
+    core = get_core(vptdf)
+    dist_slack_normalized = get_dist_slack_normalized(vptdf)
+    use_dist_slack = _use_dist_slack(vptdf)
 
     return with_solver(
         core.K, core.work_ba_col, core.temp_data, core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
-        # Extract BA[:, row] non-zeros into work_ba_col at non-ref-bus
-        # positions. Iterates only the nonzeros of the BA column (typically
-        # 2 per arc) instead of scanning the full bus axis.
-        fill!(work_ba_col, 0.0)
-        BA = core.BA
-        bus_to_valid_idx = core.bus_to_valid_idx
-        ba_rv = SparseArrays.rowvals(BA)
-        ba_nz = SparseArrays.nonzeros(BA)
-        @inbounds for k in SparseArrays.nzrange(BA, row)
-            valid_i = bus_to_valid_idx[ba_rv[k]]
-            valid_i > 0 || continue
-            work_ba_col[valid_i] = ba_nz[k]
-        end
-        lin_solve = _solve_factorization(K_solver, work_ba_col)
-        fill!(temp_data, 0.0)
-        valid_ix = core.valid_ix
-        @inbounds for i in eachindex(valid_ix)
-            temp_data[valid_ix[i]] = lin_solve[i]
-        end
+        lin_solve =
+            _solve_ba_column!(K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, row)
+        _gather_to_buses!(temp_data, core.valid_ix, lin_solve)
         if use_dist_slack
             adjustment = dot(temp_data, dist_slack_normalized)
             return temp_data .- adjustment

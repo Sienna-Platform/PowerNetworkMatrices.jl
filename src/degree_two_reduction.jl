@@ -317,7 +317,7 @@ function _get_complete_chain(
     neighbors = _get_neighbors(adj_matrix, start_node)
     current_chain = [start_node]
     reduced_indices[start_node] = true
-    _get_partial_chain_recursive!(
+    _get_partial_chain!(
         current_chain,
         adj_matrix,
         neighbors[1],
@@ -326,7 +326,7 @@ function _get_complete_chain(
         irreducible_indices,
     )
     reverse!(current_chain)
-    _get_partial_chain_recursive!(
+    _get_partial_chain!(
         current_chain,
         adj_matrix,
         neighbors[2],
@@ -338,15 +338,18 @@ function _get_complete_chain(
 end
 
 """
-    _get_partial_chain(adj_matrix::SparseArrays.SparseMatrixCSC,
-                      current_node::Int,
-                      prev_node::Int,
-                      reduced_indices::Set{Int},
-                      irreducible_indices::Set{Int})
+    _get_partial_chain!(current_chain::Vector{Int},
+                       adj_matrix::SparseArrays.SparseMatrixCSC,
+                       current_node::Int,
+                       prev_node::Int,
+                       reduced_indices::BitVector,
+                       irreducible_indices::BitVector)
 
-Recursively build a chain in one direction from current_node, avoiding prev_node.
+Extend `current_chain` in one direction from `current_node`, avoiding `prev_node`. Iterative,
+not recursive: one stack frame per bus would overflow on a long radial chain (the same failure
+`_surviving_root!` was de-recursed for).
 """
-function _get_partial_chain_recursive!(
+function _get_partial_chain!(
     current_chain::Vector{Int},
     adj_matrix::SparseArrays.SparseMatrixCSC,
     current_node::Int,
@@ -354,33 +357,33 @@ function _get_partial_chain_recursive!(
     reduced_indices::BitVector,
     irreducible_indices::BitVector,
 )
-    # If current node is reduced stop
-    if reduced_indices[current_node]
-        return Int[]
+    while true
+        # If current node is reduced stop
+        if reduced_indices[current_node]
+            return nothing
+        end
+
+        push!(current_chain, current_node)
+
+        if _is_final_node(current_node, adj_matrix, reduced_indices, irreducible_indices)
+            return nothing
+        end
+
+        reduced_indices[current_node] = true
+        # `_is_final_node` above already confirmed degree 2, so the range holds exactly two
+        # entries; reading its endpoints avoids `_get_neighbors`'s fancy-index allocation.
+        nz = SparseArrays.nzrange(adj_matrix, current_node)
+        rv = SparseArrays.rowvals(adj_matrix)
+
+        # Determine the next node to visit. It must not be the `previous_node`.
+        # This prevents the traversal from going back and forth between two nodes.
+        next_node = rv[first(nz)]
+        if next_node == prev_node
+            next_node = rv[last(nz)]
+        end
+        prev_node = current_node
+        current_node = next_node
     end
-
-    push!(current_chain, current_node)
-
-    if _is_final_node(current_node, adj_matrix, reduced_indices, irreducible_indices)
-        return
-    end
-
-    reduced_indices[current_node] = true
-    # Get neighbors
-    neighbors = _get_neighbors(adj_matrix, current_node)
-
-    # Determine the next node to visit. It must not be the `previous_node`.
-    # This prevents the traversal from going back and forth between two nodes.
-    next_node = (neighbors[1] == prev_node) ? neighbors[2] : neighbors[1]
-    _get_partial_chain_recursive!(
-        current_chain,
-        adj_matrix,
-        next_node,
-        current_node,
-        reduced_indices,
-        irreducible_indices,
-    )
-    return
 end
 
 """

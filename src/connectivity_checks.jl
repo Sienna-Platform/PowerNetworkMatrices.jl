@@ -84,8 +84,7 @@ function find_connected_components(sys::PSY.System)
 end
 
 # Group bus numbers into connected components of the graph whose edges are the
-# off-diagonal nonzeros of `M`. This replaces the former PowerModels.jl
-# `calc_connected_components` round-trip, which PowerSystems no longer re-exports.
+# off-diagonal nonzeros of `M`.
 function find_connected_components(
     M::SparseArrays.SparseMatrixCSC,
     bus_lookup::Dict{Int64, Int64},

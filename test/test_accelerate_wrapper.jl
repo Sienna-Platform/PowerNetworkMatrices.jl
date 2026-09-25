@@ -231,15 +231,10 @@ end
     S = SparseArrays.sparse(1.0 * LinearAlgebra.I, n, n)
     S[n, n] = 0.0  # exactly singular
     SparseArrays.dropzeros!(S)
-    # Both backends detect singularity at factor time (not solve time), which is
-    # the key parity guarantee. The exception TYPES differ by design (accepted
-    # divergence): KLU follows the LAPACK convention and throws
-    # `SingularException`, while libSparse fires its `reportError` callback with
-    # "Matrix is structurally singular." which our binding surfaces as a plain
-    # `ErrorException`. Callers needing uniform handling must catch both.
+    # Both backends detect singularity at factor time and throw the same type.
     @test_throws LinearAlgebra.SingularException PNM._create_factorization(
         PNM.KLUSolver(),
         S,
     )
-    @test_throws ErrorException PNM.AccelerateWrapper.aa_factorize(S)
+    @test_throws LinearAlgebra.SingularException PNM.AccelerateWrapper.aa_factorize(S)
 end

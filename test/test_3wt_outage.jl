@@ -137,3 +137,32 @@ end
         )
     end
 end
+
+@testset "partial Δb on a 3WT star-leg arc is rejected" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
+    vptdf = VirtualPTDF(sys)
+    nr = PNM.get_network_reduction_data(vptdf)
+    arc_sus = PNM._get_arc_susceptances(vptdf)
+
+    for w in 1:3
+        winding = PNM.ThreeWindingTransformerCircuit(trf, w)
+        arc = PNM.get_arc_tuple(winding, nr)
+        b_arc = arc_sus[PNM.get_arc_lookup(vptdf)[arc]]
+
+        # The full outage still cancels the winding's whole Pi-model.
+        Y11, Y12, Y21, Y22 = PNM.ybus_branch_entries(winding, nr)
+        full = PNM._compute_arc_ybus_delta(nr, arc, -b_arc)
+        @test full[1] ≈ PNM.YBUS_ELTYPE(-Y11)
+        @test full[2] ≈ PNM.YBUS_ELTYPE(-Y12)
+
+        # Partial Δb is rejected.
+        @test_throws ErrorException PNM._compute_arc_ybus_delta(nr, arc, -0.5 * b_arc)
+        @test_throws "Partial" PNM._compute_arc_ybus_delta(nr, arc, -0.5 * b_arc)
+        @test_throws PNM.get_name(winding) PNM._compute_arc_ybus_delta(
+            nr,
+            arc,
+            -0.5 * b_arc,
+        )
+    end
+end

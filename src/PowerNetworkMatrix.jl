@@ -386,9 +386,8 @@ function get_branch_multiplier(A::T, branch_name::String) where {T <: PowerNetwo
     index = get_component_name_index(catalog)
     if !haskey(index, branch_name)
         error(
-            "Branch $branch_name resolves to no directly-indexed or parallel-group branch. " *
-            "A branch absorbed into a series chain is not resolvable by bare name and must " *
-            "be resolved by component identity.",
+            "Branch $branch_name resolves to no indexed branch: absent, absorbed into a " *
+            "series chain, a member of a grouped chain, or excluded by the catalog filter.",
         )
     end
     candidates = index[branch_name]
@@ -405,6 +404,12 @@ function get_branch_multiplier(A::T, branch_name::String) where {T <: PowerNetwo
     end
     (_, arc_tuple) = only(candidates)
     entry = get_reduction_entry(catalog, arc_tuple)
-    multiplier = _branch_multiplier(arc_provenance(entry), entry, branch_name, arc_tuple)
+    multiplier = _branch_multiplier(
+        arc_provenance(entry),
+        entry,
+        branch_name,
+        arc_tuple,
+        get_network_reduction_data(catalog),
+    )
     return multiplier, arc_tuple
 end

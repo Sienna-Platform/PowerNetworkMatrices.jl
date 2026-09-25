@@ -70,6 +70,12 @@ function add_branch!(mbp::MixedBranchesParallel, branch::PSY.ACTransmission)
     return
 end
 
+# Only a direct member shares the arc (what `_branch_multiplier` resolves). A leaf inside a
+# grouped chain does not, and `BranchesSeries` takes the blanket `false`.
+_entry_carries(entry::PSY.ACTransmission, member::PSY.ACTransmission) = entry === member
+_entry_carries(group::AbstractBranchesParallel, member::PSY.ACTransmission) =
+    any(m === member for m in group)
+
 # The blanket `_is_phase_shifting(::PSY.ACTransmission) = false` in definitions.jl would
 # silently answer for groups; a group shifts when any member does.
 function _is_phase_shifting(bp::AbstractBranchesParallel)
@@ -95,26 +101,31 @@ act of adding a circuit to it. The arc stem is injective by construction.
 get_name(bp::AbstractBranchesParallel) =
     "$(bp.arc_key[1])_$(bp.arc_key[2])_double_circuit"
 
-"""
-    compute_parallel_multiplier(parallel_branch_set, branch) -> Float64
+# The substitute reactance cancels in a ratio unless the group mixes degenerate and finite
+# members; then only the reduction's configured value gives a defined share.
+function _require_epsilon_independent(bp::AbstractBranchesParallel)
+    degenerate = count(br -> !isfinite(_series_susceptance_raw(br, PSY.SU)), bp)
+    if !iszero(degenerate) && degenerate != length(bp)
+        error(
+            "Parallel group $(get_name(bp)) mixes $(degenerate) zero-impedance and " *
+            "$(length(bp) - degenerate) finite member(s); shares depend on the " *
+            "reduction's minimum retained impedance. Pass the NetworkReductionData.",
+        )
+    end
+    return
+end
 
-Susceptance fraction `b_branch / b_total` of one member of a parallel group. The member is
-resolved by object identity; passing a component that is not in the group is an error.
-"""
-function compute_parallel_multiplier(
+function _parallel_multiplier(
     parallel_branch_set::AbstractBranchesParallel,
     branch::PSY.ACTransmission,
+    min_x_eps::Float64,
 )
     b_total = 0.0
     b_branch = 0.0
     found = false
     for br in parallel_branch_set
-        # `get_series_susceptance` (see BranchAdmittance.jl) is tap-aware for
-        # two-winding transformers and dispatches PNM's three-winding winding wrapper.
-        # `nr`'s configured epsilon is out of reach here, but a share is a ratio, so the
-        # default cancels and a group of `r == x == 0` switches splits by count.
-        b = _finite_series_susceptance(br, ZERO_IMPEDANCE_X_EPSILON)
-        if br === branch
+        b = _finite_series_susceptance(br, min_x_eps)
+        if _entry_carries(br, branch)
             b_branch = b
             found = true
         end
@@ -131,10 +142,11 @@ end
 
 # Name-based lookup kept for callers that only hold a name (PTDF row API, PowerFlows).
 # PSY names are unique per concrete type only, so a name may match several members of a
-# mixed group; that was silently double-counted before — now it must resolve to exactly one.
-function compute_parallel_multiplier(
+# mixed group; it must resolve to exactly one.
+function _parallel_multiplier(
     parallel_branch_set::AbstractBranchesParallel,
     branch_name::String,
+    min_x_eps::Float64,
 )
     matches = PSY.ACTransmission[]
     for br in parallel_branch_set
@@ -148,7 +160,22 @@ function compute_parallel_multiplier(
             "group $(get_name(parallel_branch_set)); resolve by component identity.",
         )
     end
-    return compute_parallel_multiplier(parallel_branch_set, first(matches))
+    return _parallel_multiplier(parallel_branch_set, first(matches), min_x_eps)
+end
+
+"""
+    compute_parallel_multiplier(parallel_branch_set, branch) -> Float64
+
+Susceptance fraction `b_branch / b_total` of one member of a parallel group, by component
+identity or by name. Passing a component that is not in the group is an error. Errors on a
+group mixing zero-impedance and finite members; use the `nr` method.
+"""
+function compute_parallel_multiplier(
+    parallel_branch_set::AbstractBranchesParallel,
+    branch::Union{PSY.ACTransmission, String},
+)
+    _require_epsilon_independent(parallel_branch_set)
+    return _parallel_multiplier(parallel_branch_set, branch, ZERO_IMPEDANCE_X_EPSILON)
 end
 
 function get_series_susceptance(
@@ -163,7 +190,7 @@ end
 _series_susceptance_raw(
     segment::AbstractBranchesParallel,
     units::IS.AbstractUnitSystem,
-) = sum(_series_susceptance_raw(branch, units) for branch in segment.branches)
+)::Float64 = sum(_series_susceptance_raw(branch, units) for branch in segment.branches)
 
 # `get_equivalent_physical_branch_parameters` / `populate_equivalent_ybus!` for parallel and
 # series groups live in common.jl, which is included after NetworkReductionData so `nr` can be
@@ -207,15 +234,20 @@ end
 N-1 rating for the parallel group: the surviving capacity after the largest-rated
 circuit trips, ``\\sum_i S_i - \\max_i S_i``. For a group of one branch this is zero.
 
-Members with no known rating are skipped; returns `nothing` only when no member has a known
-rating (see [`get_sum_of_max_rating`](@ref)).
+Unlike its sibling aggregators, a member with no known rating is not skipped: the largest
+circuit is then unidentifiable. Returns `nothing` when any member's rating is unknown.
 """
 function get_single_element_contingency_rating(bp::AbstractBranchesParallel)
-    return _aggregate_known_ratings(
-        r -> sum(r) - maximum(r),
-        get_equivalent_rating,
-        bp.branches,
-    )
+    isempty(bp.branches) && return nothing
+    total = 0.0
+    largest = 0.0
+    for br in bp.branches
+        r = get_equivalent_rating(br)
+        isnothing(r) && return nothing
+        total += r
+        largest = max(largest, r)
+    end
+    return total - largest
 end
 
 """
@@ -224,24 +256,29 @@ end
 Susceptance-weighted average of individual branch ratings,
 ``\\sum_i f_i \\cdot S_i`` with ``f_i = b_i / \\sum_k b_k``. Reflects how DC flow
 physically splits across a parallel group. Throws `ArgumentError` if the total
-series susceptance is zero.
+series susceptance is zero. Errors on a group mixing zero-impedance and finite members;
+use the `nr` method.
 
 Members with no known rating are skipped (their susceptance still contributes to the
 weighting denominator); returns `nothing` only when no member has a known rating (see
 [`get_sum_of_max_rating`](@ref)).
 """
 function get_impedance_averaged_rating(bp::AbstractBranchesParallel)
-    # The susceptance weights must share a consistent impedance base across the group, so use
-    # system base (SU) like the sibling `compute_parallel_multiplier`. Within a parallel group
-    # (a single bus pair) this equals the natural-units weighting; device base would mix bases
-    # when the branches differ in base power. Requires the branches to be attached to a system.
-    # Σᵢ (bᵢ/b_total)·rᵢ == (Σᵢ bᵢ·rᵢ)/b_total, so one pass and no stored per-member state.
-    # Weights are shares bᵢ/b_total, so the substituted constant cancels.
+    _require_epsilon_independent(bp)
+    return _impedance_averaged_rating(bp, ZERO_IMPEDANCE_X_EPSILON)
+end
+
+# The susceptance weights must share a consistent impedance base across the group, so use
+# system base (SU) like the sibling `compute_parallel_multiplier`. Within a parallel group
+# (a single bus pair) this equals the natural-units weighting; device base would mix bases
+# when the branches differ in base power. Requires the branches to be attached to a system.
+# Σᵢ (bᵢ/b_total)·rᵢ == (Σᵢ bᵢ·rᵢ)/b_total, so one pass and no stored per-member state.
+function _impedance_averaged_rating(bp::AbstractBranchesParallel, min_x_eps::Float64)
     b_total = 0.0
     numerator = 0.0
     any_known = false
     for br in bp.branches
-        b = _finite_series_susceptance(br, ZERO_IMPEDANCE_X_EPSILON)
+        b = _finite_series_susceptance(br, min_x_eps)
         b_total += b
         r = get_equivalent_rating(br)
         if !isnothing(r)
@@ -311,6 +348,9 @@ end
 function Base.length(bp::AbstractBranchesParallel)
     return length(bp.branches)
 end
+
+Base.eltype(::Type{BranchesParallel{T}}) where {T} = T
+Base.eltype(::Type{MixedBranchesParallel}) = PSY.ACTransmission
 
 # Indexed when ANY member is: the arc is modeled, so its group must be reachable.
 # Recursive: consider series-in-parallel.

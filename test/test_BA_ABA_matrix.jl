@@ -118,9 +118,9 @@ end
         _add_test_line!(sys, "L12", arc12, 0.0, 0.1)
         arc23 = Arc(; from = buses[2], to = buses[3])
         add_component!(sys, arc23)
-        pst = PSY.TwoWindingTransformer(;
+        pst = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
             name = "PST23",
-            circuit = PSY.TransformerCircuit(;
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
                 available = true,
                 arc = arc23,
                 tap = 1.05,
@@ -172,8 +172,8 @@ end
         bus_lookup = PNM.get_bus_lookup(ybus)
         direct_map = PNM.get_direct_branch_map(nr)
         for arc in PNM.get_arc_axis(nr)
-            b_component = PNM._arc_component_susceptance(nr, arc)
-            isnan(b_component) && continue          # arc owned by no direct/parallel map
+            entry = first(PNM._resolve_arc_entry(nr, arc))
+            b_component = PNM._finite_series_susceptance(entry, nr)
             @test isfinite(b_component)
             i = PNM.get_bus_index(arc[1], bus_lookup, nr)
             j = PNM.get_bus_index(arc[2], bus_lookup, nr)
@@ -211,5 +211,66 @@ end
             test_value = false
         end
         @test test_value
+    end
+end
+
+@testset "BA: an unresolvable arc errors instead of dropping out" begin
+    # b = 0.0 is a legitimate value (r > 0, x = 0), so a miss must throw.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    nr = get_network_reduction_data(Ybus(sys))
+    absent = (typemax(Int) - 1, typemax(Int))
+    @test !haskey(PNM.get_direct_branch_map(nr), absent)
+    @test !haskey(PNM.get_parallel_branch_map(nr), absent)
+    @test_throws ErrorException PNM._ba_arc_susceptance(nr, absent)
+end
+
+@testset "BA/ABA: an anti-parallel pair is counted once per arc key" begin
+    # Both twins keep their own key and survive to BA.
+    sys = build_antiparallel_chain_segment_system()
+    # (from, to, x), exactly as the fixture writes them.
+    edges = [
+        (1, 2, 0.05), (2, 3, 0.06), (3, 4, 0.07), (4, 1, 0.08), (2, 4, 0.09),
+        (1, 10, 0.10), (10, 3, 0.11), (3, 10, 0.17),
+    ]
+    ybus = Ybus(sys)
+    nr = get_network_reduction_data(ybus)
+    ba = BA_Matrix(ybus)
+    aba = ABA_Matrix(ybus)
+    bus_lookup, arc_lookup = PNM.get_lookup(ba)
+
+    @test length([a for a in PNM.get_arc_axis(nr) if Set(a) == Set([10, 3])]) == 2
+    for (f, t, x) in edges
+        @test ba.data[bus_lookup[f], arc_lookup[(f, t)]] ≈ 1 / x
+        @test ba.data[bus_lookup[t], arc_lookup[(f, t)]] ≈ -1 / x
+    end
+
+    # Independent oracle: B' assembled straight from the fixture's reactances.
+    bus_ax = PNM.get_bus_axis(ba)
+    ix = Dict(b => i for (i, b) in enumerate(bus_ax))
+    B = zeros(length(bus_ax), length(bus_ax))
+    for (f, t, x) in edges
+        B[ix[f], ix[f]] += 1 / x
+        B[ix[t], ix[t]] += 1 / x
+        B[ix[f], ix[t]] -= 1 / x
+        B[ix[t], ix[f]] -= 1 / x
+    end
+    @test aba[10, 3] ≈ -(1 / 0.11 + 1 / 0.17)
+    ref_bus = only(PNM.get_ref_bus(aba))
+    non_ref = [b for b in bus_ax if b != ref_bus]
+    for p in non_ref, q in non_ref
+        @test aba[p, q] ≈ B[ix[p], ix[q]]
+    end
+
+    # DC sensitivities off the same oracle: θ = B'⁻¹ p with the reference angle pinned to 0.
+    X = zeros(length(bus_ax), length(bus_ax))
+    keep = [ix[b] for b in non_ref]
+    X[keep, keep] = inv(B[keep, keep])
+    ptdf = PTDF(sys)
+    for (f, t, x) in edges, n in bus_ax
+        @test isapprox(
+            getindex(ptdf, (f, t), n),
+            (X[ix[f], ix[n]] - X[ix[t], ix[n]]) / x;
+            atol = 1e-8,
+        )
     end
 end

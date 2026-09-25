@@ -7,8 +7,8 @@ _is_transformer(::PSY.TwoWindingTransformer) = true
 # transformer arcs and must be excluded from zero-impedance bus merging like any transformer.
 _is_transformer(::ThreeWindingTransformerCircuit) = true
 _is_transformer(::PSY.ACTransmission) = false
-_any_transformer(parallel_br::AbstractBranchesParallel) =
-    any(_is_transformer(br) for br in parallel_br)
+# Without this, aggregates hit the blanket `false`; recursive for nesting.
+_is_transformer(seg::AbstractReductionAggregate) = any(_is_transformer, seg)
 
 # Series admittance `Y_l = 1 / (r + x im)` from a branch's `(r, x)`, with the
 # `r == x == 0` -> `min_x_eps` substitution applied during Ybus assembly so the
@@ -27,7 +27,7 @@ end
 # exact `r == 0`) whose series admittance reaches the threshold (`|y| >= susceptance_threshold`).
 # Reads `(r, x)` once and bails on a too-large resistance before touching `x`.
 function _is_zero_impedance_branch(
-    br,
+    br::PSY.ACTransmission,
     susceptance_threshold::Float64,
     min_x_eps::Float64,
     resistance_tolerance::Float64,
@@ -37,6 +37,18 @@ function _is_zero_impedance_branch(
     x = PSY.get_x(br, PSY.SU)
     return abs(_series_admittance(r, x, min_x_eps)) >= susceptance_threshold
 end
+
+# An aggregate has no `(r, x)` of its own, and merging the endpoints of a composite arc would
+# discard its interior. ZIBR runs before every other reduction, so nothing routes one here.
+_is_zero_impedance_branch(
+    seg::AbstractReductionAggregate,
+    ::Float64,
+    ::Float64,
+    ::Float64,
+) = error(
+    "Zero-impedance eligibility is a per-branch property, but $(get_name(seg)) is a " *
+    "reduction aggregate; judge its members individually.",
+)
 
 # An arc is zero-impedance iff some individual non-transformer branch on it qualifies; the
 # parallel combination is never considered. So an `r ≈ 0` jumper in parallel with a normal
@@ -60,7 +72,7 @@ function _is_zero_impedance_arc(
     resistance_tolerance::Float64,
 )
     # Transformer-bearing arcs are excluded from zero-impedance bus merging.
-    _any_transformer(parallel_br) && return false
+    _is_transformer(parallel_br) && return false
     return any(
         _is_zero_impedance_branch(
             br,
