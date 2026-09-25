@@ -1353,9 +1353,14 @@ end
 
 # Re-derive every surviving bus's signed adjacency from the complex Ybus data. Shared by the
 # in-place merge (`_merge_ybus_buses!`) and the fused pure-merge rebuild so the two paths
-# cannot drift. A merged off-diagonal can sum to a stored zero (e.g. a series capacitor
-# cancelling a line of equal magnitude), but that still marks a real edge between the buses,
-# so it must produce an adjacency entry; do not drop those zeros.
+# cannot drift. This function is only for the signed adjacency matrix used by reduction
+# algorithms: a merged off-diagonal can sum to a stored zero (e.g. a series capacitor
+# cancelling a line of equal magnitude), but the buses remain electrically joined, so it
+# re-imposes an adjacency entry. Consumers that partition directly on `Ybus.data` instead
+# treat a stored exact zero as no edge (see `find_subnetworks`); that is an accepted S1
+# behavior change because PTSA's working Ybus is not reduced. A consequence of the
+# stored-zero rule is that a bus with a zero diagonal and exactly one non-zero off-diagonal
+# neighbour counts as islanded.
 function _repair_merged_adjacencies!(
     adjacency_data::SparseArrays.SparseMatrixCSC{Int8, Int},
     data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int},

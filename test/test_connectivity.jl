@@ -381,3 +381,23 @@ end
     vptdf = VirtualPTDF(sys)
     @test PNM.get_bus_axis(vptdf)[only(PNM.get_ref_bus_position(vptdf))] == 10
 end
+
+@testset "find_subnetworks ignores stored exact zeros" begin
+    # Chain 1-2-3 whose 2-3 entries are stored but hold exact zero.
+    rows = [1, 2, 1, 2, 3, 2, 3]
+    cols = [1, 1, 2, 2, 2, 3, 3]
+    vals = Int8[1, 1, 1, 1, 0, 0, 1]
+    A = SparseArrays.sparse(rows, cols, vals, 3, 3)
+    @test SparseArrays.nnz(A) == 7
+    for alg in (PNM.iterative_union_find, PNM.depth_first_search)
+        subnets = PNM.find_subnetworks(A, [10, 20, 30]; subnetwork_algorithm = alg)
+        @test Set(values(subnets)) == Set([Set([10, 20]), Set([30])])
+    end
+    B = copy(A)
+    B[3, 2] = 1
+    B[2, 3] = 1
+    @test SparseArrays.nnz(B) == 7
+    for alg in (PNM.iterative_union_find, PNM.depth_first_search)
+        @test length(PNM.find_subnetworks(B, [10, 20, 30]; subnetwork_algorithm = alg)) == 1
+    end
+end
