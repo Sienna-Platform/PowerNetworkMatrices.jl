@@ -354,3 +354,20 @@ Get the cached PTDF row data from a [`VirtualPTDF`](@ref) matrix.
 Returns a dictionary mapping row indices to lazily computed row vectors.
 """
 get_ptdf_data(mat::VirtualPTDF) = get_cache(mat).temp_cache
+
+"""
+    get_ptdf_row(vptdf::VirtualPTDF, arc::Tuple{Int, Int}) -> Union{Vector{Float64}, SparseVector{Float64}}
+
+Return the PTDF row for `arc` as the cache's own stored vector, without copying; on a miss the
+row is computed and cached first. The row is dense, or a `SparseVector` when the matrix's
+tolerance sparsifies rows. Treat it as read-only: mutating it corrupts the cache. It stays valid
+after the cache evicts it. Use `vptdf[arc, :]` for a private copy.
+"""
+function get_ptdf_row(vptdf::VirtualPTDF, arc::Tuple{Int, Int})
+    row = get_arc_lookup(vptdf)[arc]
+    return _cached_row(
+        get_cache(vptdf), get_cache_lock(vptdf), row, get_cutoff(vptdf),
+    ) do
+        _compute_ptdf_row(vptdf, row)
+    end
+end

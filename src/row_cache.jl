@@ -244,6 +244,32 @@ function check_cache_size!(cache::RowCache; new_add::Bool = false)
 end
 
 """
+    _cached_row(compute_row, cache, cache_lock, row, cutoff) -> RowCacheValue
+
+Return the cached row object for `row` itself (no copy), computing, applying `cutoff` to, and
+inserting it on a miss. Acquires `cache_lock` to test for a hit, runs `compute_row` outside the
+lock (solves dominate the cost), then takes the lock again to insert; a concurrent producer that
+wins the insert race wins, and every caller gets the winner's stored row.
+"""
+function _cached_row(
+    compute_row,
+    cache::RowCache,
+    cache_lock::ReentrantLock,
+    row::Int,
+    cutoff::SparsificationCutoff,
+)
+    @lock cache_lock begin
+        haskey(cache, row) && return cache.temp_cache[row]
+    end
+    stored = apply_cutoff(cutoff, compute_row())
+    @lock cache_lock begin
+        haskey(cache, row) && return cache.temp_cache[row]
+        cache[row] = stored
+        return stored
+    end
+end
+
+"""
     cached_row_lookup(compute_row, cache, cache_lock, row, column, tol) -> value
 
 Shared cache-fast-path / compute / double-checked-insert pattern used by
@@ -267,6 +293,9 @@ end
 `cutoff` is the resolved `SparsificationCutoff` stored on the matrix: an
 `AbsoluteCutoff` drops below a fixed value, a `RelativeCutoff` drops below
 `fraction · max|row|` so columns of large cases stay sparse.
+
+Indexing with `column = Colon()` copies the row; use `_cached_row` (or `get_ptdf_row`) for the
+stored object.
 """
 function cached_row_lookup(
     compute_row,
@@ -276,14 +305,5 @@ function cached_row_lookup(
     column::Union{Int, Colon},
     cutoff::SparsificationCutoff,
 )
-    @lock cache_lock begin
-        haskey(cache, row) && return cache.temp_cache[row][column]
-    end
-    row_data = compute_row()
-    stored = apply_cutoff(cutoff, row_data)
-    @lock cache_lock begin
-        haskey(cache, row) && return cache.temp_cache[row][column]
-        cache[row] = stored
-        return cache[row][column]
-    end
+    return _cached_row(compute_row, cache, cache_lock, row, cutoff)[column]
 end

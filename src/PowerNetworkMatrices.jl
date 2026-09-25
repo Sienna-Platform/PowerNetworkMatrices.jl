@@ -64,6 +64,7 @@ export get_lodf_data
 export get_network_reduction_data
 export get_partial_lodf_row
 export get_ptdf_data
+export get_ptdf_row
 export get_registered_contingencies
 export get_reductions
 export get_ward_reduction

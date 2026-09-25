@@ -71,3 +71,19 @@ end
     @test isempty(cache.temp_cache)
     @test isempty(cache.access_order)
 end
+
+@testset "_cached_row returns stored storage that survives eviction" begin
+    row_bytes = 3 * sizeof(Float64)
+    cache = PNM.RowCache(2 * row_bytes, Set{Int}(), row_bytes)
+    lk = ReentrantLock()
+    cutoff = PNM.AbsoluteCutoff(eps(Float64))
+    r1 = PNM._cached_row(() -> [1.0, 2.0, 3.0], cache, lk, 1, cutoff)
+    @test r1 === cache[1]
+    @test PNM._cached_row(() -> error("must not recompute a hit"), cache, lk, 1, cutoff) ===
+          r1
+    for k in 2:4
+        PNM._cached_row(() -> fill(Float64(k), 3), cache, lk, k, cutoff)
+    end
+    @test !haskey(cache, 1)
+    @test r1 == [1.0, 2.0, 3.0]
+end

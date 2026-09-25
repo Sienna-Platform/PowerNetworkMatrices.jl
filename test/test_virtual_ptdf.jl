@@ -242,3 +242,34 @@ end
         end
     end
 end
+
+_row_alloc(v, arc) = @allocated get_ptdf_row(v, arc)
+_getindex_alloc(v, arc) = @allocated v[arc, :]
+
+@testset "get_ptdf_row returns the cached row without copying" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    vptdf = VirtualPTDF(sys; tol = eps())
+    arc = first(PNM.get_arc_axis(vptdf))
+    row_ix = PNM.get_arc_lookup(vptdf)[arc]
+    r1 = get_ptdf_row(vptdf, arc)                 # miss: computes and caches
+    @test r1 == vptdf[arc, :]
+    @test get_ptdf_row(vptdf, arc) === r1         # hit: same object
+    @test r1 === get_ptdf_data(vptdf)[row_ix]
+    @test typeof(r1) == Vector{Float64}
+    _row_alloc(vptdf, arc)
+    _getindex_alloc(vptdf, arc)
+    @test _row_alloc(vptdf, arc) < _getindex_alloc(vptdf, arc)
+    @test_throws KeyError get_ptdf_row(vptdf, (-1, -2))
+
+    # Sparsified rows come back as the stored SparseVector.
+    vsparse = VirtualPTDF(sys; tol = 1e-3)
+    rs = get_ptdf_row(vsparse, arc)
+    @test typeof(rs) == SparseArrays.SparseVector{Float64, Int}
+    @test rs === get_ptdf_data(vsparse)[row_ix]
+
+    # Concurrent first reads all receive the single stored row.
+    vfresh = VirtualPTDF(sys; tol = eps())
+    rows = fetch.([Threads.@spawn(get_ptdf_row(vfresh, arc)) for _ in 1:4])
+    @test all(r -> r === rows[1], rows)
+    @test rows[1] === get_ptdf_data(vfresh)[row_ix]
+end
