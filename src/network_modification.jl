@@ -899,13 +899,14 @@ end
     apply_ybus_modification!(ybus::Ybus, mod::NetworkModification)
 
 Add `mod`'s arc and shunt admittance deltas into `ybus` in place: the bus admittance matrix and,
-when present, both arc admittance matrices. The result is bitwise equal to
-`ybus.data + compute_ybus_delta(ybus, mod)`. The sparsity pattern never changes, so a
-factorization's symbolic analysis stays valid; an entry outside the pattern raises an error.
-Undo exactly with [`restore_ybus_modification!`](@ref).
+when present, both arc admittance matrices. Afterwards `ybus.data == ybus_before.data +
+compute_ybus_delta(ybus_before, mod)` value for value; the stored pattern is left untouched, so
+entries the out-of-place sum would drop stay stored as zeros and `nnz` can differ. Because the
+pattern never changes, a factorization's symbolic analysis stays valid; a delta on an entry
+outside the pattern raises an error. Undo exactly with [`restore_ybus_modification!`](@ref).
 
-The pattern check is by stored-entry count (`nnz`) only; callers that need an islanded bus to
-read exact zero must write the zero explicitly after applying the modification.
+Float32 accumulation can leave a residue where the exact result is zero (e.g. the off-diagonals
+of a fully removed arc); callers that need exact zeros there must write them after applying.
 """
 function apply_ybus_modification!(ybus::Ybus, mod::NetworkModification)
     bus_lookup = get_bus_lookup(ybus)
@@ -955,7 +956,8 @@ end
 
 Copy `base`'s values back into exactly the entries [`apply_ybus_modification!`](@ref) wrote for
 `mod`. Exact: no floating-point drift accumulates across repeated apply/restore cycles. `base`
-must share `ybus`'s sparsity pattern.
+must share `ybus`'s sparsity pattern; this is checked by stored-entry count (`nnz`) only, and
+a missing or extra pair of arc admittance matrices raises an error.
 """
 function restore_ybus_modification!(ybus::Ybus, base::Ybus, mod::NetworkModification)
     _foreach_modification_entry(ybus, base, mod) do A, B, p, _
