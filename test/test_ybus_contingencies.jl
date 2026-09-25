@@ -548,3 +548,132 @@ end
     end
     @test n_corrected >= 1
 end
+
+@testset "apply_ybus_modification! is in place, pattern-preserving and exactly undone" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    base = Ybus(sys; make_arc_admittance_matrices = true)
+    work = Ybus(sys; make_arc_admittance_matrices = true)
+    vptdf = VirtualPTDF(sys)
+    colptr = copy(SparseArrays.getcolptr(work.data))
+    rowval = copy(SparseArrays.rowvals(work.data))
+    for branch in get_components(ACTransmission, sys)
+        mod = NetworkModification(vptdf, branch)
+        apply_ybus_modification!(work, mod)
+        @test SparseArrays.getcolptr(work.data) == colptr
+        @test SparseArrays.rowvals(work.data) == rowval
+        @test isapprox(work.data, apply_ybus_modification(base, mod); atol = 1e-6)
+        restore_ybus_modification!(work, base, mod)
+        @test SparseArrays.nonzeros(work.data) == SparseArrays.nonzeros(base.data)
+        @test SparseArrays.nonzeros(work.arc_admittance_from_to.data) ==
+              SparseArrays.nonzeros(base.arc_admittance_from_to.data)
+        @test SparseArrays.nonzeros(work.arc_admittance_to_from.data) ==
+              SparseArrays.nonzeros(base.arc_admittance_to_from.data)
+    end
+end
+
+@testset "apply_ybus_modification! empties a fully outaged arc's admittance rows" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    base = Ybus(sys; make_arc_admittance_matrices = true)
+    work = Ybus(sys; make_arc_admittance_matrices = true)
+    vptdf = VirtualPTDF(sys)
+    line = get_component(Line, sys, "1")
+    arc = PNM.get_arc_tuple(line)
+    mod = NetworkModification(vptdf, line)
+    apply_ybus_modification!(work, mod)
+    for (w, b) in ((work.arc_admittance_from_to, base.arc_admittance_from_to),
+        (work.arc_admittance_to_from, base.arc_admittance_to_from))
+        row = PNM.get_arc_lookup(w)[arc]
+        @test all(v -> abs(v) < 1e-5, w.data[row, :])
+        for r in axes(w.data, 1)
+            r == row && continue
+            @test w.data[r, :] == b.data[r, :]
+        end
+    end
+end
+
+@testset "apply_ybus_modification! refuses an entry outside the pattern" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    ybus = Ybus(sys; make_arc_admittance_matrices = true)
+    A = ybus.data
+    # Find a bus pair with no stored entry.
+    n = size(A, 1)
+    pair = first(
+        (i, j) for i in 1:n, j in 1:n if i != j && iszero(A[i, j]) &&
+        !(i in SparseArrays.rowvals(A)[SparseArrays.nzrange(A, j)])
+    )
+    @test_throws ErrorException PNM._stored_index(A, pair[1], pair[2])
+end
+
+@testset "apply/restore round trip for a FixedAdmittance outage" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    bus = first(get_components(ACBus, sys))
+    shunt = FixedAdmittance("TestShunt", true, bus, 0.0 + 0.2im)
+    add_component!(sys, shunt)
+    base = Ybus(sys; make_arc_admittance_matrices = true)
+    work = Ybus(sys; make_arc_admittance_matrices = true)
+    vptdf = VirtualPTDF(sys)
+    outage = PSY.FixedForcedOutage(; outage_status = 1.0)
+    add_supplemental_attribute!(sys, shunt, outage)
+    mod = NetworkModification(vptdf, sys, outage)
+    apply_ybus_modification!(work, mod)
+    restore_ybus_modification!(work, base, mod)
+    @test SparseArrays.nonzeros(work.data) == SparseArrays.nonzeros(base.data)
+    @test SparseArrays.nonzeros(work.arc_admittance_from_to.data) ==
+          SparseArrays.nonzeros(base.arc_admittance_from_to.data)
+    @test SparseArrays.nonzeros(work.arc_admittance_to_from.data) ==
+          SparseArrays.nonzeros(base.arc_admittance_to_from.data)
+end
+
+@testset "apply/restore without arc admittance matrices" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    base = Ybus(sys; make_arc_admittance_matrices = false)
+    work = Ybus(sys; make_arc_admittance_matrices = false)
+    vptdf = VirtualPTDF(sys)
+    line = get_component(Line, sys, "1")
+    mod = NetworkModification(vptdf, line)
+    apply_ybus_modification!(work, mod)
+    @test isapprox(work.data, apply_ybus_modification(base, mod); atol = 1e-6)
+    restore_ybus_modification!(work, base, mod)
+    @test SparseArrays.nonzeros(work.data) == SparseArrays.nonzeros(base.data)
+end
+
+@testset "restore_ybus_modification! errors on mismatched arc admittance matrices" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    work = Ybus(sys; make_arc_admittance_matrices = true)
+    base = Ybus(sys; make_arc_admittance_matrices = false)
+    vptdf = VirtualPTDF(sys)
+    line = get_component(Line, sys, "1")
+    mod = NetworkModification(vptdf, line)
+    apply_ybus_modification!(work, mod)
+    @test_throws ErrorException restore_ybus_modification!(work, base, mod)
+end
+
+@testset "parallel-arc apply/restore pins the Float32 bitwise contract" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    l1 = get_component(Line, sys, "1")
+    par = Line(;
+        name = "1p",
+        available = true,
+        active_power_flow = 0.0,
+        reactive_power_flow = 0.0,
+        arc = get_arc(l1),
+        r = get_r(l1, PSY.CU) * 1.37,
+        x = get_x(l1, PSY.CU) * 0.91,
+        b = get_b(l1, PSY.CU),
+        rating = get_rating(l1, PSY.CU),
+        angle_limits = get_angle_limits(l1),
+        input_basis = PSY.CU,
+    )
+    add_component!(sys, par)
+    base = Ybus(sys; make_arc_admittance_matrices = true)
+    work = Ybus(sys; make_arc_admittance_matrices = true)
+    vptdf = VirtualPTDF(sys)
+    mod = NetworkModification(vptdf, l1)
+    apply_ybus_modification!(work, mod)
+    restore_ybus_modification!(work, base, mod)
+    @test SparseArrays.nonzeros(work.data) == SparseArrays.nonzeros(base.data)
+    @test SparseArrays.nonzeros(work.arc_admittance_from_to.data) ==
+          SparseArrays.nonzeros(base.arc_admittance_from_to.data)
+    @test SparseArrays.nonzeros(work.arc_admittance_to_from.data) ==
+          SparseArrays.nonzeros(base.arc_admittance_to_from.data)
+end

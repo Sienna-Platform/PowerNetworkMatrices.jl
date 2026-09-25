@@ -24,6 +24,8 @@ export WardReduction
 export Ybus
 export ZeroImpedanceBranchReduction
 export apply_ybus_modification
+export apply_ybus_modification!
+export restore_ybus_modification!
 export compute_ybus_delta
 export get_applied_reductions
 export DC_ABA_Matrix_Factorized
