@@ -598,7 +598,7 @@ end
 """
     branch_flow_limits(branch) -> NamedTuple
 
-Directional flow limits in MVA (device units, `PSY.CU`): `(from_to, to_from)`. For symmetric
+Directional flow limits, per unit on the system base (`PSY.SU`): `(from_to, to_from)`. For symmetric
 branches both fields equal the branch's [`get_equivalent_rating`](@ref); `MonitoredLine`
 carries asymmetric limits and has its own method. Branches whose rating lives on a
 transformer circuit — and reduction groups containing them — may carry `nothing` in both
@@ -613,7 +613,7 @@ function branch_flow_limits(b::PSY.ACTransmission)
 end
 
 function branch_flow_limits(b::PSY.MonitoredLine)
-    fl = PSY.get_flow_limits(b, PSY.CU)
+    fl = PSY.get_flow_limits(b, PSY.SU)
     return (from_to = fl.from_to, to_from = fl.to_from)
 end
 

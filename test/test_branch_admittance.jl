@@ -39,14 +39,14 @@ end
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
     ml = first(PSY.get_components(PSY.MonitoredLine, sys))
     fl = PNM.branch_flow_limits(ml)
-    psy_fl = PSY.get_flow_limits(ml, PSY.CU)
+    psy_fl = PSY.get_flow_limits(ml, PSY.SU)
     @test fl.from_to == psy_fl.from_to
     @test fl.to_from == psy_fl.to_from
 end
 
 @testset "branch_flow_limits on a reduction aggregate" begin
-    # Detached on purpose: branch_flow_limits reads PSY.CU only. An asymmetric member must
-    # keep its own reverse limit.
+    # branch_flow_limits reads the system base, so the members are attached to the system.
+    # An asymmetric member must keep its own reverse limit.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
     buses = collect(PSY.get_components(PSY.ACBus, sys))
     arc = PSY.Arc(; from = buses[1], to = buses[2])
@@ -81,7 +81,12 @@ end
         angle_limits = (min = -pi / 2, max = pi / 2),
     )
 
-    symmetric = PNM.BranchesParallel([plain, bfl_line("bfl_line_2")])
+    second = bfl_line("bfl_line_2")
+    for branch in (plain, second, monitored)
+        PSY.add_component!(sys, branch; skip_validation = true)
+    end
+
+    symmetric = PNM.BranchesParallel([plain, second])
     @test PNM.branch_flow_limits(symmetric).from_to == 200.0
     @test PNM.branch_flow_limits(symmetric).to_from == 200.0
 
