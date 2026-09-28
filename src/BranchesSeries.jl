@@ -196,10 +196,12 @@ _series_member_rating(branch::PSY.ACTransmission) = get_equivalent_rating(branch
 """
     get_equivalent_rating(bs<:PSY.ACTransmission)
 
-Return the rating for PSY.ACTransmission branches.
+Return the rating for PSY.ACTransmission branches, per unit on the system base (`PSY.SU`).
+Every equivalent rating is on the system base, so a series minimum or a parallel sum can
+combine members whose own base powers differ.
 """
 function get_equivalent_rating(bs::PSY.ACTransmission)
-    return PSY.get_rating(bs, PSY.CU)
+    return PSY.get_rating(bs, PSY.SU)
 end
 
 """
@@ -207,9 +209,10 @@ end
 
 A `TwoWindingTransformer` has no parent rating (there is no `get_rating(::TwoWindingTransformer)`);
 the rating lives on its single winding and may be `nothing`. Mirrors `branch_flow_limits`.
+The winding stores it per unit on its own `base_power`; it is returned on the system base.
 """
 function get_equivalent_rating(bs::PSY.TwoWindingTransformer)
-    return PSY.get_rating(PSY.get_circuit(bs), PSY.CU)
+    return PSY.get_rating(PSY.get_circuit(bs), PSY.SU)
 end
 
 """
@@ -218,7 +221,8 @@ end
 Rating is assumed to be max_flow for GenericArcImpedance.
 """
 function get_equivalent_rating(bs::PSY.GenericArcImpedance)
-    # Detached synthetic ward equivalent: read the stored value with device base.
+    # A detached Ward equivalent cannot resolve the system base, and its stored max_flow is
+    # already a system-base value, which the device-base read returns unchanged.
     return PSY.get_max_flow(bs, PSY.CU)
 end
 
@@ -238,15 +242,15 @@ end
 """
     get_equivalent_emergency_rating(bs<:PSY.ACTransmission)
 
-Return the emergency rating for PSY.ACTransmission branches.
+Return the emergency rating for PSY.ACTransmission branches, per unit on the system base.
 """
 function get_equivalent_emergency_rating(branch::PSY.ACTransmission)
-    if isnothing(PSY.get_rating_b(branch, PSY.CU))
+    if isnothing(PSY.get_rating_b(branch, PSY.SU))
         @debug "Branch $(get_name(branch)) has no 'rating_b' defined. Post-contingency limit is going to be set using normal-operation rating.
             \n Consider including post-contingency limits using set_rating_b!()."
-        return PSY.get_rating(branch, PSY.CU)
+        return PSY.get_rating(branch, PSY.SU)
     end
-    return PSY.get_rating_b(branch, PSY.CU)
+    return PSY.get_rating_b(branch, PSY.SU)
 end
 
 """
@@ -254,7 +258,8 @@ end
 
 `TwoWindingTransformer` carries its ratings on the winding (no parent
 `get_rating`/`get_rating_b`); falls back to the winding's normal-operation rating when
-`rating_b` is unset. May return `nothing` when the winding has neither rating.
+`rating_b` is unset. May return `nothing` when the winding has neither rating. Returned per
+unit on the system base, like [`get_equivalent_rating`](@ref).
 """
 get_equivalent_emergency_rating(branch::PSY.TwoWindingTransformer) =
     _circuit_emergency_rating(PSY.get_circuit(branch), "Winding of $(PSY.get_name(branch))")
@@ -266,6 +271,7 @@ Return the emergency rating for PSY.GenericArcImpedance.
 """
 function get_equivalent_emergency_rating(branch::PSY.GenericArcImpedance)
     @debug "GenericArcImpedance $(get_name(branch)) has no emergency rating. Using max_flow as a proxy instead."
+    # Device-base read of a system-base value; see `get_equivalent_rating`.
     return PSY.get_max_flow(branch, PSY.CU)
 end
 
