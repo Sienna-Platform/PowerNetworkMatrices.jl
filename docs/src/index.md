@@ -13,9 +13,29 @@ the matrices according to different methods, providing a flexible and powerful t
 `PowerNetworkMatrices.jl` is an active project under development, and we welcome your feedback,
 suggestions, and bug reports.
 
-## Documentation Structure
+## About Sienna
 
-PowerNetworkMatrices.jl strives to follow the [Diataxis documentation framework](https://diataxis.fr/),
+`PowerNetworkMatrices.jl` is part of the National Laboratory of the Rockies (formerly known as NREL)'s
+[Sienna ecosystem](https://sienna-platform.github.io/Sienna/), an open source framework for
+scheduling problems and dynamic simulations for power systems. The Sienna ecosystem can be
+[found on GitHub](https://github.com/Sienna-Platform). It contains three applications:
+
+  - [Sienna\Data](https://sienna-platform.github.io/Sienna/pages/applications/sienna_data.html) enables
+    efficient data input, analysis, and transformation
+  - [Sienna\Ops](https://sienna-platform.github.io/Sienna/pages/applications/sienna_ops.html) enables
+    system scheduling simulations by formulating and solving optimization problems
+  - [Sienna\Dyn](https://sienna-platform.github.io/Sienna/pages/applications/sienna_dyn.html) enables
+    system transient analysis including small signal stability and full system dynamic
+    simulations
+
+Each application uses multiple packages in the [`Julia`](http://www.julialang.org)
+programming language. `PowerNetworkMatrices.jl` is part of
+[Sienna\Net](https://sienna-platform.github.io/Sienna/pages/applications/sienna_network.html):
+it computes network matrices (for example Ybus, PTDF, and LODF) from `PowerSystems.jl` data.
+
+## How to use this documentation
+
+PowerNetworkMatrices.jl strives to follow the [Diátaxis documentation framework](https://diataxis.fr/),
 which organizes documentation according to the different needs of users. The documentation is
 structured into four main sections:
 
@@ -63,6 +83,13 @@ and data structures. It's organized for quick lookup of specific details.
   - Find available methods and options
   - Access complete API documentation
 
+## Installation and Quick Links
+
+  - [Sienna installation page](https://sienna-platform.github.io/Sienna/SiennaDocs/docs/build/how-to/install/):
+    Instructions to install `PowerNetworkMatrices.jl` and other Sienna packages
+  - [Central Sienna documentation](https://sienna-platform.github.io/Sienna/SiennaDocs/docs/build/index.html):
+    Cross-linked documentation website for the core user-facing Sienna packages
+
 * * *
 
-PowerNetworkMatrices has been developed as part of the Scalable Integrated Infrastructure Planning (SIIP) initiative at the U.S. Department of Energy's National Laboratory of the Rockies (formerly known as NREL) ([NLR](https://www.nrel.gov/)).
+PowerNetworkMatrices has been developed as part of the Scalable Integrated Infrastructure Planning (SIIP) initiative at the U.S. Department of Energy's National Laboratory of the Rockies (formerly known as NREL) ([NLR](https://www.nlr.gov/)).
