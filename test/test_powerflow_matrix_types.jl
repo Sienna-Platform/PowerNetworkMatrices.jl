@@ -4,10 +4,8 @@
     @testset "DC_ABA_Matrix_Factorized" begin
         M = ABA_Matrix(sys; factorize = true)
         @test M isa PNM.DC_ABA_Matrix_Factorized
-        if PNM._has_apple_accelerate_backend()
-            M_aa = ABA_Matrix(sys; factorize = true, linear_solver = "AppleAccelerateLU")
-            @test M_aa isa PNM.DC_ABA_Matrix_Factorized
-        end
+        # PowerFlows uses the alias as an invariant type parameter of PowerFlowData.
+        @test isconcretetype(PNM.DC_ABA_Matrix_Factorized)
     end
 
     @testset "DC_ABA_Matrix_Unfactorized" begin

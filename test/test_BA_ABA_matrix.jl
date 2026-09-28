@@ -275,15 +275,11 @@ end
     end
 end
 
-_is_dc_aba_factorized(::PNM.DC_ABA_Matrix_Factorized) = true
-_is_dc_aba_factorized(::Any) = false
-
 @testset "ABA_Matrix factorizes with the requested backend" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     aba_klu = ABA_Matrix(sys; factorize = true, linear_solver = "KLU")
     @test typeof(aba_klu.K) == PNM.KLULinSolveCache{Float64, Int64}
     @test is_factorized(aba_klu)
-    @test _is_dc_aba_factorized(aba_klu)
     b = collect(range(1.0, 2.0; length = size(aba_klu.data, 1)))
     x_klu = copy(b)
     PNM.solve!(aba_klu.K, x_klu)
@@ -300,7 +296,6 @@ _is_dc_aba_factorized(::Any) = false
         aba_aa = ABA_Matrix(sys; factorize = true, linear_solver = "AppleAccelerateLU")
         @test typeof(aba_aa.K) == PNM.AAFactorCache
         @test is_factorized(aba_aa)
-        @test _is_dc_aba_factorized(aba_aa)
         x_aa = copy(b)
         PNM.AccelerateWrapper.solve!(aba_aa.K, x_aa)
         @test isapprox(x_aa, x_klu; atol = 1e-10)
