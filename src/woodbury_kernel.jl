@@ -201,12 +201,36 @@ function _woodbury_correction!(
     wf::WoodburyFactors,
 )::Vector{Float64}
     M = length(wf.arc_indices)
+    return _woodbury_correction!(
+        z_m, zeros(M), zeros(M), BA, b_mon_pre, b_mon_post, monitored_idx, wf,
+    )
+end
+
+"""
+    _woodbury_correction!(z_m, zm_Z, coeff, BA, b_mon_pre, b_mon_post, monitored_idx, wf) -> Vector{Float64}
+
+Non-allocating form: `zm_Z` and `coeff` are caller-owned buffers of length at least the
+number of modified arcs; only their first `M` entries are written.
+"""
+function _woodbury_correction!(
+    z_m::Vector{Float64},
+    zm_Z_buf::Vector{Float64},
+    coeff_buf::Vector{Float64},
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    b_mon_pre::Float64,
+    b_mon_post::Float64,
+    monitored_idx::Int,
+    wf::WoodburyFactors,
+)::Vector{Float64}
+    M = length(wf.arc_indices)
+    zm_Z = view(zm_Z_buf, 1:M)
+    correction_coeff = view(coeff_buf, 1:M)
 
     # ν_m⊤ · Z  (1 × M vector)
     # Use BA[:,m]/b instead of A[m,:] for consistent sign convention.
     ba_nzv = SparseArrays.nonzeros(BA)
     ba_rv = SparseArrays.rowvals(BA)
-    zm_Z = zeros(M)
+    fill!(zm_Z, 0.0)
     @inbounds for nz_idx in nzrange(BA, monitored_idx)
         row = ba_rv[nz_idx]
         coeff = ba_nzv[nz_idx] / b_mon_pre
@@ -216,7 +240,7 @@ function _woodbury_correction!(
     end
 
     # Woodbury correction: z_m -= Z · (W⁻¹ · zm_Z), then scale by b_mon_post.
-    correction_coeff = wf.W_inv * zm_Z
+    LinearAlgebra.mul!(correction_coeff, wf.W_inv, zm_Z)
     LinearAlgebra.mul!(z_m, wf.Z, correction_coeff, -1.0, 1.0)
     z_m .*= b_mon_post
     # Under islanding, force buses disconnected from the monitored arc to exactly

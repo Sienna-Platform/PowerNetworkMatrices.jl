@@ -680,3 +680,35 @@ end
     @test iszero(am.delta_shift_injection)
     @test am.delta_b ≈ -1 / (1 / 5.0 + 1 / (1 / 0.21))
 end
+
+@testset "Woodbury correction: buffer form matches allocating form, allocation-free" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    vptdf = VirtualPTDF(sys)
+    core = PNM.get_core(vptdf)
+    arc_sus = core.arc_susceptances
+    n_arcs = length(PNM.get_arc_axis(vptdf))
+    buf_zm = zeros(4)
+    buf_coeff = zeros(4)
+    for arcs in ([1], [1, 2], [1, 2, 3])
+        mod = NetworkModification(
+            "outage_$(join(arcs, "_"))",
+            [ArcModification(e, -arc_sus[e]) for e in arcs],
+        )
+        wf = compute_woodbury_factors(vptdf, mod)
+        for m in 1:n_arcs
+            m in arcs && continue
+            b_pre = arc_sus[m]
+            b_post = PNM._post_modification_susceptance(arc_sus, m, wf)
+            z0 = vptdf[PNM.get_arc_axis(vptdf)[m], :] ./ b_pre
+            expected = PNM._woodbury_correction!(copy(z0), core.BA, b_pre, b_post, m, wf)
+            z = copy(z0)
+            PNM._woodbury_correction!(z, buf_zm, buf_coeff, core.BA, b_pre, b_post, m, wf)
+            @test z == expected
+            @test z ≈ apply_woodbury_correction(vptdf, m, wf) atol = 1e-12
+            copyto!(z, z0)
+            @test (@allocated PNM._woodbury_correction!(
+                z, buf_zm, buf_coeff, core.BA, b_pre, b_post, m, wf,
+            )) == 0
+        end
+    end
+end
