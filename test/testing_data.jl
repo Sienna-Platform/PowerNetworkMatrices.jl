@@ -484,6 +484,7 @@ function build_hvdc_with_single_bus_island()
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.05),
         base_voltage = 69.0,
+        input_basis = PSY.CU,
     )
     add_component!(sys, bus15)
     load15 = PowerLoad(; input_basis = PSY.CU,
@@ -541,6 +542,7 @@ function build_hvdc_with_small_island()
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.05),
         base_voltage = 69.0,
+        input_basis = PSY.CU,
     )
     bus16 = ACBus(;
         number = 16,
@@ -551,6 +553,7 @@ function build_hvdc_with_small_island()
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.05),
         base_voltage = 69.0,
+        input_basis = PSY.CU,
     )
     bus17 = ACBus(;
         number = 17,
@@ -561,6 +564,7 @@ function build_hvdc_with_small_island()
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.05),
         base_voltage = 69.0,
+        input_basis = PSY.CU,
     )
     add_component!(sys, bus15)
     add_component!(sys, bus16)
@@ -657,6 +661,7 @@ function _build_degree_two_chain_system(edges; load_bus::Int = 3)
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
+            input_basis = PSY.CU,
         )
         PSY.add_component!(sys, b)
         buses[n] = b
@@ -765,6 +770,7 @@ function build_composite_arc_adjacency_system()
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
+            input_basis = PSY.CU,
         )
         PSY.add_component!(sys, b)
         buses[n] = b
@@ -807,6 +813,7 @@ function build_multi_island_composite_arc_system()
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
+            input_basis = PSY.CU,
         )
         PSY.add_component!(sys, b)
         buses[n] = b
@@ -972,6 +979,7 @@ function _mk_bus_system(n::Int)
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
+            input_basis = PSY.CU,
         )
         add_component!(sys, b)
         push!(buses, b)
@@ -1005,11 +1013,13 @@ function _mk_detached_pst_fixture()
         number = 1, name = "b1", available = true, bustype = ACBusTypes.REF,
         angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 230.0,
+        input_basis = PSY.CU,
     )
     b2 = ACBus(;
         number = 2, name = "b2", available = true, bustype = ACBusTypes.PV,
         angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 230.0,
+        input_basis = PSY.CU,
     )
     function _mk_fixture_line(name)
         return Line(; input_basis = PSY.CU,
@@ -1167,6 +1177,7 @@ function _add_star_buses!(sys, busD; numbers = (101, 102, 103))
             base_voltage = 230.0,
             area = PSY.get_area(busD),
             load_zone = PSY.get_load_zone(busD),
+            input_basis = PSY.CU,
         )
         PSY.add_component!(sys, b)
         b

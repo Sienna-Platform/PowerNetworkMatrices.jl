@@ -88,6 +88,7 @@ end
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.05),
         base_voltage = 100.0,
+        input_basis = PSY.CU,
     )
     add_component!(sys_single, bus)
     ybus_single = Ybus(sys_single)

@@ -188,6 +188,7 @@ function test_ybus_equivalence_branches_parallel(vector_branches)
         base_voltage = 1.0,
         area = nothing,
         load_zone = nothing,
+        input_basis = PSY.CU,
     )
     bus2 = ACBus(;
         number = 2,
@@ -200,6 +201,7 @@ function test_ybus_equivalence_branches_parallel(vector_branches)
         base_voltage = 1.0,
         area = nothing,
         load_zone = nothing,
+        input_basis = PSY.CU,
     )
 
     add_component!(sys, bus1)
@@ -297,6 +299,7 @@ function test_ybus_equivalence_branches_series(vector_branches)
             base_voltage = 1.0,
             area = nothing,
             load_zone = nothing,
+            input_basis = PSY.CU,
         )
         add_component!(sys, bus)
     end

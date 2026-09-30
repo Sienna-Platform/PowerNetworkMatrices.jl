@@ -97,6 +97,7 @@ end
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
+            input_basis = PSY.CU,
         )
         add_component!(sys, b)
         push!(buses, b)
@@ -212,6 +213,7 @@ end
             base_voltage = 1.0,
             area = nothing,
             load_zone = nothing,
+            input_basis = PSY.CU,
         )
         add_component!(sys, bus)
     end

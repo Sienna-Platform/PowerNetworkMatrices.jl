@@ -35,6 +35,7 @@ function _build_meshed_3wt_loop_system()
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 138.0,
+        input_basis = PSY.CU,
     )
     b1 = mkbus(1, "B1", PSY.ACBusTypes.REF)
     b2 = mkbus(2, "B2", PSY.ACBusTypes.PV)
@@ -350,6 +351,7 @@ function _build_two_composite_arcs_system()
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
+            input_basis = PSY.CU,
         )
         PSY.add_component!(sys, b)
         buses[n] = b

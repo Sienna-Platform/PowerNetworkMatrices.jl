@@ -131,6 +131,7 @@ end
             magnitude = 1.1,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
+            input_basis = PSY.CU,
         ),
     )
     PSY.add_component!(
@@ -144,6 +145,7 @@ end
             magnitude = 1.1,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
+            input_basis = PSY.CU,
         ),
     )
     ptdf_1 = PTDF(sys_1)
@@ -164,6 +166,7 @@ end
             magnitude = 1.1,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
+            input_basis = PSY.CU,
         ),
     )
 

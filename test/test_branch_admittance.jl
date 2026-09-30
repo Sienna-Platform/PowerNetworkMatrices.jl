@@ -331,6 +331,7 @@ end
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 138.0,
+        input_basis = PSY.CU,
     )
     busB = PSY.ACBus(;
         number = 2,
@@ -341,6 +342,7 @@ end
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 138.0,
+        input_basis = PSY.CU,
     )
     PSY.add_component!(sys, busA)
     PSY.add_component!(sys, busB)
@@ -403,6 +405,7 @@ end
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 138.0,
+            input_basis = PSY.CU,
         )
         busB = PSY.ACBus(;
             number = 2,
@@ -413,6 +416,7 @@ end
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 138.0,
+            input_basis = PSY.CU,
         )
         PSY.add_component!(sys, busA)
         PSY.add_component!(sys, busB)

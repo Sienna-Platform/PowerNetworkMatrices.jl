@@ -202,6 +202,7 @@ end
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.05),
         base_voltage = 69.0,
+        input_basis = PSY.CU,
     )
     add_component!(sys_with_isolated, bus6)
     bus5 = get_component(ACBus, sys_with_isolated, "nodeD")
@@ -251,6 +252,7 @@ end
         number = 6, name = "Bus 6", available = true, bustype = ACBusTypes.REF,
         angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.05),
         base_voltage = 69.0,
+        input_basis = PSY.CU,
     )
     add_component!(sys, bus6)
     add_component!(

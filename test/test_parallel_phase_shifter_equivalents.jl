@@ -348,6 +348,7 @@ function _mk_3w_winding_line_parallel_system(; line_r = 0.05, line_x = 0.15)
         number = 4, name = "star", available = true, bustype = ACBusTypes.PQ,
         angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 230.0,
+        input_basis = PSY.CU,
     )
     add_component!(sys, star)
     arc1 = Arc(; from = buses[1], to = star)

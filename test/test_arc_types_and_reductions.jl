@@ -93,6 +93,7 @@ end
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 230.0,
+        input_basis = PSY.CU,
     )
     bus2 = PSY.ACBus(;
         number = 102,
@@ -103,6 +104,7 @@ end
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 230.0,
+        input_basis = PSY.CU,
     )
     line = PSY.Line(; input_basis = PSY.CU,
         name = "mixed_line",
