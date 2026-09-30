@@ -31,10 +31,6 @@ struct BA_Matrix{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
     branch_catalog::BranchCatalog
 end
 
-get_axes(M::BA_Matrix) = M.axes
-get_lookup(M::BA_Matrix) = M.lookup
-get_ref_bus(M::BA_Matrix) = sort!(collect(keys(M.subnetwork_axes)))
-get_branch_catalog(M::BA_Matrix) = M.branch_catalog
 get_bus_axis(M::BA_Matrix) = M.axes[1]
 get_bus_lookup(M::BA_Matrix) = M.lookup[1]
 get_arc_axis(M::BA_Matrix) = M.axes[2]
@@ -55,8 +51,6 @@ and then computing the branch-bus incidence matrix weighted by branch susceptanc
         Vector of network reduction algorithms to apply before matrix construction
 - `include_constant_impedance_loads::Bool=true`:
         Whether to include constant impedance loads as shunt admittances in the network model
-- `subnetwork_algorithm=iterative_union_find`:
-        Algorithm used for identifying electrical islands and connected components
 - Additional keyword arguments are passed to the underlying `Ybus` constructor
 
 # Returns
@@ -116,11 +110,10 @@ function BA_Matrix(ybus::Ybus)
     BA_I = Vector{Int}(undef, n_entries)
     BA_J = Vector{Int}(undef, n_entries)
     BA_V = Vector{Float64}(undef, n_entries)
-    nr_data = get_network_reduction_data(ybus)
     for (ix_arc, arc) in enumerate(arc_ax)
         ix_from_bus = get_bus_index(arc[1], bus_lookup, nr)
         ix_to_bus = get_bus_index(arc[2], bus_lookup, nr)
-        b = _ba_arc_susceptance(nr_data, arc)
+        b = _ba_arc_susceptance(nr, arc)
         # A NaN/Inf in BA would poison every downstream factorization.
         if !isfinite(b)
             error(
@@ -172,12 +165,6 @@ power flow analysis, sensitivity calculations, and linear power system studies.
 - `branch_catalog::BranchCatalog`:
         Container for network reduction information applied during matrix construction
 
-# Mathematical Properties
-- **Matrix Form**: ABA = A^T * B * A (bus susceptance matrix)
-- **Dimensions**: (n_buses - n_ref) × (n_buses - n_ref)
-- **Symmetry**: Positive definite symmetric matrix (for connected networks)
-- **Sparsity**: Inherits sparsity pattern from network topology
-
 # Notes
 - Reference buses are excluded from the matrix to ensure invertibility
 - Factorization enables efficient solving of linear systems Ax = b
@@ -198,11 +185,7 @@ struct ABA_Matrix{
     branch_catalog::BranchCatalog
 end
 
-get_axes(M::ABA_Matrix) = M.axes
-get_lookup(M::ABA_Matrix) = M.lookup
-get_ref_bus(M::ABA_Matrix) = sort!(collect(keys(M.subnetwork_axes)))
 get_ref_bus_position(M::ABA_Matrix) = M.ref_bus_position
-get_branch_catalog(M::ABA_Matrix) = M.branch_catalog
 get_bus_axis(M::ABA_Matrix) = M.axes[1]
 get_bus_lookup(M::ABA_Matrix) = M.lookup[1]
 
@@ -226,8 +209,6 @@ for DC power flow analysis and power system sensitivity studies.
         Vector of network reduction algorithms to apply before matrix construction
 - `include_constant_impedance_loads::Bool=true`:
         Whether to include constant impedance loads as shunt admittances in the network model
-- `subnetwork_algorithm=iterative_union_find`:
-        Algorithm used for identifying electrical islands and connected components
 - Additional keyword arguments are passed to the underlying `Ybus` constructor
 
 # Returns
@@ -235,14 +216,6 @@ for DC power flow analysis and power system sensitivity studies.
   - Bus susceptance matrix data (excluding reference buses)
   - Network topology information and reference bus positions
   - Optional factorization for efficient solving
-
-# Mathematical Process
-1. **Ybus Construction**: Creates admittance matrix from system data
-2. **Incidence Matrix**: Computes bus-branch incidence matrix A
-3. **BA Matrix**: Forms branch susceptance weighted incidence matrix
-4. **ABA Computation**: Calculates A^T * B * A (bus susceptance matrix)
-5. **Reference Bus Removal**: Excludes reference buses for invertibility
-6. **Optional Factorization**: Performs the factorization with the selected backend if requested
 
 # Notes
 - Reference buses are automatically detected and excluded from the final matrix
@@ -287,13 +260,6 @@ via the computed Ybus matrix.
   - Bus susceptance matrix data (excluding reference buses)
   - Network topology information and reference bus positions
   - Optional factorization for efficient solving
-
-# Mathematical Process
-1. **Incidence Matrix**: Computes bus-branch incidence matrix A (from Ybus matrix)
-2. **BA Matrix**: Forms branch susceptance weighted incidence matrix
-3. **ABA Computation**: Calculates A^T * B * A (bus susceptance matrix)
-4. **Reference Bus Removal**: Excludes reference buses for invertibility
-5. **Optional Factorization**: Performs the factorization with the selected backend if requested
 
 # Notes
 - Reference buses are automatically detected and excluded from the final matrix

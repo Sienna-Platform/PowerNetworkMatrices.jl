@@ -320,7 +320,7 @@ composite arc's endpoints host an injector, so a `WardReduction` naming only [1,
 study buses drops bus 4 and, with it, the whole (2, 4) composite arc — while (1, 3) survives
 untouched in `parallel_branch_map`.
 
-This is the system used to exercise `_remake_reverse_parallel_branch_map!`: removing the
+This is the system used to exercise `_remake_reverse_composite_branch_map`: removing the
 (2, 4) composite arc forces the reverse-map rebuild, and since that rebuild recomputes the
 map from every surviving entry in `parallel_branch_map`, the (1, 3) composite arc's
 recursive registration goes through the rebuild too even though it was never itself removed.

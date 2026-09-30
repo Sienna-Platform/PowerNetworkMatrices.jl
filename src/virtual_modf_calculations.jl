@@ -29,9 +29,6 @@ serializes through the process-wide `_LIBKLU_LOCK`.
         Shared factorization/topology container (see [`VirtualFactorCore`](@ref)).
         `PTDF_A_diag` and `branch_susceptances_by_arc` are computed lazily on the
         core and shared with any other wrapper using the same core.
-- `dist_slack::Vector{Float64}`:
-        Distributed slack bus weights (retained for API symmetry; not used by the
-        Woodbury kernel).
 - `contingency_cache::Dict{Int, ContingencySpec}`:
         Resolved contingencies keyed by outage UUID.
 - `woodbury_cache::Dict{NetworkModification, WoodburyFactors}`:
@@ -44,7 +41,6 @@ serializes through the process-wide `_LIBKLU_LOCK`.
 struct VirtualMODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}, K} <:
        PowerNetworkMatrix{Float64}
     core::VirtualFactorCore{Ax, L, K}
-    dist_slack::Vector{Float64}
     contingency_cache::Dict{Int, ContingencySpec}
     woodbury_cache::Dict{NetworkModification, WoodburyFactors}
     row_caches::Dict{NetworkModification, RowCache{RowCacheValue}}
@@ -58,7 +54,6 @@ end
 # lazy compute (and back-compat reads like `vmodf.PTDF_A_diag` keep working).
 function Base.getproperty(vmodf::VirtualMODF, name::Symbol)
     if name === :core ||
-       name === :dist_slack ||
        name === :contingency_cache ||
        name === :woodbury_cache ||
        name === :row_caches ||
@@ -77,28 +72,19 @@ end
 # above), so the rest of the file reads the wrapper's own fields through proper
 # accessors instead of `getfield`.
 get_core(M::VirtualMODF) = getfield(M, :core)
-get_dist_slack(M::VirtualMODF) = getfield(M, :dist_slack)
-get_contingency_cache(M::VirtualMODF) = getfield(M, :contingency_cache)
 get_woodbury_cache(M::VirtualMODF) = getfield(M, :woodbury_cache)
 get_row_caches(M::VirtualMODF) = getfield(M, :row_caches)
 get_max_cache_size_bytes(M::VirtualMODF) = getfield(M, :max_cache_size_bytes)
 
-get_axes(M::VirtualMODF) = get_axes(get_core(M))
-get_lookup(M::VirtualMODF) = get_lookup(get_core(M))
-get_ref_bus(M::VirtualMODF) = get_ref_bus(get_core(M))
-get_ref_bus_position(M::VirtualMODF) = get_ref_bus_position(get_core(M))
-get_network_reduction_data(M::VirtualMODF) = get_network_reduction_data(get_core(M))
-get_branch_catalog(M::VirtualMODF) = get_branch_catalog(get_core(M))
-get_arc_lookup(M::VirtualMODF) = get_arc_lookup(get_core(M))
-get_bus_lookup(M::VirtualMODF) = get_bus_lookup(get_core(M))
-get_arc_axis(M::VirtualMODF) = get_arc_axis(get_core(M))
-get_bus_axis(M::VirtualMODF) = get_bus_axis(get_core(M))
-get_tol(M::VirtualMODF) = get_tol(get_core(M))
-get_cutoff(M::VirtualMODF) = get_cutoff(get_core(M))
-get_system_uuid(M::VirtualMODF) = get_system_uuid(get_core(M))
-_get_BA(M::VirtualMODF) = _get_BA(get_core(M))
-_get_arc_susceptances(M::VirtualMODF) = _get_arc_susceptances(get_core(M))
-_get_valid_ix(M::VirtualMODF) = _get_valid_ix(get_core(M))
+# Accessors forward to the core; VirtualPTDF and VirtualMODF share them.
+for f in (
+    :get_axes, :get_lookup, :get_ref_bus, :get_ref_bus_position,
+    :get_network_reduction_data, :get_branch_catalog, :get_arc_lookup, :get_bus_lookup,
+    :get_arc_axis, :get_bus_axis, :get_tol, :get_cutoff, :get_system_uuid,
+    :_get_BA, :_get_arc_susceptances, :_get_valid_ix,
+)
+    @eval $f(M::Union{VirtualPTDF, VirtualMODF}) = $f(get_core(M))
+end
 
 """
 $(TYPEDSIGNATURES)
@@ -108,28 +94,12 @@ call and returns the cached vector thereafter.
 """
 get_PTDF_A_diag(vmodf::VirtualMODF) = get_PTDF_A_diag(get_core(vmodf))
 
-# Woodbury kernel outer dispatchers forward to the shared core method.
-function _compute_woodbury_factors(
-    mat::VirtualMODF,
-    modifications::Tuple{Vararg{ArcModification}},
-)::WoodburyFactors
-    return _compute_woodbury_factors(get_core(mat), modifications)
-end
-
-function _apply_woodbury_correction(
-    mat::VirtualMODF,
-    monitored_idx::Int,
-    wf::WoodburyFactors,
-)::Vector{Float64}
-    return _apply_woodbury_correction(get_core(mat), monitored_idx, wf)
-end
-
 """
     get_registered_contingencies(vmodf::VirtualMODF) -> Dict{Int, ContingencySpec}
 
 Return the cached contingency registrations for inspection.
 """
-get_registered_contingencies(vmodf::VirtualMODF) = get_contingency_cache(vmodf)
+get_registered_contingencies(vmodf::VirtualMODF) = getfield(vmodf, :contingency_cache)
 
 # --- Base interface ---
 
@@ -139,13 +109,13 @@ function Base.show(io::IO, ::MIME{Symbol("text/plain")}, array::VirtualMODF)
     println(io, ":")
     print(
         io,
-        "VirtualMODF with $(length(get_contingency_cache(array))) registered contingencies",
+        "VirtualMODF with $(length(get_registered_contingencies(array))) registered contingencies",
     )
     return
 end
 
 function Base.isempty(vmodf::VirtualMODF)
-    return isempty(get_contingency_cache(vmodf))
+    return isempty(get_registered_contingencies(vmodf))
 end
 
 function Base.size(vmodf::VirtualMODF)
@@ -177,7 +147,6 @@ survive every reduction step, including the zero-impedance reduction that is
 auto-applied during `Ybus` construction.
 
 # Keyword Arguments
-- `dist_slack::Vector{Float64}`: Distributed slack weights (default: empty)
 - `linear_solver::String = _default_linear_solver()`: Linear solver for the
         ABA factorization. Options: "KLU", "AppleAccelerate". Defaults to
         "AppleAccelerate" on macOS and "KLU" elsewhere.
@@ -191,7 +160,6 @@ auto-applied during `Ybus` construction.
 """
 function VirtualMODF(
     sys::PSY.System;
-    dist_slack::Vector{Float64} = Float64[],
     linear_solver::String = _default_linear_solver(),
     tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
@@ -200,9 +168,6 @@ function VirtualMODF(
     automatically_register_outages::Bool = true,
     kwargs...,
 )
-    if !isempty(dist_slack)
-        @info "Distributed bus"
-    end
     # Accept any iterable of bus numbers and normalize once, matching `Ybus`.
     irreducible_buses = Set{Int}(irreducible_buses)
     resolve_linear_solver(linear_solver)
@@ -250,7 +215,6 @@ function VirtualMODF(
     return VirtualMODF(
         core,
         sys;
-        dist_slack = dist_slack,
         max_cache_size = max_cache_size,
         automatically_register_outages = automatically_register_outages,
     )
@@ -270,14 +234,12 @@ the core with those buses in `irreducible_buses`, or build from the system inste
 function VirtualMODF(
     core::VirtualFactorCore,
     sys::PSY.System;
-    dist_slack::Vector{Float64} = Float64[],
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     automatically_register_outages::Bool = true,
 )
     max_cache_bytes = max_cache_size * MiB
     vmodf = VirtualMODF(
         core,
-        dist_slack,
         Dict{Int, ContingencySpec}(),
         Dict{NetworkModification, WoodburyFactors}(),
         Dict{NetworkModification, RowCache{RowCacheValue}}(),
@@ -381,7 +343,7 @@ Resolve an Outage supplemental attribute to a ContingencySpec and cache it.
 Delegates to `NetworkModification(mat, sys, outage)` for the resolution logic.
 """
 function _register_outage!(vmodf::VirtualMODF, sys::PSY.System, outage::PSY.Outage)
-    contingency_cache = get_contingency_cache(vmodf)
+    contingency_cache = get_registered_contingencies(vmodf)
     outage_id = IS.get_id(outage)
     if haskey(contingency_cache, outage_id)
         @warn "Outage with UUID $(outage_id) is already registered; skipping."
@@ -511,21 +473,10 @@ The outage must have been registered at VirtualMODF construction time.
 $(TYPEDSIGNATURES)
 """
 function Base.getindex(vmodf::VirtualMODF, monitored::Int, outage::PSY.Outage)
-    core = get_core(vmodf)
-    contingency_cache = get_contingency_cache(vmodf)
-    outage_id = IS.get_id(outage)
     # Pair with the locked `empty!` in `clear_all_caches!`; without it, a
-    # concurrent clear could rehash `contingency_cache` mid-lookup.
-    ctg = @lock core.solver_lock begin
-        if !haskey(contingency_cache, outage_id)
-            error(
-                "Outage (UUID=$outage_id) is not registered. " *
-                "Construct VirtualMODF with the system containing this outage.",
-            )
-        end
-        contingency_cache[outage_id]
-    end
-    return vmodf[monitored, ctg.modification]
+    # concurrent clear could rehash the contingency cache mid-lookup.
+    mod = @lock get_core(vmodf).solver_lock _resolve_modification(vmodf, outage)
+    return vmodf[monitored, mod]
 end
 
 """
@@ -564,7 +515,7 @@ computation cache memory.
 function clear_all_caches!(vmodf::VirtualMODF)
     core = get_core(vmodf)
     @lock core.solver_lock begin
-        empty!(get_contingency_cache(vmodf))
+        empty!(get_registered_contingencies(vmodf))
         empty!(get_woodbury_cache(vmodf))
         empty!(get_row_caches(vmodf))
     end

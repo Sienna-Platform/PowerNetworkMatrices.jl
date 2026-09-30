@@ -33,11 +33,9 @@ _warn_or_rethrow_missing_component(::ArgumentError, uuid) =
           "cannot protect it from reduction."
 _warn_or_rethrow_missing_component(e, uuid) = rethrow()
 
-function _accumulate_monitored_buses!(
-    buses::Set{Int},
-    sys::PSY.System,
-    outage::PSY.Outage,
-)
+# Call `f(component)` for each component `outage` declares monitored; a stale UUID warns and
+# is skipped.
+function _foreach_monitored_component(f, sys::PSY.System, outage::PSY.Outage)
     for uuid in PSY.get_monitored_components(outage)
         local component
         try
@@ -46,7 +44,7 @@ function _accumulate_monitored_buses!(
             _warn_or_rethrow_missing_component(e, uuid)
             continue
         end
-        _accumulate_protected_buses!(buses, component)
+        f(component)
     end
     return
 end
@@ -67,7 +65,11 @@ function _collect_protected_buses(sys::PSY.System)
         for component in PSY.get_associated_components(sys, outage)
             _accumulate_protected_buses!(buses, component)
         end
-        _accumulate_monitored_buses!(buses, sys, outage)
+        _foreach_monitored_component(
+            c -> _accumulate_protected_buses!(buses, c),
+            sys,
+            outage,
+        )
     end
     return buses
 end
@@ -90,16 +92,7 @@ function _contingency_relevant_branches(sys::PSY.System)
         for component in PSY.get_associated_components(sys, outage)
             _push_if_branch!(branches, component)
         end
-        for uuid in PSY.get_monitored_components(outage)
-            local component
-            try
-                component = IS.get_component(sys, uuid)
-            catch e
-                _warn_or_rethrow_missing_component(e, uuid)
-                continue
-            end
-            _push_if_branch!(branches, component)
-        end
+        _foreach_monitored_component(c -> _push_if_branch!(branches, c), sys, outage)
     end
     return branches
 end

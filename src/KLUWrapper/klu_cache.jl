@@ -54,7 +54,6 @@ Base.size(cache::KLULinSolveCache) = (n = Int(_dim(cache)); (n, n))
 Base.size(cache::KLULinSolveCache, d::Integer) =
     d <= 2 ? Int(_dim(cache)) : 1
 Base.eltype(::Type{KLULinSolveCache{Tv, Ti}}) where {Tv, Ti} = Tv
-get_reuse_symbolic(cache::KLULinSolveCache) = cache.reuse_symbolic
 
 """
     is_factored(cache::KLULinSolveCache) -> Bool
@@ -66,10 +65,6 @@ finalized.
 """
 is_factored(cache::KLULinSolveCache) =
     cache.symbolic != C_NULL && cache.numeric != C_NULL
-
-# A cache holds at most one valid factorization; `is_factored` is the
-# truthy form. Kept around for tests that want a uniform numeric reading.
-n_valid(cache::KLULinSolveCache) = is_factored(cache) ? 1 : 0
 
 # ---------------------------------------------------------------------------
 # Type-paired dispatch helpers — (Tv, Ti) → libklu entry point
@@ -386,13 +381,7 @@ end
     return nothing
 end
 
-# Performance-knob dispatchers — Float64 only. libklu exposes these in the
-# ComplexF64 build too; we'll add bindings if a consumer asks.
-@inline _sort_call(::Type{Int32}, sym, num, common) =
-    klu_sort(reinterpret(SymbolicPtr32, sym), reinterpret(NumericPtr32, num), common)
-@inline _sort_call(::Type{Int64}, sym, num, common) =
-    klu_l_sort(reinterpret(SymbolicPtr, sym), reinterpret(NumericPtr, num), common)
-
+# Float64 only.
 @inline _condest_call(::Type{Int32}, ap, ax, sym, num, common) =
     klu_condest(
         ap,
@@ -409,11 +398,6 @@ end
         reinterpret(NumericPtr, num),
         common,
     )
-
-@inline _rcond_call(::Type{Int32}, sym, num, common) =
-    klu_rcond(reinterpret(SymbolicPtr32, sym), reinterpret(NumericPtr32, num), common)
-@inline _rcond_call(::Type{Int64}, sym, num, common) =
-    klu_l_rcond(reinterpret(SymbolicPtr, sym), reinterpret(NumericPtr, num), common)
 
 # ---------------------------------------------------------------------------
 # Constructor
@@ -751,31 +735,6 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    sort_factors!(cache) -> cache
-
-Sort the columns of the cached L and U factors in place via libklu's
-`klu_sort` / `klu_l_sort`. KLU's numeric phase stores factor columns in
-arbitrary order; sorting once after the first factor improves cache locality
-on every subsequent `solve!` / `tsolve!`. The cost is `O(nnz_factor)` and
-is amortized over many repeated solves — a win whenever the cache is used
-for ≥ a few solves on the same factorization.
-
-Idempotent and `refactor`-stable: sorting after the initial factor persists
-through `numeric_refactor!` because refactor preserves the column layout.
-Only call this if the cache will be reused for multiple solves; for a
-one-shot solve it is pure overhead.
-
-Float64 only.
-"""
-function sort_factors!(cache::KLULinSolveCache{Float64, Ti}) where {Ti}
-    is_factored(cache) ||
-        error("sort_factors!: cache must be factored before sorting.")
-    ok = _sort_call(Ti, cache.symbolic, cache.numeric, cache.common)
-    ok != 1 && klu_throw(cache.common[], "klu_sort")
-    return cache
-end
-
-"""
     condest!(cache) -> Float64
 
 Compute the 1-norm condition-number estimate of the cached factorization
@@ -805,22 +764,4 @@ function condest!(
     )
     ok != 1 && klu_throw(cache.common[], "klu_condest")
     return Float64(cache.common[].condest)
-end
-
-"""
-    rcond!(cache) -> Float64
-
-Compute the cheap reciprocal-condition estimate
-`min(|diag(U)|)/max(|diag(U)|)` via libklu's `klu_rcond`. The result lands
-in `cache.common[].rcond` and is also returned. Faster than `condest!` but
-less reliable as a conditioning indicator.
-
-Float64 only.
-"""
-function rcond!(cache::KLULinSolveCache{Float64, Ti}) where {Ti}
-    is_factored(cache) ||
-        error("rcond!: cache must be factored before rcond.")
-    ok = _rcond_call(Ti, cache.symbolic, cache.numeric, cache.common)
-    ok != 1 && klu_throw(cache.common[], "klu_rcond")
-    return Float64(cache.common[].rcond)
 end

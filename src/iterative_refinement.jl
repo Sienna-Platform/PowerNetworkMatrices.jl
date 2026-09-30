@@ -42,7 +42,7 @@ does not mutate `cache`'s factor; it only triggers in-place `solve!` calls
 on a residual buffer.
 
 `max_iters` caps the refinement loop (default
-`DEFAULT_REFINEMENT_MAX_ITER`). The default `tol` is `sqrt(eps(real(Tv)))`,
+`DEFAULT_REFINEMENT_MAX_ITER`). The default `tol` is `sqrt(eps(real(eltype(B))))`,
 which is conservative for power-flow Newton-Raphson Jacobians.
 
 Useful when the cached factor is of an ill-conditioned matrix — e.g.,
@@ -52,34 +52,12 @@ convergence. Cost per refinement iteration: one sparse matrix-vector
 product plus one `solve!` against the cached factor.
 """
 function solve_w_refinement!(
-    cache::KLULinSolveCache{Tv, Ti},
-    A::SparseArrays.SparseMatrixCSC{Tv, Ti},
-    X::StridedVecOrMat{Tv},
-    B::StridedVecOrMat{Tv};
-    tol::Real = sqrt(eps(real(Tv))),
-    max_iters::Int = DEFAULT_REFINEMENT_MAX_ITER,
-) where {Tv, Ti}
-    return _solve_w_refinement_body!(cache, A, X, B, tol, max_iters)
-end
-
-function solve_w_refinement!(
-    cache::AAFactorCache,
-    A::SparseArrays.SparseMatrixCSC{Cdouble, <:Integer},
-    X::StridedVecOrMat{Cdouble},
-    B::StridedVecOrMat{Cdouble};
-    tol::Real = sqrt(eps(Cdouble)),
-    max_iters::Int = DEFAULT_REFINEMENT_MAX_ITER,
-)
-    return _solve_w_refinement_body!(cache, A, X, B, tol, max_iters)
-end
-
-function _solve_w_refinement_body!(
-    cache,
+    cache::Union{KLULinSolveCache, AAFactorCache},
     A::SparseArrays.SparseMatrixCSC,
     X::StridedVecOrMat,
-    B::StridedVecOrMat,
-    tol::Real,
-    max_iters::Int,
+    B::StridedVecOrMat;
+    tol::Real = sqrt(eps(real(eltype(B)))),
+    max_iters::Int = DEFAULT_REFINEMENT_MAX_ITER,
 )
     _refine_is_factored(cache) || error(
         "solve_w_refinement!: cache must be factored. " *
@@ -125,24 +103,10 @@ Allocating wrapper around `solve_w_refinement!`. Allocates `X` matching
 `B`'s shape, then refines.
 """
 function solve_w_refinement(
-    cache::KLULinSolveCache{Tv, Ti},
-    A::SparseArrays.SparseMatrixCSC{Tv, Ti},
-    B::StridedVecOrMat{Tv};
-    tol::Real = sqrt(eps(real(Tv))),
-    max_iters::Int = DEFAULT_REFINEMENT_MAX_ITER,
-) where {Tv, Ti}
-    X = similar(B)
-    return solve_w_refinement!(
-        cache, A, X, B;
-        tol = tol, max_iters = max_iters,
-    )
-end
-
-function solve_w_refinement(
-    cache::AAFactorCache,
-    A::SparseArrays.SparseMatrixCSC{Cdouble, <:Integer},
-    B::StridedVecOrMat{Cdouble};
-    tol::Real = sqrt(eps(Cdouble)),
+    cache::Union{KLULinSolveCache, AAFactorCache},
+    A::SparseArrays.SparseMatrixCSC,
+    B::StridedVecOrMat;
+    tol::Real = sqrt(eps(real(eltype(B)))),
     max_iters::Int = DEFAULT_REFINEMENT_MAX_ITER,
 )
     X = similar(B)

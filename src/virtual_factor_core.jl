@@ -107,20 +107,8 @@ _get_BA(c::VirtualFactorCore) = c.BA
 _get_arc_susceptances(c::VirtualFactorCore) = c.arc_susceptances
 _get_valid_ix(c::VirtualFactorCore) = c.valid_ix
 
-function _ref_bus_positions(c::VirtualFactorCore)
-    n_buses = length(c.axes[2])
-    return Set{Int}(setdiff(1:n_buses, c.valid_ix))
-end
-
 # --- Lazy shared derived quantities ---
 
-"""
-    get_PTDF_A_diag(c::VirtualFactorCore) -> Vector{Float64}
-
-Return the raw diagonal `H[e, e]` of `PTDF · A`, computing it (one solve per
-arc) on first access and caching it on the core. Subsequent calls — including
-from other wrappers sharing this core — return the cached vector.
-"""
 # Double-checked publish for a lazy shared vector: `compute` runs once under `lock` and
 # `dest` is filled in place before `ready` is set, so a throw mid-compute leaves the flag
 # unset and a retry does not append a second copy.
@@ -140,12 +128,19 @@ function _publish_once!(
     end
 end
 
+"""
+    get_PTDF_A_diag(c::VirtualFactorCore) -> Vector{Float64}
+
+Return the raw diagonal `H[e, e]` of `PTDF · A`, computing it (one solve per
+arc) on first access and caching it on the core. Subsequent calls — including
+from other wrappers sharing this core — return the cached vector.
+"""
 function get_PTDF_A_diag(c::VirtualFactorCore)
     return _publish_once!(c.PTDF_A_diag, c.PTDF_A_diag_ready, c.solver_lock) do
         n_arcs = length(c.axes[1])
         @info "Computing PTDF_A_diag on first access ($n_arcs arcs)."
         t0 = time_ns()
-        new_diag = _get_PTDF_A_diag(c.K, c.BA, c.A, _ref_bus_positions(c))
+        new_diag = _get_PTDF_A_diag(c.K, c.BA, c.A, c.valid_ix, c.bus_to_valid_idx)
         elapsed = (time_ns() - t0) / 1e9
         @info "Computed PTDF_A_diag in $(round(elapsed; digits = 2)) s (cached)."
         new_diag

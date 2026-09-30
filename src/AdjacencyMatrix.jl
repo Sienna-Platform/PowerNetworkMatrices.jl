@@ -49,10 +49,6 @@ struct AdjacencyMatrix{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
 end
 
 # functions to get stored data
-get_axes(M::AdjacencyMatrix) = M.axes
-get_lookup(M::AdjacencyMatrix) = M.lookup
-get_ref_bus(M::AdjacencyMatrix) = sort!(collect(keys(M.subnetwork_axes)))
-get_branch_catalog(M::AdjacencyMatrix) = M.branch_catalog
 get_bus_axis(M::AdjacencyMatrix) = M.axes[1]
 get_bus_lookup(M::AdjacencyMatrix) = M.lookup[1]
 
@@ -101,7 +97,6 @@ Construct an AdjacencyMatrix from a PowerSystems.System.
 # Keyword arguments
 - `network_reductions::Vector{NetworkReduction}=[]`: Network reduction algorithms to apply
 - `include_constant_impedance_loads::Bool=true`: Whether to include constant impedance loads as shunt admittances
-- `subnetwork_algorithm=iterative_union_find`: Algorithm for finding electrical islands
 
 # Returns
 - `AdjacencyMatrix`: An N x N adjacency matrix indexed with bus numbers showing connectivity

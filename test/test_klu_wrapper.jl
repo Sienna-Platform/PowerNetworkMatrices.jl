@@ -326,24 +326,20 @@ end
 # Performance-knob surface
 # ---------------------------------------------------------------------------
 
-@testset "KLU wrapper: sort_factors!/condest!/rcond! work on both index types" begin
+@testset "KLU wrapper: condest! works on both index types" begin
     n = 60
     A64 = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 1.0,
         1 => fill(0.1, n - 1), -1 => fill(0.1, n - 1))
     A32 = SparseArrays.SparseMatrixCSC{Float64, Int32}(A64)
 
     for cache in (PNM.klu_factorize(A64), PNM.klu_factorize(A32))
-        PNM.KLUWrapper.sort_factors!(cache)
-        # Subsequent solve still returns the right answer.
         b = randn(n)
         y = copy(b)
         PNM.solve!(cache, y)
         @test isapprox(y, A64 \ b, atol = 1e-10)
 
         c = PNM.KLUWrapper.condest!(cache)
-        r = PNM.KLUWrapper.rcond!(cache)
         @test c > 0
-        @test 0 < r <= 1.0
     end
 end
 

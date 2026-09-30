@@ -58,15 +58,9 @@ function invalidate_equivalent_ybus!(segment)
     return
 end
 
-function add_branch!(bp::BranchesParallel{T}, branch::T) where {T <: PSY.ACTransmission}
+function add_branch!(bp::AbstractBranchesParallel, branch::PSY.ACTransmission)
     push!(bp.branches, branch)
     invalidate_equivalent_ybus!(bp)
-    return
-end
-
-function add_branch!(mbp::MixedBranchesParallel, branch::PSY.ACTransmission)
-    push!(mbp.branches, branch)
-    invalidate_equivalent_ybus!(mbp)
     return
 end
 
@@ -176,15 +170,6 @@ function compute_parallel_multiplier(
 )
     _require_epsilon_independent(parallel_branch_set)
     return _parallel_multiplier(parallel_branch_set, branch, ZERO_IMPEDANCE_X_EPSILON)
-end
-
-function get_series_susceptance(
-    segment::AbstractBranchesParallel,
-    units::IS.AbstractUnitSystem,
-)
-    v = _series_susceptance_raw(segment, units)
-    isfinite(v) || _throw_non_finite_susceptance(segment, v)
-    return v
 end
 
 _series_susceptance_raw(
@@ -361,7 +346,7 @@ _entry_matches(group::BranchesParallel, predicate) =
 # representation of its arc.
 function _entry_matches(group::MixedBranchesParallel, predicate)
     _is_unfiltered(predicate) ||
-        _warn_mixed_group("Parallel circuit", _get_segment_components(group))
+        _warn_mixed_group("Parallel circuit", leaf_components(group))
     return all(_entry_matches(member, predicate)::Bool for member in group)
 end
 

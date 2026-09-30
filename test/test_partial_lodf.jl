@@ -67,7 +67,7 @@ end
 
     # Directly test the b_arc == 0 guard by passing a fake arc_idx whose
     # arc_susceptances entry is 0. We do this by temporarily storing 0 and
-    # testing via _getindex_partial (which is internal but directly exercises the guard).
+    # testing via get_partial_lodf_row (which directly exercises the guard).
     # Alternatively, test that arc 1 with b_arc=0 conceptually:
     # The guard returns zeros(n_arcs) when arc_susceptances[idx] == 0.
     # We can test this by checking the actual arc_susceptances values are all positive
@@ -100,7 +100,7 @@ end
 
     # Ground truth: directly apply the Sherman-Morrison formula using a fresh linear solve,
     # independent of the internal work buffers of vlodf.
-    # This validates that _getindex_partial correctly implements the formula:
+    # This validates that get_partial_lodf_row correctly implements the formula:
     #   partial_lodf[ℓ] = α · (b_ℓ / b_e) · H[ℓ,e] / (1 - α · H[e,e])
     # where α = -delta_b / b_e = 1/2 and H[ℓ,e] = (A·(ABA)⁻¹·BA)[ℓ,e].
     n_buses = size(vlodf.A, 2)

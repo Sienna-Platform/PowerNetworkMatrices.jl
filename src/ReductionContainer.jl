@@ -83,28 +83,12 @@ function add_reduction!(r1::ReductionContainer, r2::ReductionContainer)
     end
 end
 
-function Base.:(==)(x::ReductionContainer, y::ReductionContainer)
-    for field in fieldnames(ReductionContainer)
-        if getfield(x, field) != getfield(y, field)
-            return false
-        end
-    end
-    return true
-end
+Base.:(==)(x::ReductionContainer, y::ReductionContainer) = _fieldwise_equal(x, y)
 
 # Configuration fields (user_irreducible_buses, zero_impedance_reduction) don't count
 # toward emptiness; only applied-reduction slots do.
 function Base.isempty(rb::ReductionContainer)
-    if !isnothing(rb.radial_reduction)
-        return false
-    end
-    if !isnothing(rb.degree_two_reduction)
-        return false
-    end
-    if !isnothing(rb.ward_reduction)
-        return false
-    end
-    return true
+    return all(isnothing, (rb.radial_reduction, rb.degree_two_reduction, rb.ward_reduction))
 end
 
 function Base.empty!(rb::ReductionContainer)

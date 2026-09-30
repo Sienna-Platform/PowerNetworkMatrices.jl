@@ -156,24 +156,8 @@ end
 # `label` is intentionally excluded from hash and equality so that physically
 # identical modifications compare equal regardless of naming. The woodbury_cache
 # in VirtualMODF relies on this property for cache hits across naming paths.
-function Base.hash(m::NetworkModification, h::UInt)
-    h = hash(length(m.arc_modifications), h)
-    for mod in m.arc_modifications
-        h = hash(mod.arc_index, h)
-        h = hash(mod.delta_b, h)
-        h = hash(mod.delta_shift_injection, h)
-        h = hash(mod.delta_y11, h)
-        h = hash(mod.delta_y12, h)
-        h = hash(mod.delta_y21, h)
-        h = hash(mod.delta_y22, h)
-    end
-    for smod in m.shunt_modifications
-        h = hash(smod.bus_index, h)
-        h = hash(smod.delta_y, h)
-    end
-    h = hash(m.is_islanding, h)
-    return h
-end
+Base.hash(m::NetworkModification, h::UInt) =
+    hash((m.arc_modifications, m.shunt_modifications, m.is_islanding), h)
 
 Base.:(==)(a::NetworkModification, b::NetworkModification) =
     a.arc_modifications == b.arc_modifications &&

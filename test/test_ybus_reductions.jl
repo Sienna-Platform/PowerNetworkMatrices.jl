@@ -756,7 +756,7 @@ end
 
 @testset "ZeroImpedanceBranchReduction: column merge symmetric when survivor index > removed" begin
     # When ZIR merges a removed bus into a survivor whose bus index is GREATER than the
-    # removed bus's (i > j), `_accumulate_csc_col_into!` must still copy every mutual from
+    # removed bus's (i > j), the column merge must still copy every mutual from
     # the removed column. The old offset bookkeeping only held for i < j, so for i > j a
     # remapped arc's mutual was dropped on one side -> asymmetric Ybus -> BA computes
     # 1/imag(1/0) = NaN. Regression for that index-ordering bug.

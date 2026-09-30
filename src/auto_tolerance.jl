@@ -150,12 +150,9 @@ function _resolve_delta(::Symbol, susceptances::AbstractVector{Float64}, q::Floa
     return delta
 end
 
-_effective_delta(spec::AutoTolerance, susceptances::AbstractVector{Float64}) =
-    _resolve_delta(spec.data_precision, susceptances, spec.quantile)
-
 # Relative per-row cutoff fraction α = clamp(safety · δ, MIN, MAX).
 function _relative_alpha(spec::AutoTolerance, susceptances::AbstractVector{Float64})
-    delta = _effective_delta(spec, susceptances)
+    delta = _resolve_delta(spec.data_precision, susceptances, spec.quantile)
     return clamp(
         spec.safety * delta,
         MIN_RELATIVE_TOLERANCE,
@@ -245,7 +242,7 @@ _dense_tol(::AutoTolerance) = eps(Float64)
 
 # ----------------------------------------------------------------------------
 # Virtual resolvers: produce a `SparsificationCutoff` stored on the matrix and
-# applied per-row in `cached_row_lookup`. A Float64 maps to a fixed absolute
+# applied per-row in `_cached_row`. A Float64 maps to a fixed absolute
 # cutoff (honored at any size). An AutoTolerance maps to a relative cutoff so
 # requested columns of large cases come back sparse — but only at or above
 # AUTO_TOLERANCE_BUS_LIMIT; on smaller systems it is a no-op (exact rows).

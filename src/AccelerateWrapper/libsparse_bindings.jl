@@ -54,13 +54,7 @@ end
 # `SparseAttributes_t` is a packed bitfield in C; Julia can't express that
 # cleanly, so we model it as `Cuint` and assemble the bits ourselves.
 const att_type = Cuint
-const ATT_TRANSPOSE = att_type(1)
-const ATT_UPPER_TRIANGLE = att_type(0)
-const ATT_LOWER_TRIANGLE = att_type(2)
 const ATT_ORDINARY = att_type(0)
-const ATT_TRIANGULAR = att_type(4)
-const ATT_UNIT_TRIANGULAR = att_type(8)
-const ATT_SYMMETRIC = att_type(12)
 
 struct SparseMatrixStructure
     rowCount::Cint
@@ -247,30 +241,6 @@ function _sparse_numeric_factor(
     )::SparseOpaqueFactorization_t
 end
 
-# In-place solve `A · X = B`, where B is a column-major dense matrix and X
-# overwrites B's storage.
-function _sparse_solve_matrix!(
-    factor::SparseOpaqueFactorization_t,
-    B::DenseMatrix_t,
-)
-    @ccall LIBSPARSE._Z11SparseSolve32SparseOpaqueFactorization_Double18DenseMatrix_Double(
-        factor::SparseOpaqueFactorization_t,
-        B::DenseMatrix_t,
-    )::Cvoid
-    return nothing
-end
-
-function _sparse_solve_vector!(
-    factor::SparseOpaqueFactorization_t,
-    b::DenseVector_t,
-)
-    @ccall LIBSPARSE._Z11SparseSolve32SparseOpaqueFactorization_Double18DenseVector_Double(
-        factor::SparseOpaqueFactorization_t,
-        b::DenseVector_t,
-    )::Cvoid
-    return nothing
-end
-
 # Workspace-aware solve overloads (libSparse, macOS 10.13+). The factor
 # exposes `solveWorkspaceRequiredStatic + nrhs * solveWorkspaceRequiredPerRHS`
 # bytes of scratch it needs per call; supplying a reusable buffer eliminates
@@ -312,34 +282,6 @@ end
 )
     return Int(factor.solveWorkspaceRequiredStatic) +
            Int(nrhs) * Int(factor.solveWorkspaceRequiredPerRHS)
-end
-
-# `Y = A · X`, dense multi-column. `Y` must be allocated to (rowCount, ncols)
-# by the caller. libSparse overwrites — does not accumulate.
-function _sparse_multiply_matrix!(
-    A::SparseMatrix_t,
-    X::DenseMatrix_t,
-    Y::DenseMatrix_t,
-)
-    @ccall LIBSPARSE._Z14SparseMultiply19SparseMatrix_Double18DenseMatrix_DoubleS0_(
-        A::SparseMatrix_t,
-        X::DenseMatrix_t,
-        Y::DenseMatrix_t,
-    )::Cvoid
-    return nothing
-end
-
-function _sparse_multiply_vector!(
-    A::SparseMatrix_t,
-    x::DenseVector_t,
-    y::DenseVector_t,
-)
-    @ccall LIBSPARSE._Z14SparseMultiply19SparseMatrix_Double18DenseVector_DoubleS0_(
-        A::SparseMatrix_t,
-        x::DenseVector_t,
-        y::DenseVector_t,
-    )::Cvoid
-    return nothing
 end
 
 # Frees the libSparse-side numeric / symbolic storage attached to an opaque

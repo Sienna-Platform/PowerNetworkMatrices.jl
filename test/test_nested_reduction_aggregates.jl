@@ -33,7 +33,7 @@ _composite_arc(nrd) = only(
 
     # The walk descends group -> chain -> line. Unwrapping one level yields the two
     # `BranchesSeries` members instead of any component.
-    leaves = PNM._get_segment_components(group)
+    leaves = PNM.leaf_components(group)
     @test all(l isa PSY.Line for l in leaves)
     @test Set(PSY.get_name(l) for l in leaves) ==
           Set(["L_1_10", "L_10_11", "L_11_3", "L_1_20", "L_20_21", "L_21_3"])

@@ -11,27 +11,12 @@ _is_full_outage(delta_b::Float64, b_arc::Float64) =
     isapprox(abs(delta_b), abs(b_arc); atol = YBUS_DELTA_TOL, rtol = sqrt(eps(Float32)))
 
 # Negated Pi-model entries: the delta that cancels the arc's contribution (full outage).
-function _negated_pi_model(entries::NTuple{4, <:Complex})::NTuple{4, YBUS_ELTYPE}
-    return (
-        YBUS_ELTYPE(-entries[1]),
-        YBUS_ELTYPE(-entries[2]),
-        YBUS_ELTYPE(-entries[3]),
-        YBUS_ELTYPE(-entries[4]),
-    )
-end
+_negated_pi_model(entries::NTuple{4, <:Complex})::NTuple{4, YBUS_ELTYPE} =
+    map(e -> YBUS_ELTYPE(-e), entries)
 
 # Scaled Pi-model entries: the delta for a partial susceptance change on a direct arc.
-function _scaled_pi_model(
-    entries::NTuple{4, <:Complex},
-    scale::Float64,
-)::NTuple{4, YBUS_ELTYPE}
-    return (
-        YBUS_ELTYPE(scale * entries[1]),
-        YBUS_ELTYPE(scale * entries[2]),
-        YBUS_ELTYPE(scale * entries[3]),
-        YBUS_ELTYPE(scale * entries[4]),
-    )
-end
+_scaled_pi_model(entries::NTuple{4, <:Complex}, scale::Float64)::NTuple{4, YBUS_ELTYPE} =
+    map(e -> YBUS_ELTYPE(scale * e), entries)
 
 """
     _member_outage_ybus_delta(bp, nr, component) -> NTuple{4, YBUS_ELTYPE}
@@ -282,10 +267,7 @@ Construct a `NetworkModification` from a branch component using network
 reduction reverse maps to classify the branch as direct, parallel, or series.
 """
 function NetworkModification(mat::PowerNetworkMatrix, branch::PSY.ACTransmission)
-    nr = get_network_reduction_data(mat)
-    arc_lookup = get_arc_lookup(mat)
-    arc_sus = _get_arc_susceptances(mat)
-    mods = _classify_branch_modification(nr, arc_lookup, arc_sus, branch)
+    _, mods = _classify_outage_components(mat, [branch])
     return NetworkModification(get_name(branch), mods)
 end
 
@@ -298,10 +280,7 @@ each one. For a partial outage (single winding trip), use a
 `ThreeWindingTransformerCircuit` instead.
 """
 function NetworkModification(mat::PowerNetworkMatrix, branch::PSY.ThreeWindingTransformer)
-    nr = get_network_reduction_data(mat)
-    arc_lookup = get_arc_lookup(mat)
-    arc_sus = _get_arc_susceptances(mat)
-    mods = _classify_branch_modification(nr, arc_lookup, arc_sus, branch)
+    _, mods = _classify_outage_components(mat, [branch])
     return NetworkModification(
         PSY.get_name(branch),
         mods,
@@ -368,52 +347,10 @@ function NetworkModification(mat::PowerNetworkMatrix, sys::PSY.System, outage::P
         error("No valid arc or shunt modifications found for outage.")
     end
 
-    nr = get_network_reduction_data(mat)
-    arc_lookup = get_arc_lookup(mat)
-    arc_sus = _get_arc_susceptances(mat)
-    bus_lookup = get_bus_lookup(mat)
-
-    # Pass 1: classify components. Series branches on the same arc must be
-    # grouped so their combined Δb is computed correctly.
-    direct_mods = ArcModification[]
-    parallel_mods = ArcModification[]
-    series_components_by_arc = Dict{Int, Vector{PSY.ACTransmission}}()
-    series_arc_tuples = Dict{Int, Tuple{Int, Int}}()
-    component_names = String[]
-    shunt_mods = ShuntModification[]
-
-    for component in all_components
-        _classify_outage_component!(
-            nr,
-            arc_lookup,
-            arc_sus,
-            bus_lookup,
-            component,
-            direct_mods,
-            parallel_mods,
-            series_components_by_arc,
-            series_arc_tuples,
-            shunt_mods,
-            component_names,
-        )
-    end
-
-    # Pass 2: compute series Δb with all tripped components grouped
-    series_mods = ArcModification[]
-    for (arc_idx, tripped) in series_components_by_arc
-        arc_tuple = series_arc_tuples[arc_idx]
-        series_chain = nr.series_branch_map[arc_tuple]
-        delta_b = _compute_series_outage_delta_b(series_chain, tripped, nr)
-        delta_shift =
-            _compute_series_outage_delta_shift_injection(series_chain, tripped, nr)
-        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
-        push!(
-            series_mods,
-            ArcModification(arc_idx, delta_b, delta_shift, dy11, dy12, dy21, dy22),
-        )
-    end
-
-    mods = vcat(direct_mods, parallel_mods, series_mods)
+    acc, mods = _classify_outage_components(mat, all_components)
+    direct_mods = acc.direct_mods
+    shunt_mods = acc.shunt_mods
+    component_names = acc.component_names
 
     if isempty(mods) && isempty(shunt_mods)
         @info "No valid arc or shunt modifications found for outage. " *
@@ -467,12 +404,57 @@ function _parallel_arc_modification(
     )
 end
 
-"""
-    _classify_outage_component!(nr, arc_lookup, arc_sus, bus_lookup, component, ...) -> nothing
+struct _OutageAccumulator
+    direct_mods::Vector{ArcModification}
+    parallel_mods::Vector{ArcModification}
+    series_components_by_arc::Dict{Int, Vector{PSY.ACTransmission}}
+    series_arc_tuples::Dict{Int, Tuple{Int, Int}}
+    shunt_mods::Vector{ShuntModification}
+    component_names::Vector{String}
+end
 
-Classify a single outage component via multiple dispatch. ACTransmission branches are
-classified into direct/parallel/series arc modifications. Shunt components produce
-diagonal admittance changes. Unsupported component types are silently ignored.
+_OutageAccumulator() = _OutageAccumulator(
+    ArcModification[],
+    ArcModification[],
+    Dict{Int, Vector{PSY.ACTransmission}}(),
+    Dict{Int, Tuple{Int, Int}}(),
+    ShuntModification[],
+    String[],
+)
+
+# Classify `components`, then compute each series arc's Δb once with all its tripped
+# components grouped. Returns the accumulator and the combined arc modifications.
+function _classify_outage_components(mat::PowerNetworkMatrix, components)
+    nr = get_network_reduction_data(mat)
+    arc_lookup = get_arc_lookup(mat)
+    arc_sus = _get_arc_susceptances(mat)
+    bus_lookup = get_bus_lookup(mat)
+    acc = _OutageAccumulator()
+    for component in components
+        _classify_outage_component!(nr, arc_lookup, arc_sus, bus_lookup, component, acc)
+    end
+    series_mods = ArcModification[]
+    for (arc_idx, tripped) in acc.series_components_by_arc
+        arc_tuple = acc.series_arc_tuples[arc_idx]
+        series_chain = nr.series_branch_map[arc_tuple]
+        delta_b = _compute_series_outage_delta_b(series_chain, tripped, nr)
+        delta_shift =
+            _compute_series_outage_delta_shift_injection(series_chain, tripped, nr)
+        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
+        push!(
+            series_mods,
+            ArcModification(arc_idx, delta_b, delta_shift, dy11, dy12, dy21, dy22),
+        )
+    end
+    return acc, vcat(acc.direct_mods, acc.parallel_mods, series_mods)
+end
+
+"""
+    _classify_outage_component!(nr, arc_lookup, arc_sus, bus_lookup, component, acc) -> nothing
+
+Classify a single outage component via multiple dispatch into the `_OutageAccumulator`.
+ACTransmission branches are classified into direct/parallel/series arc modifications. Shunt
+components produce diagonal admittance changes. Unsupported component types are skipped.
 """
 function _classify_outage_component!(
     nr::NetworkReductionData,
@@ -480,12 +462,7 @@ function _classify_outage_component!(
     arc_susceptances::Vector{Float64},
     ::Dict{Int, Int},
     component::PSY.ACTransmission,
-    direct_mods::Vector{ArcModification},
-    parallel_mods::Vector{ArcModification},
-    series_components_by_arc::Dict{Int, Vector{PSY.ACTransmission}},
-    series_arc_tuples::Dict{Int, Tuple{Int, Int}},
-    ::Vector{ShuntModification},
-    component_names::Vector{String},
+    acc::_OutageAccumulator,
 )
     tag, arc_tuple = _resolve_branch_arc(nr, component)
 
@@ -495,27 +472,27 @@ function _classify_outage_component!(
         delta_shift = -arc_dc_shift_injection(nr, arc_tuple)
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc, component)
         push!(
-            direct_mods,
+            acc.direct_mods,
             ArcModification(arc_idx, -b_arc, delta_shift, dy11, dy12, dy21, dy22),
         )
     elseif tag === :parallel
         push!(
-            parallel_mods,
+            acc.parallel_mods,
             _parallel_arc_modification(nr, arc_lookup, arc_tuple, component),
         )
     elseif tag === :series
         arc_idx = arc_lookup[arc_tuple]
-        if !haskey(series_components_by_arc, arc_idx)
-            series_components_by_arc[arc_idx] = PSY.ACTransmission[]
-            series_arc_tuples[arc_idx] = arc_tuple
+        if !haskey(acc.series_components_by_arc, arc_idx)
+            acc.series_components_by_arc[arc_idx] = PSY.ACTransmission[]
+            acc.series_arc_tuples[arc_idx] = arc_tuple
         end
-        push!(series_components_by_arc[arc_idx], component)
+        push!(acc.series_components_by_arc[arc_idx], component)
     else
         @info "Branch $(get_name(component)) not found in any reduction map. " *
               "The component may have been eliminated by a radial reduction."
         return
     end
-    push!(component_names, get_name(component))
+    push!(acc.component_names, get_name(component))
     return
 end
 
@@ -525,17 +502,12 @@ function _classify_outage_component!(
     ::Vector{Float64},
     bus_lookup::Dict{Int, Int},
     component::Union{PSY.FixedAdmittance, PSY.SwitchedAdmittance},
-    ::Vector{ArcModification},
-    ::Vector{ArcModification},
-    ::Dict{Int, Vector{PSY.ACTransmission}},
-    ::Dict{Int, Tuple{Int, Int}},
-    shunt_mods::Vector{ShuntModification},
-    component_names::Vector{String},
+    acc::_OutageAccumulator,
 )
     bus_ix = get_bus_index(component, bus_lookup, nr)
     Y = PSY.get_Y(component)
-    push!(shunt_mods, ShuntModification(bus_ix, YBUS_ELTYPE(-Y)))
-    push!(component_names, PSY.get_name(component))
+    push!(acc.shunt_mods, ShuntModification(bus_ix, YBUS_ELTYPE(-Y)))
+    push!(acc.component_names, PSY.get_name(component))
     return
 end
 
@@ -545,19 +517,14 @@ function _classify_outage_component!(
     ::Vector{Float64},
     bus_lookup::Dict{Int, Int},
     component::PSY.StandardLoad,
-    ::Vector{ArcModification},
-    ::Vector{ArcModification},
-    ::Dict{Int, Vector{PSY.ACTransmission}},
-    ::Dict{Int, Tuple{Int, Int}},
-    shunt_mods::Vector{ShuntModification},
-    component_names::Vector{String},
+    acc::_OutageAccumulator,
 )
     bus_ix = get_bus_index(component, bus_lookup, nr)
     Y =
         PSY.get_impedance_active_power(component, PSY.SU) -
         im * PSY.get_impedance_reactive_power(component, PSY.SU)
-    push!(shunt_mods, ShuntModification(bus_ix, YBUS_ELTYPE(-Y)))
-    push!(component_names, PSY.get_name(component))
+    push!(acc.shunt_mods, ShuntModification(bus_ix, YBUS_ELTYPE(-Y)))
+    push!(acc.component_names, PSY.get_name(component))
     return
 end
 
@@ -567,12 +534,7 @@ function _classify_outage_component!(
     ::Vector{Float64},
     ::Dict{Int, Int},
     component::PSY.Component,
-    ::Vector{ArcModification},
-    ::Vector{ArcModification},
-    ::Dict{Int, Vector{PSY.ACTransmission}},
-    ::Dict{Int, Tuple{Int, Int}},
-    ::Vector{ShuntModification},
-    ::Vector{String},
+    ::_OutageAccumulator,
 )
     @info "Component $(PSY.get_name(component)) ($(typeof(component))) " *
           "is not supported for outage classification. Skipping."
@@ -585,12 +547,7 @@ function _classify_outage_component!(
     arc_susceptances::Vector{Float64},
     bus_lookup::Dict{Int, Int},
     component::PSY.ThreeWindingTransformer,
-    direct_mods::Vector{ArcModification},
-    parallel_mods::Vector{ArcModification},
-    series_components_by_arc::Dict{Int, Vector{PSY.ACTransmission}},
-    series_arc_tuples::Dict{Int, Tuple{Int, Int}},
-    shunt_mods::Vector{ShuntModification},
-    component_names::Vector{String},
+    acc::_OutageAccumulator,
 )
     # An unavailable parent transformer is already out of service, so it cannot be
     # outaged; skip it regardless of the per-winding availability flags. This mirrors
@@ -604,91 +561,10 @@ function _classify_outage_component!(
             continue
         end
         _classify_outage_component!(
-            nr,
-            arc_lookup,
-            arc_susceptances,
-            bus_lookup,
-            winding,
-            direct_mods,
-            parallel_mods,
-            series_components_by_arc,
-            series_arc_tuples,
-            shunt_mods,
-            component_names,
+            nr, arc_lookup, arc_susceptances, bus_lookup, winding, acc,
         )
     end
     return
-end
-
-"""
-    _classify_branch_modification(nr, arc_lookup, arc_susceptances, branch) -> Vector{ArcModification}
-
-Classify a single branch component into the appropriate arc modification using
-the network reduction reverse maps. For single-branch modifications only;
-use `_classify_outage_component!` for multi-component outages with series grouping.
-"""
-
-"""
-    _classify_branch_modification(nr, arc_lookup, arc_susceptances, branch::PSY.ThreeWindingTransformer) -> Vector{ArcModification}
-
-Classify a `ThreeWindingTransformer` by decomposing it into its three winding arcs
-and classifying each one individually. Returns arc modifications for all windings
-present in the network.
-"""
-function _classify_branch_modification(
-    nr::NetworkReductionData,
-    arc_lookup::Dict,
-    arc_susceptances::Vector{Float64},
-    branch::PSY.ThreeWindingTransformer,
-)::Vector{ArcModification}
-    # An unavailable parent transformer is already out of service and produces no
-    # modifications, irrespective of the per-winding availability flags.
-    if !PSY.get_available(branch)
-        return ArcModification[]
-    end
-    mods = ArcModification[]
-    for (winding_num, circuit) in enumerate(PSY.get_circuits(branch))
-        winding = ThreeWindingTransformerCircuit(branch, circuit, winding_num)
-        if !get_equivalent_available(winding)
-            continue
-        end
-        append!(
-            mods,
-            _classify_branch_modification(nr, arc_lookup, arc_susceptances, winding),
-        )
-    end
-    return mods
-end
-
-function _classify_branch_modification(
-    nr::NetworkReductionData,
-    arc_lookup::Dict,
-    arc_susceptances::Vector{Float64},
-    branch::PSY.ACTransmission,
-)::Vector{ArcModification}
-    tag, arc_tuple = _resolve_branch_arc(nr, branch)
-
-    if tag === :direct
-        arc_idx = arc_lookup[arc_tuple]
-        b_arc = arc_susceptances[arc_idx]
-        delta_shift = -arc_dc_shift_injection(nr, arc_tuple)
-        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc, branch)
-        return [ArcModification(arc_idx, -b_arc, delta_shift, dy11, dy12, dy21, dy22)]
-    elseif tag === :parallel
-        return [_parallel_arc_modification(nr, arc_lookup, arc_tuple, branch)]
-    elseif tag === :series
-        arc_idx = arc_lookup[arc_tuple]
-        series_chain = nr.series_branch_map[arc_tuple]
-        delta_b = _compute_series_outage_delta_b(series_chain, branch, nr)
-        delta_shift =
-            _compute_series_outage_delta_shift_injection(series_chain, [branch], nr)
-        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
-        return [ArcModification(arc_idx, delta_b, delta_shift, dy11, dy12, dy21, dy22)]
-    else
-        @info "Branch $(get_name(branch)) not found in any reduction map. " *
-              "The component may have been eliminated by a radial reduction."
-        return ArcModification[]
-    end
 end
 
 # --- Accumulation helpers for Ybus deltas ---

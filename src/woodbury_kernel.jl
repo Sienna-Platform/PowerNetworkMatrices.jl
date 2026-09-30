@@ -1,12 +1,4 @@
 """
-Shared Woodbury matrix identity kernel for computing post-modification
-network sensitivity factors. Used by both VirtualPTDF and VirtualMODF.
-
-Implements van Dijk et al. Eq. 29:
-    B_m⁻¹ = B_r⁻¹ - B_r⁻¹ U (A⁻¹ + U⊤ B_r⁻¹ U)⁻¹ U⊤ B_r⁻¹
-"""
-
-"""
     _invert_woodbury_W(W_mat, M) -> (W_inv::Matrix{Float64}, is_islanding::Bool)
 
 Invert the M×M Woodbury W; closed form for M ≤ 2, LU otherwise.
@@ -249,124 +241,57 @@ function _woodbury_correction!(
     return z_m
 end
 
+# Solves and the scratch slot go through `with_solver`, which holds the core's `solver_lock`.
 """
-    _compute_woodbury_factors_impl(K, work_ba_col, temp_data, BA, arc_sus,
-                                   valid_ix, modifications) -> WoodburyFactors
+    _compute_woodbury_factors(mat, modifications) -> WoodburyFactors
 
-Pure-data Woodbury factor computation. Mutates `work_ba_col` and
-`temp_data`. The caller is responsible for exclusive access to those
-buffers; in `Virtual{PTDF, MODF}` this is provided by holding
-`solver_lock` via `with_solver` for the duration of the call.
+Woodbury factors `Z[:,j] = B⁻¹ν_j` for each modified arc, on a `VirtualPTDF` or `VirtualMODF`.
 """
-function _compute_woodbury_factors_impl(
-    K,
-    work_ba_col::Vector{Float64},
-    temp_data::Vector{Float64},
-    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
-    arc_sus::Vector{Float64},
-    valid_ix::Vector{Int},
-    bus_to_valid_idx::Vector{Int},
-    modifications::Tuple{Vararg{ArcModification}},
-)::WoodburyFactors
-    M = length(modifications)
-    n_bus = length(temp_data)
-
-    # Compute Z[:,j] = B⁻¹ν_j for each modified arc
-    Z = Matrix{Float64}(undef, n_bus, M)
-
-    for (j, mod) in enumerate(modifications)
-        e = mod.arc_index
-        b_e = arc_sus[e]
-
-        lin_solve = _solve_ba_column!(K, work_ba_col, BA, bus_to_valid_idx, e)
-        _gather_to_buses!(view(Z, :, j), valid_ix, lin_solve, b_e)
-    end
-
-    return _woodbury_factors_from_Z(Z, BA, arc_sus, modifications)
-end
-
-"""
-    _apply_woodbury_correction_impl(K, work_ba_col, temp_data, BA, arc_sus,
-                                    valid_ix, monitored_idx, wf) -> Vector{Float64}
-
-Pure-data Woodbury correction. Mutates `work_ba_col` and `temp_data`; the
-caller owns exclusive access to those buffers.
-"""
-function _apply_woodbury_correction_impl(
-    K,
-    work_ba_col::Vector{Float64},
-    temp_data::Vector{Float64},
-    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
-    arc_sus::Vector{Float64},
-    valid_ix::Vector{Int},
-    bus_to_valid_idx::Vector{Int},
-    monitored_idx::Int,
-    wf::WoodburyFactors,
-)::Vector{Float64}
-    n_bus = length(temp_data)
-
-    b_mon = _post_modification_susceptance(arc_sus, monitored_idx, wf)
-    if abs(b_mon) < eps()
-        return zeros(n_bus)
-    end
-
-    # z_m = B⁻¹ν_m / b_mon_pre.
-    b_mon_pre = arc_sus[monitored_idx]
-    lin_solve = _solve_ba_column!(K, work_ba_col, BA, bus_to_valid_idx, monitored_idx)
-    _gather_to_buses!(temp_data, valid_ix, lin_solve, b_mon_pre)
-
-    _woodbury_correction!(temp_data, BA, b_mon_pre, b_mon, monitored_idx, wf)
-    return copy(temp_data)
-end
-
-# Outer dispatchers. The single implementation operates on the shared
-# `VirtualFactorCore`; the `Virtual{PTDF, MODF}` wrappers forward to it (the
-# VirtualMODF forwards live in virtual_modf_calculations.jl). Both acquire the
-# solver and the single scratch slot via `with_solver`.
-
 function _compute_woodbury_factors(
-    core::VirtualFactorCore,
+    mat::Union{VirtualPTDF, VirtualMODF},
     modifications::Tuple{Vararg{ArcModification}},
 )::WoodburyFactors
+    core = get_core(mat)
     return with_solver(
         core.K, core.work_ba_col, core.temp_data, core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
-        _compute_woodbury_factors_impl(
-            K_solver, work_ba_col, temp_data,
-            core.BA, core.arc_susceptances, core.valid_ix, core.bus_to_valid_idx,
-            modifications,
-        )
+        Z = Matrix{Float64}(undef, length(temp_data), length(modifications))
+        for (j, mod) in enumerate(modifications)
+            e = mod.arc_index
+            lin_solve =
+                _solve_ba_column!(K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, e)
+            _gather_to_buses!(
+                view(Z, :, j),
+                core.valid_ix,
+                lin_solve,
+                core.arc_susceptances[e],
+            )
+        end
+        return _woodbury_factors_from_Z(Z, core.BA, core.arc_susceptances, modifications)
     end
 end
 
 function _apply_woodbury_correction(
-    core::VirtualFactorCore,
+    mat::Union{VirtualPTDF, VirtualMODF},
     monitored_idx::Int,
     wf::WoodburyFactors,
 )::Vector{Float64}
+    core = get_core(mat)
+    arc_sus = core.arc_susceptances
     return with_solver(
         core.K, core.work_ba_col, core.temp_data, core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
-        _apply_woodbury_correction_impl(
-            K_solver, work_ba_col, temp_data,
-            core.BA, core.arc_susceptances, core.valid_ix, core.bus_to_valid_idx,
-            monitored_idx, wf,
+        b_mon = _post_modification_susceptance(arc_sus, monitored_idx, wf)
+        if abs(b_mon) < eps()
+            return zeros(length(temp_data))
+        end
+        # z_m = B⁻¹ν_m / b_mon_pre.
+        b_mon_pre = arc_sus[monitored_idx]
+        lin_solve = _solve_ba_column!(
+            K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, monitored_idx,
         )
+        _gather_to_buses!(temp_data, core.valid_ix, lin_solve, b_mon_pre)
+        _woodbury_correction!(temp_data, core.BA, b_mon_pre, b_mon, monitored_idx, wf)
+        return copy(temp_data)
     end
-end
-
-# VirtualPTDF forwards to the shared core method.
-function _compute_woodbury_factors(
-    mat::VirtualPTDF,
-    modifications::Tuple{Vararg{ArcModification}},
-)::WoodburyFactors
-    return _compute_woodbury_factors(get_core(mat), modifications)
-end
-
-function _apply_woodbury_correction(
-    mat::VirtualPTDF,
-    monitored_idx::Int,
-    wf::WoodburyFactors,
-)::Vector{Float64}
-    return _apply_woodbury_correction(get_core(mat), monitored_idx, wf)
 end

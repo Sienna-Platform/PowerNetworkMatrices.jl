@@ -121,16 +121,6 @@ Given the indices, gets the values of the power network matrix considered
 """
 to_index(A::PowerNetworkMatrix, idx...) = _to_index_tuple(idx, A.lookup)
 
-# Doing `Colon() in idx` is relatively slow because it involves
-# a non-unrolled loop through the `idx` tuple which may be of
-# varying element type. Another lisp-y recursion trick fixes that
-has_colon(idx::Tuple{}) = false
-
-_is_colon(::Colon) = true
-_is_colon(::Any) = false
-
-has_colon(idx::Tuple) = _is_colon(first(idx)) || has_colon(Base.tail(idx))
-
 # TODO: better error (or just handle correctly) when user tries to index with a range like a:b
 # overloading other methods to consider PowerNetworkMatrix
 function Base.getindex(A::PowerNetworkMatrix, row, column)
@@ -247,63 +237,7 @@ function Base.summary(A::PowerNetworkMatrix)
     return
 end
 
-if isdefined(Base, :print_array) # 0.7 and later
-    Base.print_array(io::IO, X::PowerNetworkMatrix) = Base.print_matrix(io, X.data)
-end
-
-# n-dimensional arrays
-function Base.show_nd(
-    io::IO,
-    a::PowerNetworkMatrix,
-    print_matrix::Function,
-    label_slices::Bool,
-)
-    limit::Bool = get(io, :limit, false)
-    if isempty(a)
-        return
-    end
-    tailinds = Base.tail(Base.tail(axes(a.data)))
-    nd = ndims(a) - 2
-    for I in CartesianIndices(tailinds)
-        idxs = I.I
-        if limit
-            for i in 1:nd
-                ii = idxs[i]
-                ind = tailinds[i]
-                if length(ind) > 10
-                    if ii == ind[4] && all(d -> idxs[d] == first(tailinds[d]), 1:(i - 1))
-                        for j in (i + 1):nd
-                            szj = size(a.data, j + 2)
-                            indj = tailinds[j]
-                            if szj > 10 && first(indj) + 2 < idxs[j] <= last(indj) - 3
-                                @goto skip
-                            end
-                        end
-                        #println(io, idxs)
-                        print(io, "...\n\n")
-                        @goto skip
-                    end
-                    if ind[3] < ii <= ind[end - 3]
-                        @goto skip
-                    end
-                end
-            end
-        end
-        if label_slices
-            print(io, "[:, :, ")
-            for i in 1:(nd - 1)
-                show(io, a.axes[i + 2][idxs[i]])
-                print(io, ", ")
-            end
-            show(io, a.axes[end][idxs[end]])
-            println(io, "] =")
-        end
-        slice = view(a.data, axes(a.data, 1), axes(a.data, 2), idxs...)
-        Base.print_matrix(io, slice)
-        print(io, idxs == map(last, tailinds) ? "" : "\n\n")
-        @label skip
-    end
-end
+Base.print_array(io::IO, X::PowerNetworkMatrix) = Base.print_matrix(io, X.data)
 
 function Base.show(io::IO, array::PowerNetworkMatrix)
     summary(io, array)
@@ -357,6 +291,12 @@ end
     data.
 """
 get_lookup(mat::PowerNetworkMatrix) = mat.lookup
+
+get_axes(mat::PowerNetworkMatrix) = mat.axes
+get_ref_bus(mat::PowerNetworkMatrix) = sort!(collect(keys(mat.subnetwork_axes)))
+
+"""Get the [`BranchCatalog`](@ref) recording every branch merged into this matrix."""
+get_branch_catalog(mat::PowerNetworkMatrix) = mat.branch_catalog
 
 # A subnetwork's representative can itself be merged away by a later reduction (e.g.
 # ZeroImpedanceBranchReduction folding a swing into another bus); resolve it through the

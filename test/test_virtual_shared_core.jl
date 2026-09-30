@@ -72,7 +72,8 @@ end
         core.K,
         core.BA,
         core.A,
-        PNM._ref_bus_positions(core),
+        core.valid_ix,
+        core.bus_to_valid_idx,
     )
 
     n_tasks = 8

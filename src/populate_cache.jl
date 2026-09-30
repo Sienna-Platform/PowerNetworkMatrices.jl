@@ -30,36 +30,6 @@ _solve_multi_rhs!(
     out::Matrix{Float64},
 ) = AccelerateWrapper.solve_sparse!(K, B, out)
 
-# Generic fallback for any other factorization backend: solve column-by-column
-# through the single-RHS `_solve_factorization` seam (the documented extension
-# point for new solver backends). Errors clearly when the backend implements
-# neither a batched `solve_sparse!` nor `_solve_factorization`, instead of
-# surfacing a raw MethodError.
-function _solve_multi_rhs!(
-    K,
-    B::SparseArrays.SparseMatrixCSC{Float64, Int},
-    out::Matrix{Float64},
-)
-    n = size(B, 1)
-    col = zeros(n)
-    applicable(_solve_factorization, K, col) || error(
-        "Factorization backend $(typeof(K)) supports neither a batched " *
-        "`solve_sparse!` nor a single-RHS `_solve_factorization`; extend one of " *
-        "them to use `populate_cache` with this backend.",
-    )
-    @inbounds for j in axes(B, 2)
-        fill!(col, 0.0)
-        for p in SparseArrays.nzrange(B, j)
-            col[SparseArrays.rowvals(B)[p]] = SparseArrays.nonzeros(B)[p]
-        end
-        # Capture the return: KLU/Accelerate solve in place and return `col`,
-        # but a future backend may return a fresh vector, so read the result.
-        result = _solve_factorization(K, col)
-        copyto!(view(out, :, j), result)
-    end
-    return out
-end
-
 """
     _solve_arc_columns(core, arc_rows) -> Matrix{Float64}
 
@@ -89,6 +59,34 @@ end
 
 # --- VirtualPTDF -----------------------------------------------------------
 
+# Shared by VirtualPTDF and VirtualLODF: solve the rows not yet cached in one batch, let
+# `build_rows(sol, new_rows)` turn the solutions into stored rows outside the cache lock (the
+# scatter and sparsify dominate), insert them under `cache_lock`, then pin every row.
+function _populate_rows!(build_rows, mat, rows::Vector{Int})
+    core = get_core(mat)
+    cache = get_cache(mat)
+    cache_lock = get_cache_lock(mat)
+    new_rows = @lock cache_lock Int[r for r in rows if !haskey(cache, r)]
+
+    if !isempty(new_rows)
+        sol = @lock core.solver_lock _solve_arc_columns(core, new_rows)
+        stored_rows = build_rows(sol, new_rows)
+        @lock cache_lock begin
+            for (j, r) in enumerate(new_rows)
+                haskey(cache, r) && continue  # lost a race; keep the winner
+                set_persistent_row!(cache, r, stored_rows[j])
+            end
+        end
+    end
+
+    @lock cache_lock begin
+        for r in rows
+            pin_row!(cache, r)
+        end
+    end
+    return nothing
+end
+
 """
     populate_cache(vptdf::VirtualPTDF, components) -> Nothing
 
@@ -107,51 +105,24 @@ $(TYPEDSIGNATURES)
 function populate_cache(vptdf::VirtualPTDF, components)
     rows = unique(Int[_resolve_arc_index(vptdf, c) for c in components])
     isempty(rows) && return nothing
-
     core = get_core(vptdf)
-    cache = get_cache(vptdf)
-    cache_lock = get_cache_lock(vptdf)
     dist_slack_normalized = get_dist_slack_normalized(vptdf)
-    buscount = size(core.BA, 1)
     use_dist_slack = _use_dist_slack(vptdf)
     cutoff = get_cutoff(core)
-
-    # Only solve rows not already resident; existing rows are pinned below.
-    new_rows = @lock cache_lock Int[r for r in rows if !haskey(cache, r)]
-
-    if !isempty(new_rows)
-        sol = @lock core.solver_lock _solve_arc_columns(core, new_rows)
-        valid_ix = core.valid_ix
-        # Build each row outside the cache lock (the scatter, dist-slack, and
-        # sparsify dominate); take cache_lock only for the double-check + insert,
-        # matching the `cached_row_lookup` pattern. `apply_cutoff` returns `full`
-        # unchanged when the cutoff is a no-op, so allocate a fresh `full` per row
-        # to avoid aliasing the same buffer across stored rows.
+    return _populate_rows!(vptdf, rows) do sol, new_rows
+        # `apply_cutoff` returns `full` unchanged when the cutoff is a no-op, so allocate
+        # a fresh `full` per row to avoid aliasing one buffer across stored rows.
         stored_rows = Vector{RowCacheValue}(undef, length(new_rows))
-        for (j, _) in enumerate(new_rows)
-            full = zeros(buscount)
-            @inbounds for i in eachindex(valid_ix)
-                full[valid_ix[i]] = sol[i, j]
-            end
+        for j in eachindex(new_rows)
+            full =
+                _gather_to_buses!(zeros(size(core.BA, 1)), core.valid_ix, view(sol, :, j))
             if use_dist_slack
                 full .-= dot(full, dist_slack_normalized)
             end
             stored_rows[j] = apply_cutoff(cutoff, full)
         end
-        @lock cache_lock begin
-            for (j, r) in enumerate(new_rows)
-                haskey(cache, r) && continue  # lost a race; keep the winner
-                set_persistent_row!(cache, r, stored_rows[j])
-            end
-        end
+        return stored_rows
     end
-
-    @lock cache_lock begin
-        for r in rows
-            pin_row!(cache, r)
-        end
-    end
-    return nothing
 end
 
 # --- VirtualLODF -----------------------------------------------------------
@@ -173,50 +144,25 @@ $(TYPEDSIGNATURES)
 function populate_cache(vlodf::VirtualLODF, components)
     rows = unique(Int[_resolve_arc_index(vlodf, c) for c in components])
     isempty(rows) && return nothing
-
     core = get_core(vlodf)
-    cache = get_cache(vlodf)
-    cache_lock = get_cache_lock(vlodf)
     inv_PTDF_A_diag = get_inv_PTDF_A_diag(vlodf)
     cutoff = get_cutoff(core)
-    n_bus = length(core.temp_data[1])
-
-    new_rows = @lock cache_lock Int[r for r in rows if !haskey(cache, r)]
-
-    if !isempty(new_rows)
-        sol = @lock core.solver_lock _solve_arc_columns(core, new_rows)
-        valid_ix = core.valid_ix
+    return _populate_rows!(vlodf, rows) do sol, new_rows
         # Scatter each solved column back to full-bus space, then apply the
         # LODF map to every column at once: L = (A · Tmp) .* inv_PTDF_A_diag.
-        tmp = zeros(n_bus, length(new_rows))
-        @inbounds for j in eachindex(new_rows), i in eachindex(valid_ix)
-            tmp[valid_ix[i], j] = sol[i, j]
+        tmp = zeros(length(core.temp_data[1]), length(new_rows))
+        for j in eachindex(new_rows)
+            _gather_to_buses!(view(tmp, :, j), core.valid_ix, view(sol, :, j))
         end
         lodf_cols = core.A * tmp                   # (n_arcs × length(new_rows))
         lodf_cols .*= inv_PTDF_A_diag              # broadcast per-arc scaling down columns
-        @inbounds for (j, r) in enumerate(new_rows)
-            lodf_cols[r, j] = -1.0                  # self-element convention
-        end
-        # Build each row outside the cache lock; take cache_lock only to insert.
         stored_rows = Vector{RowCacheValue}(undef, length(new_rows))
-        for j in eachindex(new_rows)
-            row = lodf_cols[:, j]
-            stored_rows[j] = apply_cutoff(cutoff, row)
+        for (j, r) in enumerate(new_rows)
+            lodf_cols[r, j] = -1.0                 # self-element convention
+            stored_rows[j] = apply_cutoff(cutoff, lodf_cols[:, j])
         end
-        @lock cache_lock begin
-            for (j, r) in enumerate(new_rows)
-                haskey(cache, r) && continue
-                set_persistent_row!(cache, r, stored_rows[j])
-            end
-        end
+        return stored_rows
     end
-
-    @lock cache_lock begin
-        for r in rows
-            pin_row!(cache, r)
-        end
-    end
-    return nothing
 end
 
 # --- VirtualMODF -----------------------------------------------------------
@@ -230,7 +176,7 @@ function _resolve_modification(vmodf::VirtualMODF, outage::PSY.Outage)
     return _resolve_modification(vmodf, IS.get_id(outage))
 end
 function _resolve_modification(vmodf::VirtualMODF, id::Int)
-    contingency_cache = get_contingency_cache(vmodf)
+    contingency_cache = get_registered_contingencies(vmodf)
     haskey(contingency_cache, id) || error(
         "Contingency (id=$id) is not registered. Construct the VirtualMODF " *
         "with the system containing this outage, or pass the NetworkModification " *
@@ -357,11 +303,7 @@ function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
         base_full = Dict{Int, Vector{Float64}}()
         sizehint!(base_full, length(all_arcs))
         for (j, arc) in enumerate(all_arcs)
-            full = zeros(n_bus)
-            @inbounds for i in eachindex(valid_ix)
-                full[valid_ix[i]] = sol[i, j]
-            end
-            base_full[arc] = full
+            base_full[arc] = _gather_to_buses!(zeros(n_bus), valid_ix, view(sol, :, j))
         end
 
         for mod in mods

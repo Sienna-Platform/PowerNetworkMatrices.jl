@@ -4,7 +4,7 @@
 Eliminates leaf (degree-1) buses and their branches. Protect specific buses via
 `Ybus(sys; irreducible_buses=...)`.
 """
-@kwdef struct RadialReduction <: NetworkReduction end
+struct RadialReduction <: NetworkReduction end
 
 """
 Pre-compute a mapping from each row (branch) in a CSC sparse matrix to its two column
@@ -99,25 +99,6 @@ with only one connection that do not affect the electrical behavior of the core 
    its neighbors are eliminated and enqueuing any parent that becomes a leaf in turn. The
    surviving buses are the graph's 2-core, together with the exempt buses and one bus per
    fully radial island.
-
-# Network Topology Preservation
-- **Electrical Equivalence**: Ensures reduced network maintains same electrical behavior
-- **Connectivity Integrity**: Preserves essential network connectivity and reference structure
-- **Reduction Validity**: Only eliminates elements that truly don't affect network analysis
-- **Reversibility**: Maintains mapping information for potential reconstruction if needed
-
-# Use Cases
-- **Network Simplification**: Reduces computational burden by eliminating unnecessary elements
-- **Matrix Conditioning**: Improves numerical properties of network matrices
-- **Analysis Acceleration**: Speeds up power flow and other network computations
-- **Memory Optimization**: Reduces storage requirements for large network models
-
-# Implementation Notes
-- Pre-computes row-to-column mapping for O(1) branch endpoint lookup instead of O(nnz) sparse
-  row access
-- Uses iterative queue-based processing instead of recursive DFS for better performance
-- Handles edge cases like fully radial networks and isolated islands
-- Provides comprehensive mapping for traceability and debugging
 """
 function calculate_radial_arcs(
     A::SparseArrays.SparseMatrixCSC{Int8, Int},

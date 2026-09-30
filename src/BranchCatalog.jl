@@ -256,11 +256,6 @@ _bucket_name_to_arc(name_to_arc::NAME_TO_ARC, T::DataType) =
 _bucket_entry_names(component_to_entry::COMPONENT_TO_ENTRY, T::DataType) =
     get!(() -> Dict{String, String}(), component_to_entry, T)
 
-function _store!(bucket::Dict{K, V}, k, v) where {K, V}
-    bucket[k] = v
-    return
-end
-
 """
 Record `arc`'s row in the table and return the name it is indexed under.
 
@@ -294,7 +289,7 @@ function _index_forward!(
         _entry_matches(entry, predicate) || continue
         name = _record_arc!(arcs, arc, entry)
         for T in bucket_types(entry)
-            _store!(get!(() -> empty_bucket(entry), dest, T), arc, entry)
+            get!(() -> empty_bucket(entry), dest, T)[arc] = entry
             _bucket_name_to_arc(name_to_arc, T)[name] = arc
         end
     end
@@ -325,7 +320,7 @@ function _index_reverse!(
         # would name an entry that is not a row.
         haskey(arcs, arc) || continue
         T = _get_segment_type(member)
-        _store!(get!(() -> Dict{typeof(member), Tuple{Int, Int}}(), dest, T), member, arc)
+        get!(() -> Dict{typeof(member), Tuple{Int, Int}}(), dest, T)[member] = arc
         # The name comes from the table, not from a second call to `_entry_name`: one
         # computation, so forward and reverse cannot disagree about what the entry is called.
         _bucket_entry_names(component_to_entry, T)[get_name(member)] = get_name(arcs[arc])
@@ -361,11 +356,7 @@ function _index_series!(
         for segment in chain
             segment_name = get_name(segment)
             for T in _get_concrete_types(segment)
-                _store!(
-                    get!(() -> Dict{Tuple{Int, Int}, BranchesSeries}(), dest, T),
-                    arc,
-                    chain,
-                )
+                get!(() -> Dict{Tuple{Int, Int}, BranchesSeries}(), dest, T)[arc] = chain
                 _bucket_name_to_arc(name_to_arc, T)[segment_name] = arc
             end
             # A leaf redirects to the row its flow is reported under -- its segment, which
@@ -385,15 +376,11 @@ end
 function _index_reverse_series!(dest::Dict{DataType, Any}, source, predicate)
     for (member, arc) in source
         _entry_matches(member, predicate) || continue
-        _store!(
-            get!(
-                () -> Dict{PSY.ACTransmission, Tuple{Int, Int}}(),
-                dest,
-                _get_segment_type(member),
-            ),
-            member,
-            arc,
-        )
+        get!(
+            () -> Dict{PSY.ACTransmission, Tuple{Int, Int}}(),
+            dest,
+            _get_segment_type(member),
+        )[member] = arc
     end
     return
 end
@@ -508,7 +495,9 @@ function BranchCatalog(nrd::NetworkReductionData, predicate)
         maps.parallel_branch_map, arcs, name_to_arc, nrd.parallel_branch_map,
         predicate,
         _get_concrete_types,
-        _ -> _empty_parallel_branch_map(),
+        # Value type is `AbstractBranchesParallel`: a per-type bucket holds either a
+        # `BranchesParallel{T}` or a `MixedBranchesParallel` that includes a `T`.
+        _ -> Dict{Tuple{Int, Int}, AbstractBranchesParallel}(),
     )
     _index_reverse!(
         maps.reverse_parallel_branch_map, arcs, component_to_entry,

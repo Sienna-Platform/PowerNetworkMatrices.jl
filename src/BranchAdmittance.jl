@@ -60,12 +60,12 @@ end
 """
     get_series_susceptance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem)
 
-Series susceptance `1/x` of an `PSY.ACTransmission` branch, from
-the stored series reactance alone. `PSY.TwoWindingTransformer` has a more specific
-method (below) that additionally divides by the winding tap ratio
-(`PSY.get_tap(PSY.get_circuit(t))`). This is a deliberate asymmetry: only the susceptance
-form is tap-divided; Ybus/PTDF/LODF assembly needs the tap-divided value, while callers that
-need the untapped complex admittance should build it directly from `PSY.get_r`/`PSY.get_x`.
+Series susceptance `1/x` of an `PSY.ACTransmission` branch or reduction aggregate (parallel
+groups sum, series chains reciprocal-sum). A `PSY.TwoWindingTransformer` is additionally divided
+by the winding tap ratio (`PSY.get_tap(PSY.get_circuit(t))`). This is a deliberate asymmetry:
+only the susceptance form is tap-divided; Ybus/PTDF/LODF assembly needs the tap-divided value,
+while callers that need the untapped complex admittance should build it directly from
+`PSY.get_r`/`PSY.get_x`.
 
 Throws if the branch has `r == x == 0` (susceptance is non-finite). A consumer that needs
 the value the matrices actually use should call `get_effective_series_susceptance` instead.
@@ -73,23 +73,6 @@ the value the matrices actually use should call `get_effective_series_susceptanc
 function get_series_susceptance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem)
     v = _series_susceptance_raw(b, units)
     isfinite(v) || _throw_non_finite_susceptance(b, v)
-    return v
-end
-
-"""
-    get_series_susceptance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem)
-
-Series susceptance of a `PSY.TwoWindingTransformer`: the generic `ACTransmission`
-value (`1/x`) divided by the winding tap ratio `PSY.get_tap(PSY.get_circuit(t))`. A
-fixed-ratio transformer has `tap = 1.0`, so this is a no-op for it and matches the plain
-`ACTransmission` value.
-
-Throws if the branch has `r == x == 0` (susceptance is non-finite). A consumer that needs
-the value the matrices actually use should call `get_effective_series_susceptance` instead.
-"""
-function get_series_susceptance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem)
-    v = _series_susceptance_raw(t, units)
-    isfinite(v) || _throw_non_finite_susceptance(t, v)
     return v
 end
 
@@ -150,6 +133,21 @@ _get_shunts(::PSY.DiscreteControlledACBranch) = (zero(ComplexF64), zero(ComplexF
     return
 end
 
+# `r == x == 0` -> `min_x_eps`, the substitution Ybus assembly applies. The `br` method warns.
+@inline function _retained_x(r::Float64, x::Float64, min_x_eps::Float64)
+    if iszero(r) && iszero(x)
+        return min_x_eps
+    end
+    return x
+end
+
+function _retained_x(br::PSY.ACTransmission, r::Float64, x::Float64, min_x_eps::Float64)
+    if iszero(r) && iszero(x)
+        _warn_zero_impedance(br, min_x_eps)
+    end
+    return _retained_x(r, x, min_x_eps)
+end
+
 # `@inline` because the explicit-units getters expand past the inliner's cost model (~35 IR
 # statements each, from the `base_value` check and its error branch), so without it
 # `equivalent_branch` stays an out-of-line call in `branch_admittance` on the line path. The
@@ -185,10 +183,7 @@ The from/to shunts carry the real `PSY.get_g` conductance. A caller wanting Powe
 )
     r = PSY.get_r(b, PSY.SU)
     x = PSY.get_x(b, PSY.SU)
-    if iszero(r) && iszero(x)
-        _warn_zero_impedance(b, min_x_eps)
-        x = min_x_eps
-    end
+    x = _retained_x(b, r, x, min_x_eps)
     y_fr, y_to = _get_shunts(b)
     return EquivalentBranch(
         r, x,
@@ -206,10 +201,7 @@ function equivalent_branch(
 )
     r = PSY.get_r(b, PSY.CU)
     x = PSY.get_x(b, PSY.CU)
-    if iszero(r) && iszero(x)
-        _warn_zero_impedance(b, min_x_eps)
-        x = min_x_eps
-    end
+    x = _retained_x(b, r, x, min_x_eps)
     return EquivalentBranch(
         r, x,
         0.0, 0.0, 0.0, 0.0,
@@ -253,10 +245,7 @@ function _circuit_equivalent_branch(
 )
     r = PSY.get_r(circuit, PSY.SU)
     x = PSY.get_x(circuit, PSY.SU)
-    if iszero(r) && iszero(x)
-        _warn_zero_impedance(br, min_x_eps)
-        x = min_x_eps
-    end
+    x = _retained_x(br, r, x, min_x_eps)
     return EquivalentBranch(
         r, x,
         sh.g_fr, sh.b_fr, sh.g_to, sh.b_to,
@@ -443,21 +432,11 @@ end
 π-model admittance `(g, b, g_fr, b_fr, g_to, b_to, tap, shift)` of a single branch as the
 assembled matrices carry it, where `g + im*b == 1 / (r + im*x)` is the series admittance.
 The admittance-form view of [`equivalent_branch`](@ref); see it for the shunt and unit
-conventions, and for what `nr` contributes.
+conventions, and for what `nr` contributes. A reduction aggregate (`BranchesSeries` chain or
+`BranchesParallel` group) resolves through its reduction-aware equivalent parameters.
 """
 function branch_admittance(b::PSY.ACTransmission, nr::NetworkReductionData)
     return _to_admittance(equivalent_branch(b, nr))
-end
-
-"""
-    branch_admittance(segment::AbstractReductionAggregate, nr::NetworkReductionData) -> NamedTuple
-
-π-model admittance of a reduction-aggregated arc — a `BranchesSeries` chain or a
-`BranchesParallel` group — from PNM's reduction-aware equivalent physical branch
-parameters. Series/parallel equivalents of lines carry `tap == 1`.
-"""
-function branch_admittance(segment::AbstractReductionAggregate, nr::NetworkReductionData)
-    return _to_admittance(equivalent_branch(segment, nr))
 end
 
 """

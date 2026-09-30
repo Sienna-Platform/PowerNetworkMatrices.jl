@@ -24,7 +24,7 @@ end
 get_study_buses(nr::WardReduction) = nr.study_buses
 
 """
-    get_ward_reduction(data, bus_lookup, bus_axis, arc_axis, boundary_buses, ref_bus_numbers, study_buses, subnetwork_bus_axis)
+    get_ward_reduction(data, bus_lookup, arc_axis, boundary_buses, ref_bus_numbers, study_buses, subnetwork_bus_axis)
 
 Perform Ward reduction to create an equivalent network representation.
 
@@ -35,7 +35,6 @@ buses based on impedance criteria, and equivalent admittances are computed.
 # Arguments
 - `data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int}`: Admittance matrix of the system
 - `bus_lookup::Dict{Int, Int}`: Dictionary mapping bus numbers to matrix indices
-- `bus_axis::Vector{Int}`: Vector of all bus numbers in the system
 - `arc_axis::Vector{Tuple{Int, Int}}`: Vector of all arc tuples in the system
 - `boundary_buses::Set{Int}`: Set of boundary bus numbers between study and external areas
 - `ref_bus_numbers::Set{Int}`: Set of reference bus numbers
@@ -48,7 +47,6 @@ buses based on impedance criteria, and equivalent admittances are computed.
 function get_ward_reduction(
     data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int},
     bus_lookup::Dict{Int, Int},
-    bus_axis::Vector{Int},
     arc_axis::Vector{Tuple{Int, Int}},
     boundary_buses::Set{Int},
     ref_bus_numbers::Set{Int},
@@ -66,6 +64,7 @@ function get_ward_reduction(
     )
     boundary_buses = collect(intersect(boundary_buses, Set(all_buses)))
 
+    boundary_bus_indices = [subnetwork_bus_lookup[x] for x in boundary_buses]
     external_buses = setdiff(all_buses, study_buses)
     n_buses = length(all_buses)
 
@@ -79,8 +78,6 @@ function get_ward_reduction(
         bus_reduction_map_index[first_ref_study_bus] = Set(external_buses)
     else
         K = klu_factorize(subnetwork_data)
-        boundary_bus_indices = [subnetwork_bus_lookup[x] for x in boundary_buses]
-        boundary_bus_numbers = collect(boundary_buses)
         n_boundary = length(boundary_buses)
         E = SparseArrays.sparse(
             boundary_bus_indices,
@@ -94,7 +91,7 @@ function get_ward_reduction(
         for b in external_buses
             row_index = subnetwork_bus_lookup[b]
             closest_j = argmin(abs2.(view(Z_boundary_cols, row_index, :)))
-            push!(bus_reduction_map_index[boundary_bus_numbers[closest_j]], b)
+            push!(bus_reduction_map_index[boundary_buses[closest_j]], b)
         end
     end
     reverse_bus_search_map =
@@ -102,7 +99,6 @@ function get_ward_reduction(
 
     #Populate matrices for computing external equivalent
     external_bus_indices = [subnetwork_bus_lookup[x] for x in external_buses]
-    boundary_bus_indices = [subnetwork_bus_lookup[x] for x in boundary_buses]
     y_ee = subnetwork_data[external_bus_indices, external_bus_indices]
     y_be = subnetwork_data[
         boundary_bus_indices,

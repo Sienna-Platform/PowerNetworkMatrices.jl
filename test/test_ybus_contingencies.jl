@@ -151,7 +151,7 @@ end
     for (br, composite_arc) in candidates
         series_chain = nr.series_branch_map[composite_arc]
         is_standalone_segment =
-            any(seg -> seg === br, Iterators.flatten(values(series_chain.branches)))
+            any(seg -> seg === br, series_chain.branches)
         if is_standalone_segment
             series_branch = br
             break

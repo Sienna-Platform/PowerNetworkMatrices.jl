@@ -70,24 +70,6 @@ get_cache_lock(M::VirtualPTDF) = getfield(M, :cache_lock)
 get_dist_slack(M::VirtualPTDF) = getfield(M, :dist_slack)
 get_dist_slack_normalized(M::VirtualPTDF) = getfield(M, :dist_slack_normalized)
 
-# Accessors forward to the core.
-get_axes(M::VirtualPTDF) = get_axes(get_core(M))
-get_lookup(M::VirtualPTDF) = get_lookup(get_core(M))
-get_ref_bus(M::VirtualPTDF) = get_ref_bus(get_core(M))
-get_ref_bus_position(M::VirtualPTDF) = get_ref_bus_position(get_core(M))
-get_network_reduction_data(M::VirtualPTDF) = get_network_reduction_data(get_core(M))
-get_branch_catalog(M::VirtualPTDF) = get_branch_catalog(get_core(M))
-get_bus_lookup(M::VirtualPTDF) = get_bus_lookup(get_core(M))
-get_arc_lookup(M::VirtualPTDF) = get_arc_lookup(get_core(M))
-get_system_uuid(M::VirtualPTDF) = get_system_uuid(get_core(M))
-get_arc_axis(M::VirtualPTDF) = get_arc_axis(get_core(M))
-get_bus_axis(M::VirtualPTDF) = get_bus_axis(get_core(M))
-get_tol(M::VirtualPTDF) = get_tol(get_core(M))
-get_cutoff(M::VirtualPTDF) = get_cutoff(get_core(M))
-_get_BA(M::VirtualPTDF) = _get_BA(get_core(M))
-_get_arc_susceptances(M::VirtualPTDF) = _get_arc_susceptances(get_core(M))
-_get_valid_ix(M::VirtualPTDF) = _get_valid_ix(get_core(M))
-
 function Base.show(io::IO, ::MIME{Symbol("text/plain")}, array::VirtualPTDF)
     summary(io, array)
     isempty(array) && return
@@ -257,9 +239,7 @@ Gives the cartesian indexes of the PTDF matrix (same as the BA one).
 """
 Base.eachindex(vptdf::VirtualPTDF) = CartesianIndices(size(vptdf))
 
-if isdefined(Base, :print_array) # 0.7 and later
-    Base.print_array(io::IO, X::VirtualPTDF) = "VirtualPTDF"
-end
+Base.print_array(io::IO, X::VirtualPTDF) = "VirtualPTDF"
 
 """
     _use_dist_slack(vptdf::VirtualPTDF) -> Bool
@@ -307,11 +287,12 @@ function _getindex(
     row::Int,
     column::Union{Int, Colon},
 )
-    return cached_row_lookup(
-        get_cache(vptdf), get_cache_lock(vptdf), row, column, get_cutoff(vptdf),
+    stored = _cached_row(
+        get_cache(vptdf), get_cache_lock(vptdf), row, get_cutoff(vptdf),
     ) do
         _compute_ptdf_row(vptdf, row)
     end
+    return stored[column]
 end
 
 function Base.getindex(vptdf::VirtualPTDF, branch_name::String, bus)

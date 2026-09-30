@@ -56,9 +56,7 @@ export get_system_uuid
 export is_factorized
 export populate_cache
 
-export depth_first_search
 export find_subnetworks
-export from_hdf5
 export get_bus_reduction_map
 export get_lodf_data
 export get_network_reduction_data
@@ -67,9 +65,7 @@ export get_ptdf_data
 export get_ptdf_row
 export get_registered_contingencies
 export get_reductions
-export get_ward_reduction
 export iterative_union_find
-export to_hdf5
 export validate_connectivity
 
 using DocStringExtensions
@@ -81,12 +77,8 @@ import DataStructures
 import DataStructures: SortedDict
 import SparseArrays
 import SparseArrays: rowvals, nzrange
-import HDF5
 import LinearAlgebra
-import LinearAlgebra: BLAS.gemm
 import LinearAlgebra: ldiv!, mul!, I, dot
-import LinearAlgebra: LAPACK.getrf!, LAPACK.getrs!
-import Preferences
 
 include("KLUWrapper/KLUWrapper.jl")
 import .KLUWrapper:
@@ -102,20 +94,14 @@ import .KLUWrapper:
     solve_sparse!,
     solve_sparse,
     condest!,
-    rcond!,
-    n_valid,
     is_factored
 
 include("AccelerateWrapper/AccelerateWrapper.jl")
-import .AccelerateWrapper: AAFactorCache, aa_factorize, aa_spmm!, aa_spmv!
+import .AccelerateWrapper: AAFactorCache, aa_factorize
 
 include("linalg_settings.jl")
 include("solver_dispatch.jl")
 include("iterative_refinement.jl")
-
-function __init__()
-    something(get_linalg_backend_check(), false) && check_linalg_backend()
-end
 
 @template DEFAULT = """
                     $(SIGNATURES)
@@ -163,20 +149,16 @@ include("lodf_calculations.jl")
 include("virtual_lodf_calculations.jl")
 include("modf_definitions.jl")
 include("network_modification.jl")
-include("woodbury_kernel.jl")
 include("virtual_ptdf_modification.jl")
 include("modf_reduction_consistency.jl")
 include("virtual_modf_calculations.jl")
+include("woodbury_kernel.jl")
 include("populate_cache.jl")
 include("system_utils.jl")
-include("serialization.jl")
 
 # Forward declarations for symbols still defined inside package extensions.
 # AppleAccelerate-related functions live in `src/` now (no extension needed)
 # and are not redeclared here.
 function _calculate_PTDF_matrix_MKLPardiso end
-function _calculate_LODF_matrix_MKLPardiso end
-function _pardiso_sequential_LODF! end
-function _pardiso_single_LODF! end
 
 end

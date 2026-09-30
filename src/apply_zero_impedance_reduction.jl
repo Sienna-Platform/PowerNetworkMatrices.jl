@@ -17,10 +17,7 @@ _is_transformer(seg::AbstractReductionAggregate) = any(_is_transformer, seg)
 # function's `r == x == 0` warning (assembly already emitted it once) and rebuild
 # the full 2x2.
 function _series_admittance(r::Float64, x::Float64, min_x_eps::Float64)
-    if iszero(r) && iszero(x)
-        x = min_x_eps
-    end
-    return inv(complex(r, x))
+    return inv(complex(r, _retained_x(r, x, min_x_eps)))
 end
 
 # True for a branch with near-zero resistance (`abs(r) <= resistance_tolerance`, default `0.0` ⇒

@@ -57,8 +57,6 @@ get_winding_number(tw::ThreeWindingTransformerCircuit) = tw.winding_number
 # `get_$field` and calls it whenever PSY exposes that name, so a wrapper with a `circuit` field
 # and no `PSY.get_circuit` method throws a MethodError on display.
 PSY.get_circuit(tw::ThreeWindingTransformerCircuit) = tw.circuit
-# Lets callers key reduction maps by the parent transformer type.
-get_transformer_type(tw::ThreeWindingTransformerCircuit) = typeof(tw.transformer)
 
 function get_name(three_wt_circuit::ThreeWindingTransformerCircuit)
     transformer = get_transformer(three_wt_circuit)
