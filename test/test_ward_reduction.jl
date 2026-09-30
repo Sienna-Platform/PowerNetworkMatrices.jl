@@ -194,6 +194,7 @@ end
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     sys_with_isolated = deepcopy(sys)
     bus6 = ACBus(;
+        input_basis = PSY.CU,
         number = 6,
         name = "Bus 6",
         available = true,
@@ -248,6 +249,7 @@ end
     # island is a bus reachable only over an HVDC line, which the AC Ybus never sees.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     bus6 = ACBus(;
+        input_basis = PSY.CU,
         number = 6, name = "Bus 6", available = true, bustype = ACBusTypes.REF,
         angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.05),
         base_voltage = 69.0,

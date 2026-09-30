@@ -25,7 +25,8 @@ PrettyTables = "08abe8d2-0d0c-5749-adfa-8a2ac140af0d"
 [sources]
 InfrastructureSystems = {rev = "IS4", url = "https://github.com/Sienna-Platform/InfrastructureSystems.jl.git"}
 PowerFlowFileParser = {rev = "psy6", url = "https://github.com/Sienna-Platform/PowerFlowFileParser.jl.git"}
-PowerSystemCaseBuilder = {rev = "psy6", url = "https://github.com/Sienna-Platform/PowerSystemCaseBuilder.jl.git"}
+# TODO: revert to rev = "psy6" once PowerSystemCaseBuilder.jl#233 merges.
+PowerSystemCaseBuilder = {rev = "lk/voltage-units-1821", url = "https://github.com/Sienna-Platform/PowerSystemCaseBuilder.jl.git"}
 PowerSystems = {rev = "psy6", url = "https://github.com/Sienna-Platform/PowerSystems.jl.git"}
 # PowerDynamics-/PowerInvestmentsOpenAPIModels are not imported here — they are deps of the
 # PowerOpenAPIModels umbrella, and [sources] are not inherited transitively, so this env must
