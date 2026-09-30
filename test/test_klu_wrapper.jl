@@ -2,6 +2,12 @@ import SparseArrays
 import LinearAlgebra
 import Random
 
+@testset "Linear-solver caches share the LinearSolverCache supertype" begin
+    @test PNM.KLULinSolveCache{Float64, Int32} <: PNM.LinearSolverCache
+    @test PNM.KLULinSolveCache{Float64, Int64} <: PNM.LinearSolverCache
+    @test PNM.AAFactorCache <: PNM.LinearSolverCache
+end
+
 @testset "KLU wrapper: real round-trip and refactor" begin
     n = 50
     rng_vals = collect(1.0:n)
