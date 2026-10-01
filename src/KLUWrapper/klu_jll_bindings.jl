@@ -194,6 +194,35 @@ function klu_l_sort(
     )
 end
 
+# klu_l_extract copies the factors out of the numeric handle as 0-based CSC
+# (L unit diagonal and U diagonal stored), the BTF off-diagonal block entries F,
+# and the 0-based pivot permutations. Each of L, U and F is only filled when all
+# three of its arrays are passed. Rs and R are passed as C_NULL.
+function klu_l_extract(
+    numeric::NumericPtr,
+    symbolic::SymbolicPtr,
+    Lp::Vector{Int64}, Li::Vector{Int64}, Lx::Vector{Cdouble},
+    Up::Vector{Int64}, Ui::Vector{Int64}, Ux::Vector{Cdouble},
+    Fp::Vector{Int64}, Fi::Vector{Int64}, Fx::Vector{Cdouble},
+    P::Vector{Int64}, Q::Vector{Int64},
+    common::Ref{KluLCommon},
+)
+    return @klu_lock ccall(
+        (:klu_l_extract, libklu),
+        Cint,
+        (
+            NumericPtr, SymbolicPtr,
+            Ptr{Int64}, Ptr{Int64}, Ptr{Cdouble},
+            Ptr{Int64}, Ptr{Int64}, Ptr{Cdouble},
+            Ptr{Int64}, Ptr{Int64}, Ptr{Cdouble},
+            Ptr{Int64}, Ptr{Int64}, Ptr{Cdouble}, Ptr{Int64},
+            Ptr{KluLCommon},
+        ),
+        numeric, symbolic, Lp, Li, Lx, Up, Ui, Ux,
+        Fp, Fi, Fx, P, Q, C_NULL, C_NULL, common,
+    )
+end
+
 # klu_l_condest computes a 1-norm condition number estimate, populating
 # `common.condest`. Costs roughly two extra solves. Useful for iterative
 # refinement (informs tolerance choice) and as a diagnostic for near-singular
@@ -485,6 +514,31 @@ function klu_sort(
         Cint,
         (SymbolicPtr32, NumericPtr32, Ptr{KluCommon}),
         symbolic, numeric, common,
+    )
+end
+
+function klu_extract(
+    numeric::NumericPtr32,
+    symbolic::SymbolicPtr32,
+    Lp::Vector{Cint}, Li::Vector{Cint}, Lx::Vector{Cdouble},
+    Up::Vector{Cint}, Ui::Vector{Cint}, Ux::Vector{Cdouble},
+    Fp::Vector{Cint}, Fi::Vector{Cint}, Fx::Vector{Cdouble},
+    P::Vector{Cint}, Q::Vector{Cint},
+    common::Ref{KluCommon},
+)
+    return @klu_lock ccall(
+        (:klu_extract, libklu),
+        Cint,
+        (
+            NumericPtr32, SymbolicPtr32,
+            Ptr{Cint}, Ptr{Cint}, Ptr{Cdouble},
+            Ptr{Cint}, Ptr{Cint}, Ptr{Cdouble},
+            Ptr{Cint}, Ptr{Cint}, Ptr{Cdouble},
+            Ptr{Cint}, Ptr{Cint}, Ptr{Cdouble}, Ptr{Cint},
+            Ptr{KluCommon},
+        ),
+        numeric, symbolic, Lp, Li, Lx, Up, Ui, Ux,
+        Fp, Fi, Fx, P, Q, C_NULL, C_NULL, common,
     )
 end
 

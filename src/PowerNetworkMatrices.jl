@@ -101,7 +101,12 @@ import .KLUWrapper:
     condest!,
     rcond!,
     n_valid,
-    is_factored
+    is_factored,
+    LeanLUPlan,
+    LeanLUWorkspace,
+    lean_refactor!,
+    lean_ldiv!,
+    lean_solve!
 
 include("AccelerateWrapper/AccelerateWrapper.jl")
 import .AccelerateWrapper: AAFactorCache, aa_factorize, aa_spmm!, aa_spmv!

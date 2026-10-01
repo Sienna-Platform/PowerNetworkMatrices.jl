@@ -79,11 +79,17 @@ export KLULinSolveCache,
     rcond!,
     n_valid,
     is_factored,
-    get_reuse_symbolic
+    get_reuse_symbolic,
+    LeanLUPlan,
+    LeanLUWorkspace,
+    lean_refactor!,
+    lean_ldiv!,
+    lean_solve!
 
 include("klu_jll_bindings.jl")
 include("klu_cache.jl")
 include("solve_dense.jl")
 include("solve_sparse_rhs.jl")
+include("lean_lu.jl")
 
 end # module
