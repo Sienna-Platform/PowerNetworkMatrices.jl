@@ -1,5 +1,26 @@
 const YBUS_ELTYPE = ComplexF32
 
+# Cached two-port `(Y11, Y12, Y21, Y22)` of a reduction aggregate. Deliberately ComplexF64, not
+# YBUS_ELTYPE: `ybus_branch_entries` hands back ComplexF64 for parallel groups but ComplexF32 for
+# series chains (`_build_chain_ybus` assembles at Ybus storage precision), so the declared field
+# type is the one explicit place that conversion happens. It is also load-bearing — the
+# π-recovery representability test resolves at 1e-9, which Float32 cannot. Four numbers per
+# aggregate, so this costs nothing against the sparse Ybus that YBUS_ELTYPE exists to shrink.
+const CACHED_TWO_PORT = NTuple{4, ComplexF64}
+const EMPTY_TWO_PORT =
+    (zero(ComplexF64), zero(ComplexF64), zero(ComplexF64), zero(ComplexF64))
+
+"""
+An aggregate of branches occupying a single retained arc after a network reduction: a
+`BranchesParallel`/`MixedBranchesParallel` group or a `BranchesSeries` chain.
+
+Aggregates subtype `PSY.ACTransmission`, so without this intermediate layer they match blanket
+`::PSY.ACTransmission` methods that assume a single physical branch — silently, in the cases
+that return a value rather than erroring. Dispatch on this type whenever a method needs the
+reduction-aware `(segment, nr)` form instead.
+"""
+abstract type AbstractReductionAggregate <: PSY.ACTransmission end
+
 const KiB = 1024
 const MiB = KiB * KiB
 const GiB = MiB * KiB
@@ -15,12 +36,20 @@ const YBUS_DELTA_TOL = 1e-10
 # returned exactly. Sparsification only pays off — and is only wanted — at scale.
 const AUTO_TOLERANCE_BUS_LIMIT = 2000
 
-DEFAULT_LODF_CHUNK_SIZE = 18_000
+const DEFAULT_LODF_CHUNK_SIZE = 18_000
 
-SKIP_PARALLEL_REDUCTION_TYPES = [
-    PSY.PhaseShiftingTransformer,
-    ThreeWindingTransformerWinding{PSY.PhaseShiftingTransformer3W},
-]
+# Phase shifting is a per-circuit data property, so this is data-driven via
+# `PSY.is_phase_shifting` rather than a type list. Non-transformer branches never shift;
+# `ThreeWindingTransformerCircuit` is covered by the `PSY.is_phase_shifting` method it
+# defines for itself.
+_is_phase_shifting(::PSY.ACTransmission) = false
+_is_phase_shifting(
+    t::Union{
+        PSY.TwoWindingTransformer,
+        PSY.ThreeWindingTransformer,
+        ThreeWindingTransformerCircuit,
+    },
+) = PSY.is_phase_shifting(t)
 
 # Singleton types for linear solver dispatch, enabling compile-time method resolution.
 abstract type LinearSolverType end

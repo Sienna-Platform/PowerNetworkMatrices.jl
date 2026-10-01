@@ -1,6 +1,14 @@
-# `delta_b` removes the arc's entire series susceptance (a full outage).
+# Compared as magnitudes: delta_b from _get_arc_susceptances is -|b|, but _ba_arc_susceptance
+# is signed, so a signed test would call a full outage of a negative-reactance arc (3W star
+# leg, series compensation) partial. -|b| is the correct delta regardless: arc_sus (BA's
+# convention) is always the positive-by-construction DC susceptance magnitude, with direction
+# carried by BA's own +-1 incidence entries, not by the branch's physical sign. Negating the
+# signed _ba_arc_susceptance instead would double-negate on a negative-reactance arc and get
+# the update backwards -- confirmed by test_network_modification.jl's "negative-susceptance
+# full outage" case, where scaling by delta_b/b_arc on the signed value doubles the branch
+# instead of removing it.
 _is_full_outage(delta_b::Float64, b_arc::Float64) =
-    isapprox(delta_b, -b_arc; atol = YBUS_DELTA_TOL, rtol = 0)
+    isapprox(abs(delta_b), abs(b_arc); atol = YBUS_DELTA_TOL, rtol = sqrt(eps(Float32)))
 
 # Negated Pi-model entries: the delta that cancels the arc's contribution (full outage).
 function _negated_pi_model(entries::NTuple{4, <:Complex})::NTuple{4, YBUS_ELTYPE}
@@ -26,49 +34,149 @@ function _scaled_pi_model(
 end
 
 """
-    _compute_parallel_partial_ybus_delta(bp, delta_b) -> NTuple{4, YBUS_ELTYPE}
+    _member_outage_ybus_delta(bp, nr, component) -> NTuple{4, YBUS_ELTYPE}
 
-Compute the Pi-model Ybus delta for a partial outage on a parallel branch group.
-Finds the circuit whose susceptance matches `delta_b` and returns its negated Pi-model entries.
+π-model Ybus delta for tripping `component`, a specific member of the parallel group `bp`,
+resolved by object identity. Anti-parallel members are swapped into the group's key frame,
+mirroring `ybus_branch_entries(bp, nr)`.
 """
-function _compute_parallel_partial_ybus_delta(
+function _member_outage_ybus_delta(
     bp::AbstractBranchesParallel,
-    delta_b::Float64,
+    nr::NetworkReductionData,
+    component::PSY.ACTransmission,
 )::NTuple{4, YBUS_ELTYPE}
-    for br in bp.branches
-        if _is_full_outage(delta_b, get_series_susceptance(br))
-            return _negated_pi_model(ybus_branch_entries(br))
-        end
+    # `===` relies on `ThreeWindingTransformerCircuit` being an immutable wrapper over the
+    # parent's stored circuit, so reconstructed wrappers stay egal; if that changes,
+    # membership must key on `{parent, winding_number}` instead.
+    if !any(br === component for br in bp.branches)
+        error(
+            "Component $(get_name(component)) is not a member of the parallel group " *
+            "$(get_name(bp)); cannot compute its outage delta.",
+        )
     end
-    error(
-        "Could not resolve partial parallel outage to individual circuit Pi-models. " *
-        "No circuit in parallel group matches delta_b=$(delta_b).",
+    entries = ybus_branch_entries(component, nr)
+    if get_arc_tuple(component, nr) != get_arc_tuple(bp, nr)
+        entries = (entries[4], entries[3], entries[2], entries[1])
+    end
+    return _negated_pi_model(entries)
+end
+
+"""
+    _outaged_group_member(bp, branch) -> PSY.ACTransmission
+
+The member of bp carrying branch: branch itself, or the grouped degree-two chain whose
+leaves include it.
+"""
+function _outaged_group_member(
+    bp::AbstractBranchesParallel,
+    branch::PSY.ACTransmission,
+)::PSY.ACTransmission
+    for member in bp
+        _has_leaf(member, branch) && return member
+    end
+    return error(
+        "$(typeof(branch)) $(get_name(branch)) is filed on the arc of parallel group " *
+        "$(get_name(bp)) but no member of the group carries it.",
     )
 end
 
+# Susceptance the group arc loses when `branch` trips. A physical member leaves with all of
+# it.
+_member_outage_delta_b(
+    member::PSY.ACTransmission,
+    ::PSY.ACTransmission,
+    nr::NetworkReductionData,
+)::Float64 = -_finite_series_susceptance(member, nr)
+
+# An aggregate member is representable on the group arc only when it opens entirely, since
+# `_member_outage_ybus_delta` can only negate a member's whole Pi-model. Subtypes that can
+# answer refine this; the rest say so rather than reporting the whole member as lost.
+function _member_outage_delta_b(
+    member::AbstractReductionAggregate,
+    branch::PSY.ACTransmission,
+    ::NetworkReductionData,
+)::Float64
+    return error(
+        "Tripping $(typeof(branch)) $(get_name(branch)) leaves $(get_name(member)) partly " *
+        "in service, and a partial Pi-model delta is not supported on the composite arc " *
+        "it sits on.",
+    )
+end
+
+# A chain opens when any segment loses all of its susceptance, which is what tripping a
+# single-branch segment does. The same limit `_series_arc_ybus_delta` enforces on a chain
+# standing alone in `series_branch_map`.
+function _member_outage_delta_b(
+    member::BranchesSeries,
+    branch::PSY.ACTransmission,
+    nr::NetworkReductionData,
+)::Float64
+    delta_b = _compute_series_outage_delta_b(member, branch, nr)
+    if !_is_full_outage(delta_b, _finite_series_susceptance(member, nr))
+        error(
+            "Tripping $(typeof(branch)) $(get_name(branch)) leaves the series chain " *
+            "$(get_name(member)) partly in service. A partial Ybus delta is not supported " *
+            "on the composite arc it was grouped onto. Δb=$(delta_b).",
+        )
+    end
+    return delta_b
+end
+
 # Direct arc: full outage negates the Pi-model; otherwise scale it by `delta_b / b_arc`.
+# `b_arc` must be what BA holds for the arc: `delta_b` comes from BA, which already
+# substituted `min_x_eps` and, for a symmetric arc, read the corrected Ybus entry. Component
+# values here make the two sides disagree and scale a full outage instead of negating it.
 function _direct_arc_ybus_delta(
     br::PSY.ACTransmission,
+    nr::NetworkReductionData,
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
-    b_arc = get_series_susceptance(br)
-    entries = ybus_branch_entries(br)
+    entries = ybus_branch_entries(br, nr)
+    b_arc = _ba_arc_susceptance(entries, br, nr)
     if _is_full_outage(delta_b, b_arc)
         return _negated_pi_model(entries)
     end
-    return _scaled_pi_model(entries, delta_b / b_arc)
+    # `delta_b` is a magnitude-space change, so the fraction is taken against `|b_arc|`.
+    return _scaled_pi_model(entries, delta_b / abs(b_arc))
 end
 
-# Parallel group: full outage negates the equivalent; a partial outage drops one circuit.
+# A circuit is in or out: cancel the whole Pi-model, and reject a partial Δb so DC and AC
+# describe one contingency.
+function _direct_arc_ybus_delta(
+    tr::ThreeWindingTransformerCircuit,
+    nr::NetworkReductionData,
+    delta_b::Float64,
+)::NTuple{4, YBUS_ELTYPE}
+    entries = ybus_branch_entries(tr, nr)
+    b_arc = _ba_arc_susceptance(entries, tr, nr)
+    if !_is_full_outage(delta_b, b_arc)
+        error(
+            "Partial Ybus delta is not supported on the three-winding transformer " *
+            "star-leg arc $(get_arc_tuple(tr, nr)) of $(get_name(tr)): a circuit is " *
+            "either in service or out. Δb=$(delta_b), arc b=$(b_arc).",
+        )
+    end
+    return _negated_pi_model(entries)
+end
+
+# Parallel group: full outage negates the equivalent; a partial outage needs the tripped
+# member's identity (see `_member_outage_ybus_delta`) — value-matching susceptances picks
+# the wrong member when two members share a susceptance.
 function _parallel_arc_ybus_delta(
     bp::AbstractBranchesParallel,
     nr::NetworkReductionData,
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
-    if _is_full_outage(delta_b, get_series_susceptance(bp))
-        return _negated_pi_model(ybus_branch_entries(bp, nr))
+    entries = ybus_branch_entries(bp, nr)
+    b_arc = _ba_arc_susceptance(entries, bp, nr)
+    if _is_full_outage(delta_b, b_arc)
+        return _negated_pi_model(entries)
     end
-    return _compute_parallel_partial_ybus_delta(bp, delta_b)
+    error(
+        "Partial outage on parallel group $(get_name(bp)) requires the tripped " *
+        "component's identity; construct the modification from the branch component " *
+        "instead of the arc tuple. Δb=$(delta_b), group b=$(b_arc).",
+    )
 end
 
 # Series-reduced arc: only full outage of the equivalent chain is supported.
@@ -78,28 +186,13 @@ function _series_arc_ybus_delta(
     arc_tuple::Tuple{Int, Int},
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
-    if !_is_full_outage(delta_b, get_series_susceptance(series_chain))
+    if !_is_full_outage(delta_b, _finite_series_susceptance(series_chain, nr))
         error(
             "Partial Ybus delta is not supported on series-reduced arcs. " *
             "Arc $(arc_tuple), Δb=$(delta_b).",
         )
     end
     return _negated_pi_model(ybus_branch_entries(series_chain, nr))
-end
-
-# 3-winding transformer arc: only full outage of the winding is supported.
-function _transformer3W_arc_ybus_delta(
-    tr::ThreeWindingTransformerWinding,
-    arc_tuple::Tuple{Int, Int},
-    delta_b::Float64,
-)::NTuple{4, YBUS_ELTYPE}
-    if !_is_full_outage(delta_b, get_series_susceptance(tr))
-        error(
-            "Partial Ybus delta is not supported on 3-winding transformer arcs. " *
-            "Arc $(arc_tuple), Δb=$(delta_b).",
-        )
-    end
-    return _negated_pi_model(ybus_branch_entries(tr))
 end
 
 """
@@ -114,7 +207,7 @@ function _compute_arc_ybus_delta(
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
     if haskey(nr.direct_branch_map, arc_tuple)
-        return _direct_arc_ybus_delta(nr.direct_branch_map[arc_tuple], delta_b)
+        return _direct_arc_ybus_delta(nr.direct_branch_map[arc_tuple], nr, delta_b)
     elseif haskey(nr.parallel_branch_map, arc_tuple)
         return _parallel_arc_ybus_delta(nr.parallel_branch_map[arc_tuple], nr, delta_b)
     elseif haskey(nr.series_branch_map, arc_tuple)
@@ -124,17 +217,34 @@ function _compute_arc_ybus_delta(
             arc_tuple,
             delta_b,
         )
-    elseif haskey(nr.transformer3W_map, arc_tuple)
-        return _transformer3W_arc_ybus_delta(
-            nr.transformer3W_map[arc_tuple],
-            arc_tuple,
-            delta_b,
-        )
     end
     error(
         "Arc $(arc_tuple) not found in any network reduction map. " *
         "Cannot compute Ybus Pi-model delta.",
     )
+end
+
+"""
+    _compute_arc_ybus_delta(nr, arc_tuple, delta_b, component) -> NTuple{4, YBUS_ELTYPE}
+
+Component-aware variant: on a parallel-map arc the tripped member is resolved by object
+identity instead of susceptance value. Direct and series arcs delegate to the arc-tuple
+handlers (the direct-map entry *is* the component; series arcs carry aggregate deltas).
+"""
+function _compute_arc_ybus_delta(
+    nr::NetworkReductionData,
+    arc_tuple::Tuple{Int, Int},
+    delta_b::Float64,
+    component::PSY.ACTransmission,
+)::NTuple{4, YBUS_ELTYPE}
+    if haskey(nr.parallel_branch_map, arc_tuple)
+        return _member_outage_ybus_delta(
+            nr.parallel_branch_map[arc_tuple],
+            nr,
+            component,
+        )
+    end
+    return _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
 end
 
 """
@@ -151,7 +261,17 @@ function NetworkModification(mat::PowerNetworkMatrix, arc::Tuple{Int, Int})
     dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc, -b)
     return NetworkModification(
         "outage_$(arc[1])_$(arc[2])",
-        [ArcModification(arc_idx, -b, dy11, dy12, dy21, dy22)],
+        [
+            ArcModification(
+                arc_idx,
+                -b,
+                -arc_dc_shift_injection(nr, arc),
+                dy11,
+                dy12,
+                dy21,
+                dy22,
+            ),
+        ],
     )
 end
 
@@ -166,10 +286,7 @@ function NetworkModification(mat::PowerNetworkMatrix, branch::PSY.ACTransmission
     arc_lookup = get_arc_lookup(mat)
     arc_sus = _get_arc_susceptances(mat)
     mods = _classify_branch_modification(nr, arc_lookup, arc_sus, branch)
-    return NetworkModification(
-        get_name(branch),
-        mods,
-    )
+    return NetworkModification(get_name(branch), mods)
 end
 
 """
@@ -178,12 +295,9 @@ $(TYPEDSIGNATURES)
 Construct a `NetworkModification` from a `ThreeWindingTransformer` component.
 Automatically decomposes the transformer into its three winding arcs and classifies
 each one. For a partial outage (single winding trip), use a
-`ThreeWindingTransformerWinding` instead.
+`ThreeWindingTransformerCircuit` instead.
 """
-function NetworkModification(
-    mat::PowerNetworkMatrix,
-    branch::PSY.ThreeWindingTransformer,
-)
+function NetworkModification(mat::PowerNetworkMatrix, branch::PSY.ThreeWindingTransformer)
     nr = get_network_reduction_data(mat)
     arc_lookup = get_arc_lookup(mat)
     arc_sus = _get_arc_susceptances(mat)
@@ -206,10 +320,7 @@ load/gen-bearing terminal also disconnects. The star bus is kept in the
 union-find so it connects its terminals in the baseline, but is excluded from
 the component count — a higher post-outage count means a real bus was islanded.
 """
-function _3wt_real_bus_islanding(
-    mat::PowerNetworkMatrix,
-    mods::Vector{ArcModification},
-)
+function _3wt_real_bus_islanding(mat::PowerNetworkMatrix, mods::Vector{ArcModification})
     isempty(mods) && return false
     arc_ax = get_arc_axis(mat)
     bus_lookup = get_bus_lookup(mat)
@@ -247,11 +358,7 @@ Resolves the outage's associated `ACTransmission` components through the system,
 classifies each by the matrix's network reduction maps, and builds the
 modification. Handles multi-component outages with series-chain grouping.
 """
-function NetworkModification(
-    mat::PowerNetworkMatrix,
-    sys::PSY.System,
-    outage::PSY.Outage,
-)
+function NetworkModification(mat::PowerNetworkMatrix, sys::PSY.System, outage::PSY.Outage)
     _validate_system_uuid(mat, sys)
 
     # Single query for all associated components (avoids repeated PSY lookups)
@@ -277,10 +384,17 @@ function NetworkModification(
 
     for component in all_components
         _classify_outage_component!(
-            nr, arc_lookup, arc_sus, bus_lookup, component,
-            direct_mods, parallel_mods,
-            series_components_by_arc, series_arc_tuples,
-            shunt_mods, component_names,
+            nr,
+            arc_lookup,
+            arc_sus,
+            bus_lookup,
+            component,
+            direct_mods,
+            parallel_mods,
+            series_components_by_arc,
+            series_arc_tuples,
+            shunt_mods,
+            component_names,
         )
     end
 
@@ -289,9 +403,14 @@ function NetworkModification(
     for (arc_idx, tripped) in series_components_by_arc
         arc_tuple = series_arc_tuples[arc_idx]
         series_chain = nr.series_branch_map[arc_tuple]
-        delta_b = _compute_series_outage_delta_b(series_chain, tripped)
+        delta_b = _compute_series_outage_delta_b(series_chain, tripped, nr)
+        delta_shift =
+            _compute_series_outage_delta_shift_injection(series_chain, tripped, nr)
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
-        push!(series_mods, ArcModification(arc_idx, delta_b, dy11, dy12, dy21, dy22))
+        push!(
+            series_mods,
+            ArcModification(arc_idx, delta_b, delta_shift, dy11, dy12, dy21, dy22),
+        )
     end
 
     mods = vcat(direct_mods, parallel_mods, series_mods)
@@ -301,9 +420,12 @@ function NetworkModification(
               "The outage may only affect non-network components (e.g., generators)."
     end
 
-    outage_uuid = IS.get_uuid(outage)
-    ctg_name = isempty(component_names) ? string(outage_uuid) :
-               join(component_names, "+")
+    outage_id = IS.get_id(outage)
+    if isempty(component_names)
+        ctg_name = string(outage_id)
+    else
+        ctg_name = join(component_names, "+")
+    end
 
     # A fully-outaged ThreeWindingTransformer isolates its star bus and may
     # island a real terminal bus; flag that on `is_islanding`.
@@ -311,7 +433,9 @@ function NetworkModification(
     arc_ax = get_arc_axis(mat)
     for component in all_components
         _is_three_winding_transformer(component) || continue
-        star_num = get_arc_tuple(ThreeWindingTransformerWinding(component, 1))[2]
+        # Every circuit's arc ends at the star bus, so read it off the first one.
+        star_num =
+            PSY.get_number(PSY.get_to(PSY.get_arc(first(PSY.get_circuits(component)))))
         t3w_mods = [m for m in direct_mods if arc_ax[m.arc_index][2] == star_num]
         is_island = is_island || _3wt_real_bus_islanding(mat, t3w_mods)
     end
@@ -321,6 +445,28 @@ end
 _is_three_winding_transformer(::Any) = false
 _is_three_winding_transformer(::PSY.ThreeWindingTransformer) = true
 
+function _parallel_arc_modification(
+    nr::NetworkReductionData,
+    arc_lookup::Dict,
+    arc_tuple::Tuple{Int, Int},
+    branch::PSY.ACTransmission,
+)::ArcModification
+    bp = nr.parallel_branch_map[arc_tuple]
+    member = _outaged_group_member(bp, branch)
+    delta_b = _member_outage_delta_b(member, branch, nr)
+    delta_shift = -_member_shift_injection(bp, nr, member)
+    dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b, member)
+    return ArcModification(
+        arc_lookup[arc_tuple],
+        delta_b,
+        delta_shift,
+        dy11,
+        dy12,
+        dy21,
+        dy22,
+    )
+end
+
 """
     _classify_outage_component!(nr, arc_lookup, arc_sus, bus_lookup, component, ...) -> nothing
 
@@ -328,22 +474,6 @@ Classify a single outage component via multiple dispatch. ACTransmission branche
 classified into direct/parallel/series arc modifications. Shunt components produce
 diagonal admittance changes. Unsupported component types are silently ignored.
 """
-function _classify_outage_component!(
-    ::NetworkReductionData,
-    ::Dict,
-    ::Vector{Float64},
-    ::Dict{Int, Int},
-    component::PSY.PhaseShiftingTransformer,
-    ::Vector{ArcModification},
-    ::Vector{ArcModification},
-    ::Dict{Int, Vector{PSY.ACTransmission}},
-    ::Dict{Int, Tuple{Int, Int}},
-    ::Vector{ShuntModification},
-    ::Vector{String},
-)
-    _assert_not_phase_shifting(component)
-end
-
 function _classify_outage_component!(
     nr::NetworkReductionData,
     arc_lookup::Dict,
@@ -362,26 +492,17 @@ function _classify_outage_component!(
     if tag === :direct
         arc_idx = arc_lookup[arc_tuple]
         b_arc = arc_susceptances[arc_idx]
-        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc)
-        push!(direct_mods, ArcModification(arc_idx, -b_arc, dy11, dy12, dy21, dy22))
-    elseif tag === :transformer3w
-        arc_idx = arc_lookup[arc_tuple]
-        b_arc = arc_susceptances[arc_idx]
-        tr = nr.transformer3W_map[arc_tuple]
-        Y11, Y12, Y21, Y22 = ybus_branch_entries(tr)
+        delta_shift = -arc_dc_shift_injection(nr, arc_tuple)
+        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc, component)
         push!(
             direct_mods,
-            ArcModification(
-                arc_idx, -b_arc,
-                YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
-                YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22),
-            ),
+            ArcModification(arc_idx, -b_arc, delta_shift, dy11, dy12, dy21, dy22),
         )
     elseif tag === :parallel
-        arc_idx = arc_lookup[arc_tuple]
-        b_circuit = PSY.get_series_susceptance(component)
-        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_circuit)
-        push!(parallel_mods, ArcModification(arc_idx, -b_circuit, dy11, dy12, dy21, dy22))
+        push!(
+            parallel_mods,
+            _parallel_arc_modification(nr, arc_lookup, arc_tuple, component),
+        )
     elseif tag === :series
         arc_idx = arc_lookup[arc_tuple]
         if !haskey(series_components_by_arc, arc_idx)
@@ -433,8 +554,8 @@ function _classify_outage_component!(
 )
     bus_ix = get_bus_index(component, bus_lookup, nr)
     Y =
-        PSY.get_impedance_active_power(component) -
-        im * PSY.get_impedance_reactive_power(component)
+        PSY.get_impedance_active_power(component, PSY.SU) -
+        im * PSY.get_impedance_reactive_power(component, PSY.SU)
     push!(shunt_mods, ShuntModification(bus_ix, YBUS_ELTYPE(-Y)))
     push!(component_names, PSY.get_name(component))
     return
@@ -471,23 +592,29 @@ function _classify_outage_component!(
     shunt_mods::Vector{ShuntModification},
     component_names::Vector{String},
 )
-    _assert_not_phase_shifting(component)
     # An unavailable parent transformer is already out of service, so it cannot be
     # outaged; skip it regardless of the per-winding availability flags. This mirrors
     # the parent-then-winding gating used when building the Ybus.
     if !PSY.get_available(component)
         return
     end
-    for winding_num in 1:3
-        winding = ThreeWindingTransformerWinding(component, winding_num)
+    for (winding_num, circuit) in enumerate(PSY.get_circuits(component))
+        winding = ThreeWindingTransformerCircuit(component, circuit, winding_num)
         if !get_equivalent_available(winding)
             continue
         end
         _classify_outage_component!(
-            nr, arc_lookup, arc_susceptances, bus_lookup, winding,
-            direct_mods, parallel_mods,
-            series_components_by_arc, series_arc_tuples,
-            shunt_mods, component_names,
+            nr,
+            arc_lookup,
+            arc_susceptances,
+            bus_lookup,
+            winding,
+            direct_mods,
+            parallel_mods,
+            series_components_by_arc,
+            series_arc_tuples,
+            shunt_mods,
+            component_names,
         )
     end
     return
@@ -500,14 +627,6 @@ Classify a single branch component into the appropriate arc modification using
 the network reduction reverse maps. For single-branch modifications only;
 use `_classify_outage_component!` for multi-component outages with series grouping.
 """
-function _classify_branch_modification(
-    ::NetworkReductionData,
-    ::Dict,
-    ::Vector{Float64},
-    branch::PSY.PhaseShiftingTransformer,
-)
-    _assert_not_phase_shifting(branch)
-end
 
 """
     _classify_branch_modification(nr, arc_lookup, arc_susceptances, branch::PSY.ThreeWindingTransformer) -> Vector{ArcModification}
@@ -522,15 +641,14 @@ function _classify_branch_modification(
     arc_susceptances::Vector{Float64},
     branch::PSY.ThreeWindingTransformer,
 )::Vector{ArcModification}
-    _assert_not_phase_shifting(branch)
     # An unavailable parent transformer is already out of service and produces no
     # modifications, irrespective of the per-winding availability flags.
     if !PSY.get_available(branch)
         return ArcModification[]
     end
     mods = ArcModification[]
-    for winding_num in 1:3
-        winding = ThreeWindingTransformerWinding(branch, winding_num)
+    for (winding_num, circuit) in enumerate(PSY.get_circuits(branch))
+        winding = ThreeWindingTransformerCircuit(branch, circuit, winding_num)
         if !get_equivalent_available(winding)
             continue
         end
@@ -553,31 +671,19 @@ function _classify_branch_modification(
     if tag === :direct
         arc_idx = arc_lookup[arc_tuple]
         b_arc = arc_susceptances[arc_idx]
-        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc)
-        return [ArcModification(arc_idx, -b_arc, dy11, dy12, dy21, dy22)]
-    elseif tag === :transformer3w
-        arc_idx = arc_lookup[arc_tuple]
-        b_arc = arc_susceptances[arc_idx]
-        tr = nr.transformer3W_map[arc_tuple]
-        Y11, Y12, Y21, Y22 = ybus_branch_entries(tr)
-        return [
-            ArcModification(
-                arc_idx, -b_arc,
-                YBUS_ELTYPE(-Y11), YBUS_ELTYPE(-Y12),
-                YBUS_ELTYPE(-Y21), YBUS_ELTYPE(-Y22),
-            ),
-        ]
+        delta_shift = -arc_dc_shift_injection(nr, arc_tuple)
+        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc, branch)
+        return [ArcModification(arc_idx, -b_arc, delta_shift, dy11, dy12, dy21, dy22)]
     elseif tag === :parallel
-        arc_idx = arc_lookup[arc_tuple]
-        b_circuit = PSY.get_series_susceptance(branch)
-        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_circuit)
-        return [ArcModification(arc_idx, -b_circuit, dy11, dy12, dy21, dy22)]
+        return [_parallel_arc_modification(nr, arc_lookup, arc_tuple, branch)]
     elseif tag === :series
         arc_idx = arc_lookup[arc_tuple]
         series_chain = nr.series_branch_map[arc_tuple]
-        delta_b = _compute_series_outage_delta_b(series_chain, branch)
+        delta_b = _compute_series_outage_delta_b(series_chain, branch, nr)
+        delta_shift =
+            _compute_series_outage_delta_shift_injection(series_chain, [branch], nr)
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
-        return [ArcModification(arc_idx, delta_b, dy11, dy12, dy21, dy22)]
+        return [ArcModification(arc_idx, delta_b, delta_shift, dy11, dy12, dy21, dy22)]
     else
         @info "Branch $(get_name(branch)) not found in any reduction map. " *
               "The component may have been eliminated by a radial reduction."
@@ -639,9 +745,15 @@ function compute_ybus_delta(
         fb_ix = bus_lookup[arc_tuple[1]]
         tb_ix = bus_lookup[arc_tuple[2]]
         _accumulate_arc_delta!(
-            I, J, V, fb_ix, tb_ix,
-            arc_mod.delta_y11, arc_mod.delta_y12,
-            arc_mod.delta_y21, arc_mod.delta_y22,
+            I,
+            J,
+            V,
+            fb_ix,
+            tb_ix,
+            arc_mod.delta_y11,
+            arc_mod.delta_y12,
+            arc_mod.delta_y21,
+            arc_mod.delta_y22,
         )
     end
 
@@ -660,10 +772,7 @@ end
 Apply a canonical NetworkModification to a Ybus, returning the modified sparse matrix.
 Convenience wrapper around `compute_ybus_delta`.
 """
-function apply_ybus_modification(
-    ybus::Ybus,
-    mod::NetworkModification,
-)
+function apply_ybus_modification(ybus::Ybus, mod::NetworkModification)
     delta = compute_ybus_delta(ybus, mod)
     return ybus.data + delta
 end

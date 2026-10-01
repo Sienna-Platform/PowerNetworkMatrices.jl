@@ -1,33 +1,33 @@
 @testset "System UUID tracking in VirtualPTDF" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
-    sys_uuid = IS.get_uuid(sys)
+    sys_uuid = PSY.get_system_uuid(sys)
 
     # UUID is stored when constructing from system
     vptdf = VirtualPTDF(sys)
-    @test get_system_uuid(vptdf) == sys_uuid
+    @test PNM.get_system_uuid(vptdf) == sys_uuid
 
     # UUID is nothing when constructing from Ybus (no system available)
     ybus = Ybus(sys)
     vptdf_ybus = VirtualPTDF(ybus)
-    @test isnothing(get_system_uuid(vptdf_ybus))
+    @test isnothing(PNM.get_system_uuid(vptdf_ybus))
 end
 
 @testset "System UUID tracking in VirtualMODF" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
-    sys_uuid = IS.get_uuid(sys)
+    sys_uuid = PSY.get_system_uuid(sys)
 
     vmodf = VirtualMODF(sys)
-    @test get_system_uuid(vmodf) == sys_uuid
+    @test PNM.get_system_uuid(vmodf) == sys_uuid
 end
 
 @testset "Default get_system_uuid returns nothing" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
 
     ybus = Ybus(sys)
-    @test isnothing(get_system_uuid(ybus))
+    @test isnothing(PNM.get_system_uuid(ybus))
 
     ptdf = PTDF(sys)
-    @test isnothing(get_system_uuid(ptdf))
+    @test isnothing(PNM.get_system_uuid(ptdf))
 end
 
 @testset "System UUID validation in NetworkModification" begin

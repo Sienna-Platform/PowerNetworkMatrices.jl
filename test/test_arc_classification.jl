@@ -1,8 +1,5 @@
 @testset "_resolve_branch_arc: classifies direct, parallel, series, and unknown branches" begin
-    sys = PSB.build_system(
-        PSSEParsingTestSystems,
-        "psse_14_network_reduction_test_system",
-    )
+    sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
     reductions = NetworkReduction[DegreeTwoReduction()]
     ybus = Ybus(sys; network_reductions = reductions)
     nr = PNM.get_network_reduction_data(ybus)
@@ -28,10 +25,19 @@
         @test arc == expected_arc
     end
 
-    if !isempty(nr.reverse_transformer3W_map)
-        winding, expected_arc = first(nr.reverse_transformer3W_map)
+    # Three-winding transformer windings are one-to-one arcs held in the direct maps, so
+    # they classify as :direct like any other single branch on its arc.
+    winding_entry = nothing
+    for (branch, expected_arc) in nr.reverse_direct_branch_map
+        if branch isa PNM.ThreeWindingTransformerCircuit
+            winding_entry = (branch, expected_arc)
+            break
+        end
+    end
+    if winding_entry !== nothing
+        winding, expected_arc = winding_entry
         tag, arc = PNM._resolve_branch_arc(nr, winding)
-        @test tag === :transformer3w
+        @test tag === :direct
         @test arc == expected_arc
     end
 end

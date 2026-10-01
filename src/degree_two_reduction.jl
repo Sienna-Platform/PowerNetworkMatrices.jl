@@ -26,101 +26,193 @@ function get_degree2_reduction(
     exempt_bus_positions::Set{Int},
     direct_branch_map::Dict{Tuple{Int, Int}, PSY.ACTransmission},
     parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel},
-    transformer3W_map::Dict{Tuple{Int, Int}, ThreeWindingTransformerWinding},
 )
     reverse_bus_lookup = Dict(v => k for (k, v) in bus_lookup)
-    arc_maps = find_degree2_chains(data, exempt_bus_positions)
+    chains = find_degree2_chains(data, exempt_bus_positions)
     series_branch_map = Dict{Tuple{Int, Int}, BranchesSeries}()
+    parallel_additions = Dict{Tuple{Int, Int}, AbstractBranchesParallel}()
 
     removed_buses = Set{Int}()
     removed_arcs = Set{Tuple{Int, Int}}()
-    for (composite_arc_ix, segment_ix) in arc_maps
+    # Chains sharing an endpoint pair are electrically in parallel. Group them by the unordered
+    # pair so traversal direction cannot split a sibling pair across two arcs: the pair is an
+    # ordered tuple and which way a chain is traversed depends on interior bus numbering, so
+    # siblings can present as `(A, B)` and `(B, A)` and both reach the branch maps.
+    by_endpoints = Dict{Tuple{Int, Int}, Vector{BranchesSeries}}()
+    for segment_ix in chains
         composite_arc = (
-            reverse_bus_lookup[composite_arc_ix[1]],
-            reverse_bus_lookup[composite_arc_ix[2]],
+            reverse_bus_lookup[segment_ix[1]],
+            reverse_bus_lookup[segment_ix[end]],
         )
-        segment_numbers = [reverse_bus_lookup[x] for x in segment_ix]
-        @assert composite_arc[1] == segment_numbers[1]
-        @assert composite_arc[2] == segment_numbers[end]
-        segments = BranchesSeries()
-        for ix in 1:(length(segment_numbers) - 1)
-            segment_arc = (segment_numbers[ix], segment_numbers[ix + 1])
-            segment_arc, entry, orientation = _get_branch_map_entry(
-                direct_branch_map,
-                parallel_branch_map,
-                transformer3W_map,
-                segment_arc,
-            )
-            add_branch!(segments, entry, orientation)
-            push!(removed_arcs, segment_arc)
-            ix != 1 && push!(removed_buses, segment_numbers[ix])
-        end
-        series_branch_map[composite_arc] = segments
+        segments = _build_chain_segments!(
+            removed_arcs,
+            removed_buses,
+            composite_arc,
+            segment_ix,
+            reverse_bus_lookup,
+            direct_branch_map,
+            parallel_branch_map,
+        )
+        key = minmax(composite_arc[1], composite_arc[2])
+        push!(get!(by_endpoints, key, Vector{BranchesSeries}()), segments)
     end
+
+    for siblings in values(by_endpoints)
+        # The seed chain's orientation is the group's arc frame, matching BranchesParallel.
+        first_chain = first(siblings)
+        composite_arc = get_arc_tuple(first_chain)
+        if length(siblings) == 1
+            series_branch_map[composite_arc] = first_chain
+        else
+            parallel_additions[composite_arc] = BranchesParallel(siblings)
+        end
+    end
+
     reverse_series_branch_map = _make_reverse_series_branch_map(series_branch_map)
-    return series_branch_map, reverse_series_branch_map, removed_buses, removed_arcs
+    return series_branch_map,
+    parallel_additions,
+    reverse_series_branch_map,
+    removed_buses,
+    removed_arcs
 end
 
-function _add_to_reverse_series_branch_map!(
-    reverse_series_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}},
+# Assemble one chain's `BranchesSeries` and record the arcs and interior buses it consumes.
+function _build_chain_segments!(
+    removed_arcs::Set{Tuple{Int, Int}},
+    removed_buses::Set{Int},
     composite_arc::Tuple{Int, Int},
-    segment::AbstractBranchesParallel,
+    segment_ix::Vector{Int},
+    reverse_bus_lookup::Dict{Int, Int},
+    direct_branch_map::Dict{Tuple{Int, Int}, PSY.ACTransmission},
+    parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel},
 )
-    for branch in segment.branches
-        reverse_series_branch_map[branch] = composite_arc
+    segment_numbers = [reverse_bus_lookup[x] for x in segment_ix]
+    @assert composite_arc[1] == segment_numbers[1]
+    @assert composite_arc[2] == segment_numbers[end]
+    segments = BranchesSeries(composite_arc)
+    for ix in 1:(length(segment_numbers) - 1)
+        segment_arc = (segment_numbers[ix], segment_numbers[ix + 1])
+        entries =
+            _get_branch_map_entries(direct_branch_map, parallel_branch_map, segment_arc)
+        # The pair's principal key is the group frame, so a member keyed the other way is
+        # transposed by `_subset_two_port` when the group's two-port is assembled.
+        principal_arc, principal_entry, orientation = first(entries)
+        entry = if length(entries) == 1
+            principal_entry
+        else
+            _build_chain_merge_group(
+                PSY.ACTransmission[e[2] for e in entries],
+                principal_arc,
+            )
+        end
+        add_branch!(segments, entry, orientation)
+        for (key, _, _) in entries
+            push!(removed_arcs, key)
+        end
+        ix != 1 && push!(removed_buses, segment_numbers[ix])
+    end
+    return segments
+end
+
+# The container for several arcs resolved onto one bus pair. A homogeneous set keeps its concrete
+# type; anything mixed needs `MixedBranchesParallel`. Built here rather than through
+# `_make_parallel_branch_pair` / `_push_parallel_branch!` because their mixed-type arms emit a
+# `@warn` about suspect input data, which an anti-parallel pair on a chain segment is not.
+function _build_chain_merge_group(
+    members::Vector{PSY.ACTransmission},
+    arc_key::Tuple{Int, Int},
+)
+    member_types = unique(typeof.(members))
+    if length(member_types) == 1
+        T = only(member_types)
+        return BranchesParallel{T}(
+            T[m for m in members],
+            arc_key,
+            EMPTY_TWO_PORT,
+            false,
+        )
+    end
+    return MixedBranchesParallel(members, arc_key, EMPTY_TWO_PORT, false)
+end
+
+# A composite arc's members can nest: a chain segment can be a parallel group. Recursion
+# registers the physical branches at the leaves, which is what `_resolve_branch_arc` answers
+# with.
+function _register_composite_members!(
+    reverse_map::Dict{PSY.ACTransmission, Tuple{Int, Int}},
+    composite_arc::Tuple{Int, Int},
+    segment::AbstractReductionAggregate,
+)
+    for member in segment
+        _register_composite_members!(reverse_map, composite_arc, member)
     end
     return
 end
 
-function _add_to_reverse_series_branch_map!(
-    reverse_series_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}},
+function _register_composite_members!(
+    reverse_map::Dict{PSY.ACTransmission, Tuple{Int, Int}},
     composite_arc::Tuple{Int, Int},
     segment::PSY.ACTransmission,
 )
-    reverse_series_branch_map[segment] = composite_arc
+    reverse_map[segment] = composite_arc
     return
 end
 
 function _make_reverse_series_branch_map(
     series_branch_map::Dict{Tuple{Int, Int}, BranchesSeries},
 )
-    reverse_series_branch_map = Dict{PSY.ACTransmission, Tuple{Int, Int}}()
-    for (composite_arc, vector_segments) in series_branch_map
-        for segment_collection in values(vector_segments.branches)
-            for segment in segment_collection
-                _add_to_reverse_series_branch_map!(
-                    reverse_series_branch_map,
-                    composite_arc,
-                    segment,
-                )
-            end
-        end
+    reverse_map = Dict{PSY.ACTransmission, Tuple{Int, Int}}()
+    for (composite_arc, entry) in series_branch_map
+        _register_composite_members!(reverse_map, composite_arc, entry)
     end
-    return reverse_series_branch_map
+    return reverse_map
 end
 
-function _get_branch_map_entry(
+# The key an arc between the same bus pair is already stored under, in either orientation and in
+# any of the three forward maps, or `nothing` when the pair carries no arc. Anti-parallel branches
+# are separate keys, so both orientations have to be probed.
+function _existing_arc_key(
     direct_branch_map::Dict{Tuple{Int, Int}, PSY.ACTransmission},
     parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel},
-    transformer3W_map::Dict{Tuple{Int, Int}, ThreeWindingTransformerWinding},
+    series_branch_map::Dict{Tuple{Int, Int}, BranchesSeries},
+    arc::Tuple{Int, Int},
+)
+    for candidate in (arc, (arc[2], arc[1]))
+        if haskey(direct_branch_map, candidate) ||
+           haskey(parallel_branch_map, candidate) ||
+           haskey(series_branch_map, candidate)
+            return candidate
+        end
+    end
+    return nothing
+end
+
+# Every forward-map entry on `arc`'s unordered bus pair, as `(key, entry, orientation)` triples
+# where `orientation` relates the stored key to `arc`'s direction.
+#
+# A bus pair can carry more than one key: anti-parallel branches are keyed on the raw (from, to)
+# tuple, so `(a, b)` and `(b, a)` are distinct entries, while the adjacency matrix holds one entry
+# per pair. A caller that resolves a degree-two chain segment to "the" entry on its pair therefore
+# folds only one twin into the equivalent and leaves the other keyed on a bus the reduction is
+# about to eliminate.
+#
+# `ThreeWindingTransformerCircuit`s are one-to-one arcs held in `direct_branch_map`. Direct entries
+# come first, then parallel, each in forward-then-reverse order, so the first triple is the pair's
+# principal entry and fixes the group frame when there are several.
+function _get_branch_map_entries(
+    direct_branch_map::Dict{Tuple{Int, Int}, PSY.ACTransmission},
+    parallel_branch_map::Dict{Tuple{Int, Int}, AbstractBranchesParallel},
     arc::Tuple{Int, Int},
 )
     reverse_arc = (arc[2], arc[1])
-    if haskey(direct_branch_map, arc)
-        return arc, direct_branch_map[arc], :FromTo
-    elseif haskey(direct_branch_map, reverse_arc)
-        return reverse_arc, direct_branch_map[reverse_arc], :ToFrom
-    elseif haskey(parallel_branch_map, arc)
-        return arc, parallel_branch_map[arc], :FromTo
-    elseif haskey(parallel_branch_map, reverse_arc)
-        return reverse_arc, parallel_branch_map[reverse_arc], :ToFrom
-    elseif haskey(transformer3W_map, arc)
-        return arc, transformer3W_map[arc], :FromTo
-    elseif haskey(transformer3W_map, reverse_arc)
-        return reverse_arc, transformer3W_map[reverse_arc], :ToFrom
-    else
-        error("Arc $arc not found in the existing network reduction mappings.")
+    entries = Tuple{Tuple{Int, Int}, PSY.ACTransmission, Symbol}[]
+    for map in (direct_branch_map, parallel_branch_map)
+        haskey(map, arc) && push!(entries, (arc, map[arc], :FromTo))
+        haskey(map, reverse_arc) && push!(entries, (reverse_arc, map[reverse_arc], :ToFrom))
     end
+    isempty(entries) &&
+        error("Arc $arc not found in the existing network reduction mappings.")
+    return entries
 end
 
 """
@@ -225,7 +317,7 @@ function _get_complete_chain(
     neighbors = _get_neighbors(adj_matrix, start_node)
     current_chain = [start_node]
     reduced_indices[start_node] = true
-    _get_partial_chain_recursive!(
+    _get_partial_chain!(
         current_chain,
         adj_matrix,
         neighbors[1],
@@ -234,7 +326,7 @@ function _get_complete_chain(
         irreducible_indices,
     )
     reverse!(current_chain)
-    _get_partial_chain_recursive!(
+    _get_partial_chain!(
         current_chain,
         adj_matrix,
         neighbors[2],
@@ -246,48 +338,52 @@ function _get_complete_chain(
 end
 
 """
-    _get_partial_chain(adj_matrix::SparseArrays.SparseMatrixCSC,
-                      current_node::Int,
-                      prev_node::Int,
-                      reduced_indices::Set{Int},
-                      irreducible_indices::Set{Int})
+    _get_partial_chain!(current_chain::Vector{Int},
+                       adj_matrix::SparseArrays.SparseMatrixCSC,
+                       current_node::Int,
+                       prev_node::Int,
+                       reduced_indices::BitVector,
+                       irreducible_indices::BitVector)
 
-Recursively build a chain in one direction from current_node, avoiding prev_node.
+Extend `current_chain` in one direction from `current_node`, avoiding `prev_node`. Iterative,
+not recursive: one stack frame per bus would overflow on a long radial chain (the same failure
+`_surviving_root!` was de-recursed for).
 """
-function _get_partial_chain_recursive!(
+function _get_partial_chain!(
     current_chain::Vector{Int},
     adj_matrix::SparseArrays.SparseMatrixCSC,
     current_node::Int,
     prev_node::Int,
     reduced_indices::BitVector,
-    irreducible_indices::BitVector)
-    # If current node is reduced stop
-    if reduced_indices[current_node]
-        return Int[]
+    irreducible_indices::BitVector,
+)
+    while true
+        # If current node is reduced stop
+        if reduced_indices[current_node]
+            return nothing
+        end
+
+        push!(current_chain, current_node)
+
+        if _is_final_node(current_node, adj_matrix, reduced_indices, irreducible_indices)
+            return nothing
+        end
+
+        reduced_indices[current_node] = true
+        # `_is_final_node` above already confirmed degree 2, so the range holds exactly two
+        # entries; reading its endpoints avoids `_get_neighbors`'s fancy-index allocation.
+        nz = SparseArrays.nzrange(adj_matrix, current_node)
+        rv = SparseArrays.rowvals(adj_matrix)
+
+        # Determine the next node to visit. It must not be the `previous_node`.
+        # This prevents the traversal from going back and forth between two nodes.
+        next_node = rv[first(nz)]
+        if next_node == prev_node
+            next_node = rv[last(nz)]
+        end
+        prev_node = current_node
+        current_node = next_node
     end
-
-    push!(current_chain, current_node)
-
-    if _is_final_node(current_node, adj_matrix, reduced_indices, irreducible_indices)
-        return
-    end
-
-    reduced_indices[current_node] = true
-    # Get neighbors
-    neighbors = _get_neighbors(adj_matrix, current_node)
-
-    # Determine the next node to visit. It must not be the `previous_node`.
-    # This prevents the traversal from going back and forth between two nodes.
-    next_node = (neighbors[1] == prev_node) ? neighbors[2] : neighbors[1]
-    _get_partial_chain_recursive!(
-        current_chain,
-        adj_matrix,
-        next_node,
-        current_node,
-        reduced_indices,
-        irreducible_indices,
-    )
-    return
 end
 
 """
@@ -318,7 +414,9 @@ end
 Find all chains of degree-2 nodes in a graph represented by a CSC adjacency matrix.
 A chain is a sequence of connected degree-2 nodes.
 
-Returns a dictionary mapping each starting node to its chain of node indices.
+Returns a vector of chains, each a vector of node indices whose first and last entries are the
+chain's terminal (non-degree-2 or irreducible) nodes. Several chains may share an endpoint pair;
+grouping them onto one arc is the caller's job.
 """
 function find_degree2_chains(
     adj_matrix::SparseArrays.SparseMatrixCSC,
@@ -332,7 +430,7 @@ function find_degree2_chains(
         irreducible_mask[i] = true
     end
     reduced_indices = falses(node_count)
-    arc_map = Dict{Tuple{Int, Int}, Vector{Int}}()
+    chains = Vector{Vector{Int}}()
     degree2_nodes = _get_degree2_nodes(adj_matrix, irreducible_mask)
     for node in degree2_nodes
         if reduced_indices[node]
@@ -342,10 +440,10 @@ function find_degree2_chains(
             _get_complete_chain(adj_matrix, node, reduced_indices, irreducible_mask)
         valid_chain_path = _find_longest_valid_chain(adj_matrix, chain_path)
         if !isempty(valid_chain_path)
-            arc_map[valid_chain_path[1], valid_chain_path[end]] = valid_chain_path
+            push!(chains, valid_chain_path)
         end
     end
-    return arc_map
+    return chains
 end
 
 function _find_longest_valid_chain(

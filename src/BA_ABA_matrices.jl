@@ -14,7 +14,7 @@ computed as the product of the incidence matrix A and the susceptance matrix B.
         Tuple of dictionaries providing fast lookup from bus/branch names to matrix indices
 - `subnetwork_axes::Dict{Int, Ax}`:
         Mapping from reference bus numbers to their corresponding subnetwork axes
-- `network_reduction_data::NetworkReductionData`:
+- `branch_catalog::BranchCatalog`:
         Container for network reduction information applied during matrix construction
 
 # Notes
@@ -28,13 +28,13 @@ struct BA_Matrix{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
     axes::Ax
     lookup::L
     subnetwork_axes::Dict{Int, Ax}
-    network_reduction_data::NetworkReductionData
+    branch_catalog::BranchCatalog
 end
 
 get_axes(M::BA_Matrix) = M.axes
 get_lookup(M::BA_Matrix) = M.lookup
 get_ref_bus(M::BA_Matrix) = sort!(collect(keys(M.subnetwork_axes)))
-get_network_reduction_data(M::BA_Matrix) = M.network_reduction_data
+get_branch_catalog(M::BA_Matrix) = M.branch_catalog
 get_bus_axis(M::BA_Matrix) = M.axes[1]
 get_bus_lookup(M::BA_Matrix) = M.lookup[1]
 get_arc_axis(M::BA_Matrix) = M.axes[2]
@@ -81,6 +81,19 @@ function BA_Matrix(sys::PSY.System;
     )
 end
 
+# The DC model reads phase-shifting arcs and standalone series chains from component
+# reactances, which impedance correction does not touch; every other arc inherits the
+# correction through Ybus. Warn about the mixed result until it is validated against PSS/E.
+function _warn_impedance_correction_in_dc(nr::NetworkReductionData)
+    any(!isone, values(nr.impedance_correction_factors)) || return
+    corrected = Set(k[1] for (k, v) in nr.impedance_correction_factors if !isone(v))
+    @warn "$(length(corrected)) transformer(s) carry an active impedance correction. " *
+          "DC susceptances of phase-shifting transformers and series-reduced chains use " *
+          "the uncorrected reactance; the DC model has not been validated against PSS/E " *
+          "with impedance correction tables." maxlog = 1
+    return
+end
+
 """
     BA_Matrix(ybus::Ybus)
 
@@ -92,23 +105,9 @@ Construct a BA_Matrix from a Ybus matrix.
 # Returns
 - `BA_Matrix`: The constructed BA matrix structure containing the transposed BA matrix
 """
-# Phase-independent DC series susceptance for a phase-shifting-transformer arc, read from its
-# branch component(s) so the phase angle is ignored (`get_series_susceptance` is `1/(a x)`; the
-# shift is applied separately as an injection by the power-flow solver). A phase shifter is
-# always a direct, parallel, or three-winding branch, so this finds it; returns `NaN` otherwise.
-function _arc_component_susceptance(nr_data::NetworkReductionData, arc::Tuple{Int, Int})
-    direct_map = get_direct_branch_map(nr_data)
-    haskey(direct_map, arc) && return get_series_susceptance(direct_map[arc])
-    parallel_map = get_parallel_branch_map(nr_data)
-    haskey(parallel_map, arc) && return get_series_susceptance(parallel_map[arc])
-    transformer3W_map = get_transformer3W_map(nr_data)
-    haskey(transformer3W_map, arc) &&
-        return get_series_susceptance(transformer3W_map[arc])
-    return NaN
-end
-
 function BA_Matrix(ybus::Ybus)
-    nr = ybus.network_reduction_data
+    nr = get_network_reduction_data(ybus)
+    _warn_impedance_correction_in_dc(nr)
     bus_ax = get_bus_axis(ybus)
     bus_lookup = get_bus_lookup(ybus)
     arc_ax = get_arc_axis(nr)
@@ -121,32 +120,13 @@ function BA_Matrix(ybus::Ybus)
     for (ix_arc, arc) in enumerate(arc_ax)
         ix_from_bus = get_bus_index(arc[1], bus_lookup, nr)
         ix_to_bus = get_bus_index(arc[2], bus_lookup, nr)
-        # Series-reduced arcs take the chain's equivalent susceptance from components (lower DC
-        # error than the summed Ybus entry).
-        if is_arc_in_series_map(nr_data, arc)
-            b = get_series_susceptance(get_mapped_series_branch(nr_data, arc))
-        else
-            Y_ft = -1 * ybus.data[ix_from_bus, ix_to_bus]
-            Y_tf = -1 * ybus.data[ix_to_bus, ix_from_bus]
-            if Y_ft != Y_tf
-                # Asymmetric off-diagonals => a phase-shifting transformer. The Ybus-derived
-                # susceptance would fold its angle α into b, so take the phase-independent
-                # component susceptance instead.
-                b = _arc_component_susceptance(nr_data, arc)
-                isfinite(b) || (b = 0.0)
-            elseif iszero(Y_ft)
-                # Cancelling parallel reactances -> no DC coupling.
-                b = 0.0
-            else
-                # Symmetric branch: imag(1/Y_ft) is the equivalent series reactance; a zero net
-                # reactance (e.g. line + series capacitor) gives no usable DC coupling.
-                x_eq = imag(1 / Y_ft)
-                if iszero(x_eq)
-                    b = 0.0
-                else
-                    b = 1 / x_eq
-                end
-            end
+        b = _ba_arc_susceptance(nr_data, arc)
+        # A NaN/Inf in BA would poison every downstream factorization.
+        if !isfinite(b)
+            error(
+                "Non-finite DC susceptance $(b) on arc $(arc); BA_Matrix has no " *
+                "representation for it. This is a bug in PowerNetworkMatrices.",
+            )
         end
         BA_I[2 * ix_arc - 1] = ix_from_bus
         BA_J[2 * ix_arc - 1] = ix_arc
@@ -164,11 +144,7 @@ function BA_Matrix(ybus::Ybus)
     axes = (bus_ax, arc_ax)
     lookup = (make_ax_ref(bus_ax), make_ax_ref(arc_ax))
     subnetwork_axes = make_bus_arc_subnetwork_axes(ybus)
-    return BA_Matrix(data, axes, lookup, subnetwork_axes, ybus.network_reduction_data)
-end
-
-function get_series_susceptance(segment::PSY.ACTransmission)
-    return PSY.get_series_susceptance(segment)
+    return BA_Matrix(data, axes, lookup, subnetwork_axes, get_branch_catalog(ybus))
 end
 
 """
@@ -192,7 +168,7 @@ power flow analysis, sensitivity calculations, and linear power system studies.
         Vector containing the original indices of reference buses before matrix reduction
 - `K::F <: Union{Nothing, KLULinSolveCache{Float64}}`:
         Optional KLU factorization object for efficient linear system solving. Nothing if unfactorized
-- `network_reduction_data::NetworkReductionData`:
+- `branch_catalog::BranchCatalog`:
         Container for network reduction information applied during matrix construction
 
 # Mathematical Properties
@@ -218,14 +194,14 @@ struct ABA_Matrix{
     subnetwork_axes::Dict{Int, Ax}
     ref_bus_position::Vector{Int}
     K::F
-    network_reduction_data::NetworkReductionData
+    branch_catalog::BranchCatalog
 end
 
 get_axes(M::ABA_Matrix) = M.axes
 get_lookup(M::ABA_Matrix) = M.lookup
 get_ref_bus(M::ABA_Matrix) = sort!(collect(keys(M.subnetwork_axes)))
 get_ref_bus_position(M::ABA_Matrix) = M.ref_bus_position
-get_network_reduction_data(M::ABA_Matrix) = M.network_reduction_data
+get_branch_catalog(M::ABA_Matrix) = M.branch_catalog
 get_bus_axis(M::ABA_Matrix) = M.axes[1]
 get_bus_lookup(M::ABA_Matrix) = M.lookup[1]
 
@@ -337,7 +313,7 @@ function ABA_Matrix(ybus::Ybus; factorize::Bool = false)
         subnetwork_axes,
         ref_bus_positions,
         K,
-        ybus.network_reduction_data,
+        get_branch_catalog(ybus),
     )
 end
 
@@ -371,7 +347,9 @@ function factorize(ABA::ABA_Matrix{Ax, L, Nothing}) where {Ax, L <: NTuple{2, Di
         deepcopy(ABA.subnetwork_axes),
         deepcopy(ABA.ref_bus_position),
         klu_factorize(ABA.data),
-        deepcopy(ABA.network_reduction_data),
+        # Shared, not copied: copying would clone the PSY components held in the reduction
+        # maps, detaching them from their system.
+        get_branch_catalog(ABA),
     )
     return ABA_lu
 end

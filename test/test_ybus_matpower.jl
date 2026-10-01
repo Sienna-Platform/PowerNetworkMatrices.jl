@@ -15,9 +15,9 @@
     # auto-applied ZeroImpedanceBranchReduction to compare the unreduced matrices.
     ybus_pnm = Ybus(
         sys;
-        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+        network_reductions = PNM.NetworkReduction[PNM.ZeroImpedanceBranchReduction(;
             susceptance_threshold = Inf,
-        ),
+        )],
     )
     @test nnz(ybus_pnm.data) ==
           length(filter(!iszero, matpower_vals_re .+ im .* matpower_vals_im))
@@ -41,9 +41,9 @@ end
     # auto-applied ZeroImpedanceBranchReduction to compare the unreduced matrices.
     ybus_pnm = Ybus(
         sys;
-        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+        network_reductions = PNM.NetworkReduction[PNM.ZeroImpedanceBranchReduction(;
             susceptance_threshold = Inf,
-        ),
+        )],
     )
     @test nnz(ybus_pnm.data) ==
           length(filter(!iszero, matpower_vals_re .+ im .* matpower_vals_im))
@@ -80,9 +80,9 @@ end
     # auto-applied ZeroImpedanceBranchReduction to compare the unreduced matrices.
     ybus_pnm = Ybus(
         sys;
-        zero_impedance_reduction = PNM.ZeroImpedanceBranchReduction(;
+        network_reductions = PNM.NetworkReduction[PNM.ZeroImpedanceBranchReduction(;
             susceptance_threshold = Inf,
-        ),
+        )],
     )
     @test nnz(ybus_pnm.data) ==
           length(filter(!iszero, matpower_vals_re .+ im .* matpower_vals_im))
@@ -125,5 +125,7 @@ end
         end
         @test isapprox(ybus_pnm.data[row, col], Complex(val_re, val_im); atol = 1e-5)
     end
-    N_1_5 = get_tap(get_component(TapTransformer, sys, "bus-1-bus-5-i_3"))
+    N_1_5 = get_tap(
+        get_circuit(get_component(TwoWindingTransformer, sys, "bus-1-bus-5-i_3")),
+    )
 end

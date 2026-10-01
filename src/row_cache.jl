@@ -1,3 +1,7 @@
+# Value type stored per cached row: a dense row, or a sparsified row when a
+# tolerance is applied.
+const RowCacheValue = Union{Vector{Float64}, SparseArrays.SparseVector{Float64}}
+
 """
 Structure used for saving the rows of the Virtual PTDF and LODF matrix.
 
@@ -47,7 +51,9 @@ function RowCache(max_cache_size::Int, persistent_rows::Set{Int}, row_size)
             Dict{Int, Union{Vector{Float64}, SparseArrays.SparseVector{Float64}}}(),
             max_num_keys,
         ),
-        persistent_rows,
+        # Copy: the cache mutates this set (pinning, and `empty!`), and the caller's own
+        # set must not move under it.
+        copy(persistent_rows),
         max_cache_size,
         max_num_keys,
         sizehint!(Vector{Int}(), max_num_keys),
@@ -62,15 +68,12 @@ function Base.isempty(cache::RowCache)
 end
 
 """
-Erases the cache.
+Erases the cache, pinned rows included, returning it to its constructed capacity.
 """
 function Base.empty!(cache::RowCache)
-    isempty(cache.temp_cache) && return
-    if !isempty(cache.persistent_cache_keys)
-        @warn("Calling empty! will delete entries for the persistent rows")
-    end
     empty!(cache.temp_cache)
     empty!(cache.access_order)
+    empty!(cache.persistent_cache_keys)
     return
 end
 
@@ -128,6 +131,66 @@ function Base.getindex(
     return cache.temp_cache[key]
 end
 
+# One slot stays evictable so check_cache_size! can always make room (the constructor's
+# length + 1 <= max_num_keys bound).
+function _pin!(cache::RowCache, key::Int)
+    key in cache.persistent_cache_keys && return
+    if length(cache.persistent_cache_keys) >= cache.max_num_keys - 1
+        error(
+            "Cannot pin row $key: $(length(cache.persistent_cache_keys)) pinned rows " *
+            "already fill max_num_keys = $(cache.max_num_keys) less one evictable slot. " *
+            "Increase max_cache_size or pin fewer rows.",
+        )
+    end
+    push!(cache.persistent_cache_keys, key)
+    return
+end
+
+"""
+Stores `val` for `key` and pins `key` so it is never evicted by LRU.
+
+Used by `populate_cache` to bulk-fill rows computed via multi-RHS solves and
+guarantee they stay warm for later queries. Pinned rows count against the cache
+capacity: a pin that would leave no evictable slot errors.
+
+# Arguments
+- `cache::RowCache`:
+        cache where the row vector is stored and pinned.
+- `key::Int`:
+        row number (enumerated branch index) for the row vector.
+- `val`:
+        the row vector (dense `Vector{Float64}` or sparsified `SparseVector{Float64}`).
+"""
+function set_persistent_row!(
+    cache::RowCache{T},
+    key::Int,
+    val::T,
+) where {T <: Union{Vector{Float64}, SparseArrays.SparseVector{Float64}}}
+    # Make room before pinning: a `_pin!` that throws must not leave a key in
+    # `persistent_cache_keys` with no row behind it.
+    is_new = !haskey(cache.temp_cache, key)
+    if is_new
+        check_cache_size!(cache; new_add = true)
+    end
+    _pin!(cache, key)
+    if is_new
+        push!(cache.access_order, key)
+    end
+    cache.temp_cache[key] = val
+    return
+end
+
+"""
+Pin an already-stored `key` so a row populated lazily is also protected from
+eviction. No-op for keys absent from `temp_cache`; errors when the pin would
+consume the cache's last evictable slot.
+"""
+function pin_row!(cache::RowCache, key::Int)
+    haskey(cache.temp_cache, key) || return
+    _pin!(cache, key)
+    return
+end
+
 """
 Shows the number of rows stored in cache
 """
@@ -162,17 +225,20 @@ end
 
 """
 Check saved rows in cache and delete one not belonging to `persistent_cache_keys`.
+Errors when every row is pinned.
 """
 function check_cache_size!(cache::RowCache; new_add::Bool = false)
-    if new_add
-        v = 1
-    else
-        v = 0
-    end
-    if length(cache.temp_cache) > cache.max_num_keys - v
-        @info "Maximum memory reached, removing rows from cache (not belonging to `persistent_cache_keys`)." maxlog =
-            1
-        purge_one!(cache)
+    limit = cache.max_num_keys - Int(new_add)
+    length(cache.temp_cache) > limit || return
+    @info "Maximum memory reached, removing rows from cache (not belonging to `persistent_cache_keys`)." maxlog =
+        1
+    purge_one!(cache)
+    if length(cache.temp_cache) > limit
+        error(
+            "RowCache holds $(length(cache.temp_cache)) rows at capacity " *
+            "max_num_keys = $(cache.max_num_keys) and every one of them is pinned, so " *
+            "no row can be evicted. Increase `max_cache_size` or pin fewer rows.",
+        )
     end
     return
 end

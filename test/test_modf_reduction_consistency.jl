@@ -23,10 +23,9 @@ function _rts_reduced_away_arcs()
     return sys, full, reduced_away
 end
 
-# First non-phase-shifter branch whose reduction-mapped arc is in `arcs`.
+# First branch whose reduction-mapped arc is in `arcs`.
 function _branch_on_arcs(sys, nrd, arcs)
     for br in PSY.get_components(PSY.ACTransmission, sys)
-        typeof(br) <: PSY.PhaseShiftingTransformer && continue
         if PNM.get_arc_tuple(br, nrd) in arcs
             return br
         end
@@ -34,7 +33,7 @@ function _branch_on_arcs(sys, nrd, arcs)
     return nothing
 end
 
-_fixed_outage(; monitored = Base.UUID[]) =
+_fixed_outage(; monitored = Int[]) =
     PSY.FixedForcedOutage(; outage_status = 0.0, monitored_components = monitored)
 
 function _arc_buses(branch)
@@ -102,49 +101,10 @@ end
     # 3WT-specific method and protect all of the transformer's buses.
     protected = PNM._collect_protected_buses(sys)
     @test !isempty(protected)
-    for arc in (
-        PSY.get_primary_star_arc(t3w),
-        PSY.get_secondary_star_arc(t3w),
-        PSY.get_tertiary_star_arc(t3w),
-    )
+    for arc in PSY.get_arc.(PSY.get_circuits(t3w))
         @test PSY.get_number(PSY.get_from(arc)) in protected
         @test PSY.get_number(PSY.get_to(arc)) in protected
     end
-end
-
-@testset "augment Ward study_buses with protected buses" begin
-    # Under the unified-irreducibles design the user-supplied protected set lives
-    # on the orchestrator (`Ybus(sys; irreducible_buses=...)`) and is consumed by
-    # every Radial / DegreeTwo / ZIBR step through the `ReductionContainer`. Only
-    # `WardReduction` keeps its own (semantically distinct) `study_buses` field
-    # and so still needs explicit augmentation at the orchestrator boundary.
-    protected = Set{Int}([101, 205])
-
-    ward = WardReduction([1, 2, 3])
-    wardb = PNM._augment_ward(ward, protected)
-    @test wardb isa WardReduction
-    @test Set(wardb.study_buses) == Set([1, 2, 3, 101, 205])
-
-    # Empty protection set leaves the reduction identity-equal.
-    @test PNM._augment_ward(ward, Set{Int}()) === ward
-
-    # Non-Ward reductions pass through `_augment_ward` unchanged — they don't
-    # carry a per-spec protected set anymore.
-    radial = RadialReduction()
-    @test PNM._augment_ward(radial, protected) === radial
-
-    deg2 = DegreeTwoReduction(; reduce_reactive_power_injectors = false)
-    @test PNM._augment_ward(deg2, protected) === deg2
-
-    adjusted = PNM._augment_ward_reductions(
-        NetworkReduction[radial, deg2, ward],
-        protected,
-    )
-    @test length(adjusted) == 3
-    @test adjusted[1] === radial
-    @test adjusted[2] === deg2
-    @test adjusted[3] isa WardReduction
-    @test Set(adjusted[3].study_buses) == Set([1, 2, 3, 101, 205])
 end
 
 # --- Phase 2/3: constructor wiring + validation ----------------------------
@@ -153,7 +113,7 @@ end
     sys, full, reduced_away = _rts_reduced_away_arcs()
     @test !isempty(reduced_away)  # sanity: reduction actually removed arcs
 
-    target = _branch_on_arcs(sys, full.network_reduction_data, reduced_away)
+    target = _branch_on_arcs(sys, get_network_reduction_data(full), reduced_away)
     @test target !== nothing
 
     PSY.add_supplemental_attribute!(sys, target, _fixed_outage())
@@ -170,13 +130,13 @@ end
     @test haskey(arc_lookup, (fb, tb)) || haskey(arc_lookup, (tb, fb))
 
     outage = PSY.get_supplemental_attributes(target)[1]
-    ctg = get_registered_contingencies(protected_modf)[IS.get_uuid(outage)]
+    ctg = get_registered_contingencies(protected_modf)[IS.get_id(outage)]
     @test !isempty(ctg.modification.arc_modifications)
 end
 
 @testset "VirtualMODF protects monitored component declared on the outage (RTS)" begin
     sys, full, reduced_away = _rts_reduced_away_arcs()
-    nrd_full = full.network_reduction_data
+    nrd_full = get_network_reduction_data(full)
 
     # Monitored branch sits on a reduced-away arc; the outaged branch can be any
     # retained branch.
@@ -184,7 +144,6 @@ end
     @test monitored !== nothing
     outaged = nothing
     for br in PSY.get_components(PSY.ACTransmission, sys)
-        typeof(br) <: PSY.PhaseShiftingTransformer && continue
         br === monitored && continue
         outaged = br
         break
@@ -238,8 +197,9 @@ end
     @test haskey(arc_lookup, (mfb, mtb)) || haskey(arc_lookup, (mtb, mfb))
 end
 
-# Minimal capturing logger: ReTest cannot `record` a `@test_logs` failure, so we
-# capture log records directly and assert on them.
+# Minimal capturing logger: keeps every emitted record so the assertion below can be an
+# ordinary predicate over them rather than a log-pattern match. Used by the out-of-service
+# no-op test.
 mutable struct _CollectLogs <: Logging.AbstractLogger
     records::Vector{Tuple{Any, String}}
 end
@@ -261,7 +221,7 @@ function Logging.handle_message(
     return
 end
 
-@testset "VirtualMODF warns only when a transmission outage is dropped, not for generators" begin
+@testset "VirtualMODF errors only when a transmission outage is dropped, not for generators" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     line = PSY.get_component(PSY.ACTransmission, sys, "1")
     line_outage = _fixed_outage()
@@ -270,31 +230,78 @@ end
     gen_outage = _fixed_outage()
     PSY.add_supplemental_attribute!(sys, gen, gen_outage)
 
-    # A transmission outage whose arc was dropped (empty modification) MUST warn.
+    # A transmission outage whose arc was dropped (empty modification) MUST error.
     empty_mod = NetworkModification("dropped_line", ArcModification[])
-    collector = _CollectLogs(Tuple{Any, String}[])
-    Logging.with_logger(collector) do
-        PNM._warn_if_transmission_dropped(sys, line_outage, empty_mod)
+    @test_throws IS.ConflictingInputsError PNM._validate_transmission_survived(
+        sys,
+        line_outage,
+        empty_mod,
+    )
+
+    # A generator-only outage with an empty modification is benign.
+    @test PNM._validate_transmission_survived(sys, gen_outage, empty_mod) === nothing
+
+    # A transmission outage that DID resolve to an arc modification is fine.
+    real_mod = NetworkModification("real_line", [ArcModification(1, -1.0)])
+    @test PNM._validate_transmission_survived(sys, line_outage, real_mod) === nothing
+end
+
+# First branch the reduction leaves on no map; series-map membership counts as surviving.
+function _branch_off_every_map(sys, nrd)
+    for br in PSY.get_components(PSY.ACTransmission, sys)
+        tag, _ = PNM._resolve_branch_arc(nrd, br)
+        tag in (:direct, :parallel, :series) || return br
     end
+    return error(
+        "No branch of this system is off every reduction map; the fixture no longer " *
+        "reproduces a reduction-eliminated outage.",
+    )
+end
+
+@testset "VirtualMODF: out-of-service outage is a no-op" begin
+    # available = false: never entered Ybus, so a no-op.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    line = PSY.get_component(PSY.ACTransmission, sys, "1")
+    PSY.set_available!(line, false)
+    PSY.add_supplemental_attribute!(sys, line, _fixed_outage())
+
+    collector = _CollectLogs(Tuple{Any, String}[])
+    vmodf = Logging.with_logger(collector) do
+        VirtualMODF(sys)
+    end
+    @test length(PNM.get_registered_contingencies(vmodf)) == 1
+    # Legitimate, but not silent: the contingency screens nothing.
     @test any(
-        r -> r[1] == Logging.Warn && occursin("transmission components", r[2]),
+        r -> r[1] == Logging.Warn && occursin("out-of-service transmission", r[2]),
         collector.records,
     )
 
-    # A generator-only outage with an empty modification is benign — NO warning.
-    collector_gen = _CollectLogs(Tuple{Any, String}[])
-    Logging.with_logger(collector_gen) do
-        PNM._warn_if_transmission_dropped(sys, gen_outage, empty_mod)
-    end
-    @test !any(r -> r[1] == Logging.Warn, collector_gen.records)
+    # The same empty modification from an in-service branch is still rejected.
+    in_service = PSY.get_component(PSY.ACTransmission, sys, "2")
+    @test PSY.get_available(in_service)
+    live_outage = _fixed_outage()
+    PSY.add_supplemental_attribute!(sys, in_service, live_outage)
+    @test_throws IS.ConflictingInputsError PNM._validate_transmission_survived(
+        sys,
+        live_outage,
+        NetworkModification("dropped", ArcModification[]),
+    )
+end
 
-    # A transmission outage that DID resolve to an arc modification must NOT warn.
-    real_mod = NetworkModification("real_line", [ArcModification(1, -1.0)])
-    collector_ok = _CollectLogs(Tuple{Any, String}[])
-    Logging.with_logger(collector_ok) do
-        PNM._warn_if_transmission_dropped(sys, line_outage, real_mod)
-    end
-    @test !any(r -> r[1] == Logging.Warn, collector_ok.records)
+@testset "VirtualMODF over a shared core rejects an outage branch reduced away" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "test_RTS_GMLC_sys")
+    reductions = NetworkReduction[RadialReduction(), DegreeTwoReduction()]
+
+    # A reduced-before-outages core cannot protect the branch.
+    vptdf = VirtualPTDF(sys; network_reductions = reductions)
+    target = _branch_off_every_map(sys, get_network_reduction_data(vptdf))
+    PSY.add_supplemental_attribute!(sys, target, _fixed_outage())
+
+    @test_throws IS.ConflictingInputsError VirtualMODF(vptdf, sys)
+
+    # Building from the system protects the branch, so the same reductions succeed.
+    protected = VirtualMODF(sys; network_reductions = reductions)
+    @test !isempty(PNM.get_registered_contingencies(protected))
 end
 
 @testset "VirtualMODF tuple getindex gives a clear error for a reduced arc" begin
@@ -310,10 +317,10 @@ end
     e = 1
     b_e = base.arc_susceptances[e]
     ctg = ContingencySpec(
-        Base.UUID(UInt128(123456)),
+        123456,
         NetworkModification("ctg", [ArcModification(e, -b_e)]),
     )
-    base.contingency_cache[ctg.uuid] = ctg
+    base.contingency_cache[ctg.id] = ctg
 
     err = try
         base[missing_arc, ctg]
@@ -327,42 +334,21 @@ end
 
 # --- Phase 4: numerical correctness ----------------------------------------
 
-@testset "VirtualMODF Ward reduction protects an external outaged branch (RTS)" begin
+@testset "VirtualMODF Ward rejects an outaged branch outside the study area (RTS)" begin
+    # Ward retains exactly its study area, so a contingency on a branch outside it cannot
+    # survive and the specification is rejected. RTS carries forced-outage data on 120
+    # branches spanning all 73 buses, so no proper subset of them is a valid study area.
     sys = PSB.build_system(PSB.PSISystems, "RTS_GMLC_DA_sys")
     bus_numbers = [PSY.get_number(x) for x in PSY.get_components(PSY.ACBus, sys)]
     # Study area = area 1 (leading digit 1), matching test_ward_reduction.jl.
     study_buses = filter(x -> digits(x)[end] == 1, bus_numbers)
     @test !isempty(study_buses)
-    study_set = Set(study_buses)
+    @test length(study_buses) < length(bus_numbers)
 
-    # An external line: both endpoints outside the study area.
-    external = nothing
-    for br in PSY.get_components(PSY.ACTransmission, sys)
-        typeof(br) <: PSY.PhaseShiftingTransformer && continue
-        fb, tb = _arc_buses(br)
-        if !(fb in study_set) && !(tb in study_set)
-            external = br
-            break
-        end
-    end
-    @test external !== nothing
-
-    PSY.add_supplemental_attribute!(sys, external, _fixed_outage())
-    vmodf = VirtualMODF(
+    @test_throws IS.ConflictingInputsError VirtualMODF(
         sys;
         network_reductions = NetworkReduction[WardReduction(study_buses)],
     )
-
-    fb, tb = _arc_buses(external)
-    @test fb in _retained_buses(vmodf)
-    @test tb in _retained_buses(vmodf)
-
-    arc_lookup = PNM.get_arc_lookup(vmodf)
-    @test haskey(arc_lookup, (fb, tb)) || haskey(arc_lookup, (tb, fb))
-
-    outage = PSY.get_supplemental_attributes(external)[1]
-    ctg = get_registered_contingencies(vmodf)[IS.get_uuid(outage)]
-    @test !isempty(ctg.modification.arc_modifications)
 end
 
 @testset "VirtualMODF reduced+protected matches unreduced at common buses (RTS)" begin
@@ -370,12 +356,11 @@ end
     # protection path is exercised numerically and not just on retained backbone
     # branches (otherwise the test could pass without the feature working).
     sys, full_no_outage, reduced_away = _rts_reduced_away_arcs()
-    target = _branch_on_arcs(sys, full_no_outage.network_reduction_data, reduced_away)
+    target = _branch_on_arcs(sys, get_network_reduction_data(full_no_outage), reduced_away)
     @test target !== nothing
 
     candidate = PSY.ACTransmission[target]
     for br in PSY.get_components(PSY.ACTransmission, sys)
-        typeof(br) <: PSY.PhaseShiftingTransformer && continue
         br === target && continue
         push!(candidate, br)
         length(candidate) >= 8 && break
@@ -394,12 +379,12 @@ end
     tfb, ttb = _arc_buses(target)
     target_arc = haskey(PNM.get_arc_lookup(reduced), (tfb, ttb)) ? (tfb, ttb) : (ttb, tfb)
     @test haskey(PNM.get_arc_lookup(reduced), target_arc)
-    target_uuid = IS.get_uuid(PSY.get_supplemental_attributes(target)[1])
+    target_id = IS.get_id(PSY.get_supplemental_attributes(target)[1])
 
     bus_lookup_full = PNM.get_bus_lookup(full)
-    nrd_full = full.network_reduction_data
+    nrd_full = get_network_reduction_data(full)
     bus_lookup_red = PNM.get_bus_lookup(reduced)
-    nrd_red = reduced.network_reduction_data
+    nrd_red = get_network_reduction_data(reduced)
 
     arcs_to_compare = collect(keys(PNM.get_arc_lookup(reduced)))
     buses_to_compare = collect(keys(nrd_red.bus_reduction_map))
@@ -408,11 +393,11 @@ end
     tested_target = false
     for br in candidate
         outage = PSY.get_supplemental_attributes(br)[1]
-        uuid = IS.get_uuid(outage)
-        haskey(get_registered_contingencies(full), uuid) || continue
-        haskey(get_registered_contingencies(reduced), uuid) || continue
-        ctg_full = get_registered_contingencies(full)[uuid]
-        ctg_red = get_registered_contingencies(reduced)[uuid]
+        id = IS.get_id(outage)
+        haskey(get_registered_contingencies(full), id) || continue
+        haskey(get_registered_contingencies(reduced), id) || continue
+        ctg_full = get_registered_contingencies(full)[id]
+        ctg_red = get_registered_contingencies(reduced)[id]
         for arc in arcs_to_compare
             haskey(PNM.get_arc_lookup(full), arc) || continue
             ix_full = PNM.get_arc_lookup(full)[arc]
@@ -424,7 +409,7 @@ end
                 ib_red = PNM.get_bus_index(bus, bus_lookup_red, nrd_red)
                 @test isapprox(row_red[ib_red], row_full[ib_full]; atol = 1e-6)
                 tested_any = true
-                uuid == target_uuid && (tested_target = true)
+                id == target_id && (tested_target = true)
             end
         end
     end

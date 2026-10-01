@@ -63,7 +63,8 @@ end
         PSB.PSSEParsingTestSystems,
         "psse_14_network_reduction_test_system",
     )
-    vmodf = VirtualMODF(sys14)
+    # KLU throws on a singular factorization where AppleAccelerate returns garbage.
+    vmodf = VirtualMODF(sys14; linear_solver = "KLU")
     ptdf_ref = PTDF(sys14)
 
     # Compute shared arc indices once — deterministic since PTDF_A_diag is fixed
@@ -76,10 +77,10 @@ end
     @testset "M=1 single bridge arc" begin
         b = vmodf.arc_susceptances[e_bridge1]
         ctg = ContingencySpec(
-            Base.UUID(UInt128(50001)),
+            50001,
             NetworkModification("island_m1", [ArcModification(e_bridge1, -b)]),
         )
-        vmodf.contingency_cache[ctg.uuid] = ctg
+        vmodf.contingency_cache[ctg.id] = ctg
 
         row = PNM._compute_modf_entry(vmodf, monitored, ctg.modification)
         @test all(isfinite, row)
@@ -101,13 +102,13 @@ end
         b_br = vmodf.arc_susceptances[e_bridge1]
         b_ot = vmodf.arc_susceptances[e_other]
         ctg = ContingencySpec(
-            Base.UUID(UInt128(50002)),
+            50002,
             NetworkModification(
                 "island_m2",
                 [ArcModification(e_bridge1, -b_br), ArcModification(e_other, -b_ot)],
             ),
         )
-        vmodf.contingency_cache[ctg.uuid] = ctg
+        vmodf.contingency_cache[ctg.id] = ctg
 
         row = PNM._compute_modf_entry(vmodf, monitored, ctg.modification)
         @test !all(x -> abs(x) < 1e-10, row)
@@ -120,13 +121,13 @@ end
         b1 = vmodf.arc_susceptances[e_bridge1]
         b2 = vmodf.arc_susceptances[e_bridge2]
         ctg = ContingencySpec(
-            Base.UUID(UInt128(50003)),
+            50003,
             NetworkModification(
                 "island_2bridge",
                 [ArcModification(e_bridge1, -b1), ArcModification(e_bridge2, -b2)],
             ),
         )
-        vmodf.contingency_cache[ctg.uuid] = ctg
+        vmodf.contingency_cache[ctg.id] = ctg
 
         row = PNM._compute_modf_entry(vmodf, monitored, ctg.modification)
         @test all(isfinite, row)
@@ -144,7 +145,7 @@ end
         b2 = vmodf.arc_susceptances[e_bridge2]
         b3 = vmodf.arc_susceptances[e_other]
         ctg = ContingencySpec(
-            Base.UUID(UInt128(50004)),
+            50004,
             NetworkModification(
                 "island_m3",
                 [
@@ -154,7 +155,7 @@ end
                 ],
             ),
         )
-        vmodf.contingency_cache[ctg.uuid] = ctg
+        vmodf.contingency_cache[ctg.id] = ctg
 
         row = PNM._compute_modf_entry(vmodf, monitored, ctg.modification)
         @test !all(x -> abs(x) < 1e-10, row)
@@ -178,12 +179,12 @@ end
 
     for e in 1:n_arcs
         b_e = vmodf.arc_susceptances[e]
-        ctg_uuid = Base.UUID(UInt128(60000 + e))
+        ctg_id = 60000 + e
         ctg = ContingencySpec(
-            ctg_uuid,
+            ctg_id,
             NetworkModification("regression_$e", [ArcModification(e, -b_e)]),
         )
-        vmodf.contingency_cache[ctg_uuid] = ctg
+        vmodf.contingency_cache[ctg_id] = ctg
 
         for m in 1:n_arcs
             modf_row = PNM._compute_modf_entry(vmodf, m, ctg.modification)
@@ -201,8 +202,8 @@ end
         PSB.PSSEParsingTestSystems,
         "psse_14_network_reduction_test_system",
     )
-    vptdf = VirtualPTDF(sys)
-    vmodf = VirtualMODF(sys)        # only used to locate a bridge arc via PTDF_A_diag
+    vptdf = VirtualPTDF(sys; linear_solver = "KLU")
+    vmodf = VirtualMODF(sys; linear_solver = "KLU")  # only to locate a bridge arc via PTDF_A_diag
     ptdf_ref = PTDF(sys)
 
     # Arc indices align between VirtualPTDF and VirtualMODF of the same system.
@@ -218,4 +219,35 @@ end
     connected = setdiff(1:length(row), islanded)
     ref_row = collect(ptdf_ref[monitored, :])
     @test isapprox(row[connected], ref_row[connected]; atol = 1e-6)
+end
+
+@testset "MODF islanding: populate_cache rows match the lazy path" begin
+    # Pinned rows are never recomputed, so populate_cache must zero islanded buses too.
+    sys14 = PSB.build_system(
+        PSB.PSSEParsingTestSystems,
+        "psse_14_network_reduction_test_system",
+    )
+    v_lazy = VirtualMODF(sys14; linear_solver = "KLU")
+    v_pop = VirtualMODF(sys14; linear_solver = "KLU")
+
+    e_bridge = _find_bridge_arc(v_lazy)
+    monitored = _find_non_bridge_arc(v_lazy; exclude = Set([e_bridge]))
+
+    b = v_lazy.arc_susceptances[e_bridge]
+    ctg = ContingencySpec(
+        50101,
+        NetworkModification("populate_island", [ArcModification(e_bridge, -b)]),
+    )
+    v_lazy.contingency_cache[ctg.id] = ctg
+    v_pop.contingency_cache[ctg.id] = ctg
+
+    lazy_row = collect(v_lazy[monitored, ctg])
+    populate_cache(v_pop, [ctg]; monitored = [monitored])
+    pop_row = collect(v_pop[monitored, ctg])
+
+    islanded = _islanded_positions(v_lazy, [e_bridge], monitored)
+    @test !isempty(islanded)
+    @test all(==(0.0), lazy_row[islanded])
+    @test all(==(0.0), pop_row[islanded])
+    @test isapprox(pop_row, lazy_row; atol = 1e-10)
 end

@@ -22,8 +22,10 @@ export VirtualMODF
 export VirtualPTDF
 export WardReduction
 export Ybus
+export ZeroImpedanceBranchReduction
 export apply_ybus_modification
 export compute_ybus_delta
+export get_applied_reductions
 export DC_ABA_Matrix_Factorized
 export DC_ABA_Matrix_Unfactorized
 export DC_PTDF_Matrix
@@ -34,6 +36,13 @@ export YBUS_ELTYPE
 export get_sum_of_max_rating
 export get_single_element_contingency_rating
 export get_impedance_averaged_rating
+export equivalent_branch
+export arc_equivalent_branch
+export branch_admittance
+export get_effective_series_susceptance
+export reduced_arc_admittance
+export three_winding_arcs
+export branch_flow_limits
 
 export apply_woodbury_correction
 export clear_all_caches!
@@ -43,6 +52,7 @@ export factorize
 export get_post_modification_ptdf_row
 export get_system_uuid
 export is_factorized
+export populate_cache
 
 export depth_first_search
 export find_subnetworks
@@ -111,7 +121,7 @@ end
 
 # network calculations
 include("PowerNetworkMatrix.jl")
-include("ThreeWindingTransformerWinding.jl")
+include("ThreeWindingTransformerCircuit.jl")
 include("definitions.jl")
 include("EquivalentBranch.jl")
 include("BranchesSeries.jl")
@@ -126,6 +136,7 @@ include("ward_reduction.jl")
 include("zero_impedance_branch_reduction.jl")
 include("ReductionContainer.jl")
 include("NetworkReductionData.jl")
+include("BranchCatalog.jl")
 include("ArcAdmittanceMatrix.jl")
 include("YbusACBranches.jl")
 include("Ybus.jl")
@@ -136,8 +147,11 @@ include("AdjacencyMatrix.jl")
 include("connectivity_checks.jl")
 include("subnetworks.jl")
 include("common.jl")
+include("BranchAdmittance.jl")
 include("auto_tolerance.jl")
 include("BA_ABA_matrices.jl")
+include("virtual_factor_helpers.jl")
+include("virtual_factor_core.jl")
 include("ptdf_calculations.jl")
 include("row_cache.jl")
 include("virtual_ptdf_calculations.jl")
@@ -150,6 +164,7 @@ include("woodbury_kernel.jl")
 include("virtual_ptdf_modification.jl")
 include("modf_reduction_consistency.jl")
 include("virtual_modf_calculations.jl")
+include("populate_cache.jl")
 include("system_utils.jl")
 include("serialization.jl")
 
