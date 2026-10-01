@@ -57,6 +57,9 @@ struct KLUSolver <: LinearSolverType end
 struct DenseSolver <: LinearSolverType end
 struct MKLPardisoSolver <: LinearSolverType end
 struct AppleAccelerateLUSolver <: LinearSolverType end
+# Tag for `LeanLUCache`. Deliberately absent from `resolve_linear_solver`: PNM's own matrices
+# don't use it.
+struct LeanKLUSolver <: LinearSolverType end
 
 const SUPPORTED_LINEAR_SOLVERS =
     ("KLU", "MKLPardiso", "AppleAccelerateLU", "Dense")
