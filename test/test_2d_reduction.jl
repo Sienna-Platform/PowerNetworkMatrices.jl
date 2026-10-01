@@ -27,6 +27,7 @@ end
 function _build_meshed_3wt_loop_system()
     sys = PSY.System(100.0)
     mkbus(n, name, bt) = PSY.ACBus(;
+        input_basis = PSY.CU,
         number = n,
         name = name,
         available = true,
@@ -342,6 +343,7 @@ function _build_two_composite_arcs_system()
     buses = Dict{Int, ACBus}()
     for n in (1, 2, 3, 4, 10, 11, 20, 21, 40, 41, 42, 43)
         b = ACBus(;
+            input_basis = PSY.CU,
             number = n,
             name = "Bus $n",
             available = true,

@@ -85,6 +85,7 @@ end
 
 @testset "MixedBranchesParallel construction and methods" begin
     bus1 = PSY.ACBus(;
+        input_basis = PSY.CU,
         number = 101,
         name = "bus_101",
         available = true,
@@ -95,6 +96,7 @@ end
         base_voltage = 230.0,
     )
     bus2 = PSY.ACBus(;
+        input_basis = PSY.CU,
         number = 102,
         name = "bus_102",
         available = true,

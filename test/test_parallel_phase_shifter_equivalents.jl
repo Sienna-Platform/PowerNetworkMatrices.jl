@@ -345,6 +345,7 @@ end
 function _mk_3w_winding_line_parallel_system(; line_r = 0.05, line_x = 0.15)
     sys, buses = _mk_bus_system(3)
     star = ACBus(;
+        input_basis = PSY.CU,
         number = 4, name = "star", available = true, bustype = ACBusTypes.PQ,
         angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 230.0,

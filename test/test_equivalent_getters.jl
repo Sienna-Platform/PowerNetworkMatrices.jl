@@ -178,6 +178,7 @@ end
 function test_ybus_equivalence_branches_parallel(vector_branches)
     sys = System(100.0)
     bus1 = ACBus(;
+        input_basis = PSY.CU,
         number = 1,
         name = "bus1",
         available = true,
@@ -190,6 +191,7 @@ function test_ybus_equivalence_branches_parallel(vector_branches)
         load_zone = nothing,
     )
     bus2 = ACBus(;
+        input_basis = PSY.CU,
         number = 2,
         name = "bus2",
         available = true,
@@ -287,6 +289,7 @@ function test_ybus_equivalence_branches_series(vector_branches)
     n_buses = length(vector_branches) + 1
     for bus_ix in 1:n_buses
         bus = ACBus(;
+            input_basis = PSY.CU,
             number = bus_ix,
             name = "bus$(bus_ix)",
             available = true,
