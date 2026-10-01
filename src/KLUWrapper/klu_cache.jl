@@ -45,6 +45,20 @@ mutable struct KLULinSolveCache{
     # `solve_sparse_rhs.jl`.
     scratch::Matrix{Tv}
     col_map::Vector{Ti}
+    # Task currently inside a cache method (0 = none); see `_acquire!`.
+    owner::Threads.Atomic{UInt}
+end
+
+# Returns true when this call took ownership and must release it, false on
+# re-entry by the owning task. A different task inside the cache is a bug.
+function _acquire!(c::KLULinSolveCache)
+    me = UInt(pointer_from_objref(current_task()))
+    prev = Threads.atomic_cas!(c.owner, UInt(0), me)
+    iszero(prev) && return true
+    prev == me && return false
+    error(
+        "KLULinSolveCache (n=$(size(c, 1))) used by two tasks at once; caches are not shareable.",
+    )
 end
 
 @inline _dim(cache::KLULinSolveCache{Tv, Ti}) where {Tv, Ti} =
@@ -443,6 +457,7 @@ function KLULinSolveCache(
         reuse_symbolic, check_pattern,
         Matrix{Tv}(undef, 0, 0),
         Ti[],
+        Threads.Atomic{UInt}(0),
     )
     finalizer(_free_klu_handles!, cache)
     return cache
@@ -520,25 +535,30 @@ is populated) and the symbolic factor is still valid.
 function _recover_factorization!(
     cache::KLULinSolveCache{Tv, Ti},
 ) where {Tv, Ti}
-    cache.symbolic == C_NULL && error(
-        "KLULinSolveCache: cannot recover without a symbolic factor.",
-    )
-    isempty(cache.nzval) && error(
-        "KLULinSolveCache: cannot recover; no cached numerical values yet.",
-    )
-    if cache.numeric != C_NULL
-        num_ref = Ref(cache.numeric)
-        _free_numeric!(Tv, Ti, num_ref, cache.common)
-        cache.numeric = num_ref[]
+    taken = _acquire!(cache)
+    try
+        cache.symbolic == C_NULL && error(
+            "KLULinSolveCache: cannot recover without a symbolic factor.",
+        )
+        isempty(cache.nzval) && error(
+            "KLULinSolveCache: cannot recover; no cached numerical values yet.",
+        )
+        if cache.numeric != C_NULL
+            num_ref = Ref(cache.numeric)
+            _free_numeric!(Tv, Ti, num_ref, cache.common)
+            cache.numeric = num_ref[]
+        end
+        num = _factor_call(
+            Tv, Ti,
+            pointer(cache.colptr), pointer(cache.rowval),
+            pointer(cache.nzval), cache.symbolic, cache.common,
+        )
+        num == C_NULL && klu_throw(cache.common[], "klu_factor (recovery)")
+        cache.numeric = num
+        return cache
+    finally
+        taken && (cache.owner[] = UInt(0))
     end
-    num = _factor_call(
-        Tv, Ti,
-        pointer(cache.colptr), pointer(cache.rowval),
-        pointer(cache.nzval), cache.symbolic, cache.common,
-    )
-    num == C_NULL && klu_throw(cache.common[], "klu_factor (recovery)")
-    cache.numeric = num
-    return cache
 end
 
 @inline function _check_pattern_match(
@@ -585,29 +605,35 @@ function symbolic_factor!(
     cache::KLULinSolveCache{Tv, Ti},
     A::SparseMatrixCSC{Tv, Ti},
 ) where {Tv, Ti}
-    n = _dim(cache)
-    if size(A, 1) != Int(n) || size(A, 2) != Int(n)
-        throw(
-            DimensionMismatch(
-                "Cannot factor: cache is $(Int(n))×$(Int(n)) but A is $(size(A)).",
-            ),
-        )
+    taken = _acquire!(cache)
+    try
+        n = _dim(cache)
+        if size(A, 1) != Int(n) || size(A, 2) != Int(n)
+            throw(
+                DimensionMismatch(
+                    "Cannot factor: cache is $(Int(n))×$(Int(n)) but A is $(size(A)).",
+                ),
+            )
+        end
+        _free_klu_handles!(cache)
+
+        Acolptr = getcolptr(A)
+        Arowval = rowvals(A)
+        resize!(cache.colptr, length(Acolptr))
+        copyto!(cache.colptr, Acolptr)
+        cache.colptr .-= one(Ti)
+        resize!(cache.rowval, length(Arowval))
+        copyto!(cache.rowval, Arowval)
+        cache.rowval .-= one(Ti)
+
+        sym =
+            _analyze_call(Ti, n, pointer(cache.colptr), pointer(cache.rowval), cache.common)
+        sym == C_NULL && klu_throw(cache.common[], "klu_analyze")
+        cache.symbolic = reinterpret(Ptr{Cvoid}, sym)
+        return cache
+    finally
+        taken && (cache.owner[] = UInt(0))
     end
-    _free_klu_handles!(cache)
-
-    Acolptr = getcolptr(A)
-    Arowval = rowvals(A)
-    resize!(cache.colptr, length(Acolptr))
-    copyto!(cache.colptr, Acolptr)
-    cache.colptr .-= one(Ti)
-    resize!(cache.rowval, length(Arowval))
-    copyto!(cache.rowval, Arowval)
-    cache.rowval .-= one(Ti)
-
-    sym = _analyze_call(Ti, n, pointer(cache.colptr), pointer(cache.rowval), cache.common)
-    sym == C_NULL && klu_throw(cache.common[], "klu_analyze")
-    cache.symbolic = reinterpret(Ptr{Cvoid}, sym)
-    return cache
 end
 
 """
@@ -620,21 +646,26 @@ function symbolic_refactor!(
     cache::KLULinSolveCache{Tv, Ti},
     A::SparseMatrixCSC{Tv, Ti},
 ) where {Tv, Ti}
-    if !cache.reuse_symbolic
-        return symbolic_factor!(cache, A)
-    end
-    if cache.check_pattern
-        n = _dim(cache)
-        if size(A, 1) != Int(n) || size(A, 2) != Int(n)
-            throw(
-                DimensionMismatch(
-                    "Cannot refactor: cache is $(Int(n))×$(Int(n)) but A is $(size(A)).",
-                ),
-            )
+    taken = _acquire!(cache)
+    try
+        if !cache.reuse_symbolic
+            return symbolic_factor!(cache, A)
         end
-        _check_pattern_match(cache, A, "symbolic_refactor")
+        if cache.check_pattern
+            n = _dim(cache)
+            if size(A, 1) != Int(n) || size(A, 2) != Int(n)
+                throw(
+                    DimensionMismatch(
+                        "Cannot refactor: cache is $(Int(n))×$(Int(n)) but A is $(size(A)).",
+                    ),
+                )
+            end
+            _check_pattern_match(cache, A, "symbolic_refactor")
+        end
+        return cache
+    finally
+        taken && (cache.owner[] = UInt(0))
     end
-    return cache
 end
 
 """
@@ -648,32 +679,37 @@ function numeric_refactor!(
     cache::KLULinSolveCache{Tv, Ti},
     A::SparseMatrixCSC{Tv, Ti},
 ) where {Tv, Ti}
-    cache.symbolic == C_NULL && error(
-        "KLULinSolveCache: call symbolic_factor! before numeric_refactor!.",
-    )
-    Anz = nonzeros(A)
-    if cache.numeric == C_NULL
-        num = _factor_call(
-            Tv, Ti,
-            pointer(cache.colptr), pointer(cache.rowval),
-            pointer(Anz), cache.symbolic, cache.common,
+    taken = _acquire!(cache)
+    try
+        cache.symbolic == C_NULL && error(
+            "KLULinSolveCache: call symbolic_factor! before numeric_refactor!.",
         )
-        num == C_NULL && klu_throw(cache.common[], "klu_factor")
-        cache.numeric = num
-    else
-        cache.check_pattern && _check_pattern_match(cache, A, "numeric_refactor")
-        ok = _refactor_call(
-            Tv, Ti,
-            pointer(cache.colptr), pointer(cache.rowval),
-            pointer(Anz), cache.symbolic, cache.numeric, cache.common,
-        )
-        ok != 1 && klu_throw(cache.common[], "klu_refactor")
+        Anz = nonzeros(A)
+        if cache.numeric == C_NULL
+            num = _factor_call(
+                Tv, Ti,
+                pointer(cache.colptr), pointer(cache.rowval),
+                pointer(Anz), cache.symbolic, cache.common,
+            )
+            num == C_NULL && klu_throw(cache.common[], "klu_factor")
+            cache.numeric = num
+        else
+            cache.check_pattern && _check_pattern_match(cache, A, "numeric_refactor")
+            ok = _refactor_call(
+                Tv, Ti,
+                pointer(cache.colptr), pointer(cache.rowval),
+                pointer(Anz), cache.symbolic, cache.numeric, cache.common,
+            )
+            ok != 1 && klu_throw(cache.common[], "klu_refactor")
+        end
+        # Snapshot the values used so `_recover_factorization!` can rebuild the
+        # numeric handle without the caller having to re-supply A.
+        resize!(cache.nzval, length(Anz))
+        copyto!(cache.nzval, Anz)
+        return cache
+    finally
+        taken && (cache.owner[] = UInt(0))
     end
-    # Snapshot the values used so `_recover_factorization!` can rebuild the
-    # numeric handle without the caller having to re-supply A.
-    resize!(cache.nzval, length(Anz))
-    copyto!(cache.nzval, Anz)
-    return cache
 end
 
 """
@@ -688,9 +724,14 @@ function full_factor!(
     cache::KLULinSolveCache{Tv, Ti},
     A::SparseMatrixCSC{Tv, Ti},
 ) where {Tv, Ti}
-    symbolic_factor!(cache, A)
-    numeric_refactor!(cache, A)
-    return cache
+    taken = _acquire!(cache)
+    try
+        symbolic_factor!(cache, A)
+        numeric_refactor!(cache, A)
+        return cache
+    finally
+        taken && (cache.owner[] = UInt(0))
+    end
 end
 
 """
@@ -707,9 +748,14 @@ function full_refactor!(
     cache::KLULinSolveCache{Tv, Ti},
     A::SparseMatrixCSC{Tv, Ti},
 ) where {Tv, Ti}
-    symbolic_refactor!(cache, A)
-    numeric_refactor!(cache, A)
-    return cache
+    taken = _acquire!(cache)
+    try
+        symbolic_refactor!(cache, A)
+        numeric_refactor!(cache, A)
+        return cache
+    finally
+        taken && (cache.owner[] = UInt(0))
+    end
 end
 
 """
@@ -749,19 +795,24 @@ Float64 only.
 function condest!(
     cache::KLULinSolveCache{Float64, Ti},
 ) where {Ti}
-    is_factored(cache) ||
-        error("condest!: cache must be factored before condest.")
-    isempty(cache.nzval) && error(
-        "condest!: requires a previous numeric_refactor! to have populated nzval.",
-    )
-    ok = _condest_call(
-        Ti,
-        pointer(cache.colptr),
-        pointer(cache.nzval),
-        cache.symbolic,
-        cache.numeric,
-        cache.common,
-    )
-    ok != 1 && klu_throw(cache.common[], "klu_condest")
-    return Float64(cache.common[].condest)
+    taken = _acquire!(cache)
+    try
+        is_factored(cache) ||
+            error("condest!: cache must be factored before condest.")
+        isempty(cache.nzval) && error(
+            "condest!: requires a previous numeric_refactor! to have populated nzval.",
+        )
+        ok = _condest_call(
+            Ti,
+            pointer(cache.colptr),
+            pointer(cache.nzval),
+            cache.symbolic,
+            cache.numeric,
+            cache.common,
+        )
+        ok != 1 && klu_throw(cache.common[], "klu_condest")
+        return Float64(cache.common[].condest)
+    finally
+        taken && (cache.owner[] = UInt(0))
+    end
 end

@@ -21,14 +21,19 @@ function solve!(
     cache::KLULinSolveCache{Tv, Ti},
     B::StridedVecOrMat{Tv},
 ) where {Tv, Ti}
-    n = _check_solve_args(cache, B)
-    nrhs = size(B, 2)
-    nrhs == 0 && return B
-    ok = _solve_call(
-        Tv, Ti, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common,
-    )
-    ok == 0 && klu_throw(cache.common[], "klu_solve")
-    return B
+    taken = _acquire!(cache)
+    try
+        n = _check_solve_args(cache, B)
+        nrhs = size(B, 2)
+        nrhs == 0 && return B
+        ok = _solve_call(
+            Tv, Ti, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common,
+        )
+        ok == 0 && klu_throw(cache.common[], "klu_solve")
+        return B
+    finally
+        taken && (cache.owner[] = UInt(0))
+    end
 end
 
 """
@@ -43,15 +48,20 @@ function tsolve!(
     B::StridedVecOrMat{Tv};
     conjugate::Bool = false,
 ) where {Tv, Ti}
-    n = _check_solve_args(cache, B)
-    nrhs = size(B, 2)
-    nrhs == 0 && return B
-    ok = _tsolve_call(
-        Tv, Ti, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common;
-        conjugate = conjugate,
-    )
-    ok == 0 && klu_throw(cache.common[], "klu_tsolve")
-    return B
+    taken = _acquire!(cache)
+    try
+        n = _check_solve_args(cache, B)
+        nrhs = size(B, 2)
+        nrhs == 0 && return B
+        ok = _tsolve_call(
+            Tv, Ti, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common;
+            conjugate = conjugate,
+        )
+        ok == 0 && klu_throw(cache.common[], "klu_tsolve")
+        return B
+    finally
+        taken && (cache.owner[] = UInt(0))
+    end
 end
 
 """
