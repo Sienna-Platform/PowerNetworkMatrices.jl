@@ -24,6 +24,10 @@ _refine_is_factored(K::AAFactorCache) = AccelerateWrapper.is_factored(K)
 _refine_dim(K::KLULinSolveCache) = Int(KLUWrapper._dim(K))
 _refine_dim(K::AAFactorCache) = AccelerateWrapper._dim(K)
 
+_refine_solve!(K::LeanLUCache, r::StridedVecOrMat) = solve!(K, r)
+_refine_is_factored(K::LeanLUCache) = is_factored(K)
+_refine_dim(K::LeanLUCache) = size(K, 1)
+
 """
     solve_w_refinement!(cache, A, X, B; tol=…, max_iters=…) -> X
 
@@ -35,8 +39,9 @@ improving. `X` must be pre-allocated by the caller with the same shape as
 This is the non-allocating variant. For a one-shot allocating variant that
 returns a fresh `X`, see `solve_w_refinement`.
 
-Supports `cache::KLULinSolveCache` (KLU backend, any `{Tv, Ti}`) and
-`cache::AAFactorCache` (Apple Accelerate backend, `Cdouble` only). The
+Supports `cache::KLULinSolveCache` (KLU backend, any `{Tv, Ti}`),
+`cache::AAFactorCache` (Apple Accelerate backend, `Cdouble` only) and
+`cache::LeanLUCache` (`Cdouble` only). The
 cache must already be factored (`is_factored(cache) == true`). The function
 does not mutate `cache`'s factor; it only triggers in-place `solve!` calls
 on a residual buffer.
@@ -63,7 +68,7 @@ function solve_w_refinement!(
 end
 
 function solve_w_refinement!(
-    cache::AAFactorCache,
+    cache::Union{AAFactorCache, LeanLUCache},
     A::SparseArrays.SparseMatrixCSC{Cdouble, <:Integer},
     X::StridedVecOrMat{Cdouble},
     B::StridedVecOrMat{Cdouble};
@@ -139,7 +144,7 @@ function solve_w_refinement(
 end
 
 function solve_w_refinement(
-    cache::AAFactorCache,
+    cache::Union{AAFactorCache, LeanLUCache},
     A::SparseArrays.SparseMatrixCSC{Cdouble, <:Integer},
     B::StridedVecOrMat{Cdouble};
     tol::Real = sqrt(eps(Cdouble)),

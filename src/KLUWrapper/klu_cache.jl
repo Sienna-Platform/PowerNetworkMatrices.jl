@@ -485,6 +485,17 @@ Ensure `cache.scratch` is at least `n × block` and `cache.col_map` length
     return nothing
 end
 
+# Free the numeric handle only; the next `numeric_refactor!` then runs a fresh,
+# pivoting `klu_factor` instead of a `klu_refactor` on the old pivots.
+function _drop_numeric!(cache::KLULinSolveCache{Tv, Ti}) where {Tv, Ti}
+    if cache.numeric != C_NULL
+        num_ref = Ref(cache.numeric)
+        _free_numeric!(Tv, Ti, num_ref, cache.common)
+        cache.numeric = num_ref[]
+    end
+    return nothing
+end
+
 """
 Release the libklu numeric and symbolic handles held by `cache`, leaving the
 Julia-side fields (`colptr`, `rowval`, `common`, `scratch`, `col_map`) intact
@@ -495,11 +506,7 @@ mid-life (drop old handles before re-analyzing) and by the GC finalizer.
 function _free_klu_handles!(
     cache::KLULinSolveCache{Tv, Ti},
 ) where {Tv, Ti}
-    if cache.numeric != C_NULL
-        num_ref = Ref(cache.numeric)
-        _free_numeric!(Tv, Ti, num_ref, cache.common)
-        cache.numeric = num_ref[]
-    end
+    _drop_numeric!(cache)
     if cache.symbolic != C_NULL
         sym_ref = Ref(cache.symbolic)
         _free_symbolic!(Ti, sym_ref, cache.common)
@@ -542,11 +549,7 @@ function _recover_factorization!(
     isempty(cache.nzval) && error(
         "KLULinSolveCache: cannot recover; no cached numerical values yet.",
     )
-    if cache.numeric != C_NULL
-        num_ref = Ref(cache.numeric)
-        _free_numeric!(Tv, Ti, num_ref, cache.common)
-        cache.numeric = num_ref[]
-    end
+    _drop_numeric!(cache)
     num = _factor_call(
         Tv, Ti,
         pointer(cache.colptr), pointer(cache.rowval),

@@ -108,6 +108,7 @@ import .KLUWrapper:
     rcond!,
     n_valid,
     is_factored,
+    LeanLUCache,
     LeanLUPlan,
     LeanLUWorkspace,
     lean_refactor!,

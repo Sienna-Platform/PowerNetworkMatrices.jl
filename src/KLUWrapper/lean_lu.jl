@@ -286,3 +286,89 @@ function lean_ldiv!(ws::LeanLUWorkspace, plan::LeanLUPlan, b::AbstractVector{Flo
 end
 
 const lean_solve! = lean_ldiv!
+
+"""
+    LeanLUCache(A::SparseMatrixCSC{Float64}; reject_tol = 1e-3)
+
+Linear-solver cache for repeated solves against matrices with `A`'s pattern, using the
+lean kernel for refactorization. Drive it like a [`KLULinSolveCache`](@ref), with
+`symbolic_factor!`, `numeric_refactor!`, `full_factor!` and `solve!`.
+
+The first `numeric_refactor!` after `symbolic_factor!` factors with KLU and builds a
+[`LeanLUPlan`](@ref). Later ones use [`lean_refactor!`](@ref). If that returns less than
+`reject_tol`, the cache refactors with KLU, choosing fresh pivots, and stays on KLU until
+the next `symbolic_factor!`. A singular matrix throws `LinearAlgebra.SingularException`.
+"""
+mutable struct LeanLUCache{Ti <: Union{Int32, Int64}} <: LinearSolverCache
+    klu::KLULinSolveCache{Float64, Ti}
+    plan::Union{Nothing, LeanLUPlan{Ti}}
+    ws::LeanLUWorkspace
+    reject_tol::Float64
+    # False after a rejected lean refactor, until the next symbolic_factor!.
+    use_lean::Bool
+    # True when the current factors are in `ws`; false when they are in `klu`.
+    lean_factored::Bool
+end
+
+function LeanLUCache(
+    A::SparseMatrixCSC{Float64, Ti};
+    reject_tol::Real = 1e-3,
+) where {Ti <: Union{Int32, Int64}}
+    klu = KLULinSolveCache(A)
+    klu.common[].btf = 0
+    ws = LeanLUWorkspace(Float64[], Float64[], Float64[])
+    return LeanLUCache{Ti}(klu, nothing, ws, Float64(reject_tol), true, false)
+end
+
+Base.size(c::LeanLUCache, d...) = size(c.klu, d...)
+Base.eltype(::Type{<:LeanLUCache}) = Float64
+is_factored(c::LeanLUCache) = is_factored(c.klu)
+
+function symbolic_factor!(c::LeanLUCache{Ti}, A::SparseMatrixCSC{Float64, Ti}) where {Ti}
+    symbolic_factor!(c.klu, A)
+    c.plan = nothing
+    c.use_lean = true
+    c.lean_factored = false
+    return c
+end
+
+function numeric_refactor!(c::LeanLUCache{Ti}, A::SparseMatrixCSC{Float64, Ti}) where {Ti}
+    # Checked here, not left to `c.klu`: its fresh-factor path does not check.
+    c.klu.check_pattern && _check_pattern_match(c.klu, A, "numeric_refactor")
+    c.lean_factored = false
+    plan = c.plan
+    if c.use_lean && plan !== nothing
+        if lean_refactor!(c.ws, plan, nonzeros(A)) >= c.reject_tol
+            c.lean_factored = true
+            return c
+        end
+        # KLU's numeric factor holds the same rejected pivots: factor afresh.
+        c.use_lean = false
+        _drop_numeric!(c.klu)
+    end
+    numeric_refactor!(c.klu, A)
+    if c.use_lean && plan === nothing
+        plan = LeanLUPlan(c.klu, A)
+        c.plan = plan
+        c.ws = LeanLUWorkspace(plan)
+    end
+    return c
+end
+
+function full_factor!(c::LeanLUCache{Ti}, A::SparseMatrixCSC{Float64, Ti}) where {Ti}
+    symbolic_factor!(c, A)
+    return numeric_refactor!(c, A)
+end
+
+function solve!(c::LeanLUCache, B::StridedVecOrMat{Float64})
+    plan = c.plan
+    (c.lean_factored && plan !== nothing) || return solve!(c.klu, B)
+    if B isa AbstractVector
+        lean_ldiv!(c.ws, plan, B)
+    else
+        for b in eachcol(B)
+            lean_ldiv!(c.ws, plan, b)
+        end
+    end
+    return B
+end

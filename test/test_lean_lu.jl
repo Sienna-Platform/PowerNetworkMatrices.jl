@@ -127,3 +127,69 @@ end
     @test (@allocated PNM.lean_refactor!(ws, plan, Ax)) == 0
     @test (@allocated PNM.lean_ldiv!(ws, plan, b)) == 0
 end
+
+@testset "LeanLUCache: KLU first, then lean ($Ti)" for Ti in (Int32, Int64)
+    rng = Random.MersenneTwister(5)
+    n = 200
+    A = _lean_test_matrix(rng, n, Ti)
+    b = randn(rng, n)
+    c = PNM.LeanLUCache(A)
+    @test c isa PNM.LinearSolverCache
+    PNM.full_factor!(c, A)
+    @test PNM.is_factored(c)
+    @test !c.lean_factored
+    @test PNM.solve!(c, copy(b)) ≈ A \ b
+
+    for _ in 1:3
+        A2 = copy(A)
+        SparseArrays.nonzeros(A2) .*= 1 .+ 0.2 .* randn(rng, SparseArrays.nnz(A2))
+        PNM.numeric_refactor!(c, A2)
+        @test c.lean_factored
+        @test PNM.solve!(c, copy(b)) ≈ A2 \ b
+        B = randn(rng, n, 3)
+        @test PNM.solve!(c, copy(B)) ≈ A2 \ B
+        @test PNM.solve_w_refinement(c, A2, b) ≈ A2 \ b
+    end
+end
+
+@testset "LeanLUCache: rejected pivots fall back to KLU until symbolic_factor!" begin
+    A1 = SparseArrays.sparse([10.0 1.0; 1.0 10.0])
+    A2 = SparseArrays.sparse([1e-12 1.0; 1.0 1.0])  # frozen pivot A2[1,1] is tiny
+    b = [1.0, 2.0]
+    c = PNM.LeanLUCache(A1)
+    PNM.full_factor!(c, A1)
+    PNM.numeric_refactor!(c, A1)
+    @test c.lean_factored
+
+    PNM.numeric_refactor!(c, A2)
+    @test !c.lean_factored
+    @test !c.use_lean
+    @test PNM.solve!(c, copy(b)) ≈ Matrix(A2) \ b
+    PNM.numeric_refactor!(c, A1)
+    @test !c.lean_factored
+    @test PNM.solve!(c, copy(b)) ≈ Matrix(A1) \ b
+
+    PNM.symbolic_factor!(c, A1)
+    PNM.numeric_refactor!(c, A1)
+    PNM.numeric_refactor!(c, A1)
+    @test c.lean_factored
+
+    Z = copy(A1)
+    SparseArrays.nonzeros(Z) .= 0.0
+    @test_throws LinearAlgebra.SingularException PNM.numeric_refactor!(c, Z)
+    @test_throws ArgumentError PNM.numeric_refactor!(
+        c,
+        SparseArrays.sparse(1.0 * LinearAlgebra.I, 2, 2),
+    )
+end
+
+@testset "LeanLUCache: lean refactor and solve allocate nothing" begin
+    rng = Random.MersenneTwister(6)
+    A = _lean_test_matrix(rng, 100, Int64)
+    b = randn(rng, 100)
+    c = PNM.full_factor!(PNM.LeanLUCache(A), A)
+    PNM.numeric_refactor!(c, A)
+    PNM.solve!(c, b)
+    @test (@allocated PNM.numeric_refactor!(c, A)) == 0
+    @test (@allocated PNM.solve!(c, b)) == 0
+end
