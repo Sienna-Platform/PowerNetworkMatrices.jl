@@ -19,7 +19,7 @@ only consulted when reusing.
 mutable struct KLULinSolveCache{
     Tv <: Union{Float64, ComplexF64},
     Ti <: Union{Int32, Int64},
-}
+} <: LinearSolverCache
     colptr::Vector{Ti}
     rowval::Vector{Ti}
     # Copy of the matrix values used in the most recent numeric factorization.
