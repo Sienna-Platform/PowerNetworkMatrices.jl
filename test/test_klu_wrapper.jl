@@ -450,6 +450,16 @@ end
     @test_throws ErrorException PNM.solve_w_refinement(cache, A, b)
 end
 
+@testset "KLU wrapper: solve_w_refinement rejects mismatched element types" begin
+    n = 10
+    A = SparseArrays.spdiagm(0 => 1.0:n)
+    cache = PNM.KLUWrapper.KLULinSolveCache(A)
+    PNM.KLUWrapper.full_factor!(cache, A)
+    @test_throws MethodError PNM.solve_w_refinement(cache, A, rand(Float32, n))
+    Ac = SparseArrays.spdiagm(0 => ComplexF64.(1.0:n))
+    @test_throws ArgumentError PNM.solve_w_refinement(cache, Ac, rand(ComplexF64, n))
+end
+
 @testset "KLU wrapper: solve_w_refinement works on Int32 cache" begin
     Random.seed!(4)
     n = 30
