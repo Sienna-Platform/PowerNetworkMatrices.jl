@@ -476,6 +476,7 @@ Ybus3_matpower[3, 3] = 1.379310344827586 - 16.351724137931036im
 function build_hvdc_with_single_bus_island()
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     bus15 = ACBus(;
+        input_basis = PSY.CU,
         number = 15,
         name = "Bus 15",
         available = true,
@@ -534,6 +535,7 @@ end
 function build_hvdc_with_small_island()
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     bus15 = ACBus(;
+        input_basis = PSY.CU,
         number = 15,
         name = "Bus 15",
         available = true,
@@ -545,6 +547,7 @@ function build_hvdc_with_small_island()
         input_basis = PSY.CU,
     )
     bus16 = ACBus(;
+        input_basis = PSY.CU,
         number = 16,
         name = "Bus 16",
         available = true,
@@ -556,6 +559,7 @@ function build_hvdc_with_small_island()
         input_basis = PSY.CU,
     )
     bus17 = ACBus(;
+        input_basis = PSY.CU,
         number = 17,
         name = "Bus 17",
         available = true,
@@ -653,6 +657,7 @@ function _build_degree_two_chain_system(edges; load_bus::Int = 3)
     bus_numbers = sort!(unique!(reduce(vcat, [[e[1], e[2]] for e in edges])))
     for n in bus_numbers
         b = ACBus(;
+            input_basis = PSY.CU,
             number = n,
             name = "Bus $n",
             available = true,
@@ -762,6 +767,7 @@ function build_composite_arc_adjacency_system()
     buses = Dict{Int, ACBus}()
     for n in (1, 2, 3, 4, 5, 10, 11)
         b = ACBus(;
+            input_basis = PSY.CU,
             number = n,
             name = "Bus $n",
             available = true,
@@ -805,6 +811,7 @@ function build_multi_island_composite_arc_system()
     buses = Dict{Int, ACBus}()
     for n in (1, 2, 3, 4, 5, 10, 11, 200, 201)
         b = ACBus(;
+            input_basis = PSY.CU,
             number = n,
             name = "Bus $n",
             available = true,
@@ -971,6 +978,7 @@ function _mk_bus_system(n::Int)
             bustype = ACBusTypes.PV
         end
         b = ACBus(;
+            input_basis = PSY.CU,
             number = i,
             name = "b$i",
             available = true,
@@ -1010,12 +1018,14 @@ end
 # numbers, never impedances (which require an attached system).
 function _mk_detached_pst_fixture()
     b1 = ACBus(;
+        input_basis = PSY.CU,
         number = 1, name = "b1", available = true, bustype = ACBusTypes.REF,
         angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 230.0,
         input_basis = PSY.CU,
     )
     b2 = ACBus(;
+        input_basis = PSY.CU,
         number = 2, name = "b2", available = true, bustype = ACBusTypes.PV,
         angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 230.0,
@@ -1167,6 +1177,7 @@ end
 function _add_star_buses!(sys, busD; numbers = (101, 102, 103))
     return map(numbers) do n
         b = PSY.ACBus(;
+            input_basis = PSY.CU,
             number = n,
             name = "Bus3WT_$n",
             available = true,

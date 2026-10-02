@@ -823,6 +823,7 @@ end
     buses = ACBus[]
     for i in 1:5
         b = ACBus(;
+            input_basis = PSY.CU,
             number = i,
             name = "b$i",
             available = true,
@@ -883,6 +884,7 @@ end
     buses = ACBus[]
     for i in 1:3
         b = ACBus(;
+            input_basis = PSY.CU,
             number = i,
             name = "b$i",
             available = true,
@@ -954,6 +956,7 @@ end
             bustype = ACBusTypes.REF
         end
         b = ACBus(;
+            input_basis = PSY.CU,
             number = i,
             name = "b$i",
             available = true,

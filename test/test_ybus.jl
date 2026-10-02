@@ -80,6 +80,7 @@ end
 @testset "Test Ybus with single bus not numbered 1" begin
     sys_single = System(100.0)
     bus = ACBus(;
+        input_basis = PSY.CU,
         number = 5,
         name = "Bus5",
         available = true,
