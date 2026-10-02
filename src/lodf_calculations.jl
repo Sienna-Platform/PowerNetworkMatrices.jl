@@ -46,8 +46,9 @@ stores_transpose(::LODF) = true
 # --- Demand-matrix short-circuit ---------------------------------------------
 #
 # The LODF computation builds a *diagonal* "demand" matrix `D = diag(m_V)`
-# where `m_V[i] = 1 - PTDF·A[i, i]` (clamped to 1.0 at `LODF_ENTRY_TOLERANCE`
-# to avoid divide-by-zero when an outage islands the line). The original
+# where `m_V[i] = 1 - PTDF·A[i, i]` (clamped to 1.0 when its magnitude is below
+# `LODF_ENTRY_TOLERANCE`, to avoid divide-by-zero when an outage islands the line; a
+# negative-reactance arc can make it legitimately negative). The original
 # code factored `D` and ran a triangular solve `D · X = ptdf_denominator`;
 # that's a `factor + back-solve` over a diagonal, which collapses to
 # element-wise row scaling. KLU's BTF short-circuits this internally so the
@@ -59,7 +60,11 @@ function _build_lodf_demand(ptdf_denominator::AbstractMatrix{Float64}, linecount
     m_V = Vector{Float64}(undef, linecount)
     @inbounds for i in 1:linecount
         d = 1.0 - ptdf_denominator[i, i]
-        m_V[i] = d < LODF_ENTRY_TOLERANCE ? 1.0 : d
+        if abs(d) < LODF_ENTRY_TOLERANCE
+            m_V[i] = 1.0
+        else
+            m_V[i] = d
+        end
     end
     return m_V
 end
