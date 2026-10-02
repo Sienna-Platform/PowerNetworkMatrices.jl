@@ -662,7 +662,7 @@ function apply_ybus_modification(ybus::Ybus, mod::NetworkModification)
     return SparseArrays.dropzeros!(Y)
 end
 
-_cancels_to_zero(sum::YBUS_ELTYPE, delta::YBUS_ELTYPE) =
+_cancels_to_zero(sum::T, delta::T) where {T <: Number} =
     abs(sum) <= YBUS_CANCELLATION_RTOL * abs(delta)
 
 function _add_admittance_delta(y::YBUS_ELTYPE, delta::YBUS_ELTYPE)
@@ -671,6 +671,33 @@ function _add_admittance_delta(y::YBUS_ELTYPE, delta::YBUS_ELTYPE)
         return zero(sum)
     end
     return sum
+end
+
+# Each modified arc's remaining share of its base BA susceptance after `mod`, in the order of
+# `mod.arc_modifications` (one per arc). `delta_b` is a magnitude-space change against the base
+# susceptance, so sequential member trips add their fractions and a whole group sums to zero.
+function _arc_susceptance_scales(
+    ybus::Ybus,
+    arc_ax::Vector{Tuple{Int, Int}},
+    mod::NetworkModification,
+)
+    nr = get_network_reduction_data(ybus)
+    scales = Vector{Float64}(undef, length(mod.arc_modifications))
+    for (k, m) in enumerate(mod.arc_modifications)
+        scale = ybus.arc_susceptance_scale[m.arc_index]
+        b = _ba_arc_susceptance(nr, arc_ax[m.arc_index])
+        # A zero-susceptance arc holds zero in BA whatever its scale.
+        if iszero(b)
+            scales[k] = scale
+        else
+            fraction = m.delta_b / abs(b)
+            scales[k] = scale + fraction
+            if _cancels_to_zero(scales[k], fraction)
+                scales[k] = 0.0
+            end
+        end
+    end
+    return scales
 end
 
 # Position of the stored entry (i, j) in `nonzeros(A)`. Row indices are sorted within a column
@@ -845,10 +872,12 @@ Every position is resolved before anything is written: a delta on an entry outsi
 raises an error and leaves `ybus` unchanged. Ybus construction drops an entry whose branch
 admittances cancel exactly, so a modification touching one must use the out-of-place form.
 
-Only the numeric admittance data changes. `adjacency_data`, the subnetwork axes, the network
-reduction data, and every matrix built from `ybus` (`BA_Matrix`, `ABA_Matrix`,
-`IncidenceMatrix`, `AdjacencyMatrix`, `find_subnetworks(ybus)`) still describe the unmodified
-network; check the connectivity of a modified Ybus with
+Each modified arc's DC susceptance is tracked too, so [`BA_Matrix`](@ref), and the
+`ABA_Matrix`, `PTDF` and `VirtualPTDF` built from it, reflect the modification; a
+modification that islands part of the network makes `BA_Matrix(ybus)` raise instead. The
+topology is not updated: `adjacency_data`, the subnetwork axes, the network reduction data,
+`IncidenceMatrix`, `AdjacencyMatrix` and `find_subnetworks(ybus)` still describe the
+unmodified network; check the connectivity of a modified Ybus with
 `find_subnetworks(ybus.data, get_bus_axis(ybus))`.
 
 Cost is proportional to the entries `mod` touches, except that building the arc axis is
@@ -865,9 +894,20 @@ function apply_ybus_modification!(
 )
     ybus_entries, from_to_entries, to_from_entries =
         _modified_entries(ybus, get_bus_lookup(ybus), arc_ax, mod)
+    scales = _arc_susceptance_scales(ybus, arc_ax, mod)
     _add_deltas!(ybus.data, ybus_entries)
     _add_deltas!(ybus.arc_admittance_from_to, from_to_entries)
     _add_deltas!(ybus.arc_admittance_to_from, to_from_entries)
+    Y_nz = SparseArrays.nonzeros(ybus.data)
+    y_positions, _ = ybus_entries
+    for (k, m) in enumerate(mod.arc_modifications)
+        # A lossy group's DC susceptance is not the sum of its members', so tripping every
+        # member leaves a fraction; a bus pair that no longer couples in Ybus has none left.
+        if iszero(Y_nz[y_positions[4k - 2]])
+            scales[k] = 0.0
+        end
+        ybus.arc_susceptance_scale[m.arc_index] = scales[k]
+    end
     return
 end
 
@@ -919,5 +959,8 @@ function restore_ybus_modification!(
         ybus.arc_admittance_to_from, work_to_from,
         base.arc_admittance_to_from, base_to_from,
     )
+    for m in mod.arc_modifications
+        ybus.arc_susceptance_scale[m.arc_index] = base.arc_susceptance_scale[m.arc_index]
+    end
     return
 end
