@@ -117,6 +117,10 @@ struct with an empty cache.
 # Keyword Arguments
 - `linear_solver::String = _default_linear_solver()`: Linear solver for the
         ABA factorization.
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
+        Tolerance for row sparsification. A `Float64` applies a fixed absolute cutoff; the
+        default [`AutoTolerance`](@ref) applies a relative per-row cutoff so requested rows
+        stay sparse on large systems.
 - `network_reductions::Vector{NetworkReduction}`:
         Network reductions applied when computing the matrix.
 """

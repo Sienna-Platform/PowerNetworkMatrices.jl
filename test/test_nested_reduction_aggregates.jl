@@ -183,3 +183,30 @@ end
     # flattened leaves would wrongly accept this.
     @test !PNM._entry_matches(real_group, keep(Set(["L_1_10", "L_1_20"])))
 end
+
+@testset "Mixed parallel group holding a nested aggregate folds per level" begin
+    sys = build_antiparallel_chain_segment_nested_parallel_system()
+    ybus = Ybus(
+        sys;
+        network_reductions = NetworkReduction[DegreeTwoReduction(;
+            reduce_reactive_power_injectors = false,
+        )],
+    )
+    chain = only(values(PNM.get_series_branch_map(PNM.get_network_reduction_data(ybus))))
+    # Segment 2 is MixedBranchesParallel[L_3_10, BranchesParallel[L_10_3, L_10_3_b]].
+    mixed = collect(chain)[2]
+    @test Set(PSY.get_name.(PNM.leaf_components(mixed))) ==
+          Set(["L_3_10", "L_10_3", "L_10_3_b"])
+    function matches(names)
+        _, matched = Test.collect_test_logs(; min_level = Logging.Warn) do
+            PNM._entry_matches(mixed, (T, c) -> PSY.get_name(c) in names)
+        end
+        return matched
+    end
+    # `any` inside the nested pair: one kept member carries it, and the twin is kept.
+    @test matches(Set(["L_3_10", "L_10_3_b"]))
+    # `all` across the mixed group: the nested pair with no kept member fails it...
+    @test !matches(Set(["L_3_10"]))
+    # ...and so does the dropped twin, however well the nested pair does.
+    @test !matches(Set(["L_10_3", "L_10_3_b"]))
+end

@@ -31,6 +31,12 @@ const ZERO_IMPEDANCE_X_EPSILON = 1e-6
 const LODF_ENTRY_TOLERANCE = 1e-6
 const MODF_ISLANDING_TOLERANCE = 1e-10
 const YBUS_DELTA_TOL = 1e-10
+# Below this size relative to the delta that produced it, an entry an in-place Ybus modification
+# writes is a cancellation residue and is set to zero. Tripping a parallel group member by member
+# leaves up to ~15 Float32 eps; 64 keeps a 4x margin. The residue scales with the largest member
+# removed, so members whose admittances differ by ~1000x or more, tripped largest-first, can
+# leave one above this bound.
+const YBUS_CANCELLATION_RTOL = 64 * eps(Float32)
 # At or above this bus count a default `AutoTolerance` sparsifies the on-demand
 # (virtual) matrices; below it, AutoTolerance is a no-op so small systems are
 # returned exactly. Sparsification only pays off — and is only wanted — at scale.

@@ -206,7 +206,8 @@ for DC power flow analysis and power system sensitivity studies.
         Whether to perform factorization during construction for efficient linear system solving
 - `linear_solver::String = "KLU"`:
         Backend for the factorization when `factorize = true`: "KLU" or "AppleAccelerateLU"
-        (macOS 15.5+). Other values raise an error. `LODF(A, ABA, BA)` requires "KLU".
+        (macOS 15.5+). Other values raise an error. `LODF(A, ABA, BA)` and the
+        `DC_ABA_Matrix_Factorized` alias PowerFlows dispatches on both require "KLU".
 - `network_reductions::Vector{NetworkReduction} = NetworkReduction[]`:
         Vector of network reduction algorithms to apply before matrix construction
 - `include_constant_impedance_loads::Bool=true`:
@@ -255,7 +256,8 @@ via the computed Ybus matrix.
         Whether to perform factorization during construction for efficient linear system solving
 - `linear_solver::String = "KLU"`:
         Backend for the factorization when `factorize = true`: "KLU" or "AppleAccelerateLU"
-        (macOS 15.5+). Other values raise an error. `LODF(A, ABA, BA)` requires "KLU".
+        (macOS 15.5+). Other values raise an error. `LODF(A, ABA, BA)` and the
+        `DC_ABA_Matrix_Factorized` alias PowerFlows dispatches on both require "KLU".
 
 # Returns
 - `ABA_Matrix`: The constructed ABA matrix structure containing:

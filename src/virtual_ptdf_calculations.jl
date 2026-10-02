@@ -117,8 +117,10 @@ struct with an empty cache.
         Dictionary of weights to be used as distributed slack bus.
 - `linear_solver::String = _default_linear_solver()`:
         Linear solver to use for factorization. Options: "KLU", "AppleAccelerateLU".
-- `tol::Float64 = eps()`:
-        Tolerance related to sparsification and values to drop.
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
+        Tolerance for row sparsification. A `Float64` applies a fixed absolute cutoff; the
+        default [`AutoTolerance`](@ref) applies a relative per-row cutoff so requested rows
+        stay sparse on large systems.
 - `max_cache_size::Int`:
         max cache size in MiB (initialized as MAX_CACHE_SIZE_MiB).
 - `persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}()`:

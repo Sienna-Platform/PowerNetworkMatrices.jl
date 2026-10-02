@@ -88,7 +88,7 @@
 
     # auxiliary function
     PRTS_sparse = PTDF(RTS; tol = 1e-3)
-    @test PNM.get_tol(PRTS_sparse).x == Base.RefValue(1e-3).x
+    @test PNM.get_tol(PRTS_sparse) == 1e-3
 end
 
 @testset "Test PTDF matrices for 10 bus system with 2 reference buses" begin
