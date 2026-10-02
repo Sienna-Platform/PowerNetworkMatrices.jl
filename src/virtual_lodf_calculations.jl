@@ -154,9 +154,10 @@ end
 
 # A bridge arc islands the network when it is outaged, so `1 - H[e,e]` collapses and the
 # LODF scaling is undefined. Both LODF paths clamp such a diagonal to zero — a denominator
-# of exactly 1 — instead of dividing by a vanishing number.
+# of exactly 1 — instead of dividing by a vanishing number. Only a vanishing denominator is
+# clamped: a negative-reactance arc can push H[e,e] above 1, a valid negative denominator.
 function _clamped_ptdf_a_diag(h_ee::Float64)
-    if h_ee > 1 - LODF_ENTRY_TOLERANCE
+    if abs(1 - h_ee) < LODF_ENTRY_TOLERANCE
         return 0.0
     end
     return h_ee
@@ -342,7 +343,8 @@ Uses the Sherman-Morrison (matrix inversion lemma) formula:
 
     partial_LODF[ℓ, e] = α · (b_ℓ / b_e) · H[ℓ,e] / (1 - α · H[e,e])
 
-where α = -Δb / b_e and H[e,e] is `PTDF_A_diag[e]` clamped by
+where α = -Δb / |b_e|, `b_ℓ` and `b_e` are signed DC susceptances, and H[e,e] is
+`PTDF_A_diag[e]` clamped by
 `_clamped_ptdf_a_diag`, the same clamp `inv_PTDF_A_diag` carries. When
 `delta_b = -b_e` (full outage) this reduces to the standard LODF column; the
 self-element is overridden to -1.0 for a full outage.
@@ -392,8 +394,15 @@ function get_partial_lodf_row(
         # Step 6: Partial LODF column scaled by b_ℓ/b_e, in place on the fresh `H_col`. The
         # operand order is load-bearing: float multiply does not reassociate, and `s * (a * h)`
         # is what every stored reference row was produced with.
+        # `H_col` carries the signed b_e, so the ratio b_ℓ / b_e must be signed too; the
+        # magnitudes flip the row wherever ℓ and e differ in sign (series compensation).
+        signed_sus = [
+            _arc_susceptance_sign(core.BA, core.A, l) * core.arc_susceptances[l] for
+            l in 1:n_arcs
+        ]
         partial_lodf = H_col
-        partial_lodf .= (alpha / (denom * b_arc)) .* (core.arc_susceptances .* partial_lodf)
+        partial_lodf .=
+            (alpha / (denom * signed_sus[arc_idx])) .* (signed_sus .* partial_lodf)
 
         # Full-outage self-element convention: -1.0.
         if abs(delta_b + b_arc) < eps() * b_arc

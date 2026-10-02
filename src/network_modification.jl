@@ -1,12 +1,8 @@
-# Compared as magnitudes: delta_b from _get_arc_susceptances is -|b|, but _ba_arc_susceptance
-# is signed, so a signed test would call a full outage of a negative-reactance arc (3W star
-# leg, series compensation) partial. -|b| is the correct delta regardless: arc_sus (BA's
-# convention) is always the positive-by-construction DC susceptance magnitude, with direction
-# carried by BA's own +-1 incidence entries, not by the branch's physical sign. Negating the
-# signed _ba_arc_susceptance instead would double-negate on a negative-reactance arc and get
-# the update backwards -- confirmed by test_network_modification.jl's "negative-susceptance
-# full outage" case, where scaling by delta_b/b_arc on the signed value doubles the branch
-# instead of removing it.
+# Compared as magnitudes: delta_b is a change in |b| (-|b| for a full outage), but
+# _ba_arc_susceptance is signed, so a signed test would call a full outage of a
+# negative-reactance arc (3W star leg, series compensation) partial. Consumers that need the
+# signed change recover it from BA: the Woodbury kernel multiplies by the arc's sign
+# (`_arc_susceptance_sign`), and Ybus deltas scale by `delta_b / |b_arc|`.
 _is_full_outage(delta_b::Float64, b_arc::Float64) =
     isapprox(abs(delta_b), abs(b_arc); atol = YBUS_DELTA_TOL, rtol = sqrt(eps(Float32)))
 

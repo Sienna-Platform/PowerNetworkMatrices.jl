@@ -618,6 +618,39 @@ end
     @test abs(modified[f, t]) < 1e-5
 end
 
+@testset "Woodbury: negative-susceptance full outage matches the rebuilt network" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    line = PSY.get_component(Line, sys, "Line10")
+    PSY.set_r!(line, 0.0 * PSY.SU)
+    PSY.set_x!(line, -0.1 * PSY.SU)
+    vptdf = VirtualPTDF(sys)
+    mod = NetworkModification(vptdf, line)
+
+    PSY.set_available!(line, false)
+    ref = PTDF(sys)
+    PSY.set_available!(line, true)
+
+    vmodf = VirtualMODF(sys)
+    ctg = ContingencySpec(1, mod)
+    vmodf.contingency_cache[1] = ctg
+    vmodf_batched = VirtualMODF(sys)
+    batched_ctg = ContingencySpec(1, mod)
+    populate_cache(vmodf_batched, [batched_ctg]; monitored = PNM.get_arc_axis(ref))
+
+    bus_ax = PNM.get_bus_axis(vptdf)
+    for arc in PNM.get_arc_axis(ref)
+        expected = [ref[arc, bus] for bus in bus_ax]
+        arc_ix = PNM.get_arc_lookup(vptdf)[arc]
+        @test isapprox(
+            get_post_modification_ptdf_row(vptdf, arc_ix, mod),
+            expected;
+            atol = 1e-8,
+        )
+        @test isapprox(vmodf[arc, ctg], expected; atol = 1e-8)
+        @test isapprox(vmodf_batched[arc, batched_ctg], expected; atol = 1e-8)
+    end
+end
+
 # `build_two_parallel_degree_two_chains` with chain A's second segment replaced by a phase
 # shifter, so exactly one of the two sibling chains carries an angle.
 function _mk_shifted_grouped_chain_system(; alpha = 0.15, pst_x = 0.2)
