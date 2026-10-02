@@ -275,10 +275,12 @@ function _getindex(
     column::Union{Int, Colon},
 )
     stored = _cached_row(
-        get_cache(vlodf), get_cache_lock(vlodf), row, get_cutoff(vlodf),
-    ) do
-        _compute_lodf_row(vlodf, row)
-    end
+        () -> _compute_lodf_row(vlodf, row),
+        get_cache(vlodf),
+        get_cache_lock(vlodf),
+        row,
+        get_cutoff(vlodf),
+    )
     return stored[column]
 end
 

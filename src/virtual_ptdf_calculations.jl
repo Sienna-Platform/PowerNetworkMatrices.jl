@@ -290,10 +290,12 @@ function _getindex(
     column::Union{Int, Colon},
 )
     stored = _cached_row(
-        get_cache(vptdf), get_cache_lock(vptdf), row, get_cutoff(vptdf),
-    ) do
-        _compute_ptdf_row(vptdf, row)
-    end
+        () -> _compute_ptdf_row(vptdf, row),
+        get_cache(vptdf),
+        get_cache_lock(vptdf),
+        row,
+        get_cutoff(vptdf),
+    )
     return stored[column]
 end
 
@@ -349,8 +351,10 @@ after the cache evicts it. Use `vptdf[arc, :]` for a private copy.
 function get_ptdf_row(vptdf::VirtualPTDF, arc::Tuple{Int, Int})
     row = get_arc_lookup(vptdf)[arc]
     return _cached_row(
-        get_cache(vptdf), get_cache_lock(vptdf), row, get_cutoff(vptdf),
-    ) do
-        _compute_ptdf_row(vptdf, row)
-    end
+        () -> _compute_ptdf_row(vptdf, row),
+        get_cache(vptdf),
+        get_cache_lock(vptdf),
+        row,
+        get_cutoff(vptdf),
+    )
 end
