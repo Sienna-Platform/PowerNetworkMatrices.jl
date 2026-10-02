@@ -1077,6 +1077,22 @@ function _mk_zi_parallel_sys(rx_pairs::Vector{Tuple{Float64, Float64}})
     return sys
 end
 
+# 3-bus system: ref bus 1 tied to bus 2 by a normal line, plus parallel members on arc (2, 3)
+# carrying the supplied (r, x) pairs (used to force a degenerate net series admittance).
+function _mk_parallel_cancel_sys(member_rx::Vector{Tuple{Float64, Float64}})
+    sys, buses = _mk_bus_system(3)
+    arc12 = Arc(; from = buses[1], to = buses[2])
+    add_component!(sys, arc12)
+    _add_test_line!(sys, "L12", arc12, 0.01, 0.1)  # keeps the ref bus connected
+    # Parallel members share one Arc (2, 3), as real parallel branches do.
+    arc23 = Arc(; from = buses[2], to = buses[3])
+    add_component!(sys, arc23)
+    for (k, (r, x)) in enumerate(member_rx)
+        _add_test_line!(sys, "L23_$k", arc23, r, x)
+    end
+    return sys
+end
+
 # Attached 3-bus system with L1 ∥ PST on (1, 2) and L2 on (2, 3). Attached (not detached, as
 # in `_mk_detached_pst_fixture`) because impedance reads need `base_value`, which only
 # `add_component!` populates.

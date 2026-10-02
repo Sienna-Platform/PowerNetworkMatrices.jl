@@ -102,15 +102,7 @@ end
     ptdf = PTDF(sys)
     ptdf_rad = PTDF(sys; network_reductions = NetworkReduction[RadialReduction()])
     # test LODF from A, ABA and BA
-    test_value = false
-    try
-        lodf_rad_A_BA_ABA = LODF(A, ABA, BA_rad)
-    catch err
-        if err isa Exception
-            test_value = true
-        end
-    end
-    @test test_value
+    @test_throws r"Mismatch in .NetworkReduction." LODF(A, ABA, BA_rad)
 
     # test LODF from A, PTDF
     test_value = false

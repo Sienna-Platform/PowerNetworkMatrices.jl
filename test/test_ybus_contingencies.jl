@@ -728,3 +728,146 @@ end
     @test SparseArrays.nonzeros(work.arc_admittance_to_from.data) ==
           SparseArrays.nonzeros(base.arc_admittance_to_from.data)
 end
+
+# The pre-rewrite in-place apply: add `compute_ybus_delta`'s entries one by one.
+function _reference_apply_bus_entries!(ybus::Ybus, mod::NetworkModification)
+    Y = ybus.data
+    Y_nz = SparseArrays.nonzeros(Y)
+    d = compute_ybus_delta(ybus, mod)
+    for col in 1:size(d, 2), k in SparseArrays.nzrange(d, col)
+        Y_nz[PNM._stored_index(Y, SparseArrays.rowvals(d)[k], col)] +=
+            SparseArrays.nonzeros(d)[k]
+    end
+    return
+end
+
+function _check_apply_bitwise(base::Ybus, work::Ybus, ref::Ybus, mod::NetworkModification)
+    apply_ybus_modification!(work, mod)
+    _reference_apply_bus_entries!(ref, mod)
+    same =
+        reinterpret(UInt64, SparseArrays.nonzeros(work.data)) ==
+        reinterpret(UInt64, SparseArrays.nonzeros(ref.data))
+    restore_ybus_modification!(work, base, mod)
+    restore_ybus_modification!(ref, base, mod)
+    return same
+end
+
+@testset "apply_ybus_modification! equals the delta-matrix apply bitwise ($name)" for (
+    group,
+    name,
+) in (
+    (PSB.PSITestSystems, "c_sys14"),
+    (PSB.MatpowerTestSystems, "matpower_ACTIVSg2000_sys"),
+)
+    sys = PSB.build_system(group, name)
+    base = Ybus(sys; make_arc_admittance_matrices = true)
+    work = Ybus(sys; make_arc_admittance_matrices = true)
+    ref = Ybus(sys; make_arc_admittance_matrices = true)
+    vptdf = VirtualPTDF(sys)
+    arcs = PNM.get_arc_axis(PNM.get_network_reduction_data(base))
+    single = [only(NetworkModification(vptdf, arc).arc_modifications) for arc in arcs]
+    @test all(
+        _check_apply_bitwise(base, work, ref, NetworkModification("n1", [m])) for
+        m in single
+    )
+    # Every arc at a bus: the shared diagonal takes several deltas.
+    bus_ax = PNM.get_bus_axis(base)
+    n_multi = 0
+    for bus in bus_ax[1:min(length(bus_ax), 60)]
+        at_bus = [single[i] for (i, a) in enumerate(arcs) if bus in a]
+        length(at_bus) < 2 && continue
+        n_multi += 1
+        @test _check_apply_bitwise(base, work, ref, NetworkModification("bus", at_bus))
+    end
+    @test n_multi > 0
+    @test SparseArrays.nonzeros(work.data) == SparseArrays.nonzeros(base.data)
+
+    # With the arc axis passed in, the cost is O(touched entries), independent of the size.
+    arc_ax = PNM.get_arc_axis(PNM.get_network_reduction_data(work))
+    mod = NetworkModification("n1", [first(single)])
+    apply_ybus_modification!(work, mod, arc_ax)
+    restore_ybus_modification!(work, base, mod, arc_ax)
+    @test (@allocated apply_ybus_modification!(work, mod, arc_ax)) < 1024
+    @test (@allocated restore_ybus_modification!(work, base, mod, arc_ax)) < 1024
+    @test SparseArrays.nonzeros(work.data) == SparseArrays.nonzeros(base.data)
+end
+
+@testset "apply_ybus_modification! islands a bus whose parallel group is tripped one by one" begin
+    # Members whose admittances do not cancel exactly in Float32 when subtracted one by one.
+    sys = _mk_parallel_cancel_sys([(0.013, 0.071), (0.029, 0.217), (0.041, 0.333)])
+    base = Ybus(sys; make_arc_admittance_matrices = true)
+    work = Ybus(sys; make_arc_admittance_matrices = true)
+    vptdf = VirtualPTDF(sys)
+    mods = [
+        NetworkModification(vptdf, get_component(Line, sys, n)) for
+        n in ("L23_3", "L23_1", "L23_2")
+    ]
+    for mod in mods
+        apply_ybus_modification!(work, mod)
+    end
+    lookup = PNM.get_bus_lookup(work)
+    i, j = lookup[2], lookup[3]
+    @test iszero(work.data[i, j])
+    @test iszero(work.data[j, i])
+    @test iszero(work.data[j, j])
+    @test SparseArrays.nnz(work.data) == SparseArrays.nnz(base.data)
+    @test length(PNM.find_subnetworks(work.data, PNM.get_bus_axis(work))) == 2
+    row = PNM.get_arc_lookup(work.arc_admittance_from_to)[(2, 3)]
+    @test iszero(work.arc_admittance_from_to.data[row, :])
+    @test iszero(work.arc_admittance_to_from.data[row, :])
+
+    for mod in reverse(mods)
+        restore_ybus_modification!(work, base, mod)
+    end
+    @test SparseArrays.nonzeros(work.data) == SparseArrays.nonzeros(base.data)
+    @test SparseArrays.nonzeros(work.arc_admittance_from_to.data) ==
+          SparseArrays.nonzeros(base.arc_admittance_from_to.data)
+end
+
+@testset "apply_ybus_modification! leaves the Ybus untouched when an entry is not stored" begin
+    # ZI1 ∥ ZI2 cancel exactly on (2, 3), so construction drops that off-diagonal; L13 keeps
+    # bus 3 connected.
+    sys = _mk_zi_parallel_sys([(0.0, 0.1), (0.0, -0.1)])
+    work = Ybus(sys; make_arc_admittance_matrices = true)
+    vptdf = VirtualPTDF(sys)
+    lookup = PNM.get_bus_lookup(work)
+    @test_throws ErrorException PNM._stored_index(work.data, lookup[2], lookup[3])
+
+    line_a = get_component(Line, sys, "ZI1")
+    mod = NetworkModification(vptdf, line_a)
+    y_before = copy(SparseArrays.nonzeros(work.data))
+    ft_before = copy(SparseArrays.nonzeros(work.arc_admittance_from_to.data))
+    @test_throws ErrorException apply_ybus_modification!(work, mod)
+    @test SparseArrays.nonzeros(work.data) == y_before
+    @test SparseArrays.nonzeros(work.arc_admittance_from_to.data) == ft_before
+
+    set_available!(line_a, false)
+    ref = Ybus(sys)
+    set_available!(line_a, true)
+    @test isapprox(apply_ybus_modification(work, mod), ref.data; atol = 1e-4)
+end
+
+@testset "restore_ybus_modification! rejects a base that does not match" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    work = Ybus(sys; make_arc_admittance_matrices = true)
+    vptdf = VirtualPTDF(sys)
+    line = get_component(Line, sys, "1")
+    mod = NetworkModification(vptdf, line)
+    apply_ybus_modification!(work, mod)
+    applied = copy(SparseArrays.nonzeros(work.data))
+
+    # Same buses and stored-entry count, but the base moves the outaged line from (1, 2) to
+    # (2, 4), so it stores no entry where the modification wrote.
+    set_available!(line, false)
+    moved = Arc(; from = PSY.get_bus(sys, 2), to = PSY.get_bus(sys, 4))
+    add_component!(sys, moved)
+    _add_test_line!(sys, "moved", moved, 0.01, 0.1)
+    base_moved = Ybus(sys; make_arc_admittance_matrices = true)
+    @test SparseArrays.nnz(base_moved.data) == SparseArrays.nnz(work.data)
+    @test_throws ErrorException restore_ybus_modification!(work, base_moved, mod)
+    @test SparseArrays.nonzeros(work.data) == applied
+
+    other = Ybus(PSB.build_system(PSB.PSITestSystems, "c_sys14"))
+    @test_throws ErrorException restore_ybus_modification!(work, other, mod)
+    @test SparseArrays.nonzeros(work.data) == applied
+end

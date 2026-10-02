@@ -407,3 +407,10 @@ end
     @test length(PNM.find_subnetworks(Y, bus_ax)) == 2
     @test length(PNM.find_connected_components(Y, PNM.get_bus_lookup(ybus))) == 2
 end
+
+@testset "find_connected_components accepts a System" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    cc = PNM.find_connected_components(sys)
+    @test length(cc) == 1
+    @test only(cc) == Set(PSY.get_number.(get_components(ACBus, sys)))
+end

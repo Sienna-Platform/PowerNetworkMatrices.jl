@@ -103,8 +103,15 @@
 
     # test if error is thrown in case other linear solvers are called
     @test_throws ErrorException LODF(A, ABA, BA; linear_solver = "Dense")
+    @test_throws r"needs a factorized ABA" LODF(A, ABA_Matrix(sys5), BA)
 
     @test_throws ErrorException LODF(A, P5; linear_solver = "XXX")
+    @test_throws ErrorException LODF(sys5; linear_solver = "XXX")
+    @test isapprox(
+        LODF(sys5; linear_solver = "Dense", tol = eps()).data,
+        LODF(sys5; linear_solver = "KLU", tol = eps()).data;
+        atol = 1e-10,
+    )
 
     # test if error is thrown in case `tol` is defined in PTDF
     P5 = PTDF(sys5; tol = 1e-3)

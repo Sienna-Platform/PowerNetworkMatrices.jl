@@ -646,11 +646,31 @@ end
     apply_ybus_modification(ybus::Ybus, mod::NetworkModification) -> SparseMatrixCSC
 
 Apply a canonical NetworkModification to a Ybus, returning the modified sparse matrix.
-Convenience wrapper around `compute_ybus_delta`.
+Convenience wrapper around `compute_ybus_delta`. An entry the delta cancels to within Float32
+rounding is dropped, matching the exact zero [`apply_ybus_modification!`](@ref) writes there.
 """
 function apply_ybus_modification(ybus::Ybus, mod::NetworkModification)
     delta = compute_ybus_delta(ybus, mod)
-    return ybus.data + delta
+    Y = ybus.data + delta
+    d_rows = SparseArrays.rowvals(delta)
+    d_nz = SparseArrays.nonzeros(delta)
+    for col in 1:size(delta, 2), k in SparseArrays.nzrange(delta, col)
+        if _cancels_to_zero(Y[d_rows[k], col], d_nz[k])
+            Y[d_rows[k], col] = zero(YBUS_ELTYPE)
+        end
+    end
+    return SparseArrays.dropzeros!(Y)
+end
+
+_cancels_to_zero(sum::YBUS_ELTYPE, delta::YBUS_ELTYPE) =
+    abs(sum) <= YBUS_CANCELLATION_RTOL * abs(delta)
+
+function _add_admittance_delta(y::YBUS_ELTYPE, delta::YBUS_ELTYPE)
+    sum = y + delta
+    if _cancels_to_zero(sum, delta)
+        return zero(sum)
+    end
+    return sum
 end
 
 # Position of the stored entry (i, j) in `nonzeros(A)`. Row indices are sorted within a column
@@ -662,168 +682,192 @@ function _stored_index(A::SparseArrays.SparseMatrixCSC, i::Int, j::Int)
     if p > length(r) || rows[r[p]] != i
         error(
             "Entry ($i, $j) is not stored in the matrix; an in-place network modification " *
-            "must stay inside the base sparsity pattern.",
+            "must stay inside the base sparsity pattern. Ybus construction drops an entry " *
+            "whose branch admittances cancel exactly; use `apply_ybus_modification` for " *
+            "a modification that touches one.",
         )
     end
     return r[p]
 end
 
-_foreach_arc_row_entry(::F, ::Nothing, ::Nothing, arc, f_ix, t_ix, d_f, d_t) where {F} =
-    nothing
-
-function _foreach_arc_row_entry(
-    fn::F,
-    work::ArcAdmittanceMatrix,
-    other::ArcAdmittanceMatrix,
-    arc::Tuple{Int, Int},
-    f_ix::Int,
-    t_ix::Int,
-    d_f::YBUS_ELTYPE,
-    d_t::YBUS_ELTYPE,
-) where {F}
-    arc_lookup = get_arc_lookup(work)
-    if !haskey(arc_lookup, arc)
-        error("Arc $(arc) is not present in the arc-admittance matrix.")
-    end
-    row = arc_lookup[arc]
-    fn(work.data, other.data, _stored_index(work.data, row, f_ix), d_f)
-    fn(work.data, other.data, _stored_index(work.data, row, t_ix), d_t)
-    return
-end
-
-function _check_arc_admittance_pattern(::Nothing, ::Nothing)
-    return
-end
-
-function _check_arc_admittance_pattern(
-    work::ArcAdmittanceMatrix,
-    base::ArcAdmittanceMatrix,
-)
-    if SparseArrays.nnz(work.data) != SparseArrays.nnz(base.data)
-        error(
-            "The two arc-admittance matrices store $(SparseArrays.nnz(work.data)) and " *
-            "$(SparseArrays.nnz(base.data)) entries; an in-place modification needs one pattern.",
-        )
-    end
-    return
-end
-
-function _check_arc_admittance_pattern(::Nothing, base::ArcAdmittanceMatrix)
-    return error(
-        "The working Ybus has no arc-admittance matrices, but the base Ybus does. " *
-        "Cannot apply an in-place modification across different structures.",
-    )
-end
-
-function _check_arc_admittance_pattern(work::ArcAdmittanceMatrix, ::Nothing)
-    return error(
-        "The working Ybus has arc-admittance matrices, but the base Ybus does not. " *
-        "Cannot apply an in-place modification across different structures.",
-    )
-end
-
-# Call `fn(A, B, p, delta)` for every stored entry `mod` writes: `A` is a matrix of `ybus`, `B`
-# the same matrix of `other`, `p` the entry's position in `nonzeros(A)` (identical in `B`, whose
-# pattern must match), and `delta` the admittance change.
-function _foreach_modification_entry(
-    fn::F,
-    ybus::Ybus,
-    other::Ybus,
+# Positions in `nonzeros(Y)` of every bus-admittance entry `mod` touches, with the matching
+# deltas: four per arc modification, then one per shunt modification. Positions can repeat
+# where arcs share a bus.
+function _ybus_entries(
+    Y::SparseArrays.SparseMatrixCSC,
+    bus_lookup::Dict{Int, Int},
+    arc_ax::Vector{Tuple{Int, Int}},
     mod::NetworkModification,
-) where {F}
-    if SparseArrays.nnz(ybus.data) != SparseArrays.nnz(other.data)
-        error(
-            "The two Ybus matrices store $(SparseArrays.nnz(ybus.data)) and " *
-            "$(SparseArrays.nnz(other.data)) entries; an in-place modification needs one pattern.",
-        )
-    end
-    _check_arc_admittance_pattern(
-        ybus.arc_admittance_from_to,
-        other.arc_admittance_from_to,
-    )
-    _check_arc_admittance_pattern(
-        ybus.arc_admittance_to_from,
-        other.arc_admittance_to_from,
-    )
-    bus_lookup = get_bus_lookup(ybus)
-    arc_ax = get_arc_axis(get_network_reduction_data(ybus))
-    Y = ybus.data
+)
+    n = 4 * length(mod.arc_modifications) + length(mod.shunt_modifications)
+    positions = Vector{Int}(undef, n)
+    deltas = Vector{YBUS_ELTYPE}(undef, n)
+    k = 0
     for m in mod.arc_modifications
         arc = arc_ax[m.arc_index]
         f_ix = bus_lookup[arc[1]]
         t_ix = bus_lookup[arc[2]]
-        fn(Y, other.data, _stored_index(Y, f_ix, f_ix), m.delta_y11)
-        fn(Y, other.data, _stored_index(Y, f_ix, t_ix), m.delta_y12)
-        fn(Y, other.data, _stored_index(Y, t_ix, f_ix), m.delta_y21)
-        fn(Y, other.data, _stored_index(Y, t_ix, t_ix), m.delta_y22)
-        _foreach_arc_row_entry(
-            fn, ybus.arc_admittance_from_to, other.arc_admittance_from_to,
-            arc, f_ix, t_ix, m.delta_y11, m.delta_y12,
-        )
-        _foreach_arc_row_entry(
-            fn, ybus.arc_admittance_to_from, other.arc_admittance_to_from,
-            arc, f_ix, t_ix, m.delta_y21, m.delta_y22,
-        )
+        positions[k + 1] = _stored_index(Y, f_ix, f_ix)
+        positions[k + 2] = _stored_index(Y, f_ix, t_ix)
+        positions[k + 3] = _stored_index(Y, t_ix, f_ix)
+        positions[k + 4] = _stored_index(Y, t_ix, t_ix)
+        deltas[(k + 1):(k + 4)] .= (m.delta_y11, m.delta_y12, m.delta_y21, m.delta_y22)
+        k += 4
     end
     for s in mod.shunt_modifications
-        fn(Y, other.data, _stored_index(Y, s.bus_index, s.bus_index), s.delta_y)
+        k += 1
+        positions[k] = _stored_index(Y, s.bus_index, s.bus_index)
+        deltas[k] = s.delta_y
+    end
+    return positions, deltas
+end
+
+_arc_row_entries(::Nothing, bus_lookup, arc_ax, mod::NetworkModification, row_deltas) =
+    (Int[], YBUS_ELTYPE[])
+
+# Positions in `nonzeros(mat.data)` of the from- and to-bus entries in each modified arc's row,
+# two per arc modification, with the deltas `row_deltas(m)` assigns them.
+function _arc_row_entries(
+    mat::ArcAdmittanceMatrix,
+    bus_lookup::Dict{Int, Int},
+    arc_ax::Vector{Tuple{Int, Int}},
+    mod::NetworkModification,
+    row_deltas::F,
+) where {F}
+    arc_lookup = get_arc_lookup(mat)
+    positions = Vector{Int}(undef, 2 * length(mod.arc_modifications))
+    deltas = Vector{YBUS_ELTYPE}(undef, length(positions))
+    for (n, m) in enumerate(mod.arc_modifications)
+        arc = arc_ax[m.arc_index]
+        row = get(arc_lookup, arc, 0)
+        if iszero(row)
+            error("Arc $(arc) is not present in the arc-admittance matrix.")
+        end
+        positions[2n - 1] = _stored_index(mat.data, row, bus_lookup[arc[1]])
+        positions[2n] = _stored_index(mat.data, row, bus_lookup[arc[2]])
+        deltas[2n - 1], deltas[2n] = row_deltas(m)
+    end
+    return positions, deltas
+end
+
+_from_to_deltas(m::ArcModification) = (m.delta_y11, m.delta_y12)
+_to_from_deltas(m::ArcModification) = (m.delta_y21, m.delta_y22)
+
+# Every entry `mod` touches in `ybus`'s bus matrix and both arc admittance matrices, resolved
+# before anything is written so a missing entry leaves `ybus` unchanged.
+function _modified_entries(
+    ybus::Ybus,
+    bus_lookup::Dict{Int, Int},
+    arc_ax::Vector{Tuple{Int, Int}},
+    mod::NetworkModification,
+)
+    return (
+        _ybus_entries(ybus.data, bus_lookup, arc_ax, mod),
+        _arc_row_entries(
+            ybus.arc_admittance_from_to, bus_lookup, arc_ax, mod, _from_to_deltas,
+        ),
+        _arc_row_entries(
+            ybus.arc_admittance_to_from, bus_lookup, arc_ax, mod, _to_from_deltas,
+        ),
+    )
+end
+
+# Repeated positions are summed in input order before the one add, which is how `sparse`
+# combines duplicates, so the result matches the out-of-place `ybus.data + delta` bit for bit.
+function _add_deltas!(
+    A::SparseArrays.SparseMatrixCSC,
+    (positions, deltas)::Tuple{Vector{Int}, Vector{YBUS_ELTYPE}},
+)
+    nz = SparseArrays.nonzeros(A)
+    order = sortperm(positions; alg = Base.Sort.MergeSort)
+    k = 1
+    while k <= length(order)
+        p = positions[order[k]]
+        delta = deltas[order[k]]
+        k += 1
+        while k <= length(order) && positions[order[k]] == p
+            delta += deltas[order[k]]
+            k += 1
+        end
+        nz[p] = _add_admittance_delta(nz[p], delta)
     end
     return
 end
+
+_add_deltas!(::Nothing, ::Tuple{Vector{Int}, Vector{YBUS_ELTYPE}}) = nothing
+_add_deltas!(A::ArcAdmittanceMatrix, entries::Tuple{Vector{Int}, Vector{YBUS_ELTYPE}}) =
+    _add_deltas!(A.data, entries)
+
+function _copy_entries!(
+    dst::SparseArrays.SparseMatrixCSC,
+    (dst_positions, _)::Tuple{Vector{Int}, Vector{YBUS_ELTYPE}},
+    src::SparseArrays.SparseMatrixCSC,
+    (src_positions, _)::Tuple{Vector{Int}, Vector{YBUS_ELTYPE}},
+)
+    dst_nz = SparseArrays.nonzeros(dst)
+    src_nz = SparseArrays.nonzeros(src)
+    for k in eachindex(dst_positions, src_positions)
+        dst_nz[dst_positions[k]] = src_nz[src_positions[k]]
+    end
+    return
+end
+
+_copy_entries!(::Nothing, dst_entries, ::Nothing, src_entries) = nothing
+_copy_entries!(
+    dst::ArcAdmittanceMatrix,
+    dst_entries,
+    src::ArcAdmittanceMatrix,
+    src_entries,
+) =
+    _copy_entries!(dst.data, dst_entries, src.data, src_entries)
+
+_check_arc_admittance_presence(::Nothing, ::Nothing) = nothing
+_check_arc_admittance_presence(::ArcAdmittanceMatrix, ::ArcAdmittanceMatrix) = nothing
+_check_arc_admittance_presence(work, base) = error(
+    "Only one of the working and base Ybus carries arc-admittance matrices. " *
+    "Cannot restore an in-place modification across different structures.",
+)
 
 """
     apply_ybus_modification!(ybus::Ybus, mod::NetworkModification)
 
 Add `mod`'s arc and shunt admittance deltas into `ybus` in place: the bus admittance matrix and,
-when present, both arc admittance matrices. Afterwards `ybus.data == ybus_before.data +
-compute_ybus_delta(ybus_before, mod)` value for value; the stored pattern is left untouched, so
-entries the out-of-place sum would drop stay stored as zeros and `nnz` can differ. Because the
-pattern never changes, a factorization's symbolic analysis stays valid; a delta on an entry
-outside the pattern raises an error. Undo exactly with [`restore_ybus_modification!`](@ref).
+when present, both arc admittance matrices. The stored pattern is left untouched, so a
+factorization's symbolic analysis stays valid, and an entry the out-of-place
+[`apply_ybus_modification`](@ref) would drop stays stored as a zero. Otherwise the result
+matches it value for value. Undo exactly with [`restore_ybus_modification!`](@ref).
 
-Float32 accumulation can leave a residue where the exact result is zero (e.g. the off-diagonals
-of a fully removed arc); callers that need exact zeros there must write them after applying.
+An entry the modification cancels to within Float32 rounding (e.g. the off-diagonals of an arc
+whose parallel members are tripped one call at a time) is written as an exact zero, so
+connectivity checks on `ybus.data` see the removal.
+
+Every position is resolved before anything is written: a delta on an entry outside the pattern
+raises an error and leaves `ybus` unchanged. Ybus construction drops an entry whose branch
+admittances cancel exactly, so a modification touching one must use the out-of-place form.
+
+Only the numeric admittance data changes. `adjacency_data`, the subnetwork axes, the network
+reduction data, and every matrix built from `ybus` (`BA_Matrix`, `ABA_Matrix`,
+`IncidenceMatrix`, `AdjacencyMatrix`, `find_subnetworks(ybus)`) still describe the unmodified
+network; check the connectivity of a modified Ybus with
+`find_subnetworks(ybus.data, get_bus_axis(ybus))`.
+
+Cost is proportional to the entries `mod` touches, except that building the arc axis is
+proportional to the arc count: callers applying many modifications should pass `arc_ax =
+get_arc_axis(get_network_reduction_data(ybus))`, computed once.
 """
-function apply_ybus_modification!(ybus::Ybus, mod::NetworkModification)
-    bus_lookup = get_bus_lookup(ybus)
-    arc_ax = get_arc_axis(get_network_reduction_data(ybus))
-    Y = ybus.data
-    Y_nz = SparseArrays.nonzeros(Y)
+apply_ybus_modification!(ybus::Ybus, mod::NetworkModification) =
+    apply_ybus_modification!(ybus, mod, get_arc_axis(get_network_reduction_data(ybus)))
 
-    d = compute_ybus_delta(ybus, mod)
-    d_rows = SparseArrays.rowvals(d)
-    d_nz = SparseArrays.nonzeros(d)
-    for col in 1:size(d, 2)
-        for k in SparseArrays.nzrange(d, col)
-            Y_nz[_stored_index(Y, d_rows[k], col)] += d_nz[k]
-        end
-    end
-
-    for m in mod.arc_modifications
-        arc = arc_ax[m.arc_index]
-        f_ix = bus_lookup[arc[1]]
-        t_ix = bus_lookup[arc[2]]
-        _foreach_arc_row_entry(
-            (A, _, p, delta) -> (SparseArrays.nonzeros(A)[p] += delta),
-            ybus.arc_admittance_from_to,
-            ybus.arc_admittance_from_to,
-            arc,
-            f_ix,
-            t_ix,
-            m.delta_y11,
-            m.delta_y12,
-        )
-        _foreach_arc_row_entry(
-            (A, _, p, delta) -> (SparseArrays.nonzeros(A)[p] += delta),
-            ybus.arc_admittance_to_from,
-            ybus.arc_admittance_to_from,
-            arc,
-            f_ix,
-            t_ix,
-            m.delta_y21,
-            m.delta_y22,
-        )
-    end
+function apply_ybus_modification!(
+    ybus::Ybus,
+    mod::NetworkModification,
+    arc_ax::Vector{Tuple{Int, Int}},
+)
+    ybus_entries, from_to_entries, to_from_entries =
+        _modified_entries(ybus, get_bus_lookup(ybus), arc_ax, mod)
+    _add_deltas!(ybus.data, ybus_entries)
+    _add_deltas!(ybus.arc_admittance_from_to, from_to_entries)
+    _add_deltas!(ybus.arc_admittance_to_from, to_from_entries)
     return
 end
 
@@ -832,13 +876,48 @@ end
 
 Copy `base`'s values back into exactly the entries [`apply_ybus_modification!`](@ref) wrote for
 `mod`. Exact: no floating-point drift accumulates across repeated apply/restore cycles. `base`
-must share `ybus`'s sparsity pattern; this is checked by stored-entry count (`nnz`) only, and
-a missing or extra pair of arc admittance matrices raises an error.
+must have `ybus`'s bus axis, and every entry is looked up by `(row, column)` in each matrix
+separately, so a base that does not store an entry raises an error rather than supplying a
+value from the wrong position. All entries are resolved before any is written, so an error
+leaves `ybus` unchanged; a missing or extra pair of arc admittance matrices also raises one.
+`arc_ax` is as in [`apply_ybus_modification!`](@ref).
 """
-function restore_ybus_modification!(ybus::Ybus, base::Ybus, mod::NetworkModification)
-    _foreach_modification_entry(ybus, base, mod) do A, B, p, _
-        SparseArrays.nonzeros(A)[p] = SparseArrays.nonzeros(B)[p]
-        return
+restore_ybus_modification!(ybus::Ybus, base::Ybus, mod::NetworkModification) =
+    restore_ybus_modification!(
+        ybus,
+        base,
+        mod,
+        get_arc_axis(get_network_reduction_data(ybus)),
+    )
+
+function restore_ybus_modification!(
+    ybus::Ybus,
+    base::Ybus,
+    mod::NetworkModification,
+    arc_ax::Vector{Tuple{Int, Int}},
+)
+    bus_ax = get_bus_axis(ybus)
+    base_bus_ax = get_bus_axis(base)
+    if !(bus_ax === base_bus_ax || bus_ax == base_bus_ax)
+        error(
+            "The two Ybus matrices have different bus axes; restore needs the base " *
+            "the modification was applied against.",
+        )
     end
+    _check_arc_admittance_presence(ybus.arc_admittance_from_to, base.arc_admittance_from_to)
+    _check_arc_admittance_presence(ybus.arc_admittance_to_from, base.arc_admittance_to_from)
+    bus_lookup = get_bus_lookup(ybus)
+    work_y, work_from_to, work_to_from = _modified_entries(ybus, bus_lookup, arc_ax, mod)
+    base_y, base_from_to, base_to_from = _modified_entries(base, bus_lookup, arc_ax, mod)
+
+    _copy_entries!(ybus.data, work_y, base.data, base_y)
+    _copy_entries!(
+        ybus.arc_admittance_from_to, work_from_to,
+        base.arc_admittance_from_to, base_from_to,
+    )
+    _copy_entries!(
+        ybus.arc_admittance_to_from, work_to_from,
+        base.arc_admittance_to_from, base_to_from,
+    )
     return
 end

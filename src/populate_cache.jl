@@ -62,7 +62,11 @@ end
 # Shared by VirtualPTDF and VirtualLODF: solve the rows not yet cached in one batch, let
 # `build_rows(sol, new_rows)` turn the solutions into stored rows outside the cache lock (the
 # scatter and sparsify dominate), insert them under `cache_lock`, then pin every row.
-function _populate_rows!(build_rows, mat, rows::Vector{Int})
+function _populate_rows!(
+    build_rows::F,
+    mat::Union{VirtualPTDF, VirtualLODF},
+    rows::Vector{Int},
+) where {F}
     core = get_core(mat)
     cache = get_cache(mat)
     cache_lock = get_cache_lock(mat)
