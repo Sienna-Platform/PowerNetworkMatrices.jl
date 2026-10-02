@@ -1,6 +1,7 @@
 module PowerNetworkMatrices
 
 export ABA_Matrix
+export LinearSolverCache
 export AutoTolerance
 export discover_data_precision
 export AdjacencyMatrix
@@ -79,6 +80,11 @@ import SparseArrays
 import SparseArrays: rowvals, nzrange
 import LinearAlgebra
 import LinearAlgebra: ldiv!, mul!, I, dot
+
+"""Supertype of the cached sparse-factorization backends (`KLULinSolveCache`,
+`AAFactorCache`, and downstream caches such as PowerFlows' MKLPardiso cache).
+Defined ahead of the wrapper submodules so their cache structs can subtype it."""
+abstract type LinearSolverCache end
 
 include("KLUWrapper/KLUWrapper.jl")
 import .KLUWrapper:

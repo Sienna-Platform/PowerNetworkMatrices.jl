@@ -21,7 +21,7 @@ those error and `condest!(cache, A)` takes the values from `A`.
 mutable struct KLULinSolveCache{
     Tv <: Union{Float64, ComplexF64},
     Ti <: Union{Int32, Int64},
-}
+} <: LinearSolverCache
     colptr::Vector{Ti}
     rowval::Vector{Ti}
     # Copy of the matrix values used in the most recent numeric factorization.
@@ -518,6 +518,17 @@ Ensure `cache.scratch` is at least `n × block` and `cache.col_map` length
     return nothing
 end
 
+# Free the numeric handle only; the next `numeric_refactor!` then runs a fresh,
+# pivoting `klu_factor` instead of a `klu_refactor` on the old pivots.
+function _drop_numeric!(cache::KLULinSolveCache{Tv, Ti}) where {Tv, Ti}
+    if cache.numeric != C_NULL
+        num_ref = Ref(cache.numeric)
+        _free_numeric!(Tv, Ti, num_ref, cache.common)
+        cache.numeric = num_ref[]
+    end
+    return nothing
+end
+
 """
 Release the libklu numeric and symbolic handles held by `cache`, leaving the
 Julia-side fields (`colptr`, `rowval`, `common`, `scratch`, `col_map`) intact
@@ -531,11 +542,7 @@ function _free_klu_handles!(
 ) where {Tv, Ti}
     cache.lean_active = false
     cache.analyze_pending = false
-    if cache.numeric != C_NULL
-        num_ref = Ref(cache.numeric)
-        _free_numeric!(Tv, Ti, num_ref, cache.common)
-        cache.numeric = num_ref[]
-    end
+    _drop_numeric!(cache)
     if cache.symbolic != C_NULL
         sym_ref = Ref(cache.symbolic)
         _free_symbolic!(Ti, sym_ref, cache.common)
@@ -585,11 +592,7 @@ function _recover_factorization!(
         )
         _require_klu_numeric(cache, "KLULinSolveCache recovery")
         _check_value_snapshot(cache, "KLULinSolveCache recovery")
-        if cache.numeric != C_NULL
-            num_ref = Ref(cache.numeric)
-            _free_numeric!(Tv, Ti, num_ref, cache.common)
-            cache.numeric = num_ref[]
-        end
+        _drop_numeric!(cache)
         num = _factor_call(
             Tv, Ti,
             pointer(cache.colptr), pointer(cache.rowval),
@@ -980,7 +983,7 @@ function set_lean_plan!(cache::KLULinSolveCache{Float64}, plan::LeanLUPlan)
             ArgumentError("set_lean_plan!: the plan's pattern differs from the cache's."),
         )
         # An accepted lean refactor leaves the KLU numeric holding older factors.
-        cache.lean_active && _free_cache_numeric!(cache)
+        cache.lean_active && _drop_numeric!(cache)
         cache.lean_plan = plan
         cache.lean_vals = LeanLUValues(plan)
         cache.has_lean_plan = true
@@ -1021,7 +1024,7 @@ function pause_lean!(cache::KLULinSolveCache, paused::Bool)
         if paused && cache.lean_active
             # The KLU numeric is older than the lean factors; refactoring it would be stale.
             cache.lean_active = false
-            _free_cache_numeric!(cache)
+            _drop_numeric!(cache)
         end
         cache.lean_paused = paused
         return cache
@@ -1066,7 +1069,7 @@ function swap_lean_columns!(cache::KLULinSolveCache{Float64}, plan::LeanLUPlan, 
         # The current lean factors were computed in the old column order.
         if cache.lean_active
             cache.lean_active = false
-            _free_cache_numeric!(cache)
+            _drop_numeric!(cache)
         end
         cache.lean_plan = plan
         isempty(pairs) && return cache
@@ -1130,7 +1133,7 @@ function _lean_numeric!(
     if !cache.lean_active
         cache.lean_rejects += 1
         # The fallback re-pivots: a refactor would reuse an order chosen on older values.
-        _free_cache_numeric!(cache)
+        _drop_numeric!(cache)
     end
     return
 end
@@ -1146,7 +1149,7 @@ function drop_numeric!(cache::KLULinSolveCache)
     taken = _acquire!(cache)
     try
         cache.lean_active = false
-        _free_cache_numeric!(cache)
+        _drop_numeric!(cache)
         return cache
     finally
         taken && (cache.owner[] = UInt(0))
@@ -1204,15 +1207,6 @@ function repivot!(cache::KLULinSolveCache, A::SparseMatrixCSC)
     finally
         taken && (cache.owner[] = UInt(0))
     end
-end
-
-function _free_cache_numeric!(cache::KLULinSolveCache{Tv, Ti}) where {Tv, Ti}
-    if cache.numeric != C_NULL
-        num_ref = Ref(cache.numeric)
-        _free_numeric!(Tv, Ti, num_ref, cache.common)
-        cache.numeric = num_ref[]
-    end
-    return
 end
 
 function _require_klu_numeric(cache::KLULinSolveCache, op::AbstractString)

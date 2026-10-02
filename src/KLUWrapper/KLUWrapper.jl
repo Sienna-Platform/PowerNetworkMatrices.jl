@@ -18,6 +18,7 @@ the package.
 module KLUWrapper
 
 import LinearAlgebra
+import ..LinearSolverCache
 import SparseArrays
 import SparseArrays: SparseMatrixCSC, getcolptr, rowvals, nonzeros, nzrange
 

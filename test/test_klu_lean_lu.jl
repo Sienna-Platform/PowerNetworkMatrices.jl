@@ -228,6 +228,50 @@ end
     )
 end
 
+# Structurally nonsymmetric, diagonally dominant, irreducible (has a full cycle).
+function _lean_random_matrix(rng, n, ::Type{Ti}) where {Ti}
+    A =
+        SparseArrays.sprand(rng, n, n, 4 / n) +
+        SparseArrays.spdiagm(1 => ones(n - 1), -(n - 1) => ones(1)) +
+        SparseArrays.spdiagm(0 => fill(10.0, n))
+    return SparseMatrixCSC{Float64, Ti}(A)
+end
+
+@testset "Lean LU refactor and solve match KLU ($Ti indices)" for Ti in (Int32, Int64)
+    rng = Random.MersenneTwister(1)
+    n = 300
+    A = _lean_random_matrix(rng, n, Ti)
+    plan = KW.build_lean_plan(A)
+    vals = KW.LeanLUValues(plan)
+    cache = PNM.KLULinSolveCache(A)
+    PNM.full_factor!(cache, A)
+    b = randn(rng, n)
+    for _ in 1:5
+        A2 = copy(A)
+        nonzeros(A2) .*= 1 .+ 0.2 .* randn(rng, nnz(A2))
+        @test KW.lean_refactor!(vals, plan, nonzeros(A2)) >= 1e-3
+        x = KW.lean_solve!(copy(b), plan, vals)
+        PNM.numeric_refactor!(cache, A2)
+        @test x ≈ PNM.solve!(cache, copy(b)) rtol = 1e-10
+        @test all(iszero, vals.work)
+    end
+    @test_throws DimensionMismatch KW.lean_solve!(zeros(3), plan, vals)
+end
+
+@testset "Lean LU on reducible and block-diagonal matrices" begin
+    U = SparseArrays.spdiagm(0 => fill(2.0, 5), 1 => ones(4))
+    planU = KW.build_lean_plan(U)
+    valsU = KW.LeanLUValues(planU)
+    KW.lean_refactor!(valsU, planU, nonzeros(U))
+    @test KW.lean_solve!(ones(5), planU, valsU) ≈ U \ ones(5)
+    A = _lean_random_matrix(Random.MersenneTwister(3), 50, Int64)
+    D = SparseArrays.blockdiag(A, A)
+    planD = KW.build_lean_plan(D)
+    valsD = KW.LeanLUValues(planD)
+    KW.lean_refactor!(valsD, planD, nonzeros(D))
+    @test KW.lean_solve!(ones(100), planD, valsD) ≈ D \ ones(100)
+end
+
 _counts(c) = Tuple(KW.lean_counts(c))
 
 @testset "KLULinSolveCache lean path and fallback" begin

@@ -16,7 +16,7 @@ Float64 only. Requires macOS 15.5+ (enforced by the backend selection in
 `check_pattern` adds a structural-equality check on refactor calls and is
 only consulted when reusing.
 """
-mutable struct AAFactorCache
+mutable struct AAFactorCache <: LinearSolverCache
     # Apple-side 0-based, narrower-integer copies of the full input CSC pattern.
     # Reused as-is across `numeric_refactor!` calls.
     columnStarts::Vector{Clong}
