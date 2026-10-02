@@ -28,6 +28,7 @@ function solve_sparse!(
     taken = _acquire!(cache)
     try
         is_factored(cache) || error("KLULinSolveCache: not factored yet.")
+        _require_klu_numeric(cache, "solve_sparse!")
         block >= 1 || throw(ArgumentError("block must be >= 1; got $(block)"))
         n = _dim(cache)
         size(B, 1) == Int(n) || throw(DimensionMismatch(

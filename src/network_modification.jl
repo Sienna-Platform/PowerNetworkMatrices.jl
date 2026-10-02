@@ -730,6 +730,7 @@ function _foreach_modification_entry(
     ybus::Ybus,
     other::Ybus,
     mod::NetworkModification,
+    arc_ax::Vector{Tuple{Int, Int}},
 ) where {F}
     if SparseArrays.nnz(ybus.data) != SparseArrays.nnz(other.data)
         error(
@@ -746,7 +747,6 @@ function _foreach_modification_entry(
         other.arc_admittance_to_from,
     )
     bus_lookup = get_bus_lookup(ybus)
-    arc_ax = get_arc_axis(get_network_reduction_data(ybus))
     Y = ybus.data
     for m in mod.arc_modifications
         arc = arc_ax[m.arc_index]
@@ -772,7 +772,7 @@ function _foreach_modification_entry(
 end
 
 """
-    apply_ybus_modification!(ybus::Ybus, mod::NetworkModification)
+    apply_ybus_modification!(ybus::Ybus, mod::NetworkModification[, arc_ax])
 
 Add `mod`'s arc and shunt admittance deltas into `ybus` in place: the bus admittance matrix and,
 when present, both arc admittance matrices. Afterwards `ybus.data == ybus_before.data +
@@ -783,20 +783,60 @@ outside the pattern raises an error. Undo exactly with [`restore_ybus_modificati
 
 Float32 accumulation can leave a residue where the exact result is zero (e.g. the off-diagonals
 of a fully removed arc); callers that need exact zeros there must write them after applying.
+
+Cost is proportional to the entries `mod` touches, except that building the arc axis is
+proportional to the arc count: callers applying many modifications should pass `arc_ax =
+get_arc_axis(get_network_reduction_data(ybus))`, computed once.
 """
-function apply_ybus_modification!(ybus::Ybus, mod::NetworkModification)
+apply_ybus_modification!(ybus::Ybus, mod::NetworkModification) =
+    apply_ybus_modification!(ybus, mod, get_arc_axis(get_network_reduction_data(ybus)))
+
+function apply_ybus_modification!(
+    ybus::Ybus,
+    mod::NetworkModification,
+    arc_ax::Vector{Tuple{Int, Int}},
+)
     bus_lookup = get_bus_lookup(ybus)
-    arc_ax = get_arc_axis(get_network_reduction_data(ybus))
     Y = ybus.data
     Y_nz = SparseArrays.nonzeros(Y)
 
-    d = compute_ybus_delta(ybus, mod)
-    d_rows = SparseArrays.rowvals(d)
-    d_nz = SparseArrays.nonzeros(d)
-    for col in 1:size(d, 2)
-        for k in SparseArrays.nzrange(d, col)
-            Y_nz[_stored_index(Y, d_rows[k], col)] += d_nz[k]
+    # Entries in `compute_ybus_delta`'s listing order: 4 per arc, then the shunts.
+    n_arc = length(mod.arc_modifications)
+    n_entries = 4 * n_arc + length(mod.shunt_modifications)
+    pos = Vector{Int}(undef, n_entries)
+    val = Vector{YBUS_ELTYPE}(undef, n_entries)
+    for (a, m) in enumerate(mod.arc_modifications)
+        arc = arc_ax[m.arc_index]
+        f_ix = bus_lookup[arc[1]]
+        t_ix = bus_lookup[arc[2]]
+        k = 4 * (a - 1)
+        pos[k + 1] = _stored_index(Y, f_ix, f_ix)
+        pos[k + 2] = _stored_index(Y, f_ix, t_ix)
+        pos[k + 3] = _stored_index(Y, t_ix, f_ix)
+        pos[k + 4] = _stored_index(Y, t_ix, t_ix)
+        val[k + 1] = m.delta_y11
+        val[k + 2] = m.delta_y12
+        val[k + 3] = m.delta_y21
+        val[k + 4] = m.delta_y22
+    end
+    for (i, sm) in enumerate(mod.shunt_modifications)
+        pos[4 * n_arc + i] = _stored_index(Y, sm.bus_index, sm.bus_index)
+        val[4 * n_arc + i] = sm.delta_y
+    end
+    # Sum repeated entries in listing order before adding once, as `sparse` combines the
+    # duplicates of `compute_ybus_delta`; Float32 addition is not associative, so this keeps
+    # the result bitwise equal to adding that delta. O(n_entries^2), and n_entries is small.
+    for e in 1:n_entries
+        p = pos[e]
+        iszero(p) && continue
+        delta = val[e]
+        for e2 in (e + 1):n_entries
+            if pos[e2] == p
+                delta += val[e2]
+                pos[e2] = 0
+            end
         end
+        Y_nz[p] += delta
     end
 
     for m in mod.arc_modifications
@@ -804,7 +844,7 @@ function apply_ybus_modification!(ybus::Ybus, mod::NetworkModification)
         f_ix = bus_lookup[arc[1]]
         t_ix = bus_lookup[arc[2]]
         _foreach_arc_row_entry(
-            (A, _, p, delta) -> (SparseArrays.nonzeros(A)[p] += delta),
+            _add_at!,
             ybus.arc_admittance_from_to,
             ybus.arc_admittance_from_to,
             arc,
@@ -814,7 +854,7 @@ function apply_ybus_modification!(ybus::Ybus, mod::NetworkModification)
             m.delta_y12,
         )
         _foreach_arc_row_entry(
-            (A, _, p, delta) -> (SparseArrays.nonzeros(A)[p] += delta),
+            _add_at!,
             ybus.arc_admittance_to_from,
             ybus.arc_admittance_to_from,
             arc,
@@ -827,16 +867,35 @@ function apply_ybus_modification!(ybus::Ybus, mod::NetworkModification)
     return
 end
 
+function _add_at!(A::SparseArrays.SparseMatrixCSC, _, p::Int, delta)
+    SparseArrays.nonzeros(A)[p] += delta
+    return
+end
+
 """
-    restore_ybus_modification!(ybus::Ybus, base::Ybus, mod::NetworkModification)
+    restore_ybus_modification!(ybus::Ybus, base::Ybus, mod::NetworkModification[, arc_ax])
 
 Copy `base`'s values back into exactly the entries [`apply_ybus_modification!`](@ref) wrote for
 `mod`. Exact: no floating-point drift accumulates across repeated apply/restore cycles. `base`
 must share `ybus`'s sparsity pattern; this is checked by stored-entry count (`nnz`) only, and
-a missing or extra pair of arc admittance matrices raises an error.
+a missing or extra pair of arc admittance matrices raises an error. `arc_ax` is as in
+[`apply_ybus_modification!`](@ref).
 """
-function restore_ybus_modification!(ybus::Ybus, base::Ybus, mod::NetworkModification)
-    _foreach_modification_entry(ybus, base, mod) do A, B, p, _
+restore_ybus_modification!(ybus::Ybus, base::Ybus, mod::NetworkModification) =
+    restore_ybus_modification!(
+        ybus,
+        base,
+        mod,
+        get_arc_axis(get_network_reduction_data(ybus)),
+    )
+
+function restore_ybus_modification!(
+    ybus::Ybus,
+    base::Ybus,
+    mod::NetworkModification,
+    arc_ax::Vector{Tuple{Int, Int}},
+)
+    _foreach_modification_entry(ybus, base, mod, arc_ax) do A, B, p, _
         SparseArrays.nonzeros(A)[p] = SparseArrays.nonzeros(B)[p]
         return
     end

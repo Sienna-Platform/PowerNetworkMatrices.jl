@@ -712,3 +712,20 @@ end
         end
     end
 end
+
+@testset "NetworkModification: BA_Matrix classifies outages like VirtualPTDF" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    ybus = Ybus(sys)
+    ba = BA_Matrix(ybus)
+    vptdf = VirtualPTDF(ybus)
+    @test PNM._get_arc_susceptances(ba) == PNM._get_arc_susceptances(vptdf)
+    for line in PSY.get_components(Line, sys)
+        outage = PSY.FixedForcedOutage(; outage_status = 1.0)
+        PSY.add_supplemental_attribute!(sys, line, outage)
+        a = NetworkModification(ba, sys, outage)
+        b = NetworkModification(vptdf, sys, outage)
+        @test a.arc_modifications == b.arc_modifications
+        @test a.shunt_modifications == b.shunt_modifications
+        @test a.is_islanding == b.is_islanding
+    end
+end

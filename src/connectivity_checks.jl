@@ -78,7 +78,7 @@ Find connected subnetworks using iterative union-find algorithm.
 - `Dict{Int, Set{Int}}`: Dictionary mapping representative bus numbers to sets of connected buses
 """
 function iterative_union_find(M::SparseArrays.SparseMatrixCSC, bus_numbers::Vector{Int})
-    @info "Finding subnetworks via iterative union find"
+    @debug "Finding subnetworks via iterative union find"
     vals = SparseArrays.nonzeros(M)
     for (ix, bus_number) in enumerate(bus_numbers)
         if _live_entry_count(vals, SparseArrays.nzrange(M, ix)) <= 1

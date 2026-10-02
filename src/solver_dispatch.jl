@@ -2,18 +2,10 @@
 # outside the Virtual{PTDF, LODF, MODF} files so all three matrices share
 # the same `with_solver` seam and the same KLU/AppleAccelerate factory.
 #
-# All libklu activity in this process serializes through `_LIBKLU_LOCK`
-# (see `KLUWrapper.jl`). A pool-of-independent-caches design was tried
-# and removed: empirically, distinct `Numeric`/`Symbolic`/`Common` per
-# thread does not prevent libklu state corruption, and the per-cache
-# `solver_lock` we hold here further serializes any non-libklu work in
-# the callback. One factor + one cache per Virtual matrix is what
-# remains — same throughput as the pool variant once the global lock
-# is in place.
-#
-# Apple's libSparse has no documented cross-handle corruption issue
-# analogous to `_LIBKLU_LOCK`; the per-cache `solver_lock` we acquire
-# here is sufficient for the `AAFactorCache` backend.
+# One factor + one cache per Virtual matrix. The per-cache `solver_lock`
+# held here serializes solves on that cache and its single scratch slot,
+# for both the KLU and `AAFactorCache` backends. Distinct caches need no
+# process-wide lock (see `_LIBKLU_LOCK` in `KLUWrapper.jl`, Windows only).
 
 """
     with_solver(f, K, work_ba_col, temp_data, solver_lock) -> result

@@ -18,11 +18,10 @@ factorization is computed once.
 
 # Thread-safety
 
-Concurrent `getindex` is safe but serialized: every libklu solve is wrapped
-by `_LIBKLU_LOCK` (process-wide) and the core's `solver_lock`, and the row
-cache is guarded by `cache_lock`. Multiple threads can call `getindex`
-simultaneously; their libklu work runs one at a time, while the JuMP-side work
-(in callers) parallelizes freely.
+Concurrent `getindex` is safe but serialized: every solve runs under the
+core's `solver_lock`, and the row cache is guarded by `cache_lock`. Multiple
+threads can call `getindex` simultaneously; their solves run one at a time,
+while the JuMP-side work (in callers) parallelizes freely.
 
 # Fields
 - `core::VirtualFactorCore`:

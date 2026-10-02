@@ -21,8 +21,7 @@ Caching is two-tiered:
 Concurrent `getindex` is safe but serialized: the core's `solver_lock` (a
 `ReentrantLock`) is held for the full body of `getindex`, `clear_caches!`, and
 `clear_all_caches!`, so Dict mutations on the cache structures and the libklu
-solves it wraps all run under a single mutex. libklu activity additionally
-serializes through the process-wide `_LIBKLU_LOCK`.
+solves it wraps all run under a single mutex.
 
 # Fields
 - `core::VirtualFactorCore`:

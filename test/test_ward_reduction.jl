@@ -114,8 +114,9 @@ end
     _basic_test_ward_reduction(sys, study_buses)
     _test_matrices_ward_reduction(sys, study_buses)
 
+    # 109 keeps the 110-109 phase shifter inside the study area; see the rejection test.
     sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
-    study_buses = [101, 114, 110, 111]
+    study_buses = [101, 114, 110, 111, 109]
     _basic_test_ward_reduction(sys, study_buses)
     _test_matrices_ward_reduction(sys, study_buses)
 end
@@ -379,4 +380,48 @@ end
 
     @test b_BA ≈ b_expected rtol = 1e-5
     @test !isapprox(b_BA, b_direct_only; rtol = 1e-3)
+end
+
+@testset "Ward: a phase shifter in the external area is rejected" begin
+    # A phase shift makes the external equivalent asymmetric (y_eq[i, j] != y_eq[j, i]);
+    # GenericArcImpedance is symmetric, so Ward must refuse instead of keeping one triangle.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    study = [1, 2, 3, 4, 5]
+    @test !isempty(
+        get_network_reduction_data(
+            Ybus(sys; network_reductions = NetworkReduction[WardReduction(study)]),
+        ).added_arc_impedance_map,
+    )
+    arc = Arc(; from = PSY.get_bus(sys, 6), to = PSY.get_bus(sys, 9))
+    add_component!(sys, arc)
+    add_component!(
+        sys,
+        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+            name = "PST_6_9",
+            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+                arc = arc,
+                tap = 1.0,
+                α = 0.2,
+                available = true,
+                active_power_flow = 0.0,
+                reactive_power_flow = 0.0,
+                rating = 1.0,
+                base_power = 100.0,
+                base_voltage_primary = PSY.get_base_voltage(PSY.get_bus(sys, 6)),
+                r = 0.0,
+                x = 0.2,
+            ),
+            magnetizing_shunt = Complex(0.0, 0.0),
+        ),
+    )
+    @test_throws r"asymmetric.*bus" Ybus(
+        sys;
+        network_reductions = NetworkReduction[WardReduction(study)],
+    )
+
+    sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
+    @test_throws r"asymmetric.*bus" Ybus(
+        sys;
+        network_reductions = NetworkReduction[WardReduction([101, 114, 110, 111])],
+    )
 end

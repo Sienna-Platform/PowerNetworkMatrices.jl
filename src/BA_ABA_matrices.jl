@@ -36,6 +36,8 @@ get_bus_lookup(M::BA_Matrix) = M.lookup[1]
 get_arc_axis(M::BA_Matrix) = M.axes[2]
 get_arc_lookup(M::BA_Matrix) = M.lookup[2]
 stores_transpose(::BA_Matrix) = true
+# Lets `NetworkModification(mat, sys, outage)` classify outages without an ABA factorization.
+_get_arc_susceptances(M::BA_Matrix) = _extract_arc_susceptances(M.data)
 
 """
     BA_Matrix(sys::PSY.System; network_reductions::Vector{NetworkReduction} = Vector{NetworkReduction}(), kwargs...)
