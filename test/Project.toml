@@ -32,8 +32,7 @@ TimeSeries = "9e3dc215-6440-5c97-bce1-76c03772f85e"
 PowerNetworkMatrices = {path = ".."}
 InfrastructureSystems = {rev = "IS4", url = "https://github.com/Sienna-Platform/InfrastructureSystems.jl.git"}
 PowerFlowFileParser = {rev = "psy6", url = "https://github.com/Sienna-Platform/PowerFlowFileParser.jl.git"}
-# TODO: revert to rev = "psy6" once PowerSystemCaseBuilder.jl#233 merges.
-PowerSystemCaseBuilder = {url = "https://github.com/Sienna-Platform/PowerSystemCaseBuilder.jl.git", rev = "lk/voltage-units-1821"}
+PowerSystemCaseBuilder = {url = "https://github.com/Sienna-Platform/PowerSystemCaseBuilder.jl.git", rev = "psy6"}
 PowerSystems = {url = "https://github.com/Sienna-Platform/PowerSystems.jl.git", rev = "psy6"}
 # PSY's own [sources] pins for these are ignored once PSY is a dependency rather than the
 # root project; the test env needs its own pins so Pkg can resolve PSY's unregistered OpenAPI deps.

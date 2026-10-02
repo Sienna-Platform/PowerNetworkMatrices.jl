@@ -15,6 +15,9 @@ electrical parameters needed for power flow calculations and network analysis.
 - `branch_catalog::BranchCatalog`: Metadata from network reduction operations
 - `arc_admittance_from_to::Union{ArcAdmittanceMatrix, Nothing}`: From-to arc admittance matrix
 - `arc_admittance_to_from::Union{ArcAdmittanceMatrix, Nothing}`: To-from arc admittance matrix
+- `arc_susceptance_scale::Vector{Float64}`: Fraction of each arc's DC susceptance still in
+  service, indexed like the arc axis; 1.0 until [`apply_ybus_modification!`](@ref) changes it,
+  and applied by [`BA_Matrix`](@ref)
 
 # Key Features
 - Indexed by bus numbers (non-sequential numbering supported)
@@ -58,6 +61,33 @@ struct Ybus{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
     branch_catalog::BranchCatalog
     arc_admittance_from_to::Union{ArcAdmittanceMatrix, Nothing}
     arc_admittance_to_from::Union{ArcAdmittanceMatrix, Nothing}
+    arc_susceptance_scale::Vector{Float64}
+end
+
+function Ybus(
+    data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int},
+    adjacency_data::SparseArrays.SparseMatrixCSC{Int8, Int},
+    axes::NTuple{2, Vector},
+    lookup::NTuple{2, Dict},
+    subnetwork_axes::Dict,
+    arc_subnetwork_axis::Dict{Int, Vector{Tuple{Int, Int}}},
+    branch_catalog::BranchCatalog,
+    arc_admittance_from_to::Union{ArcAdmittanceMatrix, Nothing},
+    arc_admittance_to_from::Union{ArcAdmittanceMatrix, Nothing},
+)
+    n_arcs = length(get_arc_axis(get_network_reduction_data(branch_catalog)))
+    return Ybus(
+        data,
+        adjacency_data,
+        axes,
+        lookup,
+        subnetwork_axes,
+        arc_subnetwork_axis,
+        branch_catalog,
+        arc_admittance_from_to,
+        arc_admittance_to_from,
+        ones(n_arcs),
+    )
 end
 
 get_bus_axis(M::Ybus) = M.axes[1]

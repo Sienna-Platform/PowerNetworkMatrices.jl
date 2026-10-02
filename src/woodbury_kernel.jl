@@ -105,8 +105,20 @@ function _zero_islanded_entries!(
     return row
 end
 
+# Sign of an arc's DC susceptance: BA holds it at the arc's from bus, the bus `A` marks +1.
+function _arc_susceptance_sign(
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    A::SparseArrays.SparseMatrixCSC{Int8, Int},
+    e::Int,
+)::Float64
+    rng = SparseArrays.nzrange(BA, e)
+    isempty(rng) && return 1.0
+    p = first(rng)
+    return sign(SparseArrays.nonzeros(BA)[p]) * A[e, SparseArrays.rowvals(BA)[p]]
+end
+
 """
-    _woodbury_factors_from_Z(Z, BA, arc_sus, modifications) -> WoodburyFactors
+    _woodbury_factors_from_Z(Z, BA, A, arc_sus, modifications) -> WoodburyFactors
 
 Assemble the Woodbury factors from an already-resolved `Z`, whose column `j` is
 `B⁻¹ν_j` for the `j`-th modified arc in full-bus space. The callers differ only
@@ -116,6 +128,7 @@ batched pre-contingency solves in `populate_cache`.
 function _woodbury_factors_from_Z(
     Z::Matrix{Float64},
     BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    A::SparseArrays.SparseMatrixCSC{Int8, Int},
     arc_sus::Vector{Float64},
     modifications::Tuple{Vararg{ArcModification}},
 )::WoodburyFactors
@@ -148,8 +161,13 @@ function _woodbury_factors_from_Z(
         end
     end
 
-    # W = diag(1/Δb) + K_mat
-    W_mat = LinearAlgebra.diagm(1.0 ./ delta_b_vec) + K_mat
+    # W = diag(1/Δb) + K_mat. Z and K use ν = BA[:, e] / |b_e| = sign(b_e) · incidence, so the
+    # rank-one term must carry the signed change sign(b_e) · Δ|b|: the magnitude-space Δb alone
+    # adds a negative-reactance arc a second time instead of removing it.
+    signed_delta_b = [
+        _arc_susceptance_sign(BA, A, arc_indices[j]) * delta_b_vec[j] for j in 1:M
+    ]
+    W_mat = LinearAlgebra.diagm(1.0 ./ signed_delta_b) + K_mat
     W_inv, is_island = _invert_woodbury_W(W_mat, M)
 
     # Label post-contingency components only when islanding, so the correction can
@@ -267,7 +285,9 @@ function _compute_woodbury_factors(
                 core.arc_susceptances[e],
             )
         end
-        return _woodbury_factors_from_Z(Z, core.BA, core.arc_susceptances, modifications)
+        return _woodbury_factors_from_Z(
+            Z, core.BA, core.A, core.arc_susceptances, modifications,
+        )
     end
 end
 

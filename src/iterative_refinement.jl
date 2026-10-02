@@ -42,7 +42,8 @@ does not mutate `cache`'s factor; it only triggers in-place `solve!` calls
 on a residual buffer.
 
 `max_iters` caps the refinement loop (default
-`DEFAULT_REFINEMENT_MAX_ITER`). The default `tol` is `sqrt(eps(real(eltype(B))))`,
+`DEFAULT_REFINEMENT_MAX_ITER`). `A`, `X`, `B` and the cache's factor must share one element
+type `Tv`; a mismatch raises an `ArgumentError`. The default `tol` is `sqrt(eps(real(Tv)))`,
 which is conservative for power-flow Newton-Raphson Jacobians.
 
 Useful when the cached factor is of an ill-conditioned matrix — e.g.,
@@ -53,12 +54,18 @@ product plus one `solve!` against the cached factor.
 """
 function solve_w_refinement!(
     cache::LinearSolverCache,
-    A::SparseArrays.SparseMatrixCSC,
-    X::StridedVecOrMat,
-    B::StridedVecOrMat;
-    tol::Real = sqrt(eps(real(eltype(B)))),
+    A::SparseArrays.SparseMatrixCSC{Tv},
+    X::StridedVecOrMat{Tv},
+    B::StridedVecOrMat{Tv};
+    tol::Real = sqrt(eps(real(Tv))),
     max_iters::Int = DEFAULT_REFINEMENT_MAX_ITER,
-)
+) where {Tv}
+    eltype(cache) == Tv || throw(
+        ArgumentError(
+            "solve_w_refinement!: cache factors $(eltype(cache)) values; " *
+            "A, X and B hold $(Tv).",
+        ),
+    )
     _refine_is_factored(cache) || error(
         "solve_w_refinement!: cache must be factored. " *
         "Call `full_factor!(cache, A)` first.",
@@ -71,7 +78,6 @@ function solve_w_refinement!(
         ),
     )
 
-    Tv = eltype(X)
     fill!(X, zero(Tv))
     # `X = 0` ⇒ initial residual `r = B - A·0 = B`. Copy once; subsequent
     # iterations reuse `r` in place via `mul!(r, A, X); @. r = B - r`,
@@ -104,11 +110,11 @@ Allocating wrapper around `solve_w_refinement!`. Allocates `X` matching
 """
 function solve_w_refinement(
     cache::LinearSolverCache,
-    A::SparseArrays.SparseMatrixCSC,
-    B::StridedVecOrMat;
-    tol::Real = sqrt(eps(real(eltype(B)))),
+    A::SparseArrays.SparseMatrixCSC{Tv},
+    B::StridedVecOrMat{Tv};
+    tol::Real = sqrt(eps(real(Tv))),
     max_iters::Int = DEFAULT_REFINEMENT_MAX_ITER,
-)
+) where {Tv}
     X = similar(B)
     return solve_w_refinement!(
         cache, A, X, B;

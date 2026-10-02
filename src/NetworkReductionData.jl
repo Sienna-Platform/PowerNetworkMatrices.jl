@@ -128,9 +128,8 @@ _has_leaf(x::AbstractReductionAggregate, br::PSY.ACTransmission) =
 _get_segment_type(::T) where {T <: PSY.ACBranch} = T
 _get_segment_type(::BranchesParallel{T}) where {T <: PSY.ACTransmission} = T
 _get_segment_type(::MixedBranchesParallel) = MixedBranchesParallel
-# The 3W reduction maps are keyed by the parent transformer type
-# (`PSY.ThreeWindingTransformer`), so 3W entries are looked up by the transformer type.
-_get_segment_type(w::ThreeWindingTransformerCircuit) = typeof(get_transformer(w))
+# The 3W reduction maps are keyed by the parent transformer type, not `PSY.TransformerCircuit`.
+_get_segment_type(::ThreeWindingTransformerCircuit) = PSY.ThreeWindingTransformer
 
 """
 The bucket keys an entry is filed under: the type of every physical branch at its leaves, so

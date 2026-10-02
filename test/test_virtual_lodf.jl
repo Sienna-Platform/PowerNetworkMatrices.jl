@@ -127,6 +127,9 @@ end
     # test isempty when VirtualLODF is created (cache must be empty)
     vlodf = VirtualLODF(sys)
     @test isempty(vlodf) == true
+    vlodf_queried = VirtualLODF(sys)
+    vlodf_queried[first(PNM.get_arc_axis(vlodf_queried)), :]
+    @test !isempty(vlodf_queried)
 
     # test eachindex and axes
     @test length(eachindex(vlodf)) ==
