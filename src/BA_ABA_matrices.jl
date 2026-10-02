@@ -88,10 +88,43 @@ function _warn_impedance_correction_in_dc(nr::NetworkReductionData)
     return
 end
 
+# An in-place modification can remove every arc joining part of the network to its reference
+# bus. BA keeps the unmodified subnetwork axes, so the ABA built from it would be singular.
+function _check_modified_connectivity(
+    ybus::Ybus,
+    arc_ax::Vector{Tuple{Int, Int}},
+    nr::NetworkReductionData,
+)
+    scale = ybus.arc_susceptance_scale
+    all(isone, scale) && return
+    bus_lookup = get_bus_lookup(ybus)
+    uf = collect(1:length(bus_lookup))
+    for (ix_arc, arc) in enumerate(arc_ax)
+        iszero(scale[ix_arc]) && continue
+        union_sets!(
+            uf,
+            get_bus_index(arc[1], bus_lookup, nr),
+            get_bus_index(arc[2], bus_lookup, nr),
+        )
+    end
+    n_components = length(unique(get_representative(uf, ix) for ix in eachindex(uf)))
+    if n_components > length(ybus.subnetwork_axes)
+        error(
+            "The in-place modifications applied to this Ybus island part of the network, " *
+            "so a BA/ABA built from it would be singular. Use `VirtualMODF` for islanding " *
+            "contingencies, or rebuild the Ybus.",
+        )
+    end
+    return
+end
+
 """
     BA_Matrix(ybus::Ybus)
 
 Construct a BA_Matrix from a Ybus matrix.
+
+Arc susceptances reflect any [`apply_ybus_modification!`](@ref) applied to `ybus`; an error is
+raised if those modifications island part of the network.
 
 # Arguments
 - `ybus::Ybus`: The Ybus matrix from which to construct the BA matrix
@@ -105,6 +138,7 @@ function BA_Matrix(ybus::Ybus)
     bus_ax = get_bus_axis(ybus)
     bus_lookup = get_bus_lookup(ybus)
     arc_ax = get_arc_axis(nr)
+    _check_modified_connectivity(ybus, arc_ax, nr)
     n_isolated_buses = length(get_isolated_buses(ybus))
     n_entries = length(arc_ax) * 2 + n_isolated_buses
     BA_I = Vector{Int}(undef, n_entries)
@@ -113,7 +147,7 @@ function BA_Matrix(ybus::Ybus)
     for (ix_arc, arc) in enumerate(arc_ax)
         ix_from_bus = get_bus_index(arc[1], bus_lookup, nr)
         ix_to_bus = get_bus_index(arc[2], bus_lookup, nr)
-        b = _ba_arc_susceptance(nr, arc)
+        b = _ba_arc_susceptance(nr, arc) * ybus.arc_susceptance_scale[ix_arc]
         # A NaN/Inf in BA would poison every downstream factorization.
         if !isfinite(b)
             error(

@@ -871,3 +871,85 @@ end
     @test_throws ErrorException restore_ybus_modification!(work, other, mod)
     @test SparseArrays.nonzeros(work.data) == applied
 end
+
+# A direct arc's outage applied in place gives the DC matrices of the Ybus rebuilt with it out
+# of service: ABA shares its axes either way, PTDF is compared on the surviving arcs.
+function _test_dc_matrices_match_rebuild(sys, branch)
+    base = Ybus(sys)
+    work = Ybus(sys)
+    mod = NetworkModification(VirtualPTDF(sys), branch)
+    apply_ybus_modification!(work, mod)
+
+    set_available!(branch, false)
+    ref = Ybus(sys)
+    set_available!(branch, true)
+    @test isapprox(ABA_Matrix(work).data, ABA_Matrix(ref).data; atol = 1e-6)
+    ptdf_work = PTDF(work)
+    ptdf_ref = PTDF(ref)
+    for arc in PNM.get_arc_axis(ptdf_ref), bus in PNM.get_bus_axis(ptdf_ref)
+        @test isapprox(ptdf_work[arc, bus], ptdf_ref[arc, bus]; atol = 1e-6)
+    end
+
+    restore_ybus_modification!(work, base, mod)
+    @test BA_Matrix(work).data == BA_Matrix(base).data
+    return
+end
+
+# A parallel member's outage applied in place gives the post-modification PTDF the Woodbury
+# path computes for the same modification. A lossy group's DC susceptance is not additive, so
+# neither matches a rebuilt Ybus exactly; the two DC paths must agree with each other.
+function _test_dc_matrices_match_modf(sys, branch)
+    base = Ybus(sys)
+    work = Ybus(sys)
+    vptdf = VirtualPTDF(sys)
+    mod = NetworkModification(vptdf, branch)
+    apply_ybus_modification!(work, mod)
+    ptdf_work = PTDF(work)
+    for (arc_ix, arc) in enumerate(PNM.get_arc_axis(vptdf))
+        row = get_post_modification_ptdf_row(vptdf, arc_ix, mod)
+        for (bus_ix, bus) in enumerate(PNM.get_bus_axis(vptdf))
+            @test isapprox(ptdf_work[arc, bus], row[bus_ix]; atol = 1e-10)
+        end
+    end
+    restore_ybus_modification!(work, base, mod)
+    @test BA_Matrix(work).data == BA_Matrix(base).data
+    return
+end
+
+@testset "BA/ABA/PTDF built from a modified Ybus reflect the modification" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    _test_dc_matrices_match_rebuild(sys, get_component(Line, sys, "1"))
+
+    # Parallel members, one of them a series capacitor (negative reactance).
+    l1 = get_component(Line, sys, "1")
+    _add_test_line!(sys, "1p", get_arc(l1), 0.0, 0.2)
+    _add_test_line!(sys, "1c", get_arc(l1), 0.0, -0.5)
+    _test_dc_matrices_match_modf(sys, get_component(Line, sys, "1p"))
+    _test_dc_matrices_match_modf(sys, get_component(Line, sys, "1c"))
+
+    # A negative-reactance arc on its own.
+    sys2 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    cap_arc = Arc(; from = PSY.get_bus(sys2, 2), to = PSY.get_bus(sys2, 4))
+    add_component!(sys2, cap_arc)
+    _add_test_line!(sys2, "cap", cap_arc, 0.0, -0.5)
+    _test_dc_matrices_match_rebuild(sys2, get_component(Line, sys2, "cap"))
+end
+
+@testset "BA_Matrix rejects a Ybus whose in-place modifications island a bus" begin
+    sys = _mk_parallel_cancel_sys([(0.013, 0.071), (0.029, 0.217)])
+    work = Ybus(sys)
+    vptdf = VirtualPTDF(sys)
+    arc_ix = PNM.get_arc_lookup(vptdf)[(2, 3)]
+    apply_ybus_modification!(
+        work,
+        NetworkModification(vptdf, get_component(Line, sys, "L23_1")),
+    )
+    @test 0.0 < work.arc_susceptance_scale[arc_ix] < 1.0
+    @test size(BA_Matrix(work).data) == size(BA_Matrix(Ybus(sys)).data)
+    apply_ybus_modification!(
+        work,
+        NetworkModification(vptdf, get_component(Line, sys, "L23_2")),
+    )
+    @test iszero(work.arc_susceptance_scale[arc_ix])
+    @test_throws r"island part of the network" BA_Matrix(work)
+end
