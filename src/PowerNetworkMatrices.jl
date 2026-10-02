@@ -110,6 +110,7 @@ import .KLUWrapper:
     is_factored,
     LeanLUCache,
     LeanLUPlan,
+    copy_for_task,
     LeanLUWorkspace,
     lean_refactor!,
     lean_ldiv!,

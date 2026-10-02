@@ -17,29 +17,32 @@ Freeze the pivot order and L/U pattern of `cache`'s factorization of `A`, for us
 
 The plan is immutable. Share one plan across tasks, giving each task its own
 [`LeanLUWorkspace`](@ref).
+
+Indices are `Int32` whatever `cache`'s index type: the index arrays are most of the plan,
+and the refactor streams all of them, so `Int64` would double its memory traffic.
 """
-struct LeanLUPlan{Ti <: Union{Int32, Int64}}
+struct LeanLUPlan
     n::Int
     # LU = A[P, Q]: P[k] is the row of A at pivot k, Q[k] the column.
-    P::Vector{Ti}
-    Q::Vector{Ti}
+    P::Vector{Int32}
+    Q::Vector{Int32}
     # Values of column k live in cp[k]:cp[k+1]-1: U rows ascending, then the diagonal at
     # dpos[k], then L rows (L is unit-diagonal; its diagonal is not stored).
-    cp::Vector{Ti}
-    dpos::Vector{Ti}
-    row::Vector{Ti}
+    cp::Vector{Int32}
+    dpos::Vector{Int32}
+    row::Vector{Int32}
     # A -> LU scatter: column k adds nonzeros(A)[aSrc[e]] into row aRow[e], for e in
     # aK[k]:aK[k+1]-1. Every entry of A is scattered once, so length(aSrc) == nnz(A).
-    aK::Vector{Ti}
-    aSrc::Vector{Ti}
-    aRow::Vector{Ti}
+    aK::Vector{Int32}
+    aSrc::Vector{Int32}
+    aRow::Vector{Int32}
     # Dependencies of column k (U(j,k) != 0, j < k, ascending j -- a valid topological
     # order for the column algorithm), for d in dK[k]:dK[k+1]-1: the U(j,k) slot dU[d]
     # and the value range dLb[d]:dLe[d] of L(:,j).
-    dK::Vector{Ti}
-    dU::Vector{Ti}
-    dLb::Vector{Ti}
-    dLe::Vector{Ti}
+    dK::Vector{Int32}
+    dU::Vector{Int32}
+    dLb::Vector{Int32}
+    dLe::Vector{Int32}
     # Pivot ratio of A itself on this order; lean_refactor! reports relative to it.
     rcond0::Float64
 end
@@ -166,12 +169,20 @@ function LeanLUPlan(
         end
     end
 
-    plan = LeanLUPlan{Ti}(n, P, Q, cp, dpos, row, aK, aSrc, aRow, dK, dU, dLb, dLe, NaN)
+    # The largest stored index is nnz(LU) + 1 (cp[n + 1]) or nnz(A) (aSrc).
+    max(length(row) + 1, SparseArrays.nnz(A)) <= typemax(Int32) || throw(
+        ArgumentError("LeanLUPlan: the factors are too large for Int32 indices."),
+    )
+    ix = map(
+        v -> convert(Vector{Int32}, v),
+        (P, Q, cp, dpos, row, aK, aSrc, aRow, dK, dU, dLb, dLe),
+    )
+    plan = LeanLUPlan(n, ix..., NaN)
     rcond0 = _lean_refactor!(LeanLUWorkspace(plan), plan, nonzeros(A))
     rcond0 > 0 || throw(
         ArgumentError("LeanLUPlan: A has a zero or non-finite pivot on KLU's order."),
     )
-    return LeanLUPlan{Ti}(n, P, Q, cp, dpos, row, aK, aSrc, aRow, dK, dU, dLb, dLe, rcond0)
+    return LeanLUPlan(n, ix..., rcond0)
 end
 
 function _check_workspace(ws::LeanLUWorkspace, plan::LeanLUPlan)
@@ -301,7 +312,7 @@ the next `symbolic_factor!`. A singular matrix throws `LinearAlgebra.SingularExc
 """
 mutable struct LeanLUCache{Ti <: Union{Int32, Int64}} <: LinearSolverCache
     klu::KLULinSolveCache{Float64, Ti}
-    plan::Union{Nothing, LeanLUPlan{Ti}}
+    plan::Union{Nothing, LeanLUPlan}
     ws::LeanLUWorkspace
     reject_tol::Float64
     # False after a rejected lean refactor, until the next symbolic_factor!.
@@ -322,7 +333,7 @@ end
 
 Base.size(c::LeanLUCache, d...) = size(c.klu, d...)
 Base.eltype(::Type{<:LeanLUCache}) = Float64
-is_factored(c::LeanLUCache) = is_factored(c.klu)
+is_factored(c::LeanLUCache) = (c.lean_factored && c.plan !== nothing) || is_factored(c.klu)
 
 function symbolic_factor!(c::LeanLUCache{Ti}, A::SparseMatrixCSC{Float64, Ti}) where {Ti}
     symbolic_factor!(c.klu, A)
@@ -346,6 +357,8 @@ function numeric_refactor!(c::LeanLUCache{Ti}, A::SparseMatrixCSC{Float64, Ti}) 
         c.use_lean = false
         _drop_numeric!(c.klu)
     end
+    # A `copy_for_task` cache has a plan but defers its KLU analysis to the first fallback.
+    (plan === nothing || c.klu.symbolic != C_NULL) || symbolic_factor!(c.klu, A)
     numeric_refactor!(c.klu, A)
     if c.use_lean && plan === nothing
         plan = LeanLUPlan(c.klu, A)
@@ -353,6 +366,29 @@ function numeric_refactor!(c::LeanLUCache{Ti}, A::SparseMatrixCSC{Float64, Ti}) 
         c.ws = LeanLUWorkspace(plan)
     end
     return c
+end
+
+"""
+    copy_for_task(c::LeanLUCache) -> LeanLUCache
+
+A cache for another task, sharing `c`'s read-only [`LeanLUPlan`](@ref) and owning its own
+workspace and KLU fallback. It holds no factors: call `numeric_refactor!` before `solve!`.
+Its KLU analysis runs only if a lean refactor is rejected. `c` must already have a plan,
+from its first `numeric_refactor!` after `symbolic_factor!`.
+"""
+function copy_for_task(c::LeanLUCache{Ti}) where {Ti}
+    plan = c.plan
+    plan === nothing && throw(
+        ArgumentError("copy_for_task: the cache has no plan yet; factor it first."),
+    )
+    k = c.klu
+    klu = KLULinSolveCache{Float64, Ti}(
+        copy(k.colptr), copy(k.rowval), Float64[], Ref(k.common[]),
+        Ptr{Cvoid}(C_NULL), Ptr{Cvoid}(C_NULL), k.reuse_symbolic, k.check_pattern,
+        Matrix{Float64}(undef, 0, 0), Ti[],
+    )
+    finalizer(_free_klu_handles!, klu)
+    return LeanLUCache{Ti}(klu, plan, LeanLUWorkspace(plan), c.reject_tol, true, false)
 end
 
 function full_factor!(c::LeanLUCache{Ti}, A::SparseMatrixCSC{Float64, Ti}) where {Ti}

@@ -25,6 +25,7 @@ end
     plan, cache = _lean_plan(A)
     ws = PNM.LeanLUWorkspace(plan)
     @test 0 < plan.rcond0 <= 1
+    @test eltype(plan.row) == Int32
     @test PNM.lean_solve! === PNM.lean_ldiv!
 
     b = randn(rng, n)
@@ -192,4 +193,54 @@ end
     PNM.solve!(c, b)
     @test (@allocated PNM.numeric_refactor!(c, A)) == 0
     @test (@allocated PNM.solve!(c, b)) == 0
+end
+
+@testset "LeanLUCache: copy_for_task shares the plan ($Ti)" for Ti in (Int32, Int64)
+    rng = Random.MersenneTwister(7)
+    n = 200
+    A = _lean_test_matrix(rng, n, Ti)
+    b = randn(rng, n)
+    c = PNM.LeanLUCache(A)
+    @test_throws ArgumentError PNM.copy_for_task(c)
+    PNM.full_factor!(c, A)
+
+    t = PNM.copy_for_task(c)
+    @test t.plan === c.plan
+    @test t.ws.LU !== c.ws.LU
+    @test !PNM.is_factored(t)
+    A2 = copy(A)
+    SparseArrays.nonzeros(A2) .*= 1 .+ 0.2 .* randn(rng, SparseArrays.nnz(A2))
+    PNM.numeric_refactor!(t, A2)
+    @test t.lean_factored && PNM.is_factored(t)
+    @test PNM.solve!(t, copy(b)) ≈ A2 \ b
+    @test PNM.solve!(c, copy(b)) ≈ A \ b  # the original's factors are untouched
+
+    # One copy per task, each factoring its own values.
+    nsets = 32
+    mats = map(1:nsets) do _
+        Ai = copy(A)
+        SparseArrays.nonzeros(Ai) .*= 1 .+ 0.1 .* randn(rng, SparseArrays.nnz(Ai))
+        Ai
+    end
+    threaded = Vector{Vector{Float64}}(undef, nsets)
+    Threads.@threads for i in 1:nsets
+        ti = PNM.copy_for_task(c)
+        PNM.numeric_refactor!(ti, mats[i])
+        threaded[i] = PNM.solve!(ti, copy(b))
+    end
+    for i in 1:nsets
+        @test threaded[i] ≈ mats[i] \ b
+    end
+end
+
+@testset "LeanLUCache: copy_for_task falls back to KLU on rejected pivots" begin
+    A1 = SparseArrays.sparse([10.0 1.0; 1.0 10.0])
+    A2 = SparseArrays.sparse([1e-12 1.0; 1.0 1.0])  # frozen pivot A2[1,1] is tiny
+    b = [1.0, 2.0]
+    c = PNM.full_factor!(PNM.LeanLUCache(A1), A1)
+    t = PNM.copy_for_task(c)
+    PNM.numeric_refactor!(t, A2)
+    @test !t.lean_factored && !t.use_lean
+    @test PNM.solve!(t, copy(b)) ≈ Matrix(A2) \ b
+    @test c.use_lean  # the rejection stays with the copy
 end
