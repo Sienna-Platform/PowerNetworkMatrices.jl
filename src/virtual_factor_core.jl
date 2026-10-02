@@ -16,9 +16,9 @@ The type parameter order `{Ax, L, K}` matches `VirtualPTDF` so the PTDF/MODF
 wrappers can carry `core::VirtualFactorCore{Ax, L, K}` with the same parameters.
 
 # Thread-safety
-All libklu solves serialize through the process-wide `_LIBKLU_LOCK` and the
-per-core `solver_lock`. The single scratch slot in `temp_data`/`work_ba_col` is
-protected by `solver_lock` (acquired via `with_solver`). A core shared between
+Solves on one core serialize through its `solver_lock` (acquired via
+`with_solver`), which protects the single scratch slot in
+`temp_data`/`work_ba_col` and the core's one factorization. A core shared between
 multiple wrappers therefore serializes their solves, which is the existing
 single-scratch model.
 
@@ -199,8 +199,8 @@ function VirtualFactorCore(
     valid_ix = setdiff(1:length(bus_ax), ref_bus_positions)
     bus_to_valid_idx = _build_bus_to_valid_idx(length(bus_ax), valid_ix)
 
-    # Single scratch slot — solves serialize through `solver_lock` +
-    # `_LIBKLU_LOCK`, so per-worker scratch is unnecessary. Kept as a
+    # Single scratch slot — solves serialize through `solver_lock`, so
+    # per-worker scratch is unnecessary. Kept as a
     # `Vector{Vector{Float64}}` so the `with_solver` callback signature
     # stays uniform across solver backends.
     temp_data = [zeros(length(bus_ax))]

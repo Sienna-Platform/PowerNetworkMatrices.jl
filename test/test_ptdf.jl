@@ -123,7 +123,6 @@ end
     PSY.add_component!(
         sys_1,
         PSY.ACBus(;
-            input_basis = PSY.CU,
             number = 6,
             name = "isolated_node_1",
             available = true,
@@ -138,7 +137,6 @@ end
     PSY.add_component!(
         sys_1,
         PSY.ACBus(;
-            input_basis = PSY.CU,
             number = 7,
             name = "isolated_node_2",
             available = true,
@@ -160,7 +158,6 @@ end
     PSY.add_component!(
         sys_2,
         PSY.ACBus(;
-            input_basis = PSY.CU,
             number = 6,
             name = "isolated_node_1",
             available = true,

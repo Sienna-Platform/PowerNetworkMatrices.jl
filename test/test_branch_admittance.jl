@@ -323,7 +323,6 @@ end
 @testset "TwoWindingTransformer series susceptance divides by the winding tap" begin
     sys = PSY.System(100.0)
     busA = PSY.ACBus(;
-        input_basis = PSY.CU,
         number = 1,
         name = "busA",
         available = true,
@@ -335,7 +334,6 @@ end
         input_basis = PSY.CU,
     )
     busB = PSY.ACBus(;
-        input_basis = PSY.CU,
         number = 2,
         name = "busB",
         available = true,
@@ -399,7 +397,6 @@ end
     function _t2w_with_shunt(shunt_location)
         sys = PSY.System(100.0)
         busA = PSY.ACBus(;
-            input_basis = PSY.CU,
             number = 1,
             name = "busA",
             available = true,
@@ -411,7 +408,6 @@ end
             input_basis = PSY.CU,
         )
         busB = PSY.ACBus(;
-            input_basis = PSY.CU,
             number = 2,
             name = "busB",
             available = true,

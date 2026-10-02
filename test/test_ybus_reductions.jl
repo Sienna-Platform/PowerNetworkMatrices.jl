@@ -172,9 +172,10 @@ end
 end
 
 @testset "14 bus; Ward reduction" begin
+    # 109 keeps the 110-109 phase shifter inside the study area; Ward refuses it outside.
     sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
-    study_buses = [101, 114, 110, 111]
-    boundary_buses = [101, 114, 110, 111]
+    study_buses = [101, 114, 110, 111, 109]
+    boundary_buses = [101, 114, 110, 111, 109]
     A = IncidenceMatrix(
         sys;
         network_reductions = NetworkReduction[WardReduction(study_buses)],
@@ -184,7 +185,7 @@ end
     nrd = get_network_reduction_data(ybus)
     @test Set(ybus.axes[1]) == Set(study_buses)
     @test length(nrd.added_admittance_map) == length(boundary_buses)
-    @test length(nrd.added_arc_impedance_map) == factorial(length(boundary_buses) - 1)
+    @test length(nrd.added_arc_impedance_map) == binomial(length(boundary_buses), 2)
     ybus_full = Ybus(sys)
     for i in study_buses, j in study_buses
         if i ∈ boundary_buses && j ∈ boundary_buses
@@ -823,7 +824,6 @@ end
     buses = ACBus[]
     for i in 1:5
         b = ACBus(;
-            input_basis = PSY.CU,
             number = i,
             name = "b$i",
             available = true,
@@ -884,7 +884,6 @@ end
     buses = ACBus[]
     for i in 1:3
         b = ACBus(;
-            input_basis = PSY.CU,
             number = i,
             name = "b$i",
             available = true,
@@ -956,7 +955,6 @@ end
             bustype = ACBusTypes.REF
         end
         b = ACBus(;
-            input_basis = PSY.CU,
             number = i,
             name = "b$i",
             available = true,

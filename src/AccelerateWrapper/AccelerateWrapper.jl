@@ -24,6 +24,7 @@ module AccelerateWrapper
 import SparseArrays
 import SparseArrays: SparseMatrixCSC, getcolptr, rowvals, nonzeros, nzrange
 import LinearAlgebra
+import ..LinearSolverCache
 
 export AAFactorCache,
     aa_factorize,
@@ -45,7 +46,7 @@ else
     # Stub layer. Non-Apple builds never bind libSparse symbols, never codegen
     # the `@ccall` sites, and never instantiate `SparseOpaqueFactorization`.
     # The whole submodule reduces to these short bodies on Linux/Windows.
-    struct AAFactorCache end
+    struct AAFactorCache <: LinearSolverCache end
 
     _unavailable() = error(
         "AccelerateWrapper is macOS-only (Sys.isapple() returned false). " *

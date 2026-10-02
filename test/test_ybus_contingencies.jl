@@ -361,7 +361,6 @@ end
             bustype = ACBusTypes.REF
         end
         b = ACBus(;
-            input_basis = PSY.CU,
             number = i,
             name = "b$i",
             available = true,

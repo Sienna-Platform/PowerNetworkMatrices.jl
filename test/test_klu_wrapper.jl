@@ -2,6 +2,12 @@ import SparseArrays
 import LinearAlgebra
 import Random
 
+@testset "Linear-solver caches share the LinearSolverCache supertype" begin
+    @test PNM.KLULinSolveCache{Float64, Int32} <: PNM.LinearSolverCache
+    @test PNM.KLULinSolveCache{Float64, Int64} <: PNM.LinearSolverCache
+    @test PNM.AAFactorCache <: PNM.LinearSolverCache
+end
+
 @testset "KLU wrapper: real round-trip and refactor" begin
     n = 50
     rng_vals = collect(1.0:n)
@@ -340,6 +346,67 @@ end
 
         c = PNM.KLUWrapper.condest!(cache)
         @test c > 0
+    end
+end
+
+@testset "KLU wrapper: same-nnz pattern mismatch errors and leaves the cache intact" begin
+    n = 30
+    D = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 1.0)
+    one_at(i, j) = SparseArrays.sparse([i], [j], [0.5], n, n)
+    A = D + one_at(1, n)
+    for Ti in (Int64, Int32)
+        At = SparseArrays.SparseMatrixCSC{Float64, Ti}(A)
+        cache = PNM.klu_factorize(At)
+        colptr = copy(cache.colptr)
+        rowval = copy(cache.rowval)
+        # Same nnz: a different row in the same column, then a different column.
+        for B in (D + one_at(2, n), D + one_at(n, 1))
+            Bt = SparseArrays.SparseMatrixCSC{Float64, Ti}(B)
+            @test SparseArrays.nnz(Bt) == SparseArrays.nnz(At)
+            @test_throws ArgumentError PNM.numeric_refactor!(cache, Bt)
+            @test_throws ArgumentError PNM.KLUWrapper.symbolic_refactor!(cache, Bt)
+            @test cache.colptr == colptr
+            @test cache.rowval == rowval
+        end
+        PNM.numeric_refactor!(cache, At)
+        y = ones(n)
+        PNM.solve!(cache, y)
+        @test isapprox(y, A \ ones(n); atol = 1e-12)
+    end
+end
+
+@testset "KLU wrapper: snapshot_values = false" begin
+    n = 40
+    A = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 1.0,
+        1 => fill(0.1, n - 1), -1 => fill(0.1, n - 1))
+    A2 = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 2.0,
+        1 => fill(0.2, n - 1), -1 => fill(0.2, n - 1))
+    for Ti in (Int64, Int32)
+        At = SparseArrays.SparseMatrixCSC{Float64, Ti}(A)
+        A2t = SparseArrays.SparseMatrixCSC{Float64, Ti}(A2)
+        on = PNM.klu_factorize(At)
+        off = PNM.klu_factorize(At; snapshot_values = false)
+        PNM.numeric_refactor!(on, A2t)
+        PNM.numeric_refactor!(off, A2t)
+        @test isempty(off.nzval)
+        b = randn(n)
+        y_on = copy(b)
+        y_off = copy(b)
+        PNM.solve!(on, y_on)
+        PNM.solve!(off, y_off)
+        @test y_on == y_off
+        @test (@allocated PNM.numeric_refactor!(off, A2t)) == 0
+        # Snapshot-dependent paths error loudly; the explicit-matrix condest! works.
+        @test_throws ErrorException PNM.KLUWrapper.condest!(off)
+        @test_throws ErrorException PNM.KLUWrapper._recover_factorization!(off)
+        @test PNM.KLUWrapper.condest!(off, A2t) == PNM.KLUWrapper.condest!(on)
+        @test PNM.KLUWrapper.condest!(on, A2t) == PNM.KLUWrapper.condest!(on)
+        @test_throws ArgumentError PNM.KLUWrapper.condest!(
+            off,
+            SparseArrays.SparseMatrixCSC{Float64, Ti}(
+                A2 + SparseArrays.sparse([1], [n], [1.0], n, n),
+            ),
+        )
     end
 end
 
