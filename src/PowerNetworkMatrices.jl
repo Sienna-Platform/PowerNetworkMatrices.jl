@@ -161,6 +161,7 @@ include("modf_reduction_consistency.jl")
 include("virtual_modf_calculations.jl")
 include("woodbury_kernel.jl")
 include("populate_cache.jl")
+include("virtual_workers.jl")
 include("system_utils.jl")
 
 # Forward declarations for symbols still defined inside package extensions.
