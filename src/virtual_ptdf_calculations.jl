@@ -264,8 +264,12 @@ function _use_dist_slack(vptdf::VirtualPTDF)::Bool
     return true
 end
 
-function _compute_ptdf_row(vptdf::VirtualPTDF, row::Int)::Vector{Float64}
-    core = get_core(vptdf)
+# `core` is the matrix's own core or a `worker_core` of it, whose factorization the row is solved on.
+function _compute_ptdf_row(
+    vptdf::VirtualPTDF,
+    row::Int,
+    core::VirtualFactorCore = get_core(vptdf),
+)::Vector{Float64}
     dist_slack_normalized = get_dist_slack_normalized(vptdf)
     use_dist_slack = _use_dist_slack(vptdf)
 
