@@ -251,6 +251,7 @@ function NetworkModification(mat::PowerNetworkMatrix, arc::Tuple{Int, Int})
                 dy12,
                 dy21,
                 dy22,
+                _outaged_member_count(nr, arc),
             ),
         ],
     )
@@ -397,6 +398,7 @@ function _parallel_arc_modification(
         dy12,
         dy21,
         dy22,
+        1,
     )
 end
 
@@ -439,7 +441,7 @@ function _classify_outage_components(mat::PowerNetworkMatrix, components)
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
         push!(
             series_mods,
-            ArcModification(arc_idx, delta_b, delta_shift, dy11, dy12, dy21, dy22),
+            ArcModification(arc_idx, delta_b, delta_shift, dy11, dy12, dy21, dy22, 1),
         )
     end
     return acc, vcat(acc.direct_mods, acc.parallel_mods, series_mods)
@@ -469,7 +471,7 @@ function _classify_outage_component!(
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc, component)
         push!(
             acc.direct_mods,
-            ArcModification(arc_idx, -b_arc, delta_shift, dy11, dy12, dy21, dy22),
+            ArcModification(arc_idx, -b_arc, delta_shift, dy11, dy12, dy21, dy22, 1),
         )
     elseif tag === :parallel
         push!(
@@ -642,55 +644,92 @@ end
     apply_ybus_modification(ybus::Ybus, mod::NetworkModification) -> SparseMatrixCSC
 
 Apply a canonical NetworkModification to a Ybus, returning the modified sparse matrix.
-Convenience wrapper around `compute_ybus_delta`. An entry the delta cancels to within Float32
-rounding is dropped, matching the exact zero [`apply_ybus_modification!`](@ref) writes there.
+Convenience wrapper around `compute_ybus_delta`. The off-diagonals of a bus pair left with no
+arc member in service are dropped, matching the exact zeros
+[`apply_ybus_modification!`](@ref) writes there.
 """
 function apply_ybus_modification(ybus::Ybus, mod::NetworkModification)
-    delta = compute_ybus_delta(ybus, mod)
-    Y = ybus.data + delta
-    d_rows = SparseArrays.rowvals(delta)
-    d_nz = SparseArrays.nonzeros(delta)
-    for col in 1:size(delta, 2), k in SparseArrays.nzrange(delta, col)
-        if _cancels_to_zero(Y[d_rows[k], col], d_nz[k])
-            Y[d_rows[k], col] = zero(YBUS_ELTYPE)
-        end
+    Y = ybus.data + compute_ybus_delta(ybus, mod)
+    arc_ax = get_arc_axis(get_network_reduction_data(ybus))
+    bus_lookup = get_bus_lookup(ybus)
+    live = _live_members_after(ybus, mod)
+    for (k, m) in enumerate(mod.arc_modifications)
+        _is_dead_pair(ybus, arc_ax, mod, live, k) || continue
+        arc = arc_ax[m.arc_index]
+        f_ix = bus_lookup[arc[1]]
+        t_ix = bus_lookup[arc[2]]
+        Y[f_ix, t_ix] = zero(YBUS_ELTYPE)
+        Y[t_ix, f_ix] = zero(YBUS_ELTYPE)
     end
     return SparseArrays.dropzeros!(Y)
 end
 
-_cancels_to_zero(sum::T, delta::T) where {T <: Number} =
-    abs(sum) <= YBUS_CANCELLATION_RTOL * abs(delta)
-
-function _add_admittance_delta(y::YBUS_ELTYPE, delta::YBUS_ELTYPE)
-    sum = y + delta
-    if _cancels_to_zero(sum, delta)
-        return zero(sum)
+# Members of each modified arc still in service after `mod`, in `mod.arc_modifications` order.
+function _live_members_after(ybus::Ybus, mod::NetworkModification)
+    live = Vector{Int}(undef, length(mod.arc_modifications))
+    for (k, m) in enumerate(mod.arc_modifications)
+        live[k] = ybus.arc_live_members[m.arc_index] - m.opened
+        if live[k] < 0
+            error(
+                "The modification opens $(m.opened) member(s) of arc $(m.arc_index), which " *
+                "has $(ybus.arc_live_members[m.arc_index]) in service.",
+            )
+        end
     end
-    return sum
+    return live
+end
+
+# True when modified arc `k` has no member left and no anti-parallel twin keeps its bus pair
+# coupled: the pair's two off-diagonals hold nothing but Float32 residue.
+function _is_dead_pair(
+    ybus::Ybus,
+    arc_ax::Vector{Tuple{Int, Int}},
+    mod::NetworkModification,
+    live::Vector{Int},
+    k::Int,
+)
+    iszero(live[k]) || return false
+    arc = arc_ax[mod.arc_modifications[k].arc_index]
+    twin = (arc[2], arc[1])
+    nr = get_network_reduction_data(ybus)
+    maps = (
+        get_direct_branch_map(nr),
+        get_parallel_branch_map(nr),
+        get_series_branch_map(nr),
+        get_added_arc_impedance_map(nr),
+    )
+    any(m -> haskey(m, twin), maps) || return true
+    # O(arcs), but reached only for a dead arc with an anti-parallel twin.
+    twin_ix = findfirst(==(twin), arc_ax)
+    for (j, m) in enumerate(mod.arc_modifications)
+        m.arc_index == twin_ix && return iszero(live[j])
+    end
+    return iszero(ybus.arc_live_members[twin_ix])
 end
 
 # Each modified arc's remaining share of its base BA susceptance after `mod`, in the order of
 # `mod.arc_modifications` (one per arc). `delta_b` is a magnitude-space change against the base
-# susceptance, so sequential member trips add their fractions and a whole group sums to zero.
+# susceptance, so sequential member trips add their fractions. A lossy group's susceptance is
+# not the sum of its members', so the fractions of a fully tripped group need not reach zero;
+# the member count decides that instead.
 function _arc_susceptance_scales(
     ybus::Ybus,
     arc_ax::Vector{Tuple{Int, Int}},
     mod::NetworkModification,
+    live::Vector{Int},
 )
     nr = get_network_reduction_data(ybus)
     scales = Vector{Float64}(undef, length(mod.arc_modifications))
     for (k, m) in enumerate(mod.arc_modifications)
         scale = ybus.arc_susceptance_scale[m.arc_index]
         b = _ba_arc_susceptance(nr, arc_ax[m.arc_index])
-        # A zero-susceptance arc holds zero in BA whatever its scale.
-        if iszero(b)
+        if iszero(live[k])
+            scales[k] = 0.0
+        elseif iszero(b)
+            # Exact zero is `_ba_arc_susceptance`'s "no DC coupling"; BA scales any other b.
             scales[k] = scale
         else
-            fraction = m.delta_b / abs(b)
-            scales[k] = scale + fraction
-            if _cancels_to_zero(scales[k], fraction)
-                scales[k] = 0.0
-            end
+            scales[k] = scale + m.delta_b / abs(b)
         end
     end
     return scales
@@ -812,7 +851,7 @@ function _add_deltas!(
             delta += deltas[order[k]]
             k += 1
         end
-        nz[p] = _add_admittance_delta(nz[p], delta)
+        nz[p] += delta
     end
     return
 end
@@ -860,9 +899,11 @@ factorization's symbolic analysis stays valid, and an entry the out-of-place
 [`apply_ybus_modification`](@ref) would drop stays stored as a zero. Otherwise the result
 matches it value for value. Undo exactly with [`restore_ybus_modification!`](@ref).
 
-An entry the modification cancels to within Float32 rounding (e.g. the off-diagonals of an arc
-whose parallel members are tripped one call at a time) is written as an exact zero, so
-connectivity checks on `ybus.data` see the removal.
+Once every member of an arc is out of service, its arc admittance rows and DC susceptance are
+set to exact zeros, and so are its bus-pair off-diagonals unless an anti-parallel arc on the
+same buses is still in service; connectivity checks on `ybus.data` then see the removal. No
+other entry is rounded to zero, so a live branch beside a much stiffer tripped one keeps its
+admittance to Float32 accuracy. Opening more members than an arc has in service raises.
 
 Every position is resolved before anything is written: a delta on an entry outside the pattern
 raises an error and leaves `ybus` unchanged. Ybus construction drops an entry whose branch
@@ -890,20 +931,40 @@ function apply_ybus_modification!(
 )
     ybus_entries, from_to_entries, to_from_entries =
         _modified_entries(ybus, get_bus_lookup(ybus), arc_ax, mod)
-    scales = _arc_susceptance_scales(ybus, arc_ax, mod)
+    live = _live_members_after(ybus, mod)
+    scales = _arc_susceptance_scales(ybus, arc_ax, mod, live)
     _add_deltas!(ybus.data, ybus_entries)
     _add_deltas!(ybus.arc_admittance_from_to, from_to_entries)
     _add_deltas!(ybus.arc_admittance_to_from, to_from_entries)
     Y_nz = SparseArrays.nonzeros(ybus.data)
     y_positions, _ = ybus_entries
-    for (k, m) in enumerate(mod.arc_modifications)
-        # A lossy group's DC susceptance is not the sum of its members', so tripping every
-        # member leaves a fraction; a bus pair that no longer couples in Ybus has none left.
-        if iszero(Y_nz[y_positions[4k - 2]])
-            scales[k] = 0.0
+    for k in eachindex(mod.arc_modifications)
+        if _is_dead_pair(ybus, arc_ax, mod, live, k)
+            Y_nz[y_positions[4k - 2]] = zero(YBUS_ELTYPE)
+            Y_nz[y_positions[4k - 1]] = zero(YBUS_ELTYPE)
         end
-        ybus.arc_susceptance_scale[m.arc_index] = scales[k]
+        if iszero(live[k])
+            _zero_arc_rows!(ybus.arc_admittance_from_to, from_to_entries, k)
+            _zero_arc_rows!(ybus.arc_admittance_to_from, to_from_entries, k)
+        end
     end
+    for (k, m) in enumerate(mod.arc_modifications)
+        ybus.arc_susceptance_scale[m.arc_index] = scales[k]
+        ybus.arc_live_members[m.arc_index] = live[k]
+    end
+    return
+end
+
+_zero_arc_rows!(::Nothing, entries, k::Int) = nothing
+
+function _zero_arc_rows!(
+    A::ArcAdmittanceMatrix,
+    (positions, _)::Tuple{Vector{Int}, Vector{YBUS_ELTYPE}},
+    k::Int,
+)
+    nz = SparseArrays.nonzeros(A.data)
+    nz[positions[2k - 1]] = zero(YBUS_ELTYPE)
+    nz[positions[2k]] = zero(YBUS_ELTYPE)
     return
 end
 
@@ -957,6 +1018,7 @@ function restore_ybus_modification!(
     )
     for m in mod.arc_modifications
         ybus.arc_susceptance_scale[m.arc_index] = base.arc_susceptance_scale[m.arc_index]
+        ybus.arc_live_members[m.arc_index] = base.arc_live_members[m.arc_index]
     end
     return
 end

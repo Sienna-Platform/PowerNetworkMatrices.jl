@@ -90,27 +90,41 @@ function _warn_impedance_correction_in_dc(nr::NetworkReductionData)
     return
 end
 
-# An in-place modification can remove every arc joining part of the network to its reference
-# bus. BA keeps the unmodified subnetwork axes, so the ABA built from it would be singular.
-function _check_modified_connectivity(
+# Components of the graph whose edges are the arcs holding a nonzero DC susceptance `b`.
+function _susceptance_component_count(
     ybus::Ybus,
     arc_ax::Vector{Tuple{Int, Int}},
     nr::NetworkReductionData,
+    b::Vector{Float64},
 )
-    scale = ybus.arc_susceptance_scale
-    all(isone, scale) && return
     bus_lookup = get_bus_lookup(ybus)
     uf = collect(1:length(bus_lookup))
     for (ix_arc, arc) in enumerate(arc_ax)
-        iszero(scale[ix_arc]) && continue
+        iszero(b[ix_arc]) && continue
         union_sets!(
             uf,
             get_bus_index(arc[1], bus_lookup, nr),
             get_bus_index(arc[2], bus_lookup, nr),
         )
     end
-    n_components = length(unique(get_representative(uf, ix) for ix in eachindex(uf)))
-    if n_components > length(ybus.subnetwork_axes)
+    return length(unique(get_representative(uf, ix) for ix in eachindex(uf)))
+end
+
+# An in-place modification can remove every arc joining part of the network to its reference
+# bus. BA keeps the unmodified subnetwork axes, so the ABA built from it would be singular.
+# Connectivity is read off susceptances, not arcs: a resistive arc (b = 0) joins nothing in BA.
+# The baseline is counted the same way, because the admittance-graph subnetworks miss a
+# resistive bridge the unmodified network may already have.
+function _check_modified_connectivity(
+    ybus::Ybus,
+    arc_ax::Vector{Tuple{Int, Int}},
+    nr::NetworkReductionData,
+    b_base::Vector{Float64},
+)
+    scale = ybus.arc_susceptance_scale
+    all(isone, scale) && return
+    n_modified = _susceptance_component_count(ybus, arc_ax, nr, b_base .* scale)
+    if n_modified > _susceptance_component_count(ybus, arc_ax, nr, b_base)
         error(
             "The in-place modifications applied to this Ybus island part of the network, " *
             "so a BA/ABA built from it would be singular. Use `VirtualMODF` for islanding " *
@@ -140,7 +154,8 @@ function BA_Matrix(ybus::Ybus)
     bus_ax = get_bus_axis(ybus)
     bus_lookup = get_bus_lookup(ybus)
     arc_ax = get_arc_axis(nr)
-    _check_modified_connectivity(ybus, arc_ax, nr)
+    b_base = [_ba_arc_susceptance(nr, arc) for arc in arc_ax]
+    _check_modified_connectivity(ybus, arc_ax, nr, b_base)
     n_isolated_buses = length(get_isolated_buses(ybus))
     n_entries = length(arc_ax) * 2 + n_isolated_buses
     BA_I = Vector{Int}(undef, n_entries)
@@ -149,7 +164,7 @@ function BA_Matrix(ybus::Ybus)
     for (ix_arc, arc) in enumerate(arc_ax)
         ix_from_bus = get_bus_index(arc[1], bus_lookup, nr)
         ix_to_bus = get_bus_index(arc[2], bus_lookup, nr)
-        b = _ba_arc_susceptance(nr, arc) * ybus.arc_susceptance_scale[ix_arc]
+        b = b_base[ix_arc] * ybus.arc_susceptance_scale[ix_arc]
         # A NaN/Inf in BA would poison every downstream factorization.
         if !isfinite(b)
             error(
