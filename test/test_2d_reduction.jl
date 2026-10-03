@@ -262,6 +262,15 @@ end
     @test Set(Set(c) for c in chains) == Set([Set([1, 3, 4, 2]), Set([1, 5, 6, 2])])
 end
 
+@testset "find_degree2_chains keeps a chain parallel to a direct line on request" begin
+    # Paths 1-3-2 and 1-4-2 beside the direct line 1-2: both chains end on adjacent buses.
+    edges = [(1, 3), (3, 2), (1, 2), (1, 4), (2, 4)]
+    A = _adjacency_from_edges(edges, 4)
+    @test isempty(PNM.find_degree2_chains(A, Set{Int}()))
+    @test PNM.find_degree2_chains(A, Set{Int}(); require_valid_endpoints = false) ==
+          [[1, 3, 2], [1, 4, 2]]
+end
+
 @testset "find_degree2_chains returns opposite-traversal siblings separately" begin
     # Same topology, but the second chain's interior numbering makes it traverse 2 -> 1.
     edges = [(1, 3), (3, 4), (4, 2), (2, 5), (5, 6), (6, 1),

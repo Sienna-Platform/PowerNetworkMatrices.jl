@@ -332,10 +332,16 @@ A chain is a sequence of connected degree-2 nodes.
 Returns a vector of chains, each a vector of node indices whose first and last entries are the
 chain's terminal (non-degree-2 or irreducible) nodes. Several chains may share an endpoint pair;
 grouping them onto one arc is the caller's job.
+
+With `require_valid_endpoints = true` (default) a chain whose endpoints are already adjacent, or
+equal (a loop), is cut down to its longest sub-chain the reduction can fold. With `false` every
+complete chain is returned as found: still a series path, which is all a caller that never folds
+it (e.g. contingency grouping) needs.
 """
 function find_degree2_chains(
     adj_matrix::SparseArrays.SparseMatrixCSC,
-    irreducible_indices::Set{Int},
+    irreducible_indices::Set{Int};
+    require_valid_endpoints::Bool = true,
 )
     node_count = size(adj_matrix, 1)
     # Convert the exempt set into a BitVector for O(1) membership checks keyed by column
@@ -353,6 +359,10 @@ function find_degree2_chains(
         end
         chain_path =
             _get_complete_chain(adj_matrix, node, reduced_indices, irreducible_mask)
+        if !require_valid_endpoints
+            push!(chains, chain_path)
+            continue
+        end
         valid_chain_path = _find_longest_valid_chain(adj_matrix, chain_path)
         if !isempty(valid_chain_path)
             push!(chains, valid_chain_path)
