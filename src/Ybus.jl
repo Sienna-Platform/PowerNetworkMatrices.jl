@@ -1165,6 +1165,21 @@ function _resolve_arc_admittance(
         valid = findall(arc -> arc[1] != arc[2], arc_ax)
         arc_ax = arc_ax[valid]
         arc_keep_ixs = arc_keep_ixs[valid]
+        # A merge can leave a branch anti-parallel to a surviving key, which
+        # `_remap_merged_bus_in_branch_maps!` folds into that key's group. Relabel its row into
+        # the key's frame, where its ToFrom row is the FromTo current, so the collapse below
+        # sums it into the group's row as `_subset_two_port` does.
+        forward_keys = Set(get_arc_axis(nr))
+        for k in eachindex(arc_ax)
+            arc = arc_ax[k]
+            reversed = (arc[2], arc[1])
+            (arc in forward_keys || !(reversed in forward_keys)) && continue
+            r = arc_keep_ixs[k]
+            ft_row = new_y_ft.data[r, :]
+            new_y_ft.data[r, :] = new_y_tf.data[r, :]
+            new_y_tf.data[r, :] = ft_row
+            arc_ax[k] = reversed
+        end
         # Collapse duplicates that appear when a bus merge maps two winding arcs to the
         # same (from, to) label (e.g. primary and secondary windings both become (X, S)).
         # Sum their rows so the combined admittance is preserved, then drop the extras.
