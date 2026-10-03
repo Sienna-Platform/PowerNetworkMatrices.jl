@@ -18,6 +18,8 @@ electrical parameters needed for power flow calculations and network analysis.
 - `arc_susceptance_scale::Vector{Float64}`: Fraction of each arc's DC susceptance still in
   service, indexed like the arc axis; 1.0 until [`apply_ybus_modification!`](@ref) changes it,
   and applied by [`BA_Matrix`](@ref)
+- `arc_live_members::Vector{Int}`: Members of each arc still in service, indexed like the arc
+  axis; [`apply_ybus_modification!`](@ref) removes an arc once this reaches zero
 
 # Key Features
 - Indexed by bus numbers (non-sequential numbering supported)
@@ -62,6 +64,7 @@ struct Ybus{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
     arc_admittance_from_to::Union{ArcAdmittanceMatrix, Nothing}
     arc_admittance_to_from::Union{ArcAdmittanceMatrix, Nothing}
     arc_susceptance_scale::Vector{Float64}
+    arc_live_members::Vector{Int}
 end
 
 function Ybus(
@@ -75,7 +78,8 @@ function Ybus(
     arc_admittance_from_to::Union{ArcAdmittanceMatrix, Nothing},
     arc_admittance_to_from::Union{ArcAdmittanceMatrix, Nothing},
 )
-    n_arcs = length(get_arc_axis(get_network_reduction_data(branch_catalog)))
+    nr = get_network_reduction_data(branch_catalog)
+    arc_ax = get_arc_axis(nr)
     return Ybus(
         data,
         adjacency_data,
@@ -86,9 +90,27 @@ function Ybus(
         branch_catalog,
         arc_admittance_from_to,
         arc_admittance_to_from,
-        ones(n_arcs),
+        ones(length(arc_ax)),
+        Int[_arc_member_count(nr, arc) for arc in arc_ax],
     )
 end
+
+# Branches an outage can take off `arc`: each member of a parallel group, else the one branch
+# or series chain filed on it.
+function _outaged_member_count(nr::NetworkReductionData, arc::Tuple{Int, Int})
+    parallel = get_parallel_branch_map(nr)
+    if haskey(parallel, arc)
+        return length(parallel[arc])
+    end
+    return count(
+        m -> haskey(m, arc),
+        (get_direct_branch_map(nr), get_series_branch_map(nr)),
+    )
+end
+
+# A Ward equivalent filed on the arc is one more member, and no outage removes it.
+_arc_member_count(nr::NetworkReductionData, arc::Tuple{Int, Int}) =
+    _outaged_member_count(nr, arc) + haskey(get_added_arc_impedance_map(nr), arc)
 
 get_bus_axis(M::Ybus) = M.axes[1]
 get_bus_lookup(M::Ybus) = M.lookup[1]

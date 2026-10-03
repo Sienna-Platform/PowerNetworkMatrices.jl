@@ -3,8 +3,8 @@
 
 @testset "pst outage: ArcModification carries and merges delta_shift_injection" begin
     z = zero(PNM.YBUS_ELTYPE)
-    a = ArcModification(3, -1.0, -0.2, z, z, z, z)
-    b = ArcModification(3, -2.0, -0.3, z, z, z, z)
+    a = ArcModification(3, -1.0, -0.2, z, z, z, z, 1)
+    b = ArcModification(3, -2.0, -0.3, z, z, z, z, 1)
     @test a.delta_shift_injection == -0.2
     @test ArcModification(3, -1.0).delta_shift_injection == 0.0
 
@@ -12,11 +12,12 @@
     @test length(merged) == 1
     @test merged[1].delta_b ≈ -3.0
     @test merged[1].delta_shift_injection ≈ -0.5
+    @test merged[1].opened == 2
 
     # Physically distinct shift deltas must be distinct cache keys.
     m1 = NetworkModification("x", [a])
-    m2 = NetworkModification("y", [ArcModification(3, -1.0, 0.0, z, z, z, z)])
-    m3 = NetworkModification("z", [ArcModification(3, -1.0, -0.2, z, z, z, z)])
+    m2 = NetworkModification("y", [ArcModification(3, -1.0, 0.0, z, z, z, z, 0)])
+    m3 = NetworkModification("z", [ArcModification(3, -1.0, -0.2, z, z, z, z, 1)])
     @test m1 != m2
     # `m1` and `m2` differ only in `delta_shift_injection`; the numeric hashes are
     # deterministic, so this fails exactly when that field is dropped from `Base.hash`.
