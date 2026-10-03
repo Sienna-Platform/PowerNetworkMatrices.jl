@@ -338,3 +338,14 @@ end
     end
     @test occursin("series chain", err.msg)
 end
+
+@testset "BranchCatalog bulk-loads name buckets with the last write winning" begin
+    staged = PNM._STAGED{Pair{String, Tuple{Int, Int}}}()
+    for (name, arc) in
+        (("b", (1, 2)), ("a", (3, 4)), ("b", (5, 6)), ("c", (7, 8)), ("b", (9, 10)))
+        PNM._stage!(staged, PSY.Line, name => arc)
+    end
+    name_to_arc = PNM.NAME_TO_ARC()
+    PNM._sorted_name_buckets!(name_to_arc, staged)
+    @test collect(name_to_arc[PSY.Line]) == ["a" => (3, 4), "b" => (9, 10), "c" => (7, 8)]
+end
