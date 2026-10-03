@@ -112,6 +112,7 @@ function get_ward_reduction(
     # Eq. (2.16) from https://core.ac.uk/download/pdf/79564835.pdf.
     y_ee_cache = klu_factorize(y_ee)
     y_eq = y_be * solve_sparse(y_ee_cache, y_eb)
+    _check_ward_equivalent_symmetry(y_eq, boundary_buses)
     #Loop upper diagonal of Yeq
     for ix in 1:length(boundary_buses)
         for jx in ix:length(boundary_buses)
@@ -163,4 +164,28 @@ function get_ward_reduction(
     reverse_bus_search_map,
     added_arc_impedance_map,
     added_admittance_map
+end
+
+const WARD_SYMMETRY_RTOL = 1e-8
+
+# GenericArcImpedance is symmetric and the equivalent is built from the upper triangle only, so
+# an asymmetric y_eq (phase shifters in the external area) would be dropped silently.
+function _check_ward_equivalent_symmetry(y_eq::AbstractMatrix, boundary_buses::Vector{Int})
+    scale = maximum(abs, y_eq; init = 0.0)
+    n = length(boundary_buses)
+    for ix in 1:n, jx in (ix + 1):n
+        asymmetry = abs(y_eq[ix, jx] - y_eq[jx, ix])
+        if asymmetry > WARD_SYMMETRY_RTOL * scale
+            throw(
+                IS.DataFormatError(
+                    "Ward equivalent is asymmetric between boundary buses " *
+                    "$(boundary_buses[ix]) and $(boundary_buses[jx]): " *
+                    "|y_eq[i,j] - y_eq[j,i]| = $(asymmetry) (scale $(scale)). " *
+                    "A phase-shifting transformer in the external area cannot be " *
+                    "represented by a symmetric GenericArcImpedance equivalent.",
+                ),
+            )
+        end
+    end
+    return
 end

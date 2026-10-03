@@ -18,8 +18,8 @@ arc×arc axes/lookup). A single core can be shared with a `VirtualPTDF` /
 # Thread-safety
 
 Concurrent `getindex` (and `get_partial_lodf_row`) is safe but serialized:
-every libklu solve runs under `_LIBKLU_LOCK` (process-wide) and the core's
-`solver_lock`, and the row cache is guarded by `cache_lock`.
+every solve runs under the core's `solver_lock`, and the row cache is guarded
+by `cache_lock`.
 
 # Fields
 - `core::VirtualFactorCore`:
@@ -339,7 +339,7 @@ Compute the LODF row for a partial susceptance change `delta_b` on arc `arc_idx`
 For a full outage, set `delta_b = -arc_susceptance`. For a single circuit outage
 on a double-circuit arc, set `delta_b = -b_circuit`.
 
-Concurrent callers serialize on the core `solver_lock` and `_LIBKLU_LOCK`.
+Concurrent callers serialize on the core `solver_lock`.
 
 Uses the Sherman-Morrison (matrix inversion lemma) formula:
 

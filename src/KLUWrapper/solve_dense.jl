@@ -21,13 +21,29 @@ function solve!(
     cache::KLULinSolveCache{Tv, Ti},
     B::StridedVecOrMat{Tv},
 ) where {Tv, Ti}
-    n = _check_solve_args(cache, B)
-    nrhs = size(B, 2)
-    nrhs == 0 && return B
-    ok = _solve_call(
-        Tv, Ti, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common,
-    )
-    ok == 0 && klu_throw(cache.common[], "klu_solve")
+    taken = _acquire!(cache)
+    try
+        n = _check_solve_args(cache, B)
+        nrhs = size(B, 2)
+        nrhs == 0 && return B
+        cache.lean_active && return _lean_solve_columns!(cache, B)
+        ok = _solve_call(
+            Tv, Ti, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common,
+        )
+        ok == 0 && klu_throw(cache.common[], "klu_solve")
+        return B
+    finally
+        taken && (cache.owner[] = UInt(0))
+    end
+end
+
+_lean_solve_columns!(cache::KLULinSolveCache, B::StridedVector) =
+    lean_solve!(B, cache.lean_plan, cache.lean_vals)
+
+function _lean_solve_columns!(cache::KLULinSolveCache, B::StridedMatrix)
+    for j in axes(B, 2)
+        lean_solve!(view(B, :, j), cache.lean_plan, cache.lean_vals)
+    end
     return B
 end
 
@@ -43,15 +59,21 @@ function tsolve!(
     B::StridedVecOrMat{Tv};
     conjugate::Bool = false,
 ) where {Tv, Ti}
-    n = _check_solve_args(cache, B)
-    nrhs = size(B, 2)
-    nrhs == 0 && return B
-    ok = _tsolve_call(
-        Tv, Ti, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common;
-        conjugate = conjugate,
-    )
-    ok == 0 && klu_throw(cache.common[], "klu_tsolve")
-    return B
+    taken = _acquire!(cache)
+    try
+        n = _check_solve_args(cache, B)
+        _require_klu_numeric(cache, "tsolve!")
+        nrhs = size(B, 2)
+        nrhs == 0 && return B
+        ok = _tsolve_call(
+            Tv, Ti, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common;
+            conjugate = conjugate,
+        )
+        ok == 0 && klu_throw(cache.common[], "klu_tsolve")
+        return B
+    finally
+        taken && (cache.owner[] = UInt(0))
+    end
 end
 
 """

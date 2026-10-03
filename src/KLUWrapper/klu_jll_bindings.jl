@@ -3,12 +3,12 @@
 #   - `klu_l_*` / `klu_zl_*` for `SuiteSparse_long` (Int64) indices
 #   - `klu_*`   / `klu_z_*`  for `int`              (Int32) indices
 #
-# Each ccall is wrapped in `@klu_lock` so that all libklu activity in the
-# process serializes through `_LIBKLU_LOCK`; see it in `KLUWrapper.jl` for the
-# evidence. The `klu_*_free_*` calls are the exception: they run from GC
-# finalizers, which cannot wait on a lock (a contended wait throws "task switch
-# not allowed from inside gc finalizer", leaking the handle and eventually
-# killing the process), and a free touches only the handle it releases.
+# Each ccall is wrapped in `@klu_lock`, which serializes libklu through
+# `_LIBKLU_LOCK` on Windows only; see it in `KLUWrapper.jl`. The
+# `klu_*_free_*` calls are never wrapped: they run from GC finalizers, which
+# cannot wait on a lock (a contended wait throws "task switch not allowed from
+# inside gc finalizer", leaking the handle and eventually killing the
+# process), and a free touches only the handle it releases.
 
 import LinearAlgebra
 import SuiteSparse_jll: libklu
@@ -223,6 +223,19 @@ function klu_l_rcond(
 )
     return @klu_lock ccall(
         (:klu_l_rcond, libklu),
+        Cint,
+        (SymbolicPtr, NumericPtr, Ptr{KluLCommon}),
+        symbolic, numeric, common,
+    )
+end
+
+function klu_l_flops(
+    symbolic::SymbolicPtr,
+    numeric::NumericPtr,
+    common::Ref{KluLCommon},
+)
+    return @klu_lock ccall(
+        (:klu_l_flops, libklu),
         Cint,
         (SymbolicPtr, NumericPtr, Ptr{KluLCommon}),
         symbolic, numeric, common,
@@ -516,6 +529,46 @@ function klu_rcond(
     )
 end
 
+function klu_flops(
+    symbolic::SymbolicPtr32,
+    numeric::NumericPtr32,
+    common::Ref{KluCommon},
+)
+    return @klu_lock ccall(
+        (:klu_flops, libklu),
+        Cint,
+        (SymbolicPtr32, NumericPtr32, Ptr{KluCommon}),
+        symbolic, numeric, common,
+    )
+end
+
+# Copies the factors out in permuted index space: L (unit diagonal stored first in each
+# column) and U (diagonal stored last) of the row-scaled P (R\A) Q. A C_NULL output is
+# skipped, but L and U are filled only when their value arrays are passed too.
+function klu_extract(
+    numeric::NumericPtr32,
+    symbolic::SymbolicPtr32,
+    lp::Ptr{Cint}, li::Ptr{Cint}, lx::Ptr{Cdouble},
+    up::Ptr{Cint}, ui::Ptr{Cint}, ux::Ptr{Cdouble},
+    fp::Ptr{Cint}, fi::Ptr{Cint}, fx::Ptr{Cdouble},
+    p::Ptr{Cint}, q::Ptr{Cint}, rs::Ptr{Cdouble}, r::Ptr{Cint},
+    common::Ref{KluCommon},
+)
+    return @klu_lock ccall(
+        (:klu_extract, libklu),
+        Cint,
+        (
+            NumericPtr32, SymbolicPtr32,
+            Ptr{Cint}, Ptr{Cint}, Ptr{Cdouble},
+            Ptr{Cint}, Ptr{Cint}, Ptr{Cdouble},
+            Ptr{Cint}, Ptr{Cint}, Ptr{Cdouble},
+            Ptr{Cint}, Ptr{Cint}, Ptr{Cdouble}, Ptr{Cint},
+            Ptr{KluCommon},
+        ),
+        numeric, symbolic, lp, li, lx, up, ui, ux, fp, fi, fx, p, q, rs, r, common,
+    )
+end
+
 # Complex / Int32
 function klu_z_factor(
     ap::Ptr{Cint},
@@ -613,6 +666,33 @@ function klu_z_free_numeric!(
         (Ptr{NumericPtr32}, Ptr{KluCommon}),
         numeric_ref, common,
     )
+end
+
+# ---------------------------------------------------------------------------
+# Leading fields of `klu_symbolic` / `klu_numeric` (`klu_l_*` when Ti = Int64), read with
+# `unsafe_load`; the layout must match upstream `klu.h`.
+# ---------------------------------------------------------------------------
+
+struct KluSymbolicHead{Ti}
+    symmetry::Cdouble
+    est_flops::Cdouble
+    lnz::Cdouble
+    unz::Cdouble
+    Lnz::Ptr{Cdouble}
+    n::Ti
+    nz::Ti
+    P::Ptr{Ti}
+    Q::Ptr{Ti}
+    R::Ptr{Ti}
+    nzoff::Ti
+    nblocks::Ti
+end
+
+struct KluNumericHead{Ti}
+    n::Ti
+    nblocks::Ti
+    lnz::Ti
+    unz::Ti
 end
 
 # ---------------------------------------------------------------------------

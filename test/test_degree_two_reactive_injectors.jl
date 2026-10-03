@@ -11,7 +11,6 @@ function _build_reactive_only_degree2_system()
             bustype = ACBusTypes.PV
         end
         bus = ACBus(;
-            input_basis = PSY.CU,
             number = i,
             name = "Bus $i",
             available = true,

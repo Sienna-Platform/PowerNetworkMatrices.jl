@@ -7,9 +7,7 @@ arcs, making this the recommended path for optimization loops where
 factors are computed once per modification and many rows are queried.
 
 !!! note
-    Concurrent callers serialize on the per-cache `solver_lock` and
-    `_LIBKLU_LOCK` (KLU backend) or just the per-cache `solver_lock`
-    (AppleAccelerate backend).
+    Concurrent callers serialize on the per-cache `solver_lock`.
 
 $(TYPEDSIGNATURES)
 """
@@ -28,9 +26,7 @@ precomputed Woodbury factors. Accepts either an integer arc index
 or a `Tuple{Int, Int}` bus pair.
 
 !!! note
-    Concurrent callers serialize on the per-cache `solver_lock` and
-    `_LIBKLU_LOCK` (KLU backend) or just the per-cache `solver_lock`
-    (AppleAccelerate backend).
+    Concurrent callers serialize on the per-cache `solver_lock`.
 
 $(TYPEDSIGNATURES)
 """

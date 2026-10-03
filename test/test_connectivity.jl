@@ -239,7 +239,6 @@ end
 
 function _mk_star_bus(number, name, bustype, angle)
     return ACBus(;
-        input_basis = PSY.CU,
         number = number,
         name = name,
         available = true,

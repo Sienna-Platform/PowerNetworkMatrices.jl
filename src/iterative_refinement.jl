@@ -53,7 +53,7 @@ convergence. Cost per refinement iteration: one sparse matrix-vector
 product plus one `solve!` against the cached factor.
 """
 function solve_w_refinement!(
-    cache::Union{KLULinSolveCache, AAFactorCache},
+    cache::LinearSolverCache,
     A::SparseArrays.SparseMatrixCSC{Tv},
     X::StridedVecOrMat{Tv},
     B::StridedVecOrMat{Tv};
@@ -109,7 +109,7 @@ Allocating wrapper around `solve_w_refinement!`. Allocates `X` matching
 `B`'s shape, then refines.
 """
 function solve_w_refinement(
-    cache::Union{KLULinSolveCache, AAFactorCache},
+    cache::LinearSolverCache,
     A::SparseArrays.SparseMatrixCSC{Tv},
     B::StridedVecOrMat{Tv};
     tol::Real = sqrt(eps(real(Tv))),

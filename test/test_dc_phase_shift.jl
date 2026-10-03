@@ -89,7 +89,6 @@ end
             bustype = ACBusTypes.REF
         end
         b = ACBus(;
-            input_basis = PSY.CU,
             number = i,
             name = "b$i",
             available = true,
@@ -204,7 +203,6 @@ end
     n_buses = length(vector_branches) + 1
     for bus_ix in 1:n_buses
         bus = ACBus(;
-            input_basis = PSY.CU,
             number = bus_ix,
             name = "bus$(bus_ix)",
             available = true,
