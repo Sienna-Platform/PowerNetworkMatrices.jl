@@ -51,7 +51,7 @@ function _first_seen(labels::Vector{Int})
     return [get!(d, l, length(d) + 1) for l in labels]
 end
 _outage(e::Int, delta_b::Float64) =
-    PNM.ArcModification(e, delta_b, 0.0, 0.0f0, 0.0f0, 0.0f0, 0.0f0)
+    PNM.ArcModification(e, delta_b)
 
 @testset "BridgeLabels partitions like the union-find" begin
     rng = Random.Xoshiro(29)
