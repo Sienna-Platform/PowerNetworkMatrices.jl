@@ -891,7 +891,7 @@ _check_arc_admittance_presence(work, base) = error(
 )
 
 """
-    apply_ybus_modification!(ybus::Ybus, mod::NetworkModification)
+    apply_ybus_modification!(ybus::Ybus, mod::NetworkModification[, arc_ax])
 
 Add `mod`'s arc and shunt admittance deltas into `ybus` in place: the bus admittance matrix and,
 when present, both arc admittance matrices. The stored pattern is left untouched, so a
@@ -969,7 +969,7 @@ function _zero_arc_rows!(
 end
 
 """
-    restore_ybus_modification!(ybus::Ybus, base::Ybus, mod::NetworkModification)
+    restore_ybus_modification!(ybus::Ybus, base::Ybus, mod::NetworkModification[, arc_ax])
 
 Copy `base`'s values back into exactly the entries [`apply_ybus_modification!`](@ref) wrote for
 `mod`. Exact: no floating-point drift accumulates across repeated apply/restore cycles. `base`
