@@ -276,7 +276,6 @@ function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
     core = get_core(vmodf)
     row_caches = get_row_caches(vmodf)
     woodbury_cache = get_woodbury_cache(vmodf)
-    max_bytes = get_max_cache_size_bytes(vmodf)
     n_bus = length(core.temp_data[1])
     cutoff = get_cutoff(core)
     BA = core.BA
@@ -322,9 +321,7 @@ function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
                     n_bus,
                 )
             end
-            rc = get!(row_caches, mod) do
-                RowCache(max_bytes, Set{Int}(), n_bus * sizeof(Float64))
-            end
+            rc = get!(() -> _new_modf_row_cache(vmodf), row_caches, mod)
             for m in mon_idx
                 if haskey(rc, m)
                     pin_row!(rc, m)

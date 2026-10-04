@@ -46,6 +46,9 @@ end
 # the pinv-based Woodbury correction leaves the stale pre-contingency value there.
 # These helpers identify the disconnected buses by connectivity and zero them.
 
+_removes_arc(arc_sus::Vector{Float64}, m::ArcModification) =
+    abs(arc_sus[m.arc_index] + m.delta_b) < MODF_ISLANDING_TOLERANCE
+
 # Connected-component label (a representative bus position) of every bus in the
 # post-contingency network: the base topology minus the arcs this modification
 # fully outages (post-contingency susceptance ≈ 0). A partially-reduced arc still
@@ -59,7 +62,7 @@ function _post_contingency_bus_labels(
 )::Vector{Int}
     removed = Set{Int}()
     for m in modifications
-        if abs(arc_sus[m.arc_index] + m.delta_b) < MODF_ISLANDING_TOLERANCE
+        if _removes_arc(arc_sus, m)
             push!(removed, m.arc_index)
         end
     end
@@ -128,7 +131,7 @@ function (bl::BridgeLabels)(
     removed = 0
     n_removed = 0
     for m in modifications
-        if abs(arc_sus[m.arc_index] + m.delta_b) < MODF_ISLANDING_TOLERANCE
+        if _removes_arc(arc_sus, m)
             removed = m.arc_index
             n_removed += 1
         end
@@ -179,31 +182,22 @@ function _arc_susceptance_sign(
 end
 
 """
-    _woodbury_factors_from_Z(Z, BA, signs, arc_sus, modifications) -> WoodburyFactors
+    _woodbury_factors_from_Z(Z, BA, signs, arc_sus, modifications[, labeler]) -> WoodburyFactors
 
 Assemble the Woodbury factors from an already-resolved `Z`, whose column `j` is
 `B⁻¹ν_j` for the `j`-th modified arc in full-bus space. The callers differ only
 in how they obtain `Z`: one solve per arc in the kernel path, a lookup into the
 batched pre-contingency solves in `populate_cache`. `signs[e]` is the sign of arc `e`'s DC
-susceptance (`VirtualFactorCore.arc_susceptance_signs`).
+susceptance (`VirtualFactorCore.arc_susceptance_signs`). Islanding labels come from
+`labeler(BA, arc_sus, modifications, n_bus)`, e.g. a `BridgeLabels`.
 """
-_woodbury_factors_from_Z(
-    Z::Matrix{Float64},
-    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
-    signs::Vector{Float64},
-    arc_sus::Vector{Float64},
-    modifications::Tuple{Vararg{ArcModification}},
-) = _woodbury_factors_from_Z(Z, BA, signs, arc_sus, modifications, _post_contingency_bus_labels)
-
-# As the five-argument form, with the islanding labels from
-# `labeler(BA, arc_sus, modifications, n_bus)`, e.g. a `BridgeLabels`.
 function _woodbury_factors_from_Z(
     Z::Matrix{Float64},
     BA::SparseArrays.SparseMatrixCSC{Float64, Int},
     signs::Vector{Float64},
     arc_sus::Vector{Float64},
     modifications::Tuple{Vararg{ArcModification}},
-    labeler::F,
+    labeler::F = _post_contingency_bus_labels,
 )::WoodburyFactors where {F}
     M = length(modifications)
     n_bus = size(Z, 1)
@@ -250,6 +244,27 @@ function _woodbury_factors_from_Z(
     end
 
     return WoodburyFactors(Z, W_inv, arc_indices, delta_b_vec, is_island, labels)
+end
+
+# zm_Z = ν_mᵀ Z[:, eachindex(zm_Z)], ν_m = BA[:, m] / b_pre (BA's sign convention, not A's).
+function _monitored_Z!(
+    zm_Z::AbstractVector{Float64},
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    m::Int,
+    b_pre::Float64,
+    Z::Matrix{Float64},
+)
+    ba_nzv = SparseArrays.nonzeros(BA)
+    ba_rv = SparseArrays.rowvals(BA)
+    fill!(zm_Z, 0.0)
+    @inbounds for nz_idx in SparseArrays.nzrange(BA, m)
+        row = ba_rv[nz_idx]
+        coeff = ba_nzv[nz_idx] / b_pre
+        for j in eachindex(zm_Z)
+            zm_Z[j] += coeff * Z[row, j]
+        end
+    end
+    return zm_Z
 end
 
 # Susceptance of the monitored arc once the modifications are applied.
@@ -314,18 +329,7 @@ function _woodbury_correction!(
     zm_Z = view(zm_Z_buf, 1:M)
     correction_coeff = view(coeff_buf, 1:M)
 
-    # ν_m⊤ · Z  (1 × M vector)
-    # Use BA[:,m]/b instead of A[m,:] for consistent sign convention.
-    ba_nzv = SparseArrays.nonzeros(BA)
-    ba_rv = SparseArrays.rowvals(BA)
-    fill!(zm_Z, 0.0)
-    @inbounds for nz_idx in nzrange(BA, monitored_idx)
-        row = ba_rv[nz_idx]
-        coeff = ba_nzv[nz_idx] / b_mon_pre
-        for j in 1:M
-            zm_Z[j] += coeff * wf.Z[row, j]
-        end
-    end
+    _monitored_Z!(zm_Z, BA, monitored_idx, b_mon_pre, wf.Z)
 
     # Woodbury correction: z_m -= Z · (W⁻¹ · zm_Z), then scale by b_mon_post.
     LinearAlgebra.mul!(correction_coeff, wf.W_inv, zm_Z)

@@ -50,8 +50,6 @@ function _first_seen(labels::Vector{Int})
     d = Dict{Int, Int}()
     return [get!(d, l, length(d) + 1) for l in labels]
 end
-_outage(e::Int, delta_b::Float64) =
-    PNM.ArcModification(e, delta_b)
 
 @testset "BridgeLabels partitions like the union-find" begin
     rng = Random.Xoshiro(29)
@@ -66,9 +64,10 @@ _outage(e::Int, delta_b::Float64) =
         BA = SparseArrays.sparse(rows, cols, vcat(ones(m), -ones(m)), n, m)
         sus = ones(m)
         bl = PNM.BridgeLabels(BA)
-        cases = Tuple{Vararg{PNM.ArcModification}}[(_outage(e, -1.0),) for e in 1:m]
-        push!(cases, (_outage(1, -0.5),))
-        m > 1 && push!(cases, (_outage(1, -1.0), _outage(m, -1.0)))
+        cases =
+            Tuple{Vararg{PNM.ArcModification}}[(PNM.ArcModification(e, -1.0),) for e in 1:m]
+        push!(cases, (PNM.ArcModification(1, -0.5),))
+        m > 1 && push!(cases, (PNM.ArcModification(1, -1.0), PNM.ArcModification(m, -1.0)))
         for mods in cases
             uf = PNM._post_contingency_bus_labels(BA, sus, mods, n)
             @test _first_seen(bl(BA, sus, mods, n)) == _first_seen(uf)

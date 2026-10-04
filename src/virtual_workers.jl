@@ -140,9 +140,7 @@ end
 # core's `solver_lock`, which guards every VirtualMODF dictionary.
 function _modf_row_cache!(vmodf::VirtualMODF, contingency)
     mod = _resolve_modification(vmodf, contingency)
-    rc = get!(get_row_caches(vmodf), mod) do
-        RowCache(get_max_cache_size_bytes(vmodf), Set{Int}(), size(vmodf)[2] * sizeof(Float64))
-    end
+    rc = get!(() -> _new_modf_row_cache(vmodf), get_row_caches(vmodf), mod)
     return mod, rc
 end
 
@@ -275,9 +273,8 @@ function solve_bus_angles!(
         rhs[i, t] = p[b, t]
     end
     sol = @lock core.solver_lock _solve_factorization(core.K, rhs)
-    fill!(θ, 0.0)
-    for t in axes(p, 2), (i, b) in enumerate(valid_ix)
-        θ[b, t] = sol[i, t]
+    for t in axes(p, 2)
+        _gather_to_buses!(view(θ, :, t), valid_ix, view(sol, :, t))
     end
     return θ
 end
@@ -402,9 +399,7 @@ function arc_flows!(
     end
     c = view(scratch.c, 1:M, 1:T)
     LinearAlgebra.mul!(c, transpose(wf.W_inv), u)
-    nzv = SparseArrays.nonzeros(BA)
-    rv = SparseArrays.rowvals(BA)
-    zm_Z = scratch.zm_Z
+    zm_Z = view(scratch.zm_Z, 1:M)
     for (q, m) in enumerate(arcs)
         b_post = _post_modification_susceptance(arc_sus, m, wf)
         if abs(b_post) < eps()
@@ -414,13 +409,7 @@ function arc_flows!(
             continue
         end
         b_pre = arc_sus[m]
-        fill!(zm_Z, 0.0)
-        @inbounds for k in SparseArrays.nzrange(BA, m)
-            coeff = nzv[k] / b_pre
-            for j in 1:M
-                zm_Z[j] += coeff * wf.Z[rv[k], j]
-            end
-        end
+        _monitored_Z!(zm_Z, BA, m, b_pre, wf.Z)
         for t in 1:T
             acc = _ba_dot(BA, m, θ, t) / b_pre
             for j in 1:M
@@ -435,22 +424,16 @@ end
 """
     compute_woodbury_factors(mat, mod[, labeler]) -> WoodburyFactors
 
-Uncached Woodbury factors of `mod`, solved on `mat`'s core (`mat` a `VirtualMODF` or
-`VirtualFactorCore`, e.g. a [`worker_core`](@ref); the `VirtualPTDF` form also takes
-`labeler`). `labeler(BA, arc_sus, modifications, n_bus)` gives the island labels when `mod`
-islands; a `BridgeLabels` gives the same partition as the default in O(n_bus) for a single
-bridge, with different representatives.
+Uncached Woodbury factors of `mod`, solved on `mat`'s core (`mat` a `VirtualPTDF`,
+`VirtualMODF` or `VirtualFactorCore`, e.g. a [`worker_core`](@ref)).
+`labeler(BA, arc_sus, modifications, n_bus)` gives the island labels when `mod` islands; a
+`BridgeLabels` gives the same partition as the default in O(n_bus) for a single bridge, with
+different representatives.
 """
-compute_woodbury_factors(
-    mat,
-    mod::NetworkModification,
-) =
-    compute_woodbury_factors(mat, mod, _post_contingency_bus_labels)
-
 function compute_woodbury_factors(
     mat,
     mod::NetworkModification,
-    labeler::F,
+    labeler::F = _post_contingency_bus_labels,
 ) where {F}
     return _compute_woodbury_factors(get_core(mat), mod.arc_modifications, labeler)
 end
