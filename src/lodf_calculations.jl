@@ -59,12 +59,7 @@ stores_transpose(::LODF) = true
 function _build_lodf_demand(ptdf_denominator::AbstractMatrix{Float64}, linecount::Int)
     m_V = Vector{Float64}(undef, linecount)
     @inbounds for i in 1:linecount
-        d = 1.0 - ptdf_denominator[i, i]
-        if abs(d) < LODF_ENTRY_TOLERANCE
-            m_V[i] = 1.0
-        else
-            m_V[i] = d
-        end
+        m_V[i] = 1.0 - _clamped_ptdf_a_diag(ptdf_denominator[i, i])
     end
     return m_V
 end

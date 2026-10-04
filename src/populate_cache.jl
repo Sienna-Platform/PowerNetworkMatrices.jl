@@ -197,7 +197,7 @@ _resolve_monitored_index(vmodf::VirtualMODF, m::Tuple{Int, Int}) =
     _monitored_arc_index(vmodf, m)
 
 """
-    _woodbury_factors_from_base(base_full, BA, A, arc_sus, modifications, n_bus) -> WoodburyFactors
+    _woodbury_factors_from_base(base_full, BA, signs, arc_sus, modifications, n_bus) -> WoodburyFactors
 
 Reuse each modified arc's pre-contingency solve instead of resolving it: `base_full[arc]` is
 that solve, already scattered to full-bus space, so this assembles Woodbury factors from a
@@ -207,7 +207,7 @@ index to `B⁻¹ · BA[:, arc]`; the shared kernel (`_woodbury_factors_from_Z`) 
 function _woodbury_factors_from_base(
     base_full::Dict{Int, Vector{Float64}},
     BA::SparseArrays.SparseMatrixCSC{Float64, Int},
-    A::SparseArrays.SparseMatrixCSC{Int8, Int},
+    signs::Vector{Float64},
     arc_sus::Vector{Float64},
     modifications::Tuple{Vararg{ArcModification}},
     n_bus::Int,
@@ -221,7 +221,7 @@ function _woodbury_factors_from_base(
             Z[i, j] = col[i] / b_e
         end
     end
-    return _woodbury_factors_from_Z(Z, BA, A, arc_sus, modifications)
+    return _woodbury_factors_from_Z(Z, BA, signs, arc_sus, modifications)
 end
 
 """
@@ -316,7 +316,7 @@ function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
                 _woodbury_factors_from_base(
                     base_full,
                     BA,
-                    core.A,
+                    core.arc_susceptance_signs,
                     arc_sus,
                     mod.arc_modifications,
                     n_bus,

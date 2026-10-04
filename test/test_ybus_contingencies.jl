@@ -837,6 +837,13 @@ end
     @test isapprox(apply_ybus_modification(work, mod), ref.data; atol = 1e-4)
 end
 
+function _add_arc_line!(sys, name, from, to, r, x)
+    arc = Arc(; from = PSY.get_bus(sys, from), to = PSY.get_bus(sys, to))
+    add_component!(sys, arc)
+    _add_test_line!(sys, name, arc, r, x)
+    return
+end
+
 @testset "restore_ybus_modification! rejects a base that does not match" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     work = Ybus(sys; make_arc_admittance_matrices = true)
@@ -849,9 +856,7 @@ end
     # Same buses and stored-entry count, but the base moves the outaged line from (1, 2) to
     # (2, 4), so it stores no entry where the modification wrote.
     set_available!(line, false)
-    moved = Arc(; from = PSY.get_bus(sys, 2), to = PSY.get_bus(sys, 4))
-    add_component!(sys, moved)
-    _add_test_line!(sys, "moved", moved, 0.01, 0.1)
+    _add_arc_line!(sys, "moved", 2, 4, 0.01, 0.1)
     base_moved = Ybus(sys; make_arc_admittance_matrices = true)
     @test SparseArrays.nnz(base_moved.data) == SparseArrays.nnz(work.data)
     @test_throws ErrorException restore_ybus_modification!(work, base_moved, mod)
@@ -919,9 +924,7 @@ end
 
     # A negative-reactance arc on its own.
     sys2 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
-    cap_arc = Arc(; from = PSY.get_bus(sys2, 2), to = PSY.get_bus(sys2, 4))
-    add_component!(sys2, cap_arc)
-    _add_test_line!(sys2, "cap", cap_arc, 0.0, -0.5)
+    _add_arc_line!(sys2, "cap", 2, 4, 0.0, -0.5)
     _test_dc_matrices_match_rebuild(sys2, get_component(Line, sys2, "cap"))
 end
 
@@ -942,13 +945,6 @@ end
     )
     @test iszero(work.arc_susceptance_scale[arc_ix])
     @test_throws r"island part of the network" BA_Matrix(work)
-end
-
-function _add_arc_line!(sys, name, from, to, r, x)
-    arc = Arc(; from = PSY.get_bus(sys, from), to = PSY.get_bus(sys, to))
-    add_component!(sys, arc)
-    _add_test_line!(sys, name, arc, r, x)
-    return
 end
 
 _bus_entry(ybus::Ybus, i::Int, j::Int) =

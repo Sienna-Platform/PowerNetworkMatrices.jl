@@ -27,6 +27,8 @@ single-scratch model.
 - `BA::SparseMatrixCSC{Float64, Int}`: BA matrix.
 - `A::SparseMatrixCSC{Int8, Int}`: incidence matrix data.
 - `arc_susceptances::Vector{Float64}`: effective susceptance per arc.
+- `arc_susceptance_signs::Vector{Float64}`: sign of each arc's DC susceptance
+  (`_arc_susceptance_sign`).
 - `axes::Ax`: `(arc_axis, bus_axis)`.
 - `lookup::L`: `(arc_lookup, bus_lookup)`.
 - `valid_ix::Vector{Int}`: non-reference bus indices.
@@ -57,6 +59,7 @@ struct VirtualFactorCore{Ax, L <: NTuple{2, Dict}, K}
     BA::SparseArrays.SparseMatrixCSC{Float64, Int}
     A::SparseArrays.SparseMatrixCSC{Int8, Int}
     arc_susceptances::Vector{Float64}
+    arc_susceptance_signs::Vector{Float64}
     axes::Ax
     lookup::L
     valid_ix::Vector{Int}
@@ -207,12 +210,15 @@ function VirtualFactorCore(
     work_ba_col = [zeros(length(valid_ix))]
 
     arc_susceptances = _extract_arc_susceptances(BA.data)
+    arc_susceptance_signs =
+        Float64[_arc_susceptance_sign(BA.data, A.data, l) for l in 1:size(BA.data, 2)]
 
     return VirtualFactorCore(
         K,
         BA.data,
         A.data,
         arc_susceptances,
+        arc_susceptance_signs,
         axes,
         look_up,
         valid_ix,

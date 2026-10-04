@@ -118,17 +118,18 @@ function _arc_susceptance_sign(
 end
 
 """
-    _woodbury_factors_from_Z(Z, BA, A, arc_sus, modifications) -> WoodburyFactors
+    _woodbury_factors_from_Z(Z, BA, signs, arc_sus, modifications) -> WoodburyFactors
 
 Assemble the Woodbury factors from an already-resolved `Z`, whose column `j` is
 `B⁻¹ν_j` for the `j`-th modified arc in full-bus space. The callers differ only
 in how they obtain `Z`: one solve per arc in the kernel path, a lookup into the
-batched pre-contingency solves in `populate_cache`.
+batched pre-contingency solves in `populate_cache`. `signs[e]` is the sign of arc `e`'s DC
+susceptance (`VirtualFactorCore.arc_susceptance_signs`).
 """
 function _woodbury_factors_from_Z(
     Z::Matrix{Float64},
     BA::SparseArrays.SparseMatrixCSC{Float64, Int},
-    A::SparseArrays.SparseMatrixCSC{Int8, Int},
+    signs::Vector{Float64},
     arc_sus::Vector{Float64},
     modifications::Tuple{Vararg{ArcModification}},
 )::WoodburyFactors
@@ -164,9 +165,7 @@ function _woodbury_factors_from_Z(
     # W = diag(1/Δb) + K_mat. Z and K use ν = BA[:, e] / |b_e| = sign(b_e) · incidence, so the
     # rank-one term must carry the signed change sign(b_e) · Δ|b|: the magnitude-space Δb alone
     # adds a negative-reactance arc a second time instead of removing it.
-    signed_delta_b = [
-        _arc_susceptance_sign(BA, A, arc_indices[j]) * delta_b_vec[j] for j in 1:M
-    ]
+    signed_delta_b = [signs[arc_indices[j]] * delta_b_vec[j] for j in 1:M]
     W_mat = LinearAlgebra.diagm(1.0 ./ signed_delta_b) + K_mat
     W_inv, is_island = _invert_woodbury_W(W_mat, M)
 
@@ -286,7 +285,7 @@ function _compute_woodbury_factors(
             )
         end
         return _woodbury_factors_from_Z(
-            Z, core.BA, core.A, core.arc_susceptances, modifications,
+            Z, core.BA, core.arc_susceptance_signs, core.arc_susceptances, modifications,
         )
     end
 end

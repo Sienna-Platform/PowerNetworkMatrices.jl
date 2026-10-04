@@ -721,11 +721,13 @@ function _arc_susceptance_scales(
     nr = get_network_reduction_data(ybus)
     scales = Vector{Float64}(undef, length(mod.arc_modifications))
     for (k, m) in enumerate(mod.arc_modifications)
-        scale = ybus.arc_susceptance_scale[m.arc_index]
-        b = _ba_arc_susceptance(nr, arc_ax[m.arc_index])
         if iszero(live[k])
             scales[k] = 0.0
-        elseif iszero(b)
+            continue
+        end
+        scale = ybus.arc_susceptance_scale[m.arc_index]
+        b = _ba_arc_susceptance(nr, arc_ax[m.arc_index])
+        if iszero(b)
             # Exact zero is `_ba_arc_susceptance`'s "no DC coupling"; BA scales any other b.
             scales[k] = scale
         else

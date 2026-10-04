@@ -100,7 +100,7 @@ end
 function _outaged_member_count(nr::NetworkReductionData, arc::Tuple{Int, Int})
     parallel = get_parallel_branch_map(nr)
     if haskey(parallel, arc)
-        return length(parallel[arc])
+        return length(parallel[arc])::Int
     end
     return count(
         m -> haskey(m, arc),

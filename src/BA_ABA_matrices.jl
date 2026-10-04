@@ -107,7 +107,7 @@ function _susceptance_component_count(
             get_bus_index(arc[2], bus_lookup, nr),
         )
     end
-    return length(unique(get_representative(uf, ix) for ix in eachindex(uf)))
+    return count(ix -> get_representative(uf, ix) == ix, eachindex(uf))
 end
 
 # An in-place modification can remove every arc joining part of the network to its reference
@@ -154,7 +154,7 @@ function BA_Matrix(ybus::Ybus)
     bus_ax = get_bus_axis(ybus)
     bus_lookup = get_bus_lookup(ybus)
     arc_ax = get_arc_axis(nr)
-    b_base = [_ba_arc_susceptance(nr, arc) for arc in arc_ax]
+    b_base = Float64[_ba_arc_susceptance(nr, arc) for arc in arc_ax]
     _check_modified_connectivity(ybus, arc_ax, nr, b_base)
     n_isolated_buses = length(get_isolated_buses(ybus))
     n_entries = length(arc_ax) * 2 + n_isolated_buses

@@ -398,13 +398,12 @@ function get_partial_lodf_row(
         # is what every stored reference row was produced with.
         # `H_col` carries the signed b_e, so the ratio b_ℓ / b_e must be signed too; the
         # magnitudes flip the row wherever ℓ and e differ in sign (series compensation).
-        signed_sus = [
-            _arc_susceptance_sign(core.BA, core.A, l) * core.arc_susceptances[l] for
-            l in 1:n_arcs
-        ]
+        b_e_signed = core.arc_susceptance_signs[arc_idx] * b_arc
         partial_lodf = H_col
         partial_lodf .=
-            (alpha / (denom * signed_sus[arc_idx])) .* (signed_sus .* partial_lodf)
+            (alpha / (denom * b_e_signed)) .* (
+                (core.arc_susceptance_signs .* core.arc_susceptances) .* partial_lodf
+            )
 
         # Full-outage self-element convention: -1.0.
         if abs(delta_b + b_arc) < eps() * b_arc
