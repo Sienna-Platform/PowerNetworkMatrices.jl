@@ -56,18 +56,17 @@ mutable struct KLULinSolveCache{
     # is stale, so only `solve!` may run.
     lean_plan::LeanLUPlan
     lean_vals::LeanLUValues
-    # Column order of `lean_plan` while `swap_lean_columns!` has exchanged some of its columns.
-    lean_q::Vector{Int32}
     has_lean_plan::Bool
     lean_active::Bool
     # While set, `numeric_refactor!` skips the lean path (see `pause_lean!`).
     lean_paused::Bool
+    # Set by `defer_symbolic!`: `symbolic` is C_NULL until a KLU factorization needs it.
+    analyze_pending::Bool
+    # Counters: `lean_counts` and `cold_retries` read them.
     lean_attempts::Int
     lean_rejects::Int
     # Accepted lean factorizations whose solve the caller rejected (`repivot!`).
     lean_solve_failures::Int
-    # Set by `defer_symbolic!`: `symbolic` is C_NULL until a KLU factorization needs it.
-    analyze_pending::Bool
     # Deferred analyses that a KLU factorization then needed.
     late_analyses::Int
     # Solves the caller reran from scratch after failing on a reused pivot order.
@@ -490,8 +489,7 @@ function KLULinSolveCache(
         Matrix{Tv}(undef, 0, 0),
         Ti[],
         Threads.Atomic{UInt}(0),
-        _NO_LEAN_PLAN, _NO_LEAN_VALUES, Int32[], false, false, false, 0, 0, 0, false, 0,
-        0,
+        _NO_LEAN_PLAN, _NO_LEAN_VALUES, false, false, false, false, 0, 0, 0, 0, 0,
     )
     finalizer(_finalize_klu_handles!, cache)
     return cache
@@ -973,8 +971,11 @@ Route `numeric_refactor!` and `solve!` through the lean static-pivot LU on `plan
 must have been built (`build_lean_plan`) on a matrix with the cache's pattern. The plan is
 shared by reference; the cache gets its own LU values. A refactor whose pivot ratio falls
 below `LEAN_REJECT_RATIO * plan.rcond0`, or hits a zero or non-finite pivot, is redone
-with a fresh `klu_factor` in this cache and counted in `lean_counts`. While a lean
-factorization is current, `tsolve!`, `solve_sparse!` and `condest!` error.
+with a fresh `klu_factor` in this cache and counted in `lean_counts`.
+
+A lean factorization supports only `solve!`. `tsolve!`, `solve_sparse!` and `condest!` need a
+KLU numeric factorization and raise an error on a lean one. To use them, call
+`pause_lean!(cache, true)` and then `numeric_refactor!`, or call `pivoted_factor!`.
 """
 function set_lean_plan!(cache::KLULinSolveCache{Float64}, plan::LeanLUPlan)
     taken = _acquire!(cache)
@@ -1036,9 +1037,11 @@ end
 """
     lean_counts(cache) -> (; attempts, rejects, solve_failures, late_analyses)
 
-Lean refactors tried on `cache`; how many failed the pivot-ratio test and fell back to
-`klu_factor`; how many passed it but were replaced by `repivot!` after their solve failed; and
-how many `defer_symbolic!` analyses a KLU factorization then needed.
+Return four counters for `cache`. `attempts` counts the lean refactors that the cache tried.
+`rejects` counts the lean refactors that failed the pivot-ratio test, so the cache used
+`klu_factor` instead. `solve_failures` counts the lean factorizations that passed the test but
+failed their solve, so `repivot!` replaced them. `late_analyses` counts the KLU factorizations
+that had to run the symbolic analysis that `defer_symbolic!` postponed.
 """
 function lean_counts(cache::KLULinSolveCache)
     return (;
@@ -1056,8 +1059,12 @@ Pivot on `plan`, the lean plan set on `cache`, with the two columns of each `(a,
 exchanged: the lean step that factored column `a` of the plan's matrix factors column `b`, and
 vice versa, each on its planned pivot row. Solutions come back in the original column order,
 and the pivot-ratio test still judges every refactor. A pair whose columns differ in pattern is
-left in place (a step's L/U pattern covers only its own column). An empty `pairs` restores
-`plan`'s own order.
+left in place (a step's L/U pattern covers only its own column). If the planned pivots then
+fail the pivot-ratio test, the refactor uses `klu_factor`. An empty `pairs` restores `plan`'s
+own order.
+
+PowerFlows uses it when a bus changes between PV and REF: the swap exchanges the bus's two
+state columns, so the planned pivots stay non-zero.
 """
 function swap_lean_columns!(cache::KLULinSolveCache{Float64}, plan::LeanLUPlan, pairs)
     taken = _acquire!(cache)
@@ -1073,8 +1080,7 @@ function swap_lean_columns!(cache::KLULinSolveCache{Float64}, plan::LeanLUPlan, 
         end
         cache.lean_plan = plan
         isempty(pairs) && return cache
-        q = resize!(cache.lean_q, length(plan.q))
-        copyto!(q, plan.q)
+        q = copy(plan.q)
         for (a, b) in pairs
             _same_column_pattern(plan, a, b) || continue
             ia = findfirst(==(a), q)
