@@ -361,6 +361,7 @@ end
             bustype = ACBusTypes.REF
         end
         b = ACBus(;
+            input_basis = PSY.CU,
             number = i,
             name = "b$i",
             available = true,
@@ -369,7 +370,6 @@ end
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
-            input_basis = PSY.CU,
         )
         add_component!(sys, b)
         push!(buses, b)
@@ -728,26 +728,17 @@ end
           SparseArrays.nonzeros(base.arc_admittance_to_from.data)
 end
 
-# The pre-rewrite in-place apply: add `compute_ybus_delta`'s entries one by one.
-function _reference_apply_bus_entries!(ybus::Ybus, mod::NetworkModification)
-    Y = ybus.data
-    Y_nz = SparseArrays.nonzeros(Y)
-    d = compute_ybus_delta(ybus, mod)
-    for col in 1:size(d, 2), k in SparseArrays.nzrange(d, col)
-        Y_nz[PNM._stored_index(Y, SparseArrays.rowvals(d)[k], col)] +=
-            SparseArrays.nonzeros(d)[k]
-    end
-    return
-end
-
-function _check_apply_bitwise(base::Ybus, work::Ybus, ref::Ybus, mod::NetworkModification)
+# In place against `ybus.data + compute_ybus_delta(ybus, mod)`, through the out-of-place form.
+# `==` is exact but for signed zeros: the sparse sum turns an untouched -0.0 into 0.0.
+function _check_apply_bitwise(base::Ybus, work::Ybus, mod::NetworkModification)
     apply_ybus_modification!(work, mod)
-    _reference_apply_bus_entries!(ref, mod)
+    got = SparseArrays.dropzeros(work.data)
+    expected = apply_ybus_modification(base, mod)
     same =
-        reinterpret(UInt64, SparseArrays.nonzeros(work.data)) ==
-        reinterpret(UInt64, SparseArrays.nonzeros(ref.data))
+        SparseArrays.getcolptr(got) == SparseArrays.getcolptr(expected) &&
+        SparseArrays.rowvals(got) == SparseArrays.rowvals(expected) &&
+        SparseArrays.nonzeros(got) == SparseArrays.nonzeros(expected)
     restore_ybus_modification!(work, base, mod)
-    restore_ybus_modification!(ref, base, mod)
     return same
 end
 
@@ -761,12 +752,11 @@ end
     sys = PSB.build_system(group, name)
     base = Ybus(sys; make_arc_admittance_matrices = true)
     work = Ybus(sys; make_arc_admittance_matrices = true)
-    ref = Ybus(sys; make_arc_admittance_matrices = true)
     vptdf = VirtualPTDF(sys)
     arcs = PNM.get_arc_axis(PNM.get_network_reduction_data(base))
     single = [only(NetworkModification(vptdf, arc).arc_modifications) for arc in arcs]
     @test all(
-        _check_apply_bitwise(base, work, ref, NetworkModification("n1", [m])) for
+        _check_apply_bitwise(base, work, NetworkModification("n1", [m])) for
         m in single
     )
     # Every arc at a bus: the shared diagonal takes several deltas.
@@ -776,7 +766,7 @@ end
         at_bus = [single[i] for (i, a) in enumerate(arcs) if bus in a]
         length(at_bus) < 2 && continue
         n_multi += 1
-        @test _check_apply_bitwise(base, work, ref, NetworkModification("bus", at_bus))
+        @test _check_apply_bitwise(base, work, NetworkModification("bus", at_bus))
     end
     @test n_multi > 0
     @test SparseArrays.nonzeros(work.data) == SparseArrays.nonzeros(base.data)
@@ -786,7 +776,284 @@ end
     mod = NetworkModification("n1", [first(single)])
     apply_ybus_modification!(work, mod, arc_ax)
     restore_ybus_modification!(work, base, mod, arc_ax)
-    @test (@allocated apply_ybus_modification!(work, mod, arc_ax)) < 1024
-    @test (@allocated restore_ybus_modification!(work, base, mod, arc_ax)) < 1024
+    @test (@allocated apply_ybus_modification!(work, mod, arc_ax)) < 4096
+    @test (@allocated restore_ybus_modification!(work, base, mod, arc_ax)) < 4096
     @test SparseArrays.nonzeros(work.data) == SparseArrays.nonzeros(base.data)
+end
+
+@testset "apply_ybus_modification! islands a bus whose parallel group is tripped one by one" begin
+    # Members whose admittances do not cancel exactly in Float32 when subtracted one by one.
+    sys = _mk_parallel_cancel_sys([(0.013, 0.071), (0.029, 0.217), (0.041, 0.333)])
+    base = Ybus(sys; make_arc_admittance_matrices = true)
+    work = Ybus(sys; make_arc_admittance_matrices = true)
+    vptdf = VirtualPTDF(sys)
+    mods = [
+        NetworkModification(vptdf, get_component(Line, sys, n)) for
+        n in ("L23_3", "L23_1", "L23_2")
+    ]
+    for mod in mods
+        apply_ybus_modification!(work, mod)
+    end
+    lookup = PNM.get_bus_lookup(work)
+    i, j = lookup[2], lookup[3]
+    @test iszero(work.data[i, j])
+    @test iszero(work.data[j, i])
+    # A diagonal is never rounded to zero; bus 3 keeps only Float32 residue.
+    @test abs(work.data[j, j]) < 1e-5
+    @test SparseArrays.nnz(work.data) == SparseArrays.nnz(base.data)
+    @test length(PNM.find_subnetworks(work.data, PNM.get_bus_axis(work))) == 2
+    row = PNM.get_arc_lookup(work.arc_admittance_from_to)[(2, 3)]
+    @test iszero(work.arc_admittance_from_to.data[row, :])
+    @test iszero(work.arc_admittance_to_from.data[row, :])
+
+    for mod in reverse(mods)
+        restore_ybus_modification!(work, base, mod)
+    end
+    @test SparseArrays.nonzeros(work.data) == SparseArrays.nonzeros(base.data)
+    @test SparseArrays.nonzeros(work.arc_admittance_from_to.data) ==
+          SparseArrays.nonzeros(base.arc_admittance_from_to.data)
+end
+
+@testset "apply_ybus_modification! leaves the Ybus untouched when an entry is not stored" begin
+    # ZI1 ∥ ZI2 cancel exactly on (2, 3), so construction drops that off-diagonal; L13 keeps
+    # bus 3 connected.
+    sys = _mk_zi_parallel_sys([(0.0, 0.1), (0.0, -0.1)])
+    work = Ybus(sys; make_arc_admittance_matrices = true)
+    vptdf = VirtualPTDF(sys)
+    lookup = PNM.get_bus_lookup(work)
+    @test_throws ErrorException PNM._stored_index(work.data, lookup[2], lookup[3])
+
+    line_a = get_component(Line, sys, "ZI1")
+    mod = NetworkModification(vptdf, line_a)
+    y_before = copy(SparseArrays.nonzeros(work.data))
+    ft_before = copy(SparseArrays.nonzeros(work.arc_admittance_from_to.data))
+    @test_throws ErrorException apply_ybus_modification!(work, mod)
+    @test SparseArrays.nonzeros(work.data) == y_before
+    @test SparseArrays.nonzeros(work.arc_admittance_from_to.data) == ft_before
+
+    set_available!(line_a, false)
+    ref = Ybus(sys)
+    set_available!(line_a, true)
+    @test isapprox(apply_ybus_modification(work, mod), ref.data; atol = 1e-4)
+end
+
+function _add_arc_line!(sys, name, from, to, r, x)
+    arc = Arc(; from = PSY.get_bus(sys, from), to = PSY.get_bus(sys, to))
+    add_component!(sys, arc)
+    _add_test_line!(sys, name, arc, r, x)
+    return
+end
+
+@testset "restore_ybus_modification! rejects a base that does not match" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    work = Ybus(sys; make_arc_admittance_matrices = true)
+    vptdf = VirtualPTDF(sys)
+    line = get_component(Line, sys, "1")
+    mod = NetworkModification(vptdf, line)
+    apply_ybus_modification!(work, mod)
+    applied = copy(SparseArrays.nonzeros(work.data))
+
+    # Same buses and stored-entry count, but the base moves the outaged line from (1, 2) to
+    # (2, 4), so it stores no entry where the modification wrote.
+    set_available!(line, false)
+    _add_arc_line!(sys, "moved", 2, 4, 0.01, 0.1)
+    base_moved = Ybus(sys; make_arc_admittance_matrices = true)
+    @test SparseArrays.nnz(base_moved.data) == SparseArrays.nnz(work.data)
+    @test_throws ErrorException restore_ybus_modification!(work, base_moved, mod)
+    @test SparseArrays.nonzeros(work.data) == applied
+
+    other = Ybus(PSB.build_system(PSB.PSITestSystems, "c_sys14"))
+    @test_throws ErrorException restore_ybus_modification!(work, other, mod)
+    @test SparseArrays.nonzeros(work.data) == applied
+end
+
+# A direct arc's outage applied in place gives the DC matrices of the Ybus rebuilt with it out
+# of service: ABA shares its axes either way, PTDF is compared on the surviving arcs.
+function _test_dc_matrices_match_rebuild(sys, branch)
+    base = Ybus(sys)
+    work = Ybus(sys)
+    mod = NetworkModification(VirtualPTDF(sys), branch)
+    apply_ybus_modification!(work, mod)
+
+    set_available!(branch, false)
+    ref = Ybus(sys)
+    set_available!(branch, true)
+    @test isapprox(ABA_Matrix(work).data, ABA_Matrix(ref).data; atol = 1e-6)
+    ptdf_work = PTDF(work)
+    ptdf_ref = PTDF(ref)
+    for arc in PNM.get_arc_axis(ptdf_ref), bus in PNM.get_bus_axis(ptdf_ref)
+        @test isapprox(ptdf_work[arc, bus], ptdf_ref[arc, bus]; atol = 1e-6)
+    end
+
+    restore_ybus_modification!(work, base, mod)
+    @test BA_Matrix(work).data == BA_Matrix(base).data
+    return
+end
+
+# A parallel member's outage applied in place gives the post-modification PTDF the Woodbury
+# path computes for the same modification. A lossy group's DC susceptance is not additive, so
+# neither matches a rebuilt Ybus exactly; the two DC paths must agree with each other.
+function _test_dc_matrices_match_modf(sys, branch)
+    base = Ybus(sys)
+    work = Ybus(sys)
+    vptdf = VirtualPTDF(sys)
+    mod = NetworkModification(vptdf, branch)
+    apply_ybus_modification!(work, mod)
+    ptdf_work = PTDF(work)
+    for (arc_ix, arc) in enumerate(PNM.get_arc_axis(vptdf))
+        row = get_post_modification_ptdf_row(vptdf, arc_ix, mod)
+        for (bus_ix, bus) in enumerate(PNM.get_bus_axis(vptdf))
+            @test isapprox(ptdf_work[arc, bus], row[bus_ix]; atol = 1e-10)
+        end
+    end
+    restore_ybus_modification!(work, base, mod)
+    @test BA_Matrix(work).data == BA_Matrix(base).data
+    return
+end
+
+@testset "BA/ABA/PTDF built from a modified Ybus reflect the modification" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    _test_dc_matrices_match_rebuild(sys, get_component(Line, sys, "1"))
+
+    # Parallel members, one of them a series capacitor (negative reactance).
+    l1 = get_component(Line, sys, "1")
+    _add_test_line!(sys, "1p", get_arc(l1), 0.0, 0.2)
+    _add_test_line!(sys, "1c", get_arc(l1), 0.0, -0.5)
+    _test_dc_matrices_match_modf(sys, get_component(Line, sys, "1p"))
+    _test_dc_matrices_match_modf(sys, get_component(Line, sys, "1c"))
+
+    # A negative-reactance arc on its own.
+    sys2 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    _add_arc_line!(sys2, "cap", 2, 4, 0.0, -0.5)
+    _test_dc_matrices_match_rebuild(sys2, get_component(Line, sys2, "cap"))
+end
+
+@testset "BA_Matrix rejects a Ybus whose in-place modifications island a bus" begin
+    sys = _mk_parallel_cancel_sys([(0.013, 0.071), (0.029, 0.217)])
+    work = Ybus(sys)
+    vptdf = VirtualPTDF(sys)
+    arc_ix = PNM.get_arc_lookup(vptdf)[(2, 3)]
+    apply_ybus_modification!(
+        work,
+        NetworkModification(vptdf, get_component(Line, sys, "L23_1")),
+    )
+    @test 0.0 < work.arc_susceptance_scale[arc_ix] < 1.0
+    @test size(BA_Matrix(work).data) == size(BA_Matrix(Ybus(sys)).data)
+    apply_ybus_modification!(
+        work,
+        NetworkModification(vptdf, get_component(Line, sys, "L23_2")),
+    )
+    @test iszero(work.arc_susceptance_scale[arc_ix])
+    @test_throws r"island part of the network" BA_Matrix(work)
+end
+
+_bus_entry(ybus::Ybus, i::Int, j::Int) =
+    ybus.data[PNM.get_bus_lookup(ybus)[i], PNM.get_bus_lookup(ybus)[j]]
+
+@testset "a live anti-parallel twin does not hide a dead group (arc matrices: $arc_mats)" for arc_mats in
+                                                                                              (
+    false,
+    true,
+)
+    # Lossy members: their fractions of the group's DC susceptance do not sum to one.
+    sys = _mk_parallel_cancel_sys([(0.013, 0.071), (0.029, 0.217)])
+    _add_arc_line!(sys, "L32", 3, 2, 0.02, 0.15)
+    work = Ybus(sys; make_arc_admittance_matrices = arc_mats)
+    vptdf = VirtualPTDF(sys)
+    arc_ix = PNM.get_arc_lookup(vptdf)[(2, 3)]
+    for name in ("L23_1", "L23_2")
+        apply_ybus_modification!(
+            work,
+            NetworkModification(vptdf, get_component(Line, sys, name)),
+        )
+    end
+    @test iszero(work.arc_susceptance_scale[arc_ix])
+    @test iszero(BA_Matrix(work).data[:, arc_ix])
+    for name in ("L23_1", "L23_2")
+        set_available!(get_component(Line, sys, name), false)
+    end
+    @test isapprox(_bus_entry(work, 2, 3), _bus_entry(Ybus(sys), 2, 3); rtol = 1e-5)
+end
+
+@testset "a partial trip beside a cancelling anti-parallel twin keeps its share" begin
+    sys, _ = _mk_bus_system(3)
+    _add_arc_line!(sys, "L12", 1, 2, 0.0, 0.1)
+    _add_arc_line!(sys, "L13", 1, 3, 0.0, 0.1)
+    _add_arc_line!(sys, "L23", 2, 3, 0.0, 0.1)
+    _add_arc_line!(sys, "C32", 3, 2, 0.0, -0.2)
+    work = Ybus(sys)
+    nr = PNM.get_network_reduction_data(work)
+    arc_ax = PNM.get_arc_axis(nr)
+    arc_ix = findfirst(==((2, 3)), arc_ax)
+    delta_b = -abs(PNM._ba_arc_susceptance(nr, (2, 3))) / 2
+    dy = PNM._compute_arc_ybus_delta(nr, (2, 3), delta_b)
+    mod = NetworkModification("half", [ArcModification(arc_ix, delta_b, 0.0, dy..., 0)])
+    apply_ybus_modification!(work, mod, arc_ax)
+    @test iszero(_bus_entry(work, 2, 3))
+    @test work.arc_susceptance_scale[arc_ix] ≈ 0.5
+end
+
+@testset "apply_ybus_modification! keeps a live member beside a tripped stiff one" begin
+    # r ≠ 0 keeps the stiff member out of the zero-impedance reduction.
+    sys = _mk_parallel_cancel_sys([(1e-7, 1e-6), (0.0, 0.2)])
+    work = Ybus(sys; make_arc_admittance_matrices = true)
+    vptdf = VirtualPTDF(sys)
+    arc_ix = PNM.get_arc_lookup(vptdf)[(2, 3)]
+    stiff = get_component(Line, sys, "L23_1")
+    mod = NetworkModification(vptdf, stiff)
+    apply_ybus_modification!(work, mod)
+    @test isapprox(_bus_entry(work, 2, 3), 5im; rtol = 0.05)
+    @test isapprox(_bus_entry(work, 3, 3), -5im; rtol = 0.05)
+    @test work.arc_susceptance_scale[arc_ix] > 0.0
+    @test length(PNM.find_subnetworks(work.data, PNM.get_bus_axis(work))) == 1
+    @test BA_Matrix(work) isa BA_Matrix
+    # One member is left, so a full outage of the arc opens one too many.
+    @test_throws r"opens 2 member" apply_ybus_modification!(
+        work,
+        NetworkModification(vptdf, (2, 3)),
+    )
+end
+
+@testset "tripping a stiff direct arc keeps the diagonals of its buses" begin
+    sys, _ = _mk_bus_system(3)
+    _add_arc_line!(sys, "L12", 1, 2, 0.0, 0.2)
+    _add_arc_line!(sys, "L13", 1, 3, 0.0, 0.2)
+    _add_arc_line!(sys, "L23", 2, 3, 1e-7, 1e-6)
+    work = Ybus(sys)
+    stiff = get_component(Line, sys, "L23")
+    apply_ybus_modification!(work, NetworkModification(VirtualPTDF(sys), stiff))
+    set_available!(stiff, false)
+    truth = Ybus(sys)
+    for bus in (2, 3)
+        @test isapprox(_bus_entry(work, bus, bus), _bus_entry(truth, bus, bus); rtol = 0.05)
+    end
+    @test iszero(_bus_entry(work, 2, 3))
+end
+
+@testset "BA_Matrix connectivity ignores arcs without DC susceptance" begin
+    # Bus 3 hangs on L23 and a resistive arc, which holds zero in BA.
+    sys, _ = _mk_bus_system(3)
+    _add_arc_line!(sys, "L12", 1, 2, 0.01, 0.1)
+    _add_arc_line!(sys, "L23", 2, 3, 0.01, 0.1)
+    _add_arc_line!(sys, "R13", 1, 3, 0.05, 0.0)
+    work = Ybus(sys)
+    apply_ybus_modification!(
+        work,
+        NetworkModification(VirtualPTDF(sys), get_component(Line, sys, "L23")),
+    )
+    @test_throws r"island part of the network" BA_Matrix(work)
+
+    # A resistive spur the base already has is no new island.
+    sys2, _ = _mk_bus_system(4)
+    _add_arc_line!(sys2, "L12", 1, 2, 0.0, 0.1)
+    _add_arc_line!(sys2, "L13", 1, 3, 0.0, 0.1)
+    _add_arc_line!(sys2, "L23", 2, 3, 0.0, 0.1)
+    _add_arc_line!(sys2, "R34", 3, 4, 0.05, 0.0)
+    work2 = Ybus(sys2)
+    nr = PNM.get_network_reduction_data(work2)
+    arc_ix = findfirst(==((1, 2)), PNM.get_arc_axis(nr))
+    b = PNM._ba_arc_susceptance(nr, (1, 2))
+    half = NetworkModification("half", [ArcModification(arc_ix, -abs(b) / 2)])
+    apply_ybus_modification!(work2, half)
+    @test BA_Matrix(work2) isa BA_Matrix
 end

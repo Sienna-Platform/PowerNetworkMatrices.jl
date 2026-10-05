@@ -214,7 +214,8 @@ end
 
 """
 Check saved rows in cache and delete one not belonging to `persistent_cache_keys`.
-Errors when every row is pinned.
+Errors when no row can be evicted: every row is pinned, or the unpinned rows were written
+around the cache's LRU tracking.
 """
 function check_cache_size!(cache::RowCache; new_add::Bool = false)
     limit = cache.max_num_keys - Int(new_add)
@@ -223,10 +224,17 @@ function check_cache_size!(cache::RowCache; new_add::Bool = false)
         1
     purge_one!(cache)
     if length(cache.temp_cache) > limit
+        if all(k -> k in cache.persistent_cache_keys, keys(cache.temp_cache))
+            error(
+                "RowCache holds $(length(cache.temp_cache)) rows at capacity " *
+                "max_num_keys = $(cache.max_num_keys) and every one of them is pinned, so " *
+                "no row can be evicted. Increase `max_cache_size` or pin fewer rows.",
+            )
+        end
         error(
-            "RowCache holds $(length(cache.temp_cache)) rows at capacity " *
-            "max_num_keys = $(cache.max_num_keys) and every one of them is pinned, so " *
-            "no row can be evicted. Increase `max_cache_size` or pin fewer rows.",
+            "RowCache is at capacity max_num_keys = $(cache.max_num_keys) but its LRU order " *
+            "tracks none of the unpinned rows, so none can be evicted. A row was written " *
+            "into the cache's dictionary directly instead of through the RowCache API.",
         )
     end
     return

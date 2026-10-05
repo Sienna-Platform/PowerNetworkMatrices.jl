@@ -14,6 +14,9 @@ Full outage: `delta_b = -b_arc`. Single circuit on double-circuit: `delta_b = -b
 - `delta_y12::ComplexF32`: Change in Pi-model mutual admittance (from -> to).
 - `delta_y21::ComplexF32`: Change in Pi-model mutual admittance (to -> from).
 - `delta_y22::ComplexF32`: Change in Pi-model self-admittance at the to bus.
+- `opened::Int`: Number of the arc's members taken out of service: one per tripped branch,
+  every member for a full arc outage, zero for a partial change. A `Ybus` modified in place
+  treats an arc whose members are all out as removed.
 """
 struct ArcModification
     arc_index::Int
@@ -23,14 +26,15 @@ struct ArcModification
     delta_y12::ComplexF32
     delta_y21::ComplexF32
     delta_y22::ComplexF32
+    opened::Int
 end
 
 """
-Convenience constructor for an unshifted arc with no Pi-model deltas.
+Convenience constructor for an unshifted arc with no Pi-model deltas and no members opened.
 """
 function ArcModification(arc_index::Int, delta_b::Float64)
     z = zero(YBUS_ELTYPE)
-    return ArcModification(arc_index, delta_b, 0.0, z, z, z, z)
+    return ArcModification(arc_index, delta_b, 0.0, z, z, z, z, 0)
 end
 
 """
@@ -54,8 +58,10 @@ Merge ArcModifications that target the same arc index.
 """
 function _merge_arc_modifications(mods::Vector{ArcModification})
     length(mods) <= 1 && return mods
-    by_arc =
-        Dict{Int, Tuple{Float64, Float64, ComplexF64, ComplexF64, ComplexF64, ComplexF64}}()
+    by_arc = Dict{
+        Int,
+        Tuple{Float64, Float64, ComplexF64, ComplexF64, ComplexF64, ComplexF64, Int},
+    }()
     for m in mods
         prev = get(
             by_arc,
@@ -67,6 +73,7 @@ function _merge_arc_modifications(mods::Vector{ArcModification})
                 zero(ComplexF64),
                 zero(ComplexF64),
                 zero(ComplexF64),
+                0,
             ),
         )
         by_arc[m.arc_index] = (
@@ -76,6 +83,7 @@ function _merge_arc_modifications(mods::Vector{ArcModification})
             prev[4] + m.delta_y12,
             prev[5] + m.delta_y21,
             prev[6] + m.delta_y22,
+            prev[7] + m.opened,
         )
     end
     return [
@@ -87,6 +95,7 @@ function _merge_arc_modifications(mods::Vector{ArcModification})
             YBUS_ELTYPE(vals[4]),
             YBUS_ELTYPE(vals[5]),
             YBUS_ELTYPE(vals[6]),
+            vals[7],
         ) for (idx, vals) in sort!(collect(by_arc); by = first)
     ]
 end

@@ -1,10 +1,10 @@
+# this function extends the PowerModels.jl implementation to accept a System
 """
 Finds the set of bus numbers that belong to each connected component in the System
 """
-# this function extends the PowerModels.jl implementation to accept a System
 function find_connected_components(sys::PSY.System)
-    a = Adjacency(sys)
-    return find_connected_components(a.data, a.lookup[1])
+    a = AdjacencyMatrix(sys)
+    return find_connected_components(get_data(a), get_bus_lookup(a))
 end
 
 # Group bus numbers into connected components of the graph whose edges are the
@@ -57,10 +57,21 @@ function _union_find_components(M::SparseArrays.SparseMatrixCSC, bus_numbers::Ve
             iszero(vals[j]) || union_sets!(uf, ix, rows[j])
         end
     end
+    roots = Vector{Int}(undef, length(bus_numbers))
+    component_sizes = zeros(Int, length(bus_numbers))
+    for ix in eachindex(bus_numbers)
+        roots[ix] = get_representative(uf, ix)
+        component_sizes[roots[ix]] += 1
+    end
     subnetworks = Dict{Int, Set{Int}}()
     for (ix, bus_number) in enumerate(bus_numbers)
-        root_bus = bus_numbers[get_representative(uf, ix)]
-        push!(get!(() -> Set{Int}(), subnetworks, root_bus), bus_number)
+        root = roots[ix]
+        component = get!(
+            () -> sizehint!(Set{Int}(), component_sizes[root]),
+            subnetworks,
+            bus_numbers[root],
+        )
+        push!(component, bus_number)
     end
     return subnetworks
 end

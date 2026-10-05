@@ -77,11 +77,16 @@ function _klu_static_reference(A0, A1, b)
     common = Ref(KW.KluCommon())
     KW.klu_defaults!(common)
     common[].btf = Cint(0)
-    sym = KW.klu_analyze(Int32(n), pointer(ap), pointer(ai), common)
+    sym = GC.@preserve ap ai KW.klu_analyze(Int32(n), pointer(ap), pointer(ai), common)
     x0 = copy(nonzeros(A0))
-    num = KW.klu_factor(pointer(ap), pointer(ai), pointer(x0), sym, common)
+    num = GC.@preserve ap ai x0 KW.klu_factor(
+        pointer(ap), pointer(ai), pointer(x0), sym, common,
+    )
     x1 = copy(nonzeros(A1))
-    @assert KW.klu_refactor(pointer(ap), pointer(ai), pointer(x1), sym, num, common) == 1
+    refactored = GC.@preserve ap ai x1 KW.klu_refactor(
+        pointer(ap), pointer(ai), pointer(x1), sym, num, common,
+    )
+    @assert refactored == 1
     head = unsafe_load(Ptr{KW.KluNumericHead{Cint}}(num))
     lp = Vector{Cint}(undef, n + 1)
     li = Vector{Cint}(undef, head.lnz)
@@ -92,13 +97,15 @@ function _klu_static_reference(A0, A1, b)
     rs = Vector{Float64}(undef, n)
     p = Vector{Cint}(undef, n)
     q = Vector{Cint}(undef, n)
-    @assert KW.klu_extract(
+    extracted = GC.@preserve lp li lx up ui ux p q rs KW.klu_extract(
         num, sym, pointer(lp), pointer(li), pointer(lx), pointer(up), pointer(ui),
         pointer(ux), Ptr{Cint}(C_NULL), Ptr{Cint}(C_NULL), Ptr{Cdouble}(C_NULL),
         pointer(p), pointer(q), pointer(rs), Ptr{Cint}(C_NULL), common,
-    ) == 1
+    )
+    @assert extracted == 1
     x = copy(b)
-    @assert KW.klu_solve(sym, num, Cint(n), Cint(1), pointer(x), common) == 1
+    solved = GC.@preserve x KW.klu_solve(sym, num, Cint(n), Cint(1), pointer(x), common)
+    @assert solved == 1
     KW.klu_free_numeric!(Ref(num), common)
     KW.klu_free_symbolic!(Ref(sym), common)
     L = SparseMatrixCSC(n, n, Int.(lp) .+ 1, Int.(li) .+ 1, lx)

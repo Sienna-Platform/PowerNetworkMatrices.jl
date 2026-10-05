@@ -62,6 +62,15 @@ end
     @test length(cache) == cache.max_num_keys
 end
 
+@testset "RowCache: a row written around the LRU order is reported as such" begin
+    row_size = 8
+    cache = PNM.RowCache(3 * row_size, Set{Int}(), row_size)
+    PNM.set_persistent_row!(cache, 1, [1.0])
+    PNM.set_persistent_row!(cache, 2, [1.0])
+    cache.temp_cache[99] = [1.0]
+    @test_throws r"RowCache API" setindex!(cache, [1.0], 3)
+end
+
 @testset "RowCache: empty! clears the persistent keys" begin
     row_size = 8
     cache = PNM.RowCache(10 * row_size, Set([1, 2]), row_size)

@@ -117,6 +117,10 @@ struct with an empty cache.
 # Keyword Arguments
 - `linear_solver::String = _default_linear_solver()`: Linear solver for the
         ABA factorization.
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
+        Tolerance for row sparsification. A `Float64` applies a fixed absolute cutoff; the
+        default [`AutoTolerance`](@ref) applies a relative per-row cutoff so requested rows
+        stay sparse on large systems.
 - `network_reductions::Vector{NetworkReduction}`:
         Network reductions applied when computing the matrix.
 """
@@ -150,9 +154,10 @@ end
 
 # A bridge arc islands the network when it is outaged, so `1 - H[e,e]` collapses and the
 # LODF scaling is undefined. Both LODF paths clamp such a diagonal to zero — a denominator
-# of exactly 1 — instead of dividing by a vanishing number.
+# of exactly 1 — instead of dividing by a vanishing number. Only a vanishing denominator is
+# clamped: a negative-reactance arc can push H[e,e] above 1, a valid negative denominator.
 function _clamped_ptdf_a_diag(h_ee::Float64)
-    if h_ee > 1 - LODF_ENTRY_TOLERANCE
+    if abs(1 - h_ee) < LODF_ENTRY_TOLERANCE
         return 0.0
     end
     return h_ee
@@ -270,10 +275,12 @@ function _getindex(
     column::Union{Int, Colon},
 )
     stored = _cached_row(
-        get_cache(vlodf), get_cache_lock(vlodf), row, get_cutoff(vlodf),
-    ) do
-        _compute_lodf_row(vlodf, row)
-    end
+        () -> _compute_lodf_row(vlodf, row),
+        get_cache(vlodf),
+        get_cache_lock(vlodf),
+        row,
+        get_cutoff(vlodf),
+    )
     return stored[column]
 end
 
@@ -338,7 +345,8 @@ Uses the Sherman-Morrison (matrix inversion lemma) formula:
 
     partial_LODF[ℓ, e] = α · (b_ℓ / b_e) · H[ℓ,e] / (1 - α · H[e,e])
 
-where α = -Δb / b_e and H[e,e] is `PTDF_A_diag[e]` clamped by
+where α = -Δb / |b_e|, `b_ℓ` and `b_e` are signed DC susceptances, and H[e,e] is
+`PTDF_A_diag[e]` clamped by
 `_clamped_ptdf_a_diag`, the same clamp `inv_PTDF_A_diag` carries. When
 `delta_b = -b_e` (full outage) this reduces to the standard LODF column; the
 self-element is overridden to -1.0 for a full outage.
@@ -388,8 +396,14 @@ function get_partial_lodf_row(
         # Step 6: Partial LODF column scaled by b_ℓ/b_e, in place on the fresh `H_col`. The
         # operand order is load-bearing: float multiply does not reassociate, and `s * (a * h)`
         # is what every stored reference row was produced with.
+        # `H_col` carries the signed b_e, so the ratio b_ℓ / b_e must be signed too; the
+        # magnitudes flip the row wherever ℓ and e differ in sign (series compensation).
+        b_e_signed = core.arc_susceptance_signs[arc_idx] * b_arc
         partial_lodf = H_col
-        partial_lodf .= (alpha / (denom * b_arc)) .* (core.arc_susceptances .* partial_lodf)
+        partial_lodf .=
+            (alpha / (denom * b_e_signed)) .* (
+                (core.arc_susceptance_signs .* core.arc_susceptances) .* partial_lodf
+            )
 
         # Full-outage self-element convention: -1.0.
         if abs(delta_b + b_arc) < eps() * b_arc

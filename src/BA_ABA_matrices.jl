@@ -90,10 +90,57 @@ function _warn_impedance_correction_in_dc(nr::NetworkReductionData)
     return
 end
 
+# Components of the graph whose edges are the arcs holding a nonzero DC susceptance `b`.
+function _susceptance_component_count(
+    ybus::Ybus,
+    arc_ax::Vector{Tuple{Int, Int}},
+    nr::NetworkReductionData,
+    b::Vector{Float64},
+)
+    bus_lookup = get_bus_lookup(ybus)
+    uf = collect(1:length(bus_lookup))
+    for (ix_arc, arc) in enumerate(arc_ax)
+        iszero(b[ix_arc]) && continue
+        union_sets!(
+            uf,
+            get_bus_index(arc[1], bus_lookup, nr),
+            get_bus_index(arc[2], bus_lookup, nr),
+        )
+    end
+    return count(ix -> get_representative(uf, ix) == ix, eachindex(uf))
+end
+
+# An in-place modification can remove every arc joining part of the network to its reference
+# bus. BA keeps the unmodified subnetwork axes, so the ABA built from it would be singular.
+# Connectivity is read off susceptances, not arcs: a resistive arc (b = 0) joins nothing in BA.
+# The baseline is counted the same way, because the admittance-graph subnetworks miss a
+# resistive bridge the unmodified network may already have.
+function _check_modified_connectivity(
+    ybus::Ybus,
+    arc_ax::Vector{Tuple{Int, Int}},
+    nr::NetworkReductionData,
+    b_base::Vector{Float64},
+)
+    scale = ybus.arc_susceptance_scale
+    all(isone, scale) && return
+    n_modified = _susceptance_component_count(ybus, arc_ax, nr, b_base .* scale)
+    if n_modified > _susceptance_component_count(ybus, arc_ax, nr, b_base)
+        error(
+            "The in-place modifications applied to this Ybus island part of the network, " *
+            "so a BA/ABA built from it would be singular. Use `VirtualMODF` for islanding " *
+            "contingencies, or rebuild the Ybus.",
+        )
+    end
+    return
+end
+
 """
     BA_Matrix(ybus::Ybus)
 
 Construct a BA_Matrix from a Ybus matrix.
+
+Arc susceptances reflect any [`apply_ybus_modification!`](@ref) applied to `ybus`; an error is
+raised if those modifications island part of the network.
 
 # Arguments
 - `ybus::Ybus`: The Ybus matrix from which to construct the BA matrix
@@ -107,6 +154,8 @@ function BA_Matrix(ybus::Ybus)
     bus_ax = get_bus_axis(ybus)
     bus_lookup = get_bus_lookup(ybus)
     arc_ax = get_arc_axis(nr)
+    b_base = Float64[_ba_arc_susceptance(nr, arc) for arc in arc_ax]
+    _check_modified_connectivity(ybus, arc_ax, nr, b_base)
     n_isolated_buses = length(get_isolated_buses(ybus))
     n_entries = length(arc_ax) * 2 + n_isolated_buses
     BA_I = Vector{Int}(undef, n_entries)
@@ -115,7 +164,7 @@ function BA_Matrix(ybus::Ybus)
     for (ix_arc, arc) in enumerate(arc_ax)
         ix_from_bus = get_bus_index(arc[1], bus_lookup, nr)
         ix_to_bus = get_bus_index(arc[2], bus_lookup, nr)
-        b = _ba_arc_susceptance(nr, arc)
+        b = b_base[ix_arc] * ybus.arc_susceptance_scale[ix_arc]
         # A NaN/Inf in BA would poison every downstream factorization.
         if !isfinite(b)
             error(
@@ -206,7 +255,8 @@ for DC power flow analysis and power system sensitivity studies.
         Whether to perform factorization during construction for efficient linear system solving
 - `linear_solver::String = "KLU"`:
         Backend for the factorization when `factorize = true`: "KLU" or "AppleAccelerateLU"
-        (macOS 15.5+). Other values raise an error. `LODF(A, ABA, BA)` requires "KLU".
+        (macOS 15.5+). Other values raise an error. `LODF(A, ABA, BA)` and the
+        `DC_ABA_Matrix_Factorized` alias PowerFlows dispatches on both require "KLU".
 - `network_reductions::Vector{NetworkReduction} = NetworkReduction[]`:
         Vector of network reduction algorithms to apply before matrix construction
 - `include_constant_impedance_loads::Bool=true`:
@@ -255,7 +305,8 @@ via the computed Ybus matrix.
         Whether to perform factorization during construction for efficient linear system solving
 - `linear_solver::String = "KLU"`:
         Backend for the factorization when `factorize = true`: "KLU" or "AppleAccelerateLU"
-        (macOS 15.5+). Other values raise an error. `LODF(A, ABA, BA)` requires "KLU".
+        (macOS 15.5+). Other values raise an error. `LODF(A, ABA, BA)` and the
+        `DC_ABA_Matrix_Factorized` alias PowerFlows dispatches on both require "KLU".
 
 # Returns
 - `ABA_Matrix`: The constructed ABA matrix structure containing:
