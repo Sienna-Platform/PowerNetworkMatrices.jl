@@ -650,11 +650,11 @@ arc member in service are dropped, matching the exact zeros
 """
 function apply_ybus_modification(ybus::Ybus, mod::NetworkModification)
     Y = ybus.data + compute_ybus_delta(ybus, mod)
-    arc_ax = get_arc_axis(get_network_reduction_data(ybus))
+    arc_ax = get_arc_axis(ybus)
     bus_lookup = get_bus_lookup(ybus)
     live = _live_members_after(ybus, mod)
     for (k, m) in enumerate(mod.arc_modifications)
-        _is_dead_pair(ybus, arc_ax, mod, live, k) || continue
+        _is_dead_pair(ybus, mod, live, k) || continue
         arc = arc_ax[m.arc_index]
         f_ix = bus_lookup[arc[1]]
         t_ix = bus_lookup[arc[2]]
@@ -683,24 +683,17 @@ end
 # coupled: the pair's two off-diagonals hold nothing but Float32 residue.
 function _is_dead_pair(
     ybus::Ybus,
-    arc_ax::Vector{Tuple{Int, Int}},
     mod::NetworkModification,
     live::Vector{Int},
     k::Int,
 )
     iszero(live[k]) || return false
-    arc = arc_ax[mod.arc_modifications[k].arc_index]
+    arc = get_arc_axis(ybus)[mod.arc_modifications[k].arc_index]
     twin = (arc[2], arc[1])
-    nr = get_network_reduction_data(ybus)
-    maps = (
-        get_direct_branch_map(nr),
-        get_parallel_branch_map(nr),
-        get_series_branch_map(nr),
-        get_added_arc_impedance_map(nr),
-    )
-    any(m -> haskey(m, twin), maps) || return true
-    # O(arcs), but reached only for a dead arc with an anti-parallel twin.
-    twin_ix = findfirst(==(twin), arc_ax)
+    twin_ix = get(get_arc_lookup(ybus), twin, 0)
+    if iszero(twin_ix)
+        return true
+    end
     for (j, m) in enumerate(mod.arc_modifications)
         m.arc_index == twin_ix && return iszero(live[j])
     end
@@ -714,11 +707,11 @@ end
 # the member count decides that instead.
 function _arc_susceptance_scales(
     ybus::Ybus,
-    arc_ax::Vector{Tuple{Int, Int}},
     mod::NetworkModification,
     live::Vector{Int},
 )
     nr = get_network_reduction_data(ybus)
+    arc_ax = get_arc_axis(ybus)
     scales = Vector{Float64}(undef, length(mod.arc_modifications))
     for (k, m) in enumerate(mod.arc_modifications)
         if iszero(live[k])
@@ -822,9 +815,9 @@ _to_from_deltas(m::ArcModification) = (m.delta_y21, m.delta_y22)
 function _modified_entries(
     ybus::Ybus,
     bus_lookup::Dict{Int, Int},
-    arc_ax::Vector{Tuple{Int, Int}},
     mod::NetworkModification,
 )
+    arc_ax = get_arc_axis(ybus)
     return (
         _ybus_entries(ybus.data, bus_lookup, arc_ax, mod),
         _arc_row_entries(
@@ -893,7 +886,7 @@ _check_arc_admittance_presence(work, base) = error(
 )
 
 """
-    apply_ybus_modification!(ybus::Ybus, mod::NetworkModification[, arc_ax])
+    apply_ybus_modification!(ybus::Ybus, mod::NetworkModification)
 
 Add `mod`'s arc and shunt admittance deltas into `ybus` in place: the bus admittance matrix and,
 when present, both arc admittance matrices. The stored pattern is left untouched, so a
@@ -918,30 +911,19 @@ topology is not updated: `adjacency_data`, the subnetwork axes, the network redu
 `IncidenceMatrix`, `AdjacencyMatrix` and `find_subnetworks(ybus)` still describe the
 unmodified network; check the connectivity of a modified Ybus with
 `find_subnetworks(ybus.data, get_bus_axis(ybus))`.
-
-Cost is proportional to the entries `mod` touches, except that building the arc axis is
-proportional to the arc count: callers applying many modifications should pass `arc_ax =
-get_arc_axis(get_network_reduction_data(ybus))`, computed once.
 """
-apply_ybus_modification!(ybus::Ybus, mod::NetworkModification) =
-    apply_ybus_modification!(ybus, mod, get_arc_axis(get_network_reduction_data(ybus)))
-
-function apply_ybus_modification!(
-    ybus::Ybus,
-    mod::NetworkModification,
-    arc_ax::Vector{Tuple{Int, Int}},
-)
+function apply_ybus_modification!(ybus::Ybus, mod::NetworkModification)
     ybus_entries, from_to_entries, to_from_entries =
-        _modified_entries(ybus, get_bus_lookup(ybus), arc_ax, mod)
+        _modified_entries(ybus, get_bus_lookup(ybus), mod)
     live = _live_members_after(ybus, mod)
-    scales = _arc_susceptance_scales(ybus, arc_ax, mod, live)
+    scales = _arc_susceptance_scales(ybus, mod, live)
     _add_deltas!(ybus.data, ybus_entries)
     _add_deltas!(ybus.arc_admittance_from_to, from_to_entries)
     _add_deltas!(ybus.arc_admittance_to_from, to_from_entries)
     Y_nz = SparseArrays.nonzeros(ybus.data)
     y_positions, _ = ybus_entries
     for k in eachindex(mod.arc_modifications)
-        if _is_dead_pair(ybus, arc_ax, mod, live, k)
+        if _is_dead_pair(ybus, mod, live, k)
             Y_nz[y_positions[4k - 2]] = zero(YBUS_ELTYPE)
             Y_nz[y_positions[4k - 1]] = zero(YBUS_ELTYPE)
         end
@@ -971,29 +953,19 @@ function _zero_arc_rows!(
 end
 
 """
-    restore_ybus_modification!(ybus::Ybus, base::Ybus, mod::NetworkModification[, arc_ax])
+    restore_ybus_modification!(ybus::Ybus, base::Ybus, mod::NetworkModification)
 
 Copy `base`'s values back into exactly the entries [`apply_ybus_modification!`](@ref) wrote for
 `mod`. Exact: no floating-point drift accumulates across repeated apply/restore cycles. `base`
-must have `ybus`'s bus axis, and every entry is looked up by `(row, column)` in each matrix
+must have `ybus`'s bus and arc axes, and every entry is looked up by `(row, column)` in each matrix
 separately, so a base that does not store an entry raises an error rather than supplying a
 value from the wrong position. All entries are resolved before any is written, so an error
 leaves `ybus` unchanged; a missing or extra pair of arc admittance matrices also raises one.
-`arc_ax` is as in [`apply_ybus_modification!`](@ref).
 """
-restore_ybus_modification!(ybus::Ybus, base::Ybus, mod::NetworkModification) =
-    restore_ybus_modification!(
-        ybus,
-        base,
-        mod,
-        get_arc_axis(get_network_reduction_data(ybus)),
-    )
-
 function restore_ybus_modification!(
     ybus::Ybus,
     base::Ybus,
     mod::NetworkModification,
-    arc_ax::Vector{Tuple{Int, Int}},
 )
     bus_ax = get_bus_axis(ybus)
     base_bus_ax = get_bus_axis(base)
@@ -1003,11 +975,19 @@ function restore_ybus_modification!(
             "the modification was applied against.",
         )
     end
+    arc_ax = get_arc_axis(ybus)
+    base_arc_ax = get_arc_axis(base)
+    if !(arc_ax === base_arc_ax || arc_ax == base_arc_ax)
+        error(
+            "The two Ybus matrices have different arc axes; restore needs the base " *
+            "the modification was applied against.",
+        )
+    end
     _check_arc_admittance_presence(ybus.arc_admittance_from_to, base.arc_admittance_from_to)
     _check_arc_admittance_presence(ybus.arc_admittance_to_from, base.arc_admittance_to_from)
     bus_lookup = get_bus_lookup(ybus)
-    work_y, work_from_to, work_to_from = _modified_entries(ybus, bus_lookup, arc_ax, mod)
-    base_y, base_from_to, base_to_from = _modified_entries(base, bus_lookup, arc_ax, mod)
+    work_y, work_from_to, work_to_from = _modified_entries(ybus, bus_lookup, mod)
+    base_y, base_from_to, base_to_from = _modified_entries(base, bus_lookup, mod)
 
     _copy_entries!(ybus.data, work_y, base.data, base_y)
     _copy_entries!(

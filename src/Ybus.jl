@@ -15,11 +15,13 @@ electrical parameters needed for power flow calculations and network analysis.
 - `branch_catalog::BranchCatalog`: Metadata from network reduction operations
 - `arc_admittance_from_to::Union{ArcAdmittanceMatrix, Nothing}`: From-to arc admittance matrix
 - `arc_admittance_to_from::Union{ArcAdmittanceMatrix, Nothing}`: To-from arc admittance matrix
+- `arc_axis::Vector{Tuple{Int, Int}}`: Arc axis of the network reduction data, stored one time
+- `arc_lookup::Dict{Tuple{Int, Int}, Int}`: Map from each arc in `arc_axis` to its index
 - `arc_susceptance_scale::Vector{Float64}`: Fraction of each arc's DC susceptance still in
-  service, indexed like the arc axis; 1.0 until [`apply_ybus_modification!`](@ref) changes it,
+  service, indexed by `arc_axis`; 1.0 until [`apply_ybus_modification!`](@ref) changes it,
   and applied by [`BA_Matrix`](@ref)
-- `arc_live_members::Vector{Int}`: Members of each arc still in service, indexed like the arc
-  axis; [`apply_ybus_modification!`](@ref) removes an arc once this reaches zero
+- `arc_live_members::Vector{Int}`: Members of each arc still in service, indexed by
+  `arc_axis`; [`apply_ybus_modification!`](@ref) removes an arc once this reaches zero
 
 # Key Features
 - Indexed by bus numbers (non-sequential numbering supported)
@@ -63,6 +65,8 @@ struct Ybus{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
     branch_catalog::BranchCatalog
     arc_admittance_from_to::Union{ArcAdmittanceMatrix, Nothing}
     arc_admittance_to_from::Union{ArcAdmittanceMatrix, Nothing}
+    arc_axis::Vector{Tuple{Int, Int}}
+    arc_lookup::Dict{Tuple{Int, Int}, Int}
     arc_susceptance_scale::Vector{Float64}
     arc_live_members::Vector{Int}
 end
@@ -90,6 +94,8 @@ function Ybus(
         branch_catalog,
         arc_admittance_from_to,
         arc_admittance_to_from,
+        arc_ax,
+        make_ax_ref(arc_ax),
         ones(length(arc_ax)),
         Int[_arc_member_count(nr, arc) for arc in arc_ax],
     )
@@ -113,6 +119,8 @@ _arc_member_count(nr::NetworkReductionData, arc::Tuple{Int, Int}) =
     _outaged_member_count(nr, arc) + haskey(get_added_arc_impedance_map(nr), arc)
 
 get_bus_axis(M::Ybus) = M.axes[1]
+get_arc_axis(M::Ybus) = M.arc_axis
+get_arc_lookup(M::Ybus) = M.arc_lookup
 get_bus_lookup(M::Ybus) = M.lookup[1]
 
 """
