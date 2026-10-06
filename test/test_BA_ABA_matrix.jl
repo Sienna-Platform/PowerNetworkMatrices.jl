@@ -102,9 +102,9 @@ end
         _add_test_line!(sys, "L12", arc12, 0.0, 0.1)
         arc23 = Arc(; from = buses[2], to = buses[3])
         add_component!(sys, arc23)
-        pst = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        pst = PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "PST23",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 available = true,
                 arc = arc23,
                 tap = 1.05,
@@ -131,7 +131,7 @@ end
     end
 
     _, pst = _mk_pst_sys(0.0)
-    target = PNM.get_series_susceptance(pst, PSY.SU)  # 1 / (tap * x) = 1 / (1.05 * 0.2)
+    target = PNM.get_series_susceptance(pst, u"SU")  # 1 / (tap * x) = 1 / (1.05 * 0.2)
     for α in (0.0, 0.3, -0.5)
         sys, _ = _mk_pst_sys(α)
         b = _pst_susceptance(sys)

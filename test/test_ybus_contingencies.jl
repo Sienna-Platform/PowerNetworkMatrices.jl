@@ -216,14 +216,14 @@ end
     @test length(mod.arc_modifications) == 1
     @test isapprox(
         mod.arc_modifications[1].delta_b,
-        -PNM.get_series_susceptance(line, PSY.SU),
+        -PNM.get_series_susceptance(line, u"SU"),
     )
 
     # Tripping the phase-shifting member drops that member's susceptance and its share of
     # the group's DC shift injection.
     mod_pst = NetworkModification(vptdf, pst)
     @test length(mod_pst.arc_modifications) == 1
-    b_pst = PNM.get_series_susceptance(pst, PSY.SU)
+    b_pst = PNM.get_series_susceptance(pst, u"SU")
     @test isapprox(mod_pst.arc_modifications[1].delta_b, -b_pst)
     @test isapprox(
         mod_pst.arc_modifications[1].delta_shift_injection,
@@ -235,13 +235,13 @@ end
     # White-box: PST filed FIRST so the old value-scan would hit it before the line.
     # Line x=0.1 and PST (tap=1.0, x=0.1) both have b = 10.0 — deliberate collision.
     # Attached (not detached, as in `_mk_detached_pst_fixture`) because
-    # `ybus_branch_entries`/`get_series_susceptance` read impedances in `PSY.SU`, which
+    # `ybus_branch_entries`/`get_series_susceptance` read impedances in `u"SU"`, which
     # needs a system base power; `NetworkReductionData` is still built manually (PST
     # filed first) so map order, not `add_component!` order, drives the collision.
     sys, buses = _mk_bus_system(2)
     arc = Arc(; from = buses[1], to = buses[2])
     add_component!(sys, arc)
-    line = Line(; input_basis = PSY.CU,
+    line = Line(; input_basis = u"CU",
         name = "L1",
         available = true,
         active_power_flow = 0.0,
@@ -254,9 +254,9 @@ end
         angle_limits = (min = -1.5, max = 1.5),
     )
     add_component!(sys, line)
-    pst = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+    pst = PSY.TwoWindingTransformer(; input_basis = u"CU",
         name = "PSTx01",
-        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
             arc = arc,
             tap = 1.0,
             α = 0.15,
@@ -276,7 +276,7 @@ end
     nr = PNM.NetworkReductionData()
     PNM.add_to_branch_maps!(nr, PSY.get_arc(pst), pst)
     PNM.add_to_branch_maps!(nr, PSY.get_arc(line), line)
-    b_line = PNM.get_series_susceptance(line, PSY.SU)
+    b_line = PNM.get_series_susceptance(line, u"SU")
 
     # Identity-resolved delta for tripping the line: the negated LINE pi-model
     # (symmetric), never the PST's asymmetric one.
@@ -319,7 +319,7 @@ end
     mod = NetworkModification(vptdf, line)
     @test length(mod.arc_modifications) == 1
     m = mod.arc_modifications[1]
-    @test m.delta_b == -PNM.get_series_susceptance(line, PSY.SU)
+    @test m.delta_b == -PNM.get_series_susceptance(line, u"SU")
     @test m.delta_y12 ≈ m.delta_y21
     @test m.delta_y11 ≈
           -PNM.ybus_branch_entries(line, PNM.get_network_reduction_data(vptdf))[1]
@@ -361,7 +361,7 @@ end
             bustype = ACBusTypes.REF
         end
         b = ACBus(;
-            input_basis = PSY.CU,
+            input_basis = u"CU",
             number = i,
             name = "b$i",
             available = true,
@@ -379,7 +379,7 @@ end
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(; input_basis = PSY.CU,
+            Line(; input_basis = u"CU",
                 name = name,
                 available = true,
                 active_power_flow = 0.0,
@@ -400,9 +400,9 @@ end
     add_component!(sys, arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "PST",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = arc,
                 tap = 1.05,
                 α = 0.0,
@@ -451,9 +451,9 @@ end
     add_component!(sys, zi_arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "ZI_T",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = zi_arc, tap = 1.0, α = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
@@ -505,9 +505,9 @@ end
     add_component!(sys, zi_arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "ZI_T",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = zi_arc, tap = 1.0, α = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
@@ -699,12 +699,12 @@ end
         active_power_flow = 0.0,
         reactive_power_flow = 0.0,
         arc = get_arc(l1),
-        r = get_r(l1, PSY.CU) * 1.37,
-        x = get_x(l1, PSY.CU) * 0.91,
-        b = get_b(l1, PSY.CU),
-        rating = get_rating(l1, PSY.CU),
+        r = get_r(l1, u"CU") * 1.37,
+        x = get_x(l1, u"CU") * 0.91,
+        b = get_b(l1, u"CU"),
+        rating = get_rating(l1, u"CU"),
         angle_limits = get_angle_limits(l1),
-        input_basis = PSY.CU,
+        input_basis = u"CU",
     )
     add_component!(sys, par)
     base = Ybus(sys; make_arc_admittance_matrices = true)

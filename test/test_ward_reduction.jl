@@ -133,13 +133,13 @@ end
     )
     existing_line_susceptance = PNM.get_series_susceptance(
         get_network_reduction_data(ptdf_2).direct_branch_map[(101, 102)],
-        PSY.SU,
+        u"SU",
     )
     # The ward equivalent is a detached synthetic branch storing system-base
     # impedance; read it back with device base (identity).
     ward_line_susceptance = PNM.get_series_susceptance(
         get_network_reduction_data(ptdf_2).added_arc_impedance_map[(101, 102)],
-        PSY.CU,
+        u"CU",
     )
     ward_multiplier =
         existing_line_susceptance / (existing_line_susceptance + ward_line_susceptance)
@@ -203,17 +203,16 @@ end
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.05),
         base_voltage = 69.0,
-        input_basis = PSY.CU,
+        input_basis = u"CU",
     )
     add_component!(sys_with_isolated, bus6)
     bus5 = get_component(ACBus, sys_with_isolated, "nodeD")
-    hvdc1 = TwoTerminalGenericHVDCLine(; input_basis = PSY.CU,
+    hvdc1 = TwoTerminalGenericHVDCLine(; input_basis = u"CU",
         name = "Line18",
         available = true,
         active_power_flow = 0.0,
         arc = Arc(; from = bus5, to = bus6),
-        active_power_limits_from = (min = -100.0, max = 100.0),
-        active_power_limits_to = (min = -100.0, max = 100.0),
+        rating = 100.0,
         reactive_power_limits_from = (min = -100.0, max = 100.0),
         reactive_power_limits_to = (min = -100.0, max = 100.0),
     )
@@ -253,16 +252,15 @@ end
         number = 6, name = "Bus 6", available = true, bustype = ACBusTypes.REF,
         angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.05),
         base_voltage = 69.0,
-        input_basis = PSY.CU,
+        input_basis = u"CU",
     )
     add_component!(sys, bus6)
     add_component!(
         sys,
-        TwoTerminalGenericHVDCLine(; input_basis = PSY.CU,
+        TwoTerminalGenericHVDCLine(; input_basis = u"CU",
             name = "Line18", available = true, active_power_flow = 0.0,
             arc = Arc(; from = get_component(ACBus, sys, "nodeD"), to = bus6),
-            active_power_limits_from = (min = -100.0, max = 100.0),
-            active_power_limits_to = (min = -100.0, max = 100.0),
+            rating = 100.0,
             reactive_power_limits_from = (min = -100.0, max = 100.0),
             reactive_power_limits_to = (min = -100.0, max = 100.0),
         ),
@@ -338,7 +336,7 @@ end
 end
 
 @testset "Ward: added arcs answer get_effective_series_susceptance" begin
-    # Added Ward arcs are detached; their r/x are already system base, so read PSY.CU.
+    # Added Ward arcs are detached; their r/x are already system base, so read u"CU".
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     ybus = Ybus(sys; network_reductions = NetworkReduction[WardReduction([1, 2, 3, 4, 5])])
     nr = get_network_reduction_data(ybus)
@@ -347,7 +345,7 @@ end
     for (arc, component) in added
         b = PNM.get_effective_series_susceptance(component, nr)
         @test isfinite(b)
-        @test b ≈ 1 / PSY.get_x(component, PSY.CU)
+        @test b ≈ 1 / PSY.get_x(component, u"CU")
     end
 end
 
@@ -396,9 +394,9 @@ end
     add_component!(sys, arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "PST_6_9",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = arc,
                 tap = 1.0,
                 α = 0.2,

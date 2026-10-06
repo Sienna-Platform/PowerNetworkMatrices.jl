@@ -93,7 +93,7 @@ end
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 230.0,
-        input_basis = PSY.CU,
+        input_basis = u"CU",
     )
     bus2 = PSY.ACBus(;
         number = 102,
@@ -104,9 +104,9 @@ end
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 230.0,
-        input_basis = PSY.CU,
+        input_basis = u"CU",
     )
-    line = PSY.Line(; input_basis = PSY.CU,
+    line = PSY.Line(; input_basis = u"CU",
         name = "mixed_line",
         available = true,
         active_power_flow = 0.0,
@@ -119,9 +119,9 @@ end
         rating = 100.0,
         angle_limits = (min = -π / 2, max = π / 2),
     )
-    tap = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+    tap = PSY.TwoWindingTransformer(; input_basis = u"CU",
         name = "mixed_tap",
-        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
             arc = PSY.Arc(; from = bus1, to = bus2),
             tap = 1.0,
             available = true,

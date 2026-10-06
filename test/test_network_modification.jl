@@ -401,7 +401,7 @@ end
             ba.data[bus_lookup[arc[1]], ix];
             rtol = 1e-5,
         )
-        @test isapprox(PNM._ba_arc_susceptance(entry, nr), 1 / PSY.get_x(entry, PSY.SU))
+        @test isapprox(PNM._ba_arc_susceptance(entry, nr), 1 / PSY.get_x(entry, u"SU"))
 
         # With the two sides agreeing, a full-arc outage negates the π-model rather than
         # scaling it by the ratio of the pair total to one twin.
@@ -512,9 +512,9 @@ function _mk_antiparallel_identical_pst_system(; alpha = 0.15, x = 0.2, tap = 1.
         add_component!(sys, arc)
         add_component!(
             sys,
-            PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+            PSY.TwoWindingTransformer(; input_basis = u"CU",
                 name = name,
-                circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+                circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                     arc = arc, tap = tap, α = alpha, available = true,
                     active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                     base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = x,
@@ -530,7 +530,7 @@ function _mk_antiparallel_identical_pst_system(; alpha = 0.15, x = 0.2, tap = 1.
     add_component!(sys, arc)
     add_component!(
         sys,
-        Line(; input_basis = PSY.CU,
+        Line(; input_basis = u"CU",
             name = "L23", available = true, active_power_flow = 0.0,
             reactive_power_flow = 0.0, arc = arc, r = 0.0, x = 0.1,
             b = (from = 0.0, to = 0.0), rating = 1.0,
@@ -587,8 +587,8 @@ end
 @testset "NetworkModification: negative-susceptance full outage" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     line = PSY.get_component(Line, sys, "Line10")
-    PSY.set_r!(line, 0.0 * PSY.SU)
-    PSY.set_x!(line, -0.1 * PSY.SU)
+    PSY.set_r!(line, 0.0u"SU")
+    PSY.set_x!(line, -0.1u"SU")
     vptdf = VirtualPTDF(sys)
     nr = PNM.get_network_reduction_data(vptdf)
     arc = PNM.get_arc_tuple(line, nr)
@@ -621,8 +621,8 @@ end
 @testset "Woodbury: negative-susceptance full outage matches the rebuilt network" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     line = PSY.get_component(Line, sys, "Line10")
-    PSY.set_r!(line, 0.0 * PSY.SU)
-    PSY.set_x!(line, -0.1 * PSY.SU)
+    PSY.set_r!(line, 0.0u"SU")
+    PSY.set_x!(line, -0.1u"SU")
     vptdf = VirtualPTDF(sys)
     mod = NetworkModification(vptdf, line)
 
@@ -668,9 +668,9 @@ function _mk_shifted_grouped_chain_system(; alpha = 0.15, pst_x = 0.2)
     add_component!(sys, arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "PST_10_3",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = arc, tap = 1.0, α = alpha, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = pst_x,

@@ -83,7 +83,7 @@ the value the matrices actually use should call `get_effective_series_susceptanc
 """
 function get_series_susceptance(
     segment::ThreeWindingTransformerCircuit,
-    units::IS.AbstractUnitSystem,
+    units,
 )
     v = _series_susceptance_raw(segment, units)
     isfinite(v) || _throw_non_finite_susceptance(segment, v)
@@ -92,7 +92,7 @@ end
 
 _series_susceptance_raw(
     segment::ThreeWindingTransformerCircuit,
-    units::IS.AbstractUnitSystem,
+    units,
 ) = _series_susceptance_raw(segment.circuit, units)
 
 function get_series_phase_shift(tw::ThreeWindingTransformerCircuit)
@@ -104,14 +104,14 @@ end
 
 Star-leg resistance (pu, system base) of this circuit.
 """
-get_equivalent_r(tw::ThreeWindingTransformerCircuit) = PSY.get_r(tw.circuit, PSY.SU)
+get_equivalent_r(tw::ThreeWindingTransformerCircuit) = PSY.get_r(tw.circuit, u"SU")
 
 """
     get_equivalent_x(tw::ThreeWindingTransformerCircuit)
 
 Star-leg reactance (pu, system base) of this circuit.
 """
-get_equivalent_x(tw::ThreeWindingTransformerCircuit) = PSY.get_x(tw.circuit, PSY.SU)
+get_equivalent_x(tw::ThreeWindingTransformerCircuit) = PSY.get_x(tw.circuit, u"SU")
 
 """
     get_equivalent_rating(tw::ThreeWindingTransformerCircuit)
@@ -120,15 +120,15 @@ The circuit's own rating, per unit on the system base. May be `nothing` when uns
 how a `PSY.Line`'s rating is surfaced; there is no parent-level rating to fall back to.
 """
 get_equivalent_rating(tw::ThreeWindingTransformerCircuit) =
-    PSY.get_rating(tw.circuit, PSY.SU)
+    PSY.get_rating(tw.circuit, u"SU")
 
 # Shared by the 2W and 3W methods: `PSY.TransformerCircuit`'s `rating_b`, per unit on the
 # system base, falling back to its normal rating when unset.
 function _circuit_emergency_rating(c::PSY.TransformerCircuit, name::AbstractString)
-    rating_b = PSY.get_rating_b(c, PSY.SU)
+    rating_b = PSY.get_rating_b(c, u"SU")
     if isnothing(rating_b)
         @debug "$name has no 'rating_b' defined; using normal-operation rating."
-        return PSY.get_rating(c, PSY.SU)
+        return PSY.get_rating(c, u"SU")
     end
     return rating_b
 end

@@ -200,8 +200,8 @@ end
     # 1 - H[e,e] is negative rather than vanishing; it must not be clamped.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     line = PSY.get_component(Line, sys, "Line10")
-    PSY.set_r!(line, 0.0 * PSY.SU)
-    PSY.set_x!(line, -0.1 * PSY.SU)
+    PSY.set_r!(line, 0.0u"SU")
+    PSY.set_x!(line, -0.1u"SU")
     pre = PTDF(sys)
     lodf = LODF(sys)
     lodf_from_ptdf = LODF(IncidenceMatrix(sys), PTDF(sys; tol = eps()); tol = eps())
@@ -228,7 +228,7 @@ end
     b_e = PNM._get_arc_susceptances(vlodf)[e_ix]
     full = PNM.get_partial_lodf_row(vlodf, e_ix, -b_e)
     half = PNM.get_partial_lodf_row(vlodf, e_ix, -b_e / 2)
-    PSY.set_x!(line, -0.2 * PSY.SU)
+    PSY.set_x!(line, -0.2u"SU")
     halved = PTDF(sys)
     for l in PNM.get_arc_axis(post)
         l_ix = PNM.get_arc_lookup(vlodf)[l]

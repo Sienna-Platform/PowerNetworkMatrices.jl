@@ -353,7 +353,7 @@ _zero_impedance_susceptance(bs::BranchesSeries, min_x_eps::Float64)::Float64 =
 # A guard on the raw layer, not a parallel implementation: non-degenerate branches keep one
 # source of truth.
 function _finite_series_susceptance(segment::PSY.ACTransmission, min_x_eps::Float64)
-    b = _series_susceptance_raw(segment, PSY.SU)
+    b = _series_susceptance_raw(segment, u"SU")
     isfinite(b) && return b
     return _zero_impedance_susceptance(segment, min_x_eps)
 end
@@ -642,7 +642,7 @@ end
 # tap, no α) -- the loss-estimate equivalent that exists even when a lossy shifted group has
 # no single-π representation. Orientation-symmetric.
 function _dc_series_impedance(br::PSY.ACTransmission)
-    return complex(PSY.get_r(br, PSY.SU), PSY.get_x(br, PSY.SU))
+    return complex(PSY.get_r(br, u"SU"), PSY.get_x(br, u"SU"))
 end
 
 function _dc_series_impedance(t::PSY.TwoWindingTransformer)
@@ -650,7 +650,7 @@ function _dc_series_impedance(t::PSY.TwoWindingTransformer)
 end
 
 function _dc_series_impedance(c::PSY.TransformerCircuit)
-    return complex(PSY.get_r(c, PSY.SU), PSY.get_x(c, PSY.SU))
+    return complex(PSY.get_r(c, u"SU"), PSY.get_x(c, u"SU"))
 end
 
 function _dc_series_impedance(tw::ThreeWindingTransformerCircuit)

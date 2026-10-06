@@ -247,7 +247,7 @@ function _mk_star_bus(number, name, bustype, angle)
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 230.0,
-        input_basis = PSY.CU,
+        input_basis = u"CU",
     )
 end
 

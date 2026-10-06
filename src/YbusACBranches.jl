@@ -1,6 +1,5 @@
 struct YbusACBranches
     lines::Vector{PSY.Line}
-    monitored_lines::Vector{PSY.MonitoredLine}
     generic_arc_impedances::Vector{PSY.GenericArcImpedance}
     two_winding_transformers::Vector{PSY.TwoWindingTransformer}
     breaker_switches::Vector{PSY.DiscreteControlledACBranch}
@@ -8,7 +7,6 @@ end
 
 function Base.length(b::YbusACBranches)::Int
     return length(b.lines) +
-           length(b.monitored_lines) +
            length(b.generic_arc_impedances) +
            length(b.two_winding_transformers) +
            length(b.breaker_switches)
@@ -43,13 +41,11 @@ end
 function _get_ybus_two_terminal_ac_branches(sys::PSY.System)::YbusACBranches
     branches = YbusACBranches(
         Vector{PSY.Line}(),
-        Vector{PSY.MonitoredLine}(),
         Vector{PSY.GenericArcImpedance}(),
         Vector{PSY.TwoWindingTransformer}(),
         Vector{PSY.DiscreteControlledACBranch}(),
     )
     _populate_ybus_branch_vector!(branches.lines, sys)
-    _populate_ybus_branch_vector!(branches.monitored_lines, sys)
     _populate_ybus_branch_vector!(branches.generic_arc_impedances, sys)
     _populate_ybus_branch_vector!(branches.two_winding_transformers, sys)
     _populate_ybus_branch_vector!(branches.breaker_switches, sys)
@@ -61,7 +57,6 @@ function _foreach_ybus_branch(
     branches::YbusACBranches,
 ) where {F <: Function}
     ix = _foreach_typed_branches(f, branches.lines, 0)
-    ix = _foreach_typed_branches(f, branches.monitored_lines, ix)
     ix = _foreach_typed_branches(f, branches.generic_arc_impedances, ix)
     ix = _foreach_typed_branches(f, branches.two_winding_transformers, ix)
     ix = _foreach_typed_branches(f, branches.breaker_switches, ix)

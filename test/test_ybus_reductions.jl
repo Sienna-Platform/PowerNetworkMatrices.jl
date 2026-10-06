@@ -283,8 +283,8 @@ end
 end
 
 function _set_zero_impedance!(branch)
-    set_r!(branch, 0.0 * PSY.SU)
-    set_x!(branch, 1e-5 * PSY.SU)
+    set_r!(branch, 0.0u"SU")
+    set_x!(branch, 1e-5u"SU")
 end
 
 @testset "ZeroImpedanceBranchReduction: chained bus merge" begin
@@ -307,8 +307,8 @@ end
 @testset "ZeroImpedanceBranchReduction: transformer arcs are excluded" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     t = get_component(TwoWindingTransformer, sys, "Trans4")  # from=7, to=8
-    set_r!(t, 0.0 * PSY.SU)
-    set_x!(t, 1e-5 * PSY.SU)
+    set_r!(t, 0.0u"SU")
+    set_x!(t, 1e-5u"SU")
 
     ybus = Ybus(sys)
     nrd = get_network_reduction_data(ybus)
@@ -326,8 +326,8 @@ end
     # admittance came out NaN and Ybus assembly died on the `isfinite` guard.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     t = get_component(TwoWindingTransformer, sys, "Trans4")
-    set_r!(t, 0.0 * PSY.SU)
-    set_x!(t, 0.0 * PSY.SU)
+    set_r!(t, 0.0u"SU")
+    set_x!(t, 0.0u"SU")
 
     min_x_eps = 1e-3
     eb = PNM.equivalent_branch(t; min_x_eps = min_x_eps)
@@ -362,12 +362,12 @@ end
     # Aggregate members get the configured substitute reactance, not the default.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     t = get_component(TwoWindingTransformer, sys, "Trans4")
-    set_r!(t, 0.0 * PSY.SU)
-    set_x!(t, 0.0 * PSY.SU)
+    set_r!(t, 0.0u"SU")
+    set_x!(t, 0.0u"SU")
     arc = PSY.get_arc(t)
-    sibling = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+    sibling = PSY.TwoWindingTransformer(; input_basis = u"CU",
         name = "Trans4_parallel",
-        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
             arc = arc, tap = 1.0, α = 0.0, available = true,
             active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
             base_power = 100.0,
@@ -421,7 +421,7 @@ end
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(; input_basis = PSY.CU,
+            Line(; input_basis = u"CU",
                 name = name,
                 available = true,
                 active_power_flow = 0.0,
@@ -439,9 +439,9 @@ end
     add_component!(sys, zi_arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "T12_zero_impedance",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = zi_arc, tap = 1.0, α = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
@@ -489,7 +489,7 @@ end
     )
     zi_arc = PSY.Arc(; from = busD, to = sec_bus)
     PSY.add_component!(sys, zi_arc)
-    zi_line = PSY.Line(; input_basis = PSY.CU,
+    zi_line = PSY.Line(; input_basis = u"CU",
         name = "zi_line",
         available = true,
         active_power_flow = 0.0,
@@ -591,8 +591,8 @@ end
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     for name in ("Line3", "Line6")
         line = get_component(Line, sys, name)
-        set_r!(line, 0.0 * PSY.SU)
-        set_x!(line, 0.0 * PSY.SU)
+        set_r!(line, 0.0u"SU")
+        set_x!(line, 0.0u"SU")
     end
     ybus = Ybus(sys; irreducible_buses = Set([4]))
     nrd = get_network_reduction_data(ybus)
@@ -607,8 +607,8 @@ end
     sys2 = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     for name in ("Line3", "Line6")
         line = get_component(Line, sys2, name)
-        set_r!(line, 0.0 * PSY.SU)
-        set_x!(line, 0.0 * PSY.SU)
+        set_r!(line, 0.0u"SU")
+        set_x!(line, 0.0u"SU")
     end
     ybus2 = Ybus(sys2; irreducible_buses = Set([2, 4]))
     nrd2 = get_network_reduction_data(ybus2)
@@ -627,8 +627,8 @@ end
         sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
         for name in ("Line3", "Line6", "Line4")
             line = get_component(Line, sys, name)
-            set_r!(line, 0.0 * PSY.SU)
-            set_x!(line, 0.0 * PSY.SU)
+            set_r!(line, 0.0u"SU")
+            set_x!(line, 0.0u"SU")
         end
         ybus = Ybus(sys; irreducible_buses = pinned)
         nrd = get_network_reduction_data(ybus)
@@ -649,8 +649,8 @@ end
     # makes it qualify and bus 3 merges into bus 2.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     line = get_component(Line, sys, "Line3")
-    set_r!(line, 0.0 * PSY.SU)
-    set_x!(line, 1e-3 * PSY.SU)  # susceptance ≈ 1 / 1e-3 = 1e3
+    set_r!(line, 0.0u"SU")
+    set_x!(line, 1e-3u"SU")  # susceptance ≈ 1 / 1e-3 = 1e3
 
     ybus_default = Ybus(sys)
     @test 3 ∈ PNM.get_bus_axis(ybus_default)
@@ -674,8 +674,8 @@ end
     # drops below the threshold, so the branch is retained instead.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     line = get_component(Line, sys, "Line3")  # bus 2 → 3
-    set_r!(line, 0.0 * PSY.SU)
-    set_x!(line, 0.0 * PSY.SU)
+    set_r!(line, 0.0u"SU")
+    set_x!(line, 0.0u"SU")
 
     ybus_default = Ybus(sys)
     @test 3 ∉ PNM.get_bus_axis(ybus_default)  # merged with the default tiny substitute reactance
@@ -832,7 +832,7 @@ end
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
-            input_basis = PSY.CU,
+            input_basis = u"CU",
         )
         add_component!(sys, b)
         push!(buses, b)
@@ -842,7 +842,7 @@ end
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(; input_basis = PSY.CU,
+            Line(; input_basis = u"CU",
                 name = name,
                 available = true,
                 active_power_flow = 0.0,
@@ -892,7 +892,7 @@ end
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
-            input_basis = PSY.CU,
+            input_basis = u"CU",
         )
         add_component!(sys, b)
         push!(buses, b)
@@ -902,7 +902,7 @@ end
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(; input_basis = PSY.CU,
+            Line(; input_basis = u"CU",
                 name = name,
                 available = true,
                 active_power_flow = 0.0,
@@ -963,7 +963,7 @@ end
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
-            input_basis = PSY.CU,
+            input_basis = u"CU",
         )
         add_component!(sys, b)
         push!(buses, b)
@@ -973,7 +973,7 @@ end
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(; input_basis = PSY.CU,
+            Line(; input_basis = u"CU",
                 name = name,
                 available = true,
                 active_power_flow = 0.0,
@@ -995,9 +995,9 @@ end
     add_component!(sys, arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "PST",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = arc,
                 tap = 1.05,
                 α = 0.15,
@@ -1120,7 +1120,7 @@ end
     # axes[2]) — so the (from-bus, arc) entry is `ba.data[bus_ix, arc_ix]`.
     ba = BA_Matrix(ybus)
     b_expected = sum(
-        PNM.get_series_susceptance(br, PSY.SU) for br in parallel[(1, 2)]
+        PNM.get_series_susceptance(br, u"SU") for br in parallel[(1, 2)]
     )
     arc_ix = findfirst(==((1, 2)), ba.axes[2])
     @test ba.data[bl[1], arc_ix] ≈ b_expected
@@ -1353,16 +1353,16 @@ end
     sys, buses = _mk_bus_system(2)
     arc = Arc(; from = buses[1], to = buses[2])
     add_component!(sys, arc)
-    line = Line(; input_basis = PSY.CU,
+    line = Line(; input_basis = u"CU",
         name = "L1", available = true, active_power_flow = 0.0,
         reactive_power_flow = 0.0, arc = arc, r = 0.0, x = 0.1,
         b = (from = 0.0, to = 0.0), rating = 1.0,
         angle_limits = (min = -1.5, max = 1.5),
     )
     add_component!(sys, line)
-    pst1 = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+    pst1 = PSY.TwoWindingTransformer(; input_basis = u"CU",
         name = "PST1",
-        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
             arc = arc, tap = 1.0, α = 0.0,
             available = true, active_power_flow = 0.0, reactive_power_flow = 0.0,
             rating = 1.0, base_power = 100.0, base_voltage_primary = 230.0,
@@ -1378,9 +1378,9 @@ end
     @test PNM.compute_parallel_multiplier(group, pst1) ≈ 5.0 / 15.0
 
     # Name collision across concrete types: was silently double-counted, now loud.
-    pst_same_name = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+    pst_same_name = PSY.TwoWindingTransformer(; input_basis = u"CU",
         name = PSY.get_name(line),
-        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
             arc = arc, tap = 1.0, α = 0.0,
             available = true, active_power_flow = 0.0, reactive_power_flow = 0.0,
             rating = 1.0, base_power = 100.0, base_voltage_primary = 230.0,
@@ -1655,12 +1655,15 @@ end
     add_component!(sys, arc2)
     add_component!(
         sys,
-        PSY.GenericArcImpedance(; input_basis = PSY.CU,
+        PSY.GenericArcImpedance(; input_basis = u"CU",
             name = "GAI_junction_to_stub",
             available = true,
             active_power_flow = 0.0,
             reactive_power_flow = 0.0,
-            max_flow = 100.0,
+            operational_flow_limit = (
+                from_to = (min = -100.0, max = 100.0),
+                to_from = (min = -100.0, max = 100.0),
+            ),
             arc = arc2,
             r = 0.02,
             x = 0.08,

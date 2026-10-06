@@ -349,7 +349,7 @@ end
     curve = IS.PiecewiseLinearData([(x = 0.5, y = 1.5), (x = 1.5, y = 1.5)])
     ict = ImpedanceCorrectionData(;
         table_number = 1,
-        impedance_correction_curve = curve,
+        tap_ratio_correction_curve = curve,
         transformer_winding = WindingCategory.PRIMARY_WINDING,
         transformer_control_mode = ImpedanceCorrectionTransformerControlMode.TAP_RATIO,
     )
@@ -362,7 +362,7 @@ end
     tr3 = first(get_components(ThreeWindingTransformer, sys3))
     bad = ImpedanceCorrectionData(;
         table_number = 99,
-        impedance_correction_curve = curve,
+        tap_ratio_correction_curve = curve,
         transformer_winding = WindingCategory.TR2W_WINDING,
         transformer_control_mode = ImpedanceCorrectionTransformerControlMode.TAP_RATIO,
     )
@@ -380,7 +380,7 @@ end
         tr,
         ImpedanceCorrectionData(;
             table_number = 1,
-            impedance_correction_curve = IS.PiecewiseLinearData([
+            tap_ratio_correction_curve = IS.PiecewiseLinearData([
                 (x = 0.5, y = 1.5),
                 (x = 1.5, y = 1.5),
             ]),

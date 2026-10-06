@@ -88,7 +88,7 @@ end
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.05),
         base_voltage = 100.0,
-        input_basis = PSY.CU,
+        input_basis = u"CU",
     )
     add_component!(sys_single, bus)
     ybus_single = Ybus(sys_single)
@@ -99,6 +99,6 @@ end
 # The "modification of units base when constructing Ybus" testset was removed with the IS4
 # stateless-units migration. It asserted that Ybus assembly flipped the system's ambient units
 # base to SYSTEM_BASE and warned while doing so. There is no ambient state to flip now:
-# assembly reads every value with an explicit unit argument (`PSY.get_r(br, PSY.SU)`), so the
+# assembly reads every value with an explicit unit argument (`PSY.get_r(br, u"SU")`), so the
 # guarantee it protected — Ybus entries are in system base — is enforced at each call site
 # instead, and `set_units_base_system!` no longer exists in PSY.

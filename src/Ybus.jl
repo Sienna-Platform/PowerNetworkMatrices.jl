@@ -586,8 +586,8 @@ function _ybus!(
 )
     bus_no = get_bus_index(fa, num_bus, nr)
     Y =
-        PSY.get_impedance_active_power(fa, PSY.SU) -
-        im * PSY.get_impedance_reactive_power(fa, PSY.SU)
+        PSY.get_impedance_active_power(fa, u"SU") -
+        im * PSY.get_impedance_reactive_power(fa, u"SU")
     if !isfinite(Y)
         error("Data in $(PSY.get_name(fa)) is incorrect. Y = $(Y)")
     end

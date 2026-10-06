@@ -126,11 +126,14 @@ function get_ward_reduction(
                         available = true,
                         active_power_flow = 0.0,
                         reactive_power_flow = 0.0,
-                        max_flow = 1e6,
+                        operational_flow_limit = (
+                            from_to = (min = -1e6, max = 1e6),
+                            to_from = (min = -1e6, max = 1e6),
+                        ),
                         arc = PSY.Arc(nothing),
                         r = real(arc_impedance),
                         x = imag(arc_impedance),
-                        input_basis = PSY.CU,
+                        input_basis = u"CU",
                     )
                     Y11, Y12, _, Y22 = ybus_branch_entries(generic_arc_impedance)
                     @assert isapprox(-1.0 * Y12, y_eq[ix, jx])

@@ -131,7 +131,7 @@ end
             magnitude = 1.1,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
-            input_basis = PSY.CU,
+            input_basis = u"CU",
         ),
     )
     PSY.add_component!(
@@ -145,7 +145,7 @@ end
             magnitude = 1.1,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
-            input_basis = PSY.CU,
+            input_basis = u"CU",
         ),
     )
     ptdf_1 = PTDF(sys_1)
@@ -166,13 +166,13 @@ end
             magnitude = 1.1,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
-            input_basis = PSY.CU,
+            input_basis = u"CU",
         ),
     )
 
     add_component!(
         sys_2,
-        PSY.Line(; input_basis = PSY.CU,
+        PSY.Line(; input_basis = u"CU",
             name = "7",
             available = branch_2.available,
             active_power_flow = branch_2.active_power_flow,
@@ -184,7 +184,7 @@ end
             r = branch_2.r,
             x = branch_2.x,
             b = branch_2.b,
-            rating = get_rating(branch_2, PSY.CU),
+            rating = get_rating(branch_2, u"CU"),
             angle_limits = get_angle_limits(branch_2),
         ),
     )

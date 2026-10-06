@@ -72,6 +72,7 @@ export validate_connectivity
 using DocStringExtensions
 import InfrastructureSystems as IS
 import PowerSystems as PSY
+using PowerSystems: @u_str, PerUnit
 import PowerSystems: ACBusTypes
 
 import DataStructures

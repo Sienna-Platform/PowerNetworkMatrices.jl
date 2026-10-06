@@ -58,7 +58,7 @@ end
 end
 
 """
-    get_series_susceptance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem)
+    get_series_susceptance(b::PSY.ACTransmission, units)
 
 Series susceptance `1/x` of an `PSY.ACTransmission` branch or reduction aggregate (parallel
 groups sum, series chains reciprocal-sum). A `PSY.TwoWindingTransformer` is additionally divided
@@ -70,7 +70,7 @@ while callers that need the untapped complex admittance should build it directly
 Throws if the branch has `r == x == 0` (susceptance is non-finite). A consumer that needs
 the value the matrices actually use should call `get_effective_series_susceptance` instead.
 """
-function get_series_susceptance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem)
+function get_series_susceptance(b::PSY.ACTransmission, units)
     v = _series_susceptance_raw(b, units)
     isfinite(v) || _throw_non_finite_susceptance(b, v)
     return v
@@ -78,15 +78,15 @@ end
 
 # The single home for the `1/x` arithmetic. Returns `Inf` when `r == x == 0`:
 # `get_series_susceptance` rejects that, `_finite_series_susceptance` substitutes.
-_series_susceptance_raw(b::PSY.ACTransmission, units::IS.AbstractUnitSystem) =
+_series_susceptance_raw(b::PSY.ACTransmission, units) =
     1 / PSY.get_x(b, units)
 # Detached Ward equivalents can't resolve system base; their r/x are already system-base,
-# which `PSY.CU` returns unchanged.
-_series_susceptance_raw(b::PSY.GenericArcImpedance, ::IS.AbstractUnitSystem) =
-    1 / PSY.get_x(b, PSY.CU)
-_series_susceptance_raw(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem) =
+# which `u"CU"` returns unchanged.
+_series_susceptance_raw(b::PSY.GenericArcImpedance, _units) =
+    1 / PSY.get_x(b, u"CU")
+_series_susceptance_raw(t::PSY.TwoWindingTransformer, units) =
     _series_susceptance_raw(PSY.get_circuit(t), units)
-_series_susceptance_raw(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem) =
+_series_susceptance_raw(c::PSY.TransformerCircuit, units) =
     (1 / PSY.get_x(c, units)) / PSY.get_tap(c)
 
 """
@@ -113,8 +113,8 @@ end
 # reading each once and taking both fields statically halves the unit-conversion work.
 # ComplexF64, not YBUS_ELTYPE — the π layer is Float64; narrowing happens at Ybus storage.
 function _get_shunts(br::PSY.ACTransmission)
-    g = PSY.get_g(br, PSY.SU)
-    b = PSY.get_b(br, PSY.SU)
+    g = PSY.get_g(br, u"SU")
+    b = PSY.get_b(br, u"SU")
     return (complex(g.from, b.from), complex(g.to, b.to))
 end
 
@@ -181,8 +181,8 @@ The from/to shunts carry the real `PSY.get_g` conductance. A caller wanting Powe
     b::PSY.ACTransmission;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
-    r = PSY.get_r(b, PSY.SU)
-    x = PSY.get_x(b, PSY.SU)
+    r = PSY.get_r(b, u"SU")
+    x = PSY.get_x(b, u"SU")
     x = _retained_x(b, r, x, min_x_eps)
     y_fr, y_to = _get_shunts(b)
     return EquivalentBranch(
@@ -193,14 +193,14 @@ The from/to shunts carry the real `PSY.get_g` conductance. A caller wanting Powe
 end
 
 # A detached Ward equivalent's r/x are already system-base values, so they are read on the
-# device base (`PSY.CU`), which returns them unchanged — a detached component cannot resolve
+# device base (`u"CU"`), which returns them unchanged — a detached component cannot resolve
 # the system base power. It carries no shunts.
 function equivalent_branch(
     b::PSY.GenericArcImpedance;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
-    r = PSY.get_r(b, PSY.CU)
-    x = PSY.get_x(b, PSY.CU)
+    r = PSY.get_r(b, u"CU")
+    x = PSY.get_x(b, u"CU")
     x = _retained_x(b, r, x, min_x_eps)
     return EquivalentBranch(
         r, x,
@@ -214,7 +214,7 @@ function equivalent_branch(
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
     sh = _magnetizing_shunt_split(
-        PSY.get_magnetizing_shunt(b, PSY.SU),
+        PSY.get_magnetizing_shunt(b, u"SU"),
         PSY.get_shunt_location(b),
     )
     return _circuit_equivalent_branch(PSY.get_circuit(b), sh, b, min_x_eps)
@@ -226,7 +226,7 @@ function equivalent_branch(
 )
     transformer = get_transformer(w)
     sh = _three_winding_shunt_split(
-        PSY.get_magnetizing_shunt(transformer, PSY.SU),
+        PSY.get_magnetizing_shunt(transformer, u"SU"),
         PSY.get_shunt_location(transformer),
         get_winding_number(w),
     )
@@ -243,8 +243,8 @@ function _circuit_equivalent_branch(
     br::PSY.ACTransmission,
     min_x_eps::Float64,
 )
-    r = PSY.get_r(circuit, PSY.SU)
-    x = PSY.get_x(circuit, PSY.SU)
+    r = PSY.get_r(circuit, u"SU")
+    x = PSY.get_x(circuit, u"SU")
     x = _retained_x(br, r, x, min_x_eps)
     return EquivalentBranch(
         r, x,
@@ -313,11 +313,12 @@ function _evaluate_correction_table(
     mode = PSY.get_transformer_control_mode(ict)
     if mode == PSY.ImpedanceCorrectionTransformerControlMode.TAP_RATIO
         x = abs(PSY.get_tap(circuit))
+        curve = PSY.get_tap_ratio_correction_curve(ict)
     else
-        # The table's x-values are degrees; `α` is stored in radians.
-        x = rad2deg(PSY.get_α(circuit))
+        x = PSY.get_α(circuit)
+        curve = PSY.get_phase_angle_correction_curve(ict)
     end
-    return _interpolate_correction_factor(PSY.get_impedance_correction_curve(ict), x)
+    return _interpolate_correction_factor(curve, x)
 end
 
 # `WindingCategory` encodes the winding position directly (`TR2W_WINDING = 0`, then
@@ -577,31 +578,42 @@ end
 """
     branch_flow_limits(branch) -> NamedTuple
 
-Directional flow limits, per unit on the system base (`PSY.SU`): `(from_to, to_from)`. For symmetric
-branches both fields equal the branch's [`get_equivalent_rating`](@ref); `MonitoredLine`
-carries asymmetric limits and has its own method. Branches whose rating lives on a
-transformer circuit — and reduction groups containing them — may carry `nothing` in both
-fields when no rating is known; `Line`/`MonitoredLine` limits are always `Float64`.
+Directional flow limits, per unit on the system base (`u"SU"`): `(from_to, to_from)`. For symmetric
+branches both fields equal the branch's [`get_equivalent_rating`](@ref). A `Line` with an
+`operational_flow_limit` returns the maximum of each direction instead. Branches whose rating
+lives on a transformer circuit — and reduction groups containing them — may carry `nothing` in
+both fields when no rating is known; `Line` limits are always `Float64`.
 
 A reduction aggregate answers with its equivalent rating in both directions, and throws when
 any member carries asymmetric limits.
 """
 function branch_flow_limits(b::PSY.ACTransmission)
+    return _symmetric_flow_limits(b)
+end
+
+function _symmetric_flow_limits(b::PSY.ACTransmission)
     r = get_equivalent_rating(b)
     return (from_to = r, to_from = r)
 end
 
-function branch_flow_limits(b::PSY.MonitoredLine)
-    fl = PSY.get_flow_limits(b, PSY.SU)
-    return (from_to = fl.from_to, to_from = fl.to_from)
+function branch_flow_limits(b::PSY.Line)
+    return _line_flow_limits(b, PSY.get_operational_flow_limit(b, u"SU"))
+end
+
+_line_flow_limits(b::PSY.Line, ::Nothing) = _symmetric_flow_limits(b)
+
+function _line_flow_limits(::PSY.Line, ofl::NamedTuple)
+    return (from_to = ofl.from_to.max, to_from = ofl.to_from.max)
 end
 
 _has_asymmetric_flow_limits(::PSY.ACTransmission) = false
 
-function _has_asymmetric_flow_limits(b::PSY.MonitoredLine)
-    fl = PSY.get_flow_limits(b, PSY.CU)
-    return fl.from_to != fl.to_from
+function _has_asymmetric_flow_limits(b::PSY.Line)
+    return _is_asymmetric(PSY.get_operational_flow_limit(b, u"SU"))
 end
+
+_is_asymmetric(::Nothing) = false
+_is_asymmetric(ofl::NamedTuple) = ofl.from_to.max != ofl.to_from.max
 
 _has_asymmetric_flow_limits(seg::AbstractReductionAggregate) =
     any(_has_asymmetric_flow_limits, seg)
