@@ -21,8 +21,7 @@ function solve!(
     cache::KLULinSolveCache{Tv, Ti},
     B::StridedVecOrMat{Tv},
 ) where {Tv, Ti}
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         n = _check_solve_args(cache, B)
         nrhs = size(B, 2)
         nrhs == 0 && return B
@@ -32,8 +31,6 @@ function solve!(
         )
         ok == 0 && klu_throw(cache.common[], "klu_solve")
         return B
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
@@ -59,8 +56,7 @@ function tsolve!(
     B::StridedVecOrMat{Tv};
     conjugate::Bool = false,
 ) where {Tv, Ti}
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         n = _check_solve_args(cache, B)
         _require_klu_numeric(cache, "tsolve!")
         nrhs = size(B, 2)
@@ -71,8 +67,6 @@ function tsolve!(
         )
         ok == 0 && klu_throw(cache.common[], "klu_tsolve")
         return B
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
