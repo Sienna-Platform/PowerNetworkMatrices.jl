@@ -10,6 +10,8 @@ The cache keeps a reference to the matrix of the last factorization, because
 Pardiso reads the matrix again in the solve phase for iterative refinement.
 `numeric_refactor!` requires the sparsity pattern of the last
 `symbolic_factor!`, and throws an `ArgumentError` for a different pattern.
+
+Not thread-safe: share one cache per task.
 """
 mutable struct PardisoLinSolveCache{T <: Union{Float64, ComplexF64}} <: LinearSolverCache
     # A `Pardiso.MKLPardisoSolver`. Its type is not available without the extension.

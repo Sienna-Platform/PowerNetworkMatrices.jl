@@ -83,7 +83,7 @@ import LinearAlgebra
 import LinearAlgebra: ldiv!, mul!, I, dot
 
 """Supertype of the cached sparse-factorization backends (`KLULinSolveCache`,
-`AAFactorCache`, and downstream caches such as PowerFlows' MKLPardiso cache).
+`AAFactorCache`, and `PardisoLinSolveCache`).
 Defined ahead of the wrapper submodules so their cache structs can subtype it."""
 abstract type LinearSolverCache end
 

@@ -126,10 +126,12 @@ function PNM.symbolic_factor!(
 ) where {T}
     cache.is_factored = false
     cache.A = A
-    cache.colptr = Vector{Int}(getcolptr(A))
-    cache.rowval = Vector{Int}(rowvals(A))
+    empty!(cache.colptr)
+    empty!(cache.rowval)
     Pardiso.set_phase!(cache.ps, Pardiso.ANALYSIS)
     Pardiso.pardiso(cache.ps, cache.A, T[])
+    cache.colptr = Vector{Int}(getcolptr(A))
+    cache.rowval = Vector{Int}(rowvals(A))
     return cache
 end
 
