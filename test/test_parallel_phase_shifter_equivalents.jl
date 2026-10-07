@@ -418,7 +418,7 @@ function _mk_near_angle_parallel_lines_system(θs; x = 0.1)
     for (i, θ) in enumerate(θs)
         add_component!(
             sys,
-            Line(; input_basis = PSY.CU,
+            Line(; input_basis = u"CU",
                 name = "L$i", available = true, active_power_flow = 0.0,
                 reactive_power_flow = 0.0, arc = arc, r = x / tan(θ), x = x,
                 b = (from = 0.0, to = 0.0), rating = 1.0,
