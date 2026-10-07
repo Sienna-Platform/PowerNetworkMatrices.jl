@@ -152,11 +152,10 @@ end
     end
 end
 
-@testset "Anti-parallel branches stay connected for DFS connectivity" begin
+@testset "Anti-parallel branches stay connected for value-based connectivity" begin
     # Two branches between the same bus pair with opposite from/to arcs each contribute
     # +1/-1 to the signed bus adjacency; summed naively they cancel to zero, which hides
-    # the connection from the value-based DFS connectivity check (`find_connected_components`,
-    # the scalable alternative to Goderya). The Ybus build must retain the last branch's
+    # the connection from the value-based connectivity check (`find_connected_components`). The Ybus build must retain the last branch's
     # orientation (matching the original overwrite semantics) and warn. Real datasets
     # contain anti-parallel lines, so this must hold.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
@@ -205,34 +204,11 @@ end
     @test ybus.adjacency_data[j, i] != 0
     @test ybus.adjacency_data[i, j] == -ybus.adjacency_data[j, i]
 
-    # Value-based DFS connectivity sees the stub connected: a single component.
+    # Value-based connectivity sees the stub connected: a single component.
     cc = PNM.find_connected_components(ybus.adjacency_data, ybus.lookup[1])
     @test length(cc) == 1
     # Structure-based union find agrees.
     @test length(PNM.find_subnetworks(ybus.adjacency_data, ybus.axes[1])) == 1
-end
-
-@testset "Subnetwork algorithms" begin
-    sys = build_hvdc_with_small_island()
-    ybus = @test_logs (:info, r"Finding subnetworks via iterative union find") match_mode =
-        :any Ybus(sys)
-    ybus =
-        @test_logs (:info, r"Finding subnetworks via depth first search") match_mode = :any Ybus(
-            sys;
-            subnetwork_algorithm = depth_first_search,
-        )
-
-    sub_1 = PNM.find_subnetworks(
-        ybus.data,
-        ybus.axes[1];
-        subnetwork_algorithm = depth_first_search,
-    )
-    sub_2 = PNM.find_subnetworks(
-        ybus.data,
-        ybus.axes[1];
-        subnetwork_algorithm = iterative_union_find,
-    )
-    @test sub_1 == sub_2
 end
 
 @testset "assign_reference_buses! supports multiple swings per island (multi-swing)" begin
@@ -271,6 +247,7 @@ function _mk_star_bus(number, name, bustype, angle)
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 230.0,
+        input_basis = u"CU",
     )
 end
 
@@ -380,4 +357,59 @@ end
 
     vptdf = VirtualPTDF(sys)
     @test PNM.get_bus_axis(vptdf)[only(PNM.get_ref_bus_position(vptdf))] == 10
+end
+
+@testset "find_subnetworks ignores stored exact zeros" begin
+    # Chain 1-2-3 whose 2-3 entries are stored but hold exact zero.
+    rows = [1, 2, 1, 2, 3, 2, 3]
+    cols = [1, 1, 2, 2, 2, 3, 3]
+    vals = Int8[1, 1, 1, 1, 0, 0, 1]
+    A = SparseArrays.sparse(rows, cols, vals, 3, 3)
+    @test SparseArrays.nnz(A) == 7
+    subnets = PNM.find_subnetworks(A, [10, 20, 30])
+    @test Set(values(subnets)) == Set([Set([10, 20]), Set([30])])
+    B = copy(A)
+    B[3, 2] = 1
+    B[2, 3] = 1
+    @test SparseArrays.nnz(B) == 7
+    @test length(PNM.find_subnetworks(B, [10, 20, 30])) == 1
+end
+
+@testset "all connectivity routines agree on stored exact zeros" begin
+    # Chain 1-2-3 whose 2-3 entries are stored but hold exact zero.
+    A = SparseArrays.sparse(
+        [1, 2, 1, 2, 3, 2, 3], [1, 1, 2, 2, 2, 3, 3], Int8[1, 1, 1, 1, 0, 0, 1], 3, 3)
+    lookup = Dict(10 => 1, 20 => 2, 30 => 3)
+    expected = Set([Set([10, 20]), Set([30])])
+    @test PNM.find_connected_components(A, lookup) == expected
+    @test Set(values(PNM.find_subnetworks(A, [10, 20, 30]))) == expected
+    B = copy(A)
+    B[3, 2] = 1
+    B[2, 3] = 1
+    @test length(PNM.find_connected_components(B, lookup)) == 1
+end
+
+@testset "in-place zeroed Ybus off-diagonals island a bus for every routine" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    ybus = Ybus(sys)
+    Y = copy(ybus.data)
+    j = 1
+    nz = SparseArrays.nonzeros(Y)
+    for k in SparseArrays.nzrange(Y, j)
+        i = SparseArrays.rowvals(Y)[k]
+        i == j && continue
+        nz[PNM._stored_index(Y, i, j)] = zero(eltype(nz))
+        nz[PNM._stored_index(Y, j, i)] = zero(eltype(nz))
+    end
+    @test SparseArrays.nnz(Y) == SparseArrays.nnz(ybus.data)
+    bus_ax = PNM.get_bus_axis(ybus)
+    @test length(PNM.find_subnetworks(Y, bus_ax)) == 2
+    @test length(PNM.find_connected_components(Y, PNM.get_bus_lookup(ybus))) == 2
+end
+
+@testset "find_connected_components accepts a System" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    cc = PNM.find_connected_components(sys)
+    @test length(cc) == 1
+    @test only(cc) == Set(PSY.get_number.(get_components(ACBus, sys)))
 end

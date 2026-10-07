@@ -139,7 +139,7 @@ end
     end
     add_component!(
         sys,
-        PowerLoad(; input_basis = PSY.CU,
+        PowerLoad(; input_basis = u"CU",
             name = "Leaf1_load",
             available = true,
             bus = get_component(ACBus, sys, "Leaf1"),
@@ -169,12 +169,12 @@ end
     )
         PSY.get_available(source) || continue
         injection[ptdf.lookup[1][PSY.get_number(PSY.get_bus(source))]] +=
-            PSY.get_active_power(source, PSY.SU)
+            PSY.get_active_power(source, u"SU")
     end
     for load in get_components(x -> !isa(x, PSY.FixedAdmittance), PSY.ElectricLoad, sys)
         PSY.get_available(load) || continue
         injection[ptdf.lookup[1][PSY.get_number(PSY.get_bus(load))]] -=
-            PSY.get_active_power(load, PSY.SU)
+            PSY.get_active_power(load, u"SU")
     end
 
     reduced_injection = deepcopy(injection)

@@ -16,7 +16,7 @@ Float64 only. Requires macOS 15.5+ (enforced by the backend selection in
 `check_pattern` adds a structural-equality check on refactor calls and is
 only consulted when reusing.
 """
-mutable struct AAFactorCache
+mutable struct AAFactorCache <: LinearSolverCache
     # Apple-side 0-based, narrower-integer copies of the full input CSC pattern.
     # Reused as-is across `numeric_refactor!` calls.
     columnStarts::Vector{Clong}
@@ -107,7 +107,7 @@ function AAFactorCache(
         scaling,
     )
     _populate_pattern!(cache, A)
-    finalizer(_free_handles!, cache)
+    finalizer(_finalize_aa_handles!, cache)
     return cache
 end
 
@@ -188,6 +188,26 @@ function _free_handles!(cache::AAFactorCache)
 end
 
 Base.finalize(cache::AAFactorCache) = _free_handles!(cache)
+
+# Set at exit, before Julia runs the remaining finalizers, so a finalizer never frees a
+# handle that an unawaited task is still factoring or solving on; the OS reclaims it.
+const _PROCESS_EXITING = Threads.Atomic{Bool}(false)
+
+function _mark_process_exiting()
+    _PROCESS_EXITING[] = true
+    return nothing
+end
+
+function __init__()
+    atexit(_mark_process_exiting)
+    return nothing
+end
+
+function _finalize_aa_handles!(cache::AAFactorCache)
+    _PROCESS_EXITING[] && return nothing
+    _free_handles!(cache)
+    return nothing
+end
 
 # `deepcopy` is unsafe: it would bit-copy the raw libSparse factor handles,
 # aliasing one factorization across two finalizer-owning caches (a

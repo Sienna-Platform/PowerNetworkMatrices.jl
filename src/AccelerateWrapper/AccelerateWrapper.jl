@@ -12,7 +12,6 @@ designed for the access patterns of `PowerNetworkMatrices`:
   analysis, without re-allocating the structural arrays.
 - Solve dense and **sparse** right-hand sides in place, with the sparse path
   packing only non-empty RHS columns into a bounded scratch block.
-- Compute `A·X` and `A·x` directly via libSparse's `SparseMultiply`.
 
 This module is intentionally lighter than the upstream `AppleAccelerate.jl`
 package: it owns no high-level Julia wrappers over libSparse, exposes the
@@ -25,6 +24,7 @@ module AccelerateWrapper
 import SparseArrays
 import SparseArrays: SparseMatrixCSC, getcolptr, rowvals, nonzeros, nzrange
 import LinearAlgebra
+import ..LinearSolverCache
 
 export AAFactorCache,
     aa_factorize,
@@ -35,21 +35,18 @@ export AAFactorCache,
     solve!,
     solve_sparse!,
     solve_sparse,
-    is_factored,
-    aa_spmm!,
-    aa_spmv!
+    is_factored
 
 @static if Sys.isapple()
     include("libsparse_bindings.jl")
     include("aa_cache.jl")
     include("solve_dense.jl")
     include("solve_sparse_rhs.jl")
-    include("spmm.jl")
 else
     # Stub layer. Non-Apple builds never bind libSparse symbols, never codegen
     # the `@ccall` sites, and never instantiate `SparseOpaqueFactorization`.
     # The whole submodule reduces to these short bodies on Linux/Windows.
-    struct AAFactorCache end
+    struct AAFactorCache <: LinearSolverCache end
 
     _unavailable() = error(
         "AccelerateWrapper is macOS-only (Sys.isapple() returned false). " *
@@ -66,8 +63,6 @@ else
     solve_sparse!(args...; kwargs...) = _unavailable()
     solve_sparse(args...; kwargs...) = _unavailable()
     is_factored(::AAFactorCache) = false
-    aa_spmm!(args...) = _unavailable()
-    aa_spmv!(args...) = _unavailable()
 end
 
 end # module

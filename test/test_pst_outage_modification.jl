@@ -3,8 +3,8 @@
 
 @testset "pst outage: ArcModification carries and merges delta_shift_injection" begin
     z = zero(PNM.YBUS_ELTYPE)
-    a = ArcModification(3, -1.0, -0.2, z, z, z, z)
-    b = ArcModification(3, -2.0, -0.3, z, z, z, z)
+    a = ArcModification(3, -1.0, -0.2, z, z, z, z, 1)
+    b = ArcModification(3, -2.0, -0.3, z, z, z, z, 1)
     @test a.delta_shift_injection == -0.2
     @test ArcModification(3, -1.0).delta_shift_injection == 0.0
 
@@ -12,11 +12,12 @@
     @test length(merged) == 1
     @test merged[1].delta_b ≈ -3.0
     @test merged[1].delta_shift_injection ≈ -0.5
+    @test merged[1].opened == 2
 
     # Physically distinct shift deltas must be distinct cache keys.
     m1 = NetworkModification("x", [a])
-    m2 = NetworkModification("y", [ArcModification(3, -1.0, 0.0, z, z, z, z)])
-    m3 = NetworkModification("z", [ArcModification(3, -1.0, -0.2, z, z, z, z)])
+    m2 = NetworkModification("y", [ArcModification(3, -1.0, 0.0, z, z, z, z, 0)])
+    m3 = NetworkModification("z", [ArcModification(3, -1.0, -0.2, z, z, z, z, 1)])
     @test m1 != m2
     # `m1` and `m2` differ only in `delta_shift_injection`; the numeric hashes are
     # deterministic, so this fails exactly when that field is dropped from `Base.hash`.
@@ -34,7 +35,7 @@ function _mk_pst_triangle_system(; alpha = 0.15)
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(; input_basis = PSY.CU,
+            Line(; input_basis = u"CU",
                 name = name, available = true, active_power_flow = 0.0,
                 reactive_power_flow = 0.0, arc = arc, r = 0.0, x = 0.1,
                 b = (from = 0.0, to = 0.0), rating = 1.0,
@@ -49,9 +50,9 @@ function _mk_pst_triangle_system(; alpha = 0.15)
     add_component!(sys, pst_arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "PST",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = pst_arc, tap = 1.0, α = alpha, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0,
@@ -74,9 +75,9 @@ function _mk_pst_series_system(; parallel_segment::Bool = false)
         add_component!(sys, arc)
         add_component!(
             sys,
-            PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+            PSY.TwoWindingTransformer(; input_basis = u"CU",
                 name = name,
-                circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+                circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                     arc = arc, tap = 1.0, α = α, available = true,
                     active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                     base_power = 100.0, base_voltage_primary = 230.0,
@@ -92,7 +93,7 @@ function _mk_pst_series_system(; parallel_segment::Bool = false)
     if parallel_segment
         add_component!(
             sys,
-            Line(; input_basis = PSY.CU,
+            Line(; input_basis = u"CU",
                 name = "L23", available = true, active_power_flow = 0.0,
                 reactive_power_flow = 0.0, arc = t3_arc, r = 0.0, x = 0.1,
                 b = (from = 0.0, to = 0.0), rating = 1.0,
@@ -180,7 +181,7 @@ end
     @test !iszero(injection)
     @test m.delta_shift_injection ≈ -injection
     @test m.delta_b ≈
-          -PNM.get_series_susceptance(PNM.get_series_branch_map(nr)[(1, 3)], PSY.SU)
+          -PNM.get_series_susceptance(PNM.get_series_branch_map(nr)[(1, 3)], u"SU")
 end
 
 @testset "pst outage: partial trip inside a series chain keeps the arc" begin
@@ -197,9 +198,9 @@ end
     # susceptance-weighted parallel equivalent of t3 and L23, segment 1 is t1 alone.
     t1 = get_component(PSY.TwoWindingTransformer, sys, "t1")
     l23 = get_component(Line, sys, "L23")
-    b_t1 = PNM.get_series_susceptance(t1, PSY.SU)
-    b_t3 = PNM.get_series_susceptance(t3, PSY.SU)
-    b_l23 = PNM.get_series_susceptance(l23, PSY.SU)
+    b_t1 = PNM.get_series_susceptance(t1, u"SU")
+    b_t3 = PNM.get_series_susceptance(t3, u"SU")
+    b_l23 = PNM.get_series_susceptance(l23, u"SU")
     α_t1 = PSY.get_α(PSY.get_circuit(t1))
     α_t3 = PSY.get_α(PSY.get_circuit(t3))
 

@@ -15,6 +15,13 @@ electrical parameters needed for power flow calculations and network analysis.
 - `branch_catalog::BranchCatalog`: Metadata from network reduction operations
 - `arc_admittance_from_to::Union{ArcAdmittanceMatrix, Nothing}`: From-to arc admittance matrix
 - `arc_admittance_to_from::Union{ArcAdmittanceMatrix, Nothing}`: To-from arc admittance matrix
+- `arc_axis::Vector{Tuple{Int, Int}}`: Arc axis of the network reduction data, stored one time
+- `arc_lookup::Dict{Tuple{Int, Int}, Int}`: Map from each arc in `arc_axis` to its index
+- `arc_susceptance_scale::Vector{Float64}`: Fraction of each arc's DC susceptance still in
+  service, indexed by `arc_axis`; 1.0 until [`apply_ybus_modification!`](@ref) changes it,
+  and applied by [`BA_Matrix`](@ref)
+- `arc_live_members::Vector{Int}`: Members of each arc still in service, indexed by
+  `arc_axis`; [`apply_ybus_modification!`](@ref) removes an arc once this reaches zero
 
 # Key Features
 - Indexed by bus numbers (non-sequential numbering supported)
@@ -58,15 +65,62 @@ struct Ybus{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
     branch_catalog::BranchCatalog
     arc_admittance_from_to::Union{ArcAdmittanceMatrix, Nothing}
     arc_admittance_to_from::Union{ArcAdmittanceMatrix, Nothing}
+    arc_axis::Vector{Tuple{Int, Int}}
+    arc_lookup::Dict{Tuple{Int, Int}, Int}
+    arc_susceptance_scale::Vector{Float64}
+    arc_live_members::Vector{Int}
 end
 
-get_axes(M::Ybus) = M.axes
-get_lookup(M::Ybus) = M.lookup
-get_ref_bus(M::Ybus) = sort!(collect(keys(M.subnetwork_axes)))
+function Ybus(
+    data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int},
+    adjacency_data::SparseArrays.SparseMatrixCSC{Int8, Int},
+    axes::NTuple{2, Vector},
+    lookup::NTuple{2, Dict},
+    subnetwork_axes::Dict,
+    arc_subnetwork_axis::Dict{Int, Vector{Tuple{Int, Int}}},
+    branch_catalog::BranchCatalog,
+    arc_admittance_from_to::Union{ArcAdmittanceMatrix, Nothing},
+    arc_admittance_to_from::Union{ArcAdmittanceMatrix, Nothing},
+)
+    nr = get_network_reduction_data(branch_catalog)
+    arc_ax = get_arc_axis(nr)
+    return Ybus(
+        data,
+        adjacency_data,
+        axes,
+        lookup,
+        subnetwork_axes,
+        arc_subnetwork_axis,
+        branch_catalog,
+        arc_admittance_from_to,
+        arc_admittance_to_from,
+        arc_ax,
+        make_ax_ref(arc_ax),
+        ones(length(arc_ax)),
+        Int[_arc_member_count(nr, arc) for arc in arc_ax],
+    )
+end
 
-"""Get the [`BranchCatalog`](@ref) recording every branch merged into this matrix."""
-get_branch_catalog(M::Ybus) = M.branch_catalog
+# Branches an outage can take off `arc`: each member of a parallel group, else the one branch
+# or series chain filed on it.
+function _outaged_member_count(nr::NetworkReductionData, arc::Tuple{Int, Int})
+    parallel = get_parallel_branch_map(nr)
+    if haskey(parallel, arc)
+        return length(parallel[arc])::Int
+    end
+    return count(
+        m -> haskey(m, arc),
+        (get_direct_branch_map(nr), get_series_branch_map(nr)),
+    )
+end
+
+# A Ward equivalent filed on the arc is one more member, and no outage removes it.
+_arc_member_count(nr::NetworkReductionData, arc::Tuple{Int, Int}) =
+    _outaged_member_count(nr, arc) + haskey(get_added_arc_impedance_map(nr), arc)
+
 get_bus_axis(M::Ybus) = M.axes[1]
+get_arc_axis(M::Ybus) = M.arc_axis
+get_arc_lookup(M::Ybus) = M.arc_lookup
 get_bus_lookup(M::Ybus) = M.lookup[1]
 
 """
@@ -93,37 +147,6 @@ println("Isolated buses: ", isolated)
 """
 function get_isolated_buses(M::Ybus)
     return [x for x in keys(M.subnetwork_axes) if length(M.subnetwork_axes[x][1]) == 1]
-end
-
-"""
-    get_default_reduction(sys::PSY.System) -> NetworkReductionData
-
-Build a Y-bus matrix from the system and return its default network reduction data.
-
-This function constructs a Y-bus matrix with no network reductions applied and returns
-the resulting `NetworkReductionData`, which contains the basic bus and branch mappings
-for the system without any reduction algorithms.
-
-# Arguments
-- `sys::PSY.System`: Power system to analyze
-
-# Returns
-- `NetworkReductionData`: Default network reduction data with basic system mappings
-
-# Examples
-```julia
-system = System("system.json")
-reduction_data = get_default_reduction(system)
-println("Number of buses: ", length(get_bus_reduction_map(reduction_data)))
-```
-
-# See Also
-- [`Ybus`](@ref): Y-bus matrix construction
-- [`NetworkReductionData`](@ref): Network reduction data structure
-"""
-function get_default_reduction(sys::PSY.System)
-    ybus = Ybus(sys)
-    return get_network_reduction_data(ybus)
 end
 
 """
@@ -571,8 +594,8 @@ function _ybus!(
 )
     bus_no = get_bus_index(fa, num_bus, nr)
     Y =
-        PSY.get_impedance_active_power(fa, PSY.SU) -
-        im * PSY.get_impedance_reactive_power(fa, PSY.SU)
+        PSY.get_impedance_active_power(fa, u"SU") -
+        im * PSY.get_impedance_reactive_power(fa, u"SU")
     if !isfinite(Y)
         error("Data in $(PSY.get_name(fa)) is incorrect. Y = $(Y)")
     end
@@ -675,7 +698,6 @@ end
         make_arc_admittance_matrices::Bool = false,
         network_reductions::Vector{NetworkReduction} = NetworkReduction[],
         include_constant_impedance_loads::Bool = true,
-        subnetwork_algorithm = iterative_union_find,
         kwargs...
     ) -> Ybus
 
@@ -692,33 +714,9 @@ and network reductions while maintaining connectivity analysis.
 - `make_arc_admittance_matrices::Bool=false`: Whether to construct arc admittance matrices for power flow
 - `network_reductions::Vector{NetworkReduction}=[]`: Network reduction algorithms to apply
 - `include_constant_impedance_loads::Bool=true`: Whether to include constant impedance loads as shunt admittances
-- `subnetwork_algorithm=iterative_union_find`: Algorithm for finding electrical islands
 
 # Returns
 - `Ybus`: Constructed Y-bus matrix with network topology and electrical parameters
-
-# Features
-- **Branch Support**: Lines, transformers, phase shifters, three-winding transformers
-- **Shunt Elements**: Fixed admittances, switched admittances, constant impedance loads
-- **Network Reductions**: Radial, degree-two, Ward reductions for computational efficiency
-- **Multiple Islands**: Handles disconnected network components with separate reference buses
-- **Branch Matrices**: Optional from-to/to-from admittance matrices for power flow calculations
-
-# Examples
-```julia
-# Basic Y-bus construction
-ybus = Ybus(system)
-
-# With arc admittance matrices for power flow
-ybus = Ybus(system; make_arc_admittance_matrices=true)
-
-# Apply network reductions for computational efficiency
-reductions = [RadialReduction(), DegreeTwoReduction()]
-ybus = Ybus(system; network_reductions=reductions)
-
-# Exclude constant impedance loads
-ybus = Ybus(system; include_constant_impedance_loads=false)
-```
 
 # See Also
 - [`NetworkReduction`](@ref): Network reduction algorithms
@@ -767,7 +765,6 @@ function Ybus(
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
     irreducible_buses = Set{Int}(),
     include_constant_impedance_loads = true,
-    subnetwork_algorithm = iterative_union_find,
 )
     network_reductions, zero_impedance_reduction =
         _split_zero_impedance_reduction(network_reductions)
@@ -889,19 +886,14 @@ function Ybus(
             SparseArrays.sparse(rows_ix_nnz, [fb; tb], [y11; y12], arc_count, busnumber)
         ytf_data =
             SparseArrays.sparse(rows_ix_nnz, [tb; fb], [y22; y21], arc_count, busnumber)
-        arc_admittance_from_to = ArcAdmittanceMatrix(
+        arc_admittance_from_to, arc_admittance_to_from = _arc_admittance_pair(
             yft_data,
-            (arc_axis, bus_ax),
-            (arc_lookup, bus_lookup),
-            catalog,
-            :FromTo,
-        )
-        arc_admittance_to_from = ArcAdmittanceMatrix(
             ytf_data,
-            (arc_axis, bus_ax),
-            (arc_lookup, bus_lookup),
+            arc_axis,
+            bus_ax,
+            arc_lookup,
+            bus_lookup,
             catalog,
-            :ToFrom,
         )
     else
         arc_admittance_from_to = nothing
@@ -909,7 +901,7 @@ function Ybus(
     end
     if length(bus_lookup) > 1
         subnetworks = assign_reference_buses!(
-            find_subnetworks(ybus, bus_ax; subnetwork_algorithm = subnetwork_algorithm),
+            find_subnetworks(ybus, bus_ax),
             ref_bus_numbers,
             ref_bus_angles,
         )
@@ -1056,18 +1048,20 @@ function _make_arc_subnetwork_axis(
     subnetworks::Dict{Int, Set{Int}},
     nr::NetworkReductionData,
 )
-    arc_ax = get_arc_axis(nr)
-    arc_subnetwork_axis = Dict{Int, Vector{Tuple{Int, Int}}}()
-    for k in keys(subnetworks)
-        arc_subnetwork_axis[k] = Vector{Tuple{Int, Int}}()
+    arc_subnetwork_axis = Dict{Int, Vector{Tuple{Int, Int}}}(
+        k => Vector{Tuple{Int, Int}}() for k in keys(subnetworks)
+    )
+    bus_to_subnetwork = Dict{Int, Int}()
+    for (k, buses) in subnetworks
+        for bus in buses
+            bus_to_subnetwork[bus] = k
+        end
     end
-    for arc in arc_ax
-        for (k, v) in subnetworks
-            if arc[1] ∈ v || arc[2] in v
-                subnetwork = get!(arc_subnetwork_axis, k, Vector{Tuple{Int, Int}}())
-                push!(subnetwork, arc)
-                break
-            end
+    for arc in get_arc_axis(nr)
+        if haskey(bus_to_subnetwork, arc[1])
+            push!(arc_subnetwork_axis[bus_to_subnetwork[arc[1]]], arc)
+        elseif haskey(bus_to_subnetwork, arc[2])
+            push!(arc_subnetwork_axis[bus_to_subnetwork[arc[2]]], arc)
         end
     end
     return arc_subnetwork_axis
@@ -1127,6 +1121,23 @@ function build_reduced_ybus(
     return _apply_reduction(ybus, network_reduction_data)
 end
 
+# The FromTo/ToFrom arc-admittance pair share one arc axis, bus axis, and catalog.
+function _arc_admittance_pair(
+    yft_data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int},
+    ytf_data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int},
+    arc_axis,
+    bus_axis,
+    arc_lookup,
+    bus_lookup,
+    catalog::BranchCatalog,
+)
+    axes = (arc_axis, bus_axis)
+    lookup = (arc_lookup, bus_lookup)
+    yft = ArcAdmittanceMatrix(yft_data, axes, lookup, catalog, :FromTo)
+    ytf = ArcAdmittanceMatrix(ytf_data, axes, lookup, catalog, :ToFrom)
+    return yft, ytf
+end
+
 function _resolve_arc_admittance(
     new_y_ft::ArcAdmittanceMatrix,
     new_y_tf::ArcAdmittanceMatrix,
@@ -1156,6 +1167,21 @@ function _resolve_arc_admittance(
         valid = findall(arc -> arc[1] != arc[2], arc_ax)
         arc_ax = arc_ax[valid]
         arc_keep_ixs = arc_keep_ixs[valid]
+        # A merge can leave a branch anti-parallel to a surviving key, which
+        # `_remap_merged_bus_in_branch_maps!` folds into that key's group. Relabel its row into
+        # the key's frame, where its ToFrom row is the FromTo current, so the collapse below
+        # sums it into the group's row as `_subset_two_port` does.
+        forward_keys = Set(get_arc_axis(nr))
+        for k in eachindex(arc_ax)
+            arc = arc_ax[k]
+            reversed = (arc[2], arc[1])
+            (arc in forward_keys || !(reversed in forward_keys)) && continue
+            r = arc_keep_ixs[k]
+            ft_row = new_y_ft.data[r, :]
+            new_y_ft.data[r, :] = new_y_tf.data[r, :]
+            new_y_tf.data[r, :] = ft_row
+            arc_ax[k] = reversed
+        end
         # Collapse duplicates that appear when a bus merge maps two winding arcs to the
         # same (from, to) label (e.g. primary and secondary windings both become (X, S)).
         # Sum their rows so the combined admittance is preserved, then drop the extras.
@@ -1183,21 +1209,15 @@ function _resolve_arc_admittance(
     ytf_data = new_y_tf.data[arc_keep_ixs, bus_ix]
 
     catalog = BranchCatalog(nr)
-    arc_admittance_from_to = ArcAdmittanceMatrix(
+    return _arc_admittance_pair(
         yft_data,
-        (arc_ax, bus_ax),
-        (arc_lookup, bus_lookup),
-        catalog,
-        :FromTo,
-    )
-    arc_admittance_to_from = ArcAdmittanceMatrix(
         ytf_data,
-        (arc_ax, bus_ax),
-        (arc_lookup, bus_lookup),
+        arc_ax,
+        bus_ax,
+        arc_lookup,
+        bus_lookup,
         catalog,
-        :ToFrom,
     )
-    return arc_admittance_from_to, arc_admittance_to_from
 end
 
 function _resolve_arc_admittance(
@@ -1283,79 +1303,11 @@ _merge_arc_admittance_bus_columns(
     ::Dict{Int, Int},
 ) = (nothing, nothing)
 
-function _accumulate_csc_row_into!(M::SparseArrays.SparseMatrixCSC, i::Int, j::Int)
-    rows = SparseArrays.rowvals(M)
-    vals = SparseArrays.nonzeros(M)
-    for col in 1:size(M, 2)
-        v_j = zero(eltype(M))
-        for k in SparseArrays.nzrange(M, col)
-            rows[k] == j && (v_j = vals[k])
-        end
-        iszero(v_j) && continue
-        found = false
-        for k in SparseArrays.nzrange(M, col)
-            if rows[k] == i
-                vals[k] += v_j
-                found = true
-                break
-            end
-        end
-        found || (M[i, col] += v_j)
-    end
-    return
-end
-
-function _accumulate_csc_col_into!(M::SparseArrays.SparseMatrixCSC, i::Int, j::Int)
-    rows = SparseArrays.rowvals(M)
-    vals = SparseArrays.nonzeros(M)
-    # Snapshot column j up front. Structural inserts into column i shift the CSC backing
-    # store, and the shift direction depends on whether i precedes or follows j; iterating
-    # a captured copy of column j stays correct for either ordering. An offset-based version
-    # is only valid when i < j (for i > j it drops a mutual term, giving an asymmetric Ybus).
-    j_entries = [(rows[k], vals[k]) for k in SparseArrays.nzrange(M, j)]
-    for (r, v_j) in j_entries
-        iszero(v_j) && continue
-        found = false
-        # Re-read i_range each iteration: a structural insert changes where column i lives.
-        i_range = SparseArrays.nzrange(M, i)
-        for k_i in i_range
-            if rows[k_i] == r
-                vals[k_i] += v_j
-                found = true
-                break
-            end
-        end
-        found || (M[r, i] += v_j)
-    end
-    return
-end
-
-function _merge_ybus_buses!(
-    data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int},
-    adjacency_data::SparseArrays.SparseMatrixCSC{Int8, Int},
-    bus_lookup::Dict{Int, Int},
-    merged_bus_pairs::Dict{Int, Int},
-)
-    for (removed_bus, surviving_bus) in merged_bus_pairs
-        i = bus_lookup[surviving_bus]
-        j = bus_lookup[removed_bus]
-        _accumulate_csc_row_into!(data, i, j)
-        _accumulate_csc_col_into!(data, i, j)
-        _accumulate_csc_row_into!(adjacency_data, i, j)
-        _accumulate_csc_col_into!(adjacency_data, i, j)
-    end
-    # Anti-parallel branches cancel in the signed adjacency (+1/-1 sum to 0) and get dropped
-    # by `dropzeros!`, hiding a real edge from DegreeTwoReduction. The complex Ybus data sums
-    # and never cancels structurally, so re-derive each surviving bus's adjacency from it.
-    _repair_merged_adjacencies!(adjacency_data, data, bus_lookup, merged_bus_pairs)
-    return
-end
-
-# Re-derive every surviving bus's signed adjacency from the complex Ybus data. Shared by the
-# in-place merge (`_merge_ybus_buses!`) and the fused pure-merge rebuild so the two paths
-# cannot drift. A merged off-diagonal can sum to a stored zero (e.g. a series capacitor
+# Re-derive every surviving bus's signed adjacency from the complex Ybus data. A merged off-diagonal can sum to a stored zero (e.g. a series capacitor
 # cancelling a line of equal magnitude), but that still marks a real edge between the buses,
-# so it must produce an adjacency entry; do not drop those zeros.
+# so it must produce an adjacency entry; do not drop those zeros. The adjacency is topology;
+# value-based connectivity on `data` itself (see connectivity_checks.jl) correctly sees no
+# coupling there.
 function _repair_merged_adjacencies!(
     adjacency_data::SparseArrays.SparseMatrixCSC{Int8, Int},
     data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int},
@@ -1384,14 +1336,10 @@ function _repair_merged_adjacency!(
 end
 
 # A bus merge identifies the removed bus with its survivor: their rows/columns add and the
-# removed bus is dropped. The general path does this with in-place CSC structural inserts
-# (`_merge_ybus_buses!`) plus a later `data[bus_ix, bus_ix]` slice; on a large sparse matrix
-# every insert shifts the whole backing store, so the cost scales with merges × nnz. When a
-# reduction is a pure merge (no eliminations or admittance additions), the merge and the
-# slice are both just an index relabeling, so we can do them together in one O(nnz) pass:
-# relabel each entry's row/column to the surviving index and let `sparse()` sum collisions.
-# Returns `true` when the fast path applies; only ZIBR produces such a reduction today
-# (radial/Ward add admittances, degree-two adds series branches).
+# removed bus is dropped. For a pure merge (no eliminations or admittance additions; only ZIBR
+# produces one — radial/Ward add admittances, degree-two adds series branches) the merge and
+# the bus-removal slice are just an index relabeling, done in one O(nnz) pass: relabel each
+# entry's row/column to the surviving index and let `sparse()` sum collisions.
 function _is_pure_merge_reduction(nr_new::NetworkReductionData)
     return !isempty(nr_new.merged_bus_pairs) &&
            isempty(nr_new.removed_buses) &&
@@ -1491,6 +1439,54 @@ reduced bus axis. Every arc the reduction retains must resolve to surviving buse
     return
 end
 
+# Every arc on the reduced arc axis must sit in exactly one island's arc list, inside that
+# island's buses. A drift here gives the same arc two keys depending on which axis a consumer
+# reads, and the miss surfaces far downstream of the reduction that caused it.
+function _validate_arc_subnetwork_axis(
+    subnetwork_axes::Dict,
+    arc_subnetwork_axis::Dict{Int, Vector{Tuple{Int, Int}}},
+    arc_ax::Vector{Tuple{Int, Int}},
+)
+    arcs = Set(arc_ax)
+    seen = Set{Tuple{Int, Int}}()
+    n_listed = 0
+    for (k, island_arcs) in arc_subnetwork_axis
+        haskey(subnetwork_axes, k) || error(
+            "Network reduction left arc subnetwork key $k, which is not a bus subnetwork key.",
+        )
+        island = Set(subnetwork_axes[k][1])
+        for arc in island_arcs
+            (arc in arcs && arc[1] in island && arc[2] in island) || error(
+                "Network reduction left arc $arc in the arc list of subnetwork $k, but the arc \
+is not on the reduced arc axis or has an endpoint outside the subnetwork.",
+            )
+            push!(seen, arc)
+        end
+        n_listed += length(island_arcs)
+    end
+    (n_listed == length(seen) == length(arcs)) || error(
+        "Network reduction left $(length(arcs)) arcs on the arc axis, but the subnetwork arc \
+lists hold $n_listed entries for $(length(seen)) distinct arcs. Each arc must belong to exactly \
+one subnetwork.",
+    )
+    return
+end
+
+# BA takes its columns from the arc-admittance matrices but its island arc lists from
+# arc_subnetwork_axis, which derives from the branch maps. The two must agree.
+function _validate_arc_admittance_axis(
+    arc_admittance::ArcAdmittanceMatrix,
+    arc_ax::Vector{Tuple{Int, Int}},
+)
+    Set(get_arc_axis(arc_admittance)) == Set(arc_ax) || error(
+        "Network reduction left an arc-admittance arc axis that differs from the arc axis \
+of the branch maps: $(length(get_arc_axis(arc_admittance))) arcs against $(length(arc_ax)).",
+    )
+    return
+end
+
+_validate_arc_admittance_axis(::Nothing, ::Vector{Tuple{Int, Int}}) = nothing
+
 function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     # These quantities are modified and used to construct the new Ybus
     data = get_data(ybus)
@@ -1498,15 +1494,16 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     bus_lookup = get_bus_lookup(ybus)
     nr = get_network_reduction_data(ybus)
 
-    # A pure-merge reduction (only ZIBR today) folds removed buses into survivors purely by
-    # index relabeling, so its merge and bus-removal slice are fused into one O(nnz) rebuild
-    # below; any other reduction merges the square Ybus in place via _merge_ybus_buses!. In
-    # either case the arc-admittance bus columns are merged in _merge_arc_admittance_bus_columns.
+    # A pure-merge reduction (only ZIBR) folds removed buses into survivors by index
+    # relabeling, fusing the merge and the bus-removal slice into one O(nnz) rebuild below.
+    # The arc-admittance bus columns are merged in _merge_arc_admittance_bus_columns.
     fast_merge = _is_pure_merge_reduction(nr_new)
+    isempty(nr_new.merged_bus_pairs) || fast_merge ||
+        error(
+            "Bus merges combined with other reductions in one NetworkReductionData are not supported.",
+        )
     yft_merged, ytf_merged = ybus.arc_admittance_from_to, ybus.arc_admittance_to_from
     if !isempty(nr_new.merged_bus_pairs)
-        fast_merge ||
-            _merge_ybus_buses!(data, adjacency_data, bus_lookup, nr_new.merged_bus_pairs)
         yft_merged, ytf_merged = _merge_arc_admittance_bus_columns(
             ybus.arc_admittance_from_to,
             ybus.arc_admittance_to_from,
@@ -1547,8 +1544,7 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     bus_ix = [get_bus_lookup(ybus)[x] for x in bus_ax]
     if fast_merge
         # Fuse the merge (sum removed bus into survivor) and the bus-removal slice into one
-        # relabel-and-sum pass, then re-derive survivor adjacency from the complex Ybus data
-        # via the same `_repair_merged_adjacencies!` the in-place merge uses.
+        # relabel-and-sum pass, then re-derive survivor adjacency from the complex Ybus data.
         remap =
             _build_merge_remap(get_bus_lookup(ybus), bus_lookup, nr_new.merged_bus_pairs)
         n_new = length(bus_ax)
@@ -1573,14 +1569,12 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
         )
     end
 
-    subnetwork_axes, arc_subnetwork_axis = _make_subnetwork_axes(
-        ybus,
-        bus_numbers_to_remove,
-        nr_new.removed_arcs,
-        union(
-            Set(keys(nr_new.added_arc_impedance_map)),
-            Set(arc for (arc, _) in composite_entries),
-        ),
+    subnetwork_axes = _make_subnetwork_axes(ybus, bus_numbers_to_remove)
+    # Derived from the final branch maps, like the unreduced build, so the island arc lists
+    # cannot keep a label that a bus merge or an anti-parallel fold already retired.
+    arc_subnetwork_axis = _make_arc_subnetwork_axis(
+        Dict(k => Set(v[1]) for (k, v) in subnetwork_axes),
+        nr,
     )
 
     arc_admittance_from_to, arc_admittance_to_from = _resolve_arc_admittance(
@@ -1600,6 +1594,8 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
         nr.merged_bus_pairs = nr_new.merged_bus_pairs
     end
     _validate_surviving_arc_keys(nr, bus_ax)
+    _validate_arc_subnetwork_axis(subnetwork_axes, arc_subnetwork_axis, get_arc_axis(nr))
+    _validate_arc_admittance_axis(arc_admittance_from_to, get_arc_axis(nr))
     return Ybus(
         data,
         adjacency_data,
@@ -1737,7 +1733,8 @@ function _remap_merged_bus_in_branch_maps!(
     # when ZIR runs (D2 populates it afterwards), so its reverse map does not need rebuilding
     # here.
     _remake_reverse_direct_branch_map!(nr)
-    _remake_reverse_parallel_branch_map!(nr)
+    nr.reverse_parallel_branch_map =
+        _remake_reverse_composite_branch_map(nr.parallel_branch_map)
     return
 end
 
@@ -1762,8 +1759,14 @@ function _remove_arcs_from_branch_maps!(
         end
     end
     remake_reverse_direct_branch_map && _remake_reverse_direct_branch_map!(nr)
-    remake_reverse_parallel_branch_map && _remake_reverse_parallel_branch_map!(nr)
-    remake_reverse_series_branch_map && _remake_reverse_series_branch_map!(nr)
+    if remake_reverse_parallel_branch_map
+        nr.reverse_parallel_branch_map =
+            _remake_reverse_composite_branch_map(nr.parallel_branch_map)
+    end
+    if remake_reverse_series_branch_map
+        nr.reverse_series_branch_map =
+            _remake_reverse_composite_branch_map(nr.series_branch_map)
+    end
     return
 end
 
@@ -1858,14 +1861,8 @@ function _update_bus_maps!(
     return
 end
 
-function _make_subnetwork_axes(
-    ybus::Ybus,
-    bus_numbers_to_remove::Vector{Int},
-    arcs_to_remove::Set{Tuple{Int, Int}},
-    arcs_to_add::Set{Tuple{Int, Int}},
-)
+function _make_subnetwork_axes(ybus::Ybus, bus_numbers_to_remove::Vector{Int})
     subnetwork_axes = deepcopy(ybus.subnetwork_axes)
-    arc_subnetwork_axis = deepcopy(ybus.arc_subnetwork_axis)
     subnetwork_key_removed = Set{Int}()
     for k in keys(subnetwork_axes)
         if k in bus_numbers_to_remove
@@ -1890,8 +1887,6 @@ function _make_subnetwork_axes(
         end
         delete!(subnetwork_axes, k)
         subnetwork_axes[new_ref_bus] = (axis_1, axis_2)
-        # If a reference bus key is reduced, change the arc subnetwork axis key as well:
-        arc_subnetwork_axis[new_ref_bus] = pop!(arc_subnetwork_axis, k)
         @warn "Original reference bus $k removed during reduction; reassigning the subnetwork reference bus to $new_ref_bus."
     end
     empty_subnetwork_keys = Set{Int}()
@@ -1903,18 +1898,8 @@ function _make_subnetwork_axes(
     for k in empty_subnetwork_keys
         @warn "Subnetwork with reference bus $k has no remaining buses after reduction and will be removed from the Ybus."
         delete!(subnetwork_axes, k)
-        delete!(arc_subnetwork_axis, k)
     end
-    for (k, values) in arc_subnetwork_axis
-        subnetwork_buses = Set(subnetwork_axes[k][1])
-        local_arcs_to_add =
-            Set(
-                arc for arc in arcs_to_add if
-                arc[1] in subnetwork_buses && arc[2] in subnetwork_buses
-            )
-        arc_subnetwork_axis[k] = union(setdiff(values, arcs_to_remove), local_arcs_to_add)
-    end
-    return subnetwork_axes, arc_subnetwork_axis
+    return subnetwork_axes
 end
 
 function _modify_removed_arc_connections!(
@@ -2026,21 +2011,15 @@ function _add_series_branches_to_ybus!(
     ytf_data = SparseArrays.sparse(I_ytf, J_ytf, V_ytf, row_ix - 1, n_buses)
 
     catalog = BranchCatalog(nrd)
-    arc_admittance_from_to = ArcAdmittanceMatrix(
+    return _arc_admittance_pair(
         yft_data,
-        (arc_axis, get_bus_axis(yft)),
-        (arc_lookup, get_bus_lookup(yft)),
-        catalog,
-        :FromTo,
-    )
-    arc_admittance_to_from = ArcAdmittanceMatrix(
         ytf_data,
-        (arc_axis, get_bus_axis(ytf)),
-        (arc_lookup, get_bus_lookup(ytf)),
+        arc_axis,
+        get_bus_axis(yft),
+        arc_lookup,
+        get_bus_lookup(yft),
         catalog,
-        :ToFrom,
     )
-    return arc_admittance_from_to, arc_admittance_to_from
 end
 
 # Entries the composite arc's members already contributed to the unreduced Ybus, in the
@@ -2144,77 +2123,7 @@ end
 
 """
     add_segment_to_ybus!(
-        segment::PSY.ACTransmission
-        y11::Vector{YBUS_ELTYPE},
-        y12::Vector{YBUS_ELTYPE},
-        y21::Vector{YBUS_ELTYPE},
-        y22::Vector{YBUS_ELTYPE},
-        fb::Vector{Int},
-        tb::Vector{Int},
-        ix::Int,
-        segment_orientation::Symbol
-    )
-
-Add a branch segment to Y-bus vectors during series chain reduction.
-
-Adds the Y-bus entries for a single segment (branch or transformer winding) to the
-admittance vectors, handling the proper orientation. Used when building equivalent
-Y-bus entries for series chains of degree-two buses.
-
-# Arguments
-- `segment::Union{PSY.ACTransmission, Tuple{PSY.ThreeWindingTransformer, Int}}`: Branch segment to add
-- `y11::Vector{YBUS_ELTYPE}`: Vector for from-bus self admittances
-- `y12::Vector{YBUS_ELTYPE}`: Vector for from-to mutual admittances
-- `y21::Vector{YBUS_ELTYPE}`: Vector for to-from mutual admittances
-- `y22::Vector{YBUS_ELTYPE}`: Vector for to-bus self admittances
-- `fb::Vector{Int}`: Vector for from-bus indices
-- `tb::Vector{Int}`: Vector for to-bus indices
-- `ix::Int`: Index position for the segment
-- `segment_orientation::Symbol`: `:FromTo` or `:ToFrom` orientation
-
-# Implementation Details
-- Computes Pi-model entries using `ybus_branch_entries()`
-- Handles orientation by swapping entries for `:ToFrom`
-- Sets bus indices to consecutive values (ix, ix+1) for chain building
-- Used in degree-two network reduction algorithms
-
-# See Also
-- [`DegreeTwoReduction`](@ref): Degree-two bus elimination
-- [`ybus_branch_entries`](@ref): Pi-model computation
-"""
-function add_segment_to_ybus!(
-    segment::PSY.ACTransmission,
-    y11::Vector{YBUS_ELTYPE},
-    y12::Vector{YBUS_ELTYPE},
-    y21::Vector{YBUS_ELTYPE},
-    y22::Vector{YBUS_ELTYPE},
-    fb::Vector{Int},
-    tb::Vector{Int},
-    ix::Int,
-    segment_orientation::Symbol,
-    nr::NetworkReductionData,
-)
-    (Y11, Y12, Y21, Y22) = ybus_branch_entries(segment, nr)
-    push!(fb, ix)
-    push!(tb, ix + 1)
-    if segment_orientation == :FromTo
-        push!(y11, Y11)
-        push!(y12, Y12)
-        push!(y21, Y21)
-        push!(y22, Y22)
-    elseif segment_orientation == :ToFrom
-        push!(y11, Y22)
-        push!(y12, Y21)
-        push!(y21, Y12)
-        push!(y22, Y11)
-    else
-        error("Invalid segment orientation $(segment_orientation)")
-    end
-end
-
-"""
-    add_segment_to_ybus!(
-        segment::AbstractReductionAggregate,
+        segment::PSY.ACTransmission,
         y11::Vector{YBUS_ELTYPE},
         y12::Vector{YBUS_ELTYPE},
         y21::Vector{YBUS_ELTYPE},
@@ -2226,33 +2135,24 @@ end
         nr::NetworkReductionData,
     )
 
-Add a reduction aggregate — a parallel group or a series chain — as a single segment to Y-bus
-vectors during series chain reduction.
-
-Uses the aggregate's own two-port (`ybus_branch_entries(segment, nr)`); summing members under
-one orientation mis-handles an anti-parallel asymmetric member.
+Add a chain segment to Y-bus vectors during series chain reduction. The segment is a branch,
+a transformer winding, or a reduction aggregate (a parallel group or series chain, whose own
+two-port `ybus_branch_entries(segment, nr)` is used).
 
 # Arguments
-- `segment::AbstractReductionAggregate`: parallel group or series chain to add
-- `y11::Vector{YBUS_ELTYPE}`: Vector for from-bus self admittances
-- `y12::Vector{YBUS_ELTYPE}`: Vector for from-to mutual admittances
-- `y21::Vector{YBUS_ELTYPE}`: Vector for to-from mutual admittances
-- `y22::Vector{YBUS_ELTYPE}`: Vector for to-bus self admittances
-- `fb::Vector{Int}`: Vector for from-bus indices
-- `tb::Vector{Int}`: Vector for to-bus indices
+- `segment::PSY.ACTransmission`: Segment to add
+- `y11`, `y12`, `y21`, `y22`: Vectors of from-self, from-to, to-from, and to-self admittances
+- `fb`, `tb`: Vectors of from-bus and to-bus indices; the segment gets indices `(ix, ix+1)`
 - `ix::Int`: Index position for the segment
-- `segment_orientation::Symbol`: `:FromTo` or `:ToFrom` orientation
-
-# Implementation Details
-- Handles orientation by swapping entries for `:ToFrom`
-- Sets bus indices to consecutive values (ix, ix+1) for chain building
+- `segment_orientation::Symbol`: `:FromTo` or `:ToFrom`; `:ToFrom` swaps the entries
+- `nr::NetworkReductionData`: Reduction state used to resolve the segment's entries
 
 # See Also
-- [`add_segment_to_ybus!`](@ref): Single branch variant
-- [`DegreeTwoReduction`](@ref): Series chain elimination
+- [`DegreeTwoReduction`](@ref): Degree-two bus elimination
+- [`ybus_branch_entries`](@ref): Pi-model computation
 """
 function add_segment_to_ybus!(
-    segment::AbstractReductionAggregate,
+    segment::PSY.ACTransmission,
     y11::Vector{YBUS_ELTYPE},
     y12::Vector{YBUS_ELTYPE},
     y21::Vector{YBUS_ELTYPE},
@@ -2302,21 +2202,12 @@ function _remake_reverse_direct_branch_map!(nr::NetworkReductionData)
     nr.reverse_direct_branch_map = reverse_direct_branch_map
     return
 end
-function _remake_reverse_parallel_branch_map!(nr::NetworkReductionData)
-    reverse_parallel_branch_map = Dict{PSY.ACTransmission, Tuple{Int, Int}}()
-    for (arc, entry) in nr.parallel_branch_map
-        _register_composite_members!(reverse_parallel_branch_map, arc, entry)
+function _remake_reverse_composite_branch_map(branch_map)
+    reverse_map = Dict{PSY.ACTransmission, Tuple{Int, Int}}()
+    for (arc, entry) in branch_map
+        _register_composite_members!(reverse_map, arc, entry)
     end
-    nr.reverse_parallel_branch_map = reverse_parallel_branch_map
-    return
-end
-function _remake_reverse_series_branch_map!(nr::NetworkReductionData)
-    reverse_series_branch_map = Dict{PSY.ACTransmission, Tuple{Int, Int}}()
-    for (arc, entry) in nr.series_branch_map
-        _register_composite_members!(reverse_series_branch_map, arc, entry)
-    end
-    nr.reverse_series_branch_map = reverse_series_branch_map
-    return
+    return reverse_map
 end
 
 """
@@ -2396,8 +2287,7 @@ end
 
 # See Also
 - [`validate_connectivity`](@ref): Check for full connectivity
-- [`depth_first_search`](@ref): Graph traversal algorithm
-- [`iterative_union_find`](@ref): Alternative connectivity algorithm
+- [`iterative_union_find`](@ref): Underlying connectivity algorithm
 """
 function find_subnetworks(M::Ybus)
     bus_numbers = M.axes[2]
@@ -2532,7 +2422,6 @@ function get_reduction(ybus::Ybus, ::PSY.System, reduction::WardReduction)
     added_admittance_map = get_ward_reduction(
         ybus.data,
         bus_lookup,
-        bus_axis,
         arc_axis,
         boundary_buses,
         Set(get_ref_bus(ybus)),

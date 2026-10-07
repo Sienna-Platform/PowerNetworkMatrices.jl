@@ -31,11 +31,9 @@ function assign_reference_buses!(
         elseif length(ref_bus) == 0
             bus_groups[bus_key] = pop!(subnetworks, bus_key)
             @warn "No reference bus in the subnetwork associated with bus $bus_key. Reference bus assigned arbitrarily"
-        elseif length(ref_bus) > 1
+        else
             representative = argmin(r -> (get(ref_angles, r, 0.0), r), ref_bus)
             bus_groups[representative] = pop!(subnetworks, bus_key)
-        else
-            @assert false
         end
     end
     return bus_groups

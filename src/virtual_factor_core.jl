@@ -16,9 +16,9 @@ The type parameter order `{Ax, L, K}` matches `VirtualPTDF` so the PTDF/MODF
 wrappers can carry `core::VirtualFactorCore{Ax, L, K}` with the same parameters.
 
 # Thread-safety
-All libklu solves serialize through the process-wide `_LIBKLU_LOCK` and the
-per-core `solver_lock`. The single scratch slot in `temp_data`/`work_ba_col` is
-protected by `solver_lock` (acquired via `with_solver`). A core shared between
+Solves on one core serialize through its `solver_lock` (acquired via
+`with_solver`), which protects the single scratch slot in
+`temp_data`/`work_ba_col` and the core's one factorization. A core shared between
 multiple wrappers therefore serializes their solves, which is the existing
 single-scratch model.
 
@@ -27,6 +27,8 @@ single-scratch model.
 - `BA::SparseMatrixCSC{Float64, Int}`: BA matrix.
 - `A::SparseMatrixCSC{Int8, Int}`: incidence matrix data.
 - `arc_susceptances::Vector{Float64}`: effective susceptance per arc.
+- `arc_susceptance_signs::Vector{Float64}`: sign of each arc's DC susceptance
+  (`_arc_susceptance_sign`).
 - `axes::Ax`: `(arc_axis, bus_axis)`.
 - `lookup::L`: `(arc_lookup, bus_lookup)`.
 - `valid_ix::Vector{Int}`: non-reference bus indices.
@@ -57,6 +59,7 @@ struct VirtualFactorCore{Ax, L <: NTuple{2, Dict}, K}
     BA::SparseArrays.SparseMatrixCSC{Float64, Int}
     A::SparseArrays.SparseMatrixCSC{Int8, Int}
     arc_susceptances::Vector{Float64}
+    arc_susceptance_signs::Vector{Float64}
     axes::Ax
     lookup::L
     valid_ix::Vector{Int}
@@ -107,20 +110,8 @@ _get_BA(c::VirtualFactorCore) = c.BA
 _get_arc_susceptances(c::VirtualFactorCore) = c.arc_susceptances
 _get_valid_ix(c::VirtualFactorCore) = c.valid_ix
 
-function _ref_bus_positions(c::VirtualFactorCore)
-    n_buses = length(c.axes[2])
-    return Set{Int}(setdiff(1:n_buses, c.valid_ix))
-end
-
 # --- Lazy shared derived quantities ---
 
-"""
-    get_PTDF_A_diag(c::VirtualFactorCore) -> Vector{Float64}
-
-Return the raw diagonal `H[e, e]` of `PTDF · A`, computing it (one solve per
-arc) on first access and caching it on the core. Subsequent calls — including
-from other wrappers sharing this core — return the cached vector.
-"""
 # Double-checked publish for a lazy shared vector: `compute` runs once under `lock` and
 # `dest` is filled in place before `ready` is set, so a throw mid-compute leaves the flag
 # unset and a retry does not append a second copy.
@@ -140,12 +131,19 @@ function _publish_once!(
     end
 end
 
+"""
+    get_PTDF_A_diag(c::VirtualFactorCore) -> Vector{Float64}
+
+Return the raw diagonal `H[e, e]` of `PTDF · A`, computing it (one solve per
+arc) on first access and caching it on the core. Subsequent calls — including
+from other wrappers sharing this core — return the cached vector.
+"""
 function get_PTDF_A_diag(c::VirtualFactorCore)
     return _publish_once!(c.PTDF_A_diag, c.PTDF_A_diag_ready, c.solver_lock) do
         n_arcs = length(c.axes[1])
         @info "Computing PTDF_A_diag on first access ($n_arcs arcs)."
         t0 = time_ns()
-        new_diag = _get_PTDF_A_diag(c.K, c.BA, c.A, _ref_bus_positions(c))
+        new_diag = _get_PTDF_A_diag(c.K, c.BA, c.A, c.valid_ix, c.bus_to_valid_idx)
         elapsed = (time_ns() - t0) / 1e9
         @info "Computed PTDF_A_diag in $(round(elapsed; digits = 2)) s (cached)."
         new_diag
@@ -173,8 +171,8 @@ end
 """
     VirtualFactorCore(ybus::Ybus; linear_solver, tol, system_uuid) -> VirtualFactorCore
 
-Build the shared factorization core from a `Ybus`. This is the single place that
-constructs the incidence matrix, BA matrix, ABA matrix, and its factorization.
+Build the shared factorization core from a `Ybus`: the incidence matrix, BA matrix, ABA matrix,
+and its factorization. `worker_core` rebuilds the ABA matrix and factorization of an existing core.
 """
 function VirtualFactorCore(
     ybus::Ybus;
@@ -204,20 +202,23 @@ function VirtualFactorCore(
     valid_ix = setdiff(1:length(bus_ax), ref_bus_positions)
     bus_to_valid_idx = _build_bus_to_valid_idx(length(bus_ax), valid_ix)
 
-    # Single scratch slot — solves serialize through `solver_lock` +
-    # `_LIBKLU_LOCK`, so per-worker scratch is unnecessary. Kept as a
+    # Single scratch slot — solves serialize through `solver_lock`, so
+    # per-worker scratch is unnecessary. Kept as a
     # `Vector{Vector{Float64}}` so the `with_solver` callback signature
     # stays uniform across solver backends.
     temp_data = [zeros(length(bus_ax))]
     work_ba_col = [zeros(length(valid_ix))]
 
     arc_susceptances = _extract_arc_susceptances(BA.data)
+    arc_susceptance_signs =
+        Float64[_arc_susceptance_sign(BA.data, A.data, l) for l in 1:size(BA.data, 2)]
 
     return VirtualFactorCore(
         K,
         BA.data,
         A.data,
         arc_susceptances,
+        arc_susceptance_signs,
         axes,
         look_up,
         valid_ix,

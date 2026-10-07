@@ -166,3 +166,22 @@ end
         )
     end
 end
+
+@testset "3WT windings sharing a degree-two chain remove the chain once" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
+    # With the primary out, the star bus has degree two and the other windings form one chain.
+    PSY.set_available!(PSY.get_primary_circuit(trf), false)
+    vptdf = VirtualPTDF(
+        sys;
+        network_reductions = NetworkReduction[DegreeTwoReduction(;
+            reduce_reactive_power_injectors = false,
+        )],
+    )
+    nr = PNM.get_network_reduction_data(vptdf)
+    mod = NetworkModification(vptdf, trf)
+    am = only(mod.arc_modifications)
+    arc = PNM.get_arc_axis(vptdf)[am.arc_index]
+    @test haskey(PNM.get_series_branch_map(nr), arc)
+    @test am.delta_b ≈ -PNM._ba_arc_susceptance(nr, arc)
+end

@@ -401,7 +401,7 @@ end
             ba.data[bus_lookup[arc[1]], ix];
             rtol = 1e-5,
         )
-        @test isapprox(PNM._ba_arc_susceptance(entry, nr), 1 / PSY.get_x(entry, PSY.SU))
+        @test isapprox(PNM._ba_arc_susceptance(entry, nr), 1 / PSY.get_x(entry, u"SU"))
 
         # With the two sides agreeing, a full-arc outage negates the π-model rather than
         # scaling it by the ratio of the pair total to one twin.
@@ -512,9 +512,9 @@ function _mk_antiparallel_identical_pst_system(; alpha = 0.15, x = 0.2, tap = 1.
         add_component!(sys, arc)
         add_component!(
             sys,
-            PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+            PSY.TwoWindingTransformer(; input_basis = u"CU",
                 name = name,
-                circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+                circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                     arc = arc, tap = tap, α = alpha, available = true,
                     active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                     base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = x,
@@ -530,7 +530,7 @@ function _mk_antiparallel_identical_pst_system(; alpha = 0.15, x = 0.2, tap = 1.
     add_component!(sys, arc)
     add_component!(
         sys,
-        Line(; input_basis = PSY.CU,
+        Line(; input_basis = u"CU",
             name = "L23", available = true, active_power_flow = 0.0,
             reactive_power_flow = 0.0, arc = arc, r = 0.0, x = 0.1,
             b = (from = 0.0, to = 0.0), rating = 1.0,
@@ -587,8 +587,8 @@ end
 @testset "NetworkModification: negative-susceptance full outage" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     line = PSY.get_component(Line, sys, "Line10")
-    PSY.set_r!(line, 0.0 * PSY.SU)
-    PSY.set_x!(line, -0.1 * PSY.SU)
+    PSY.set_r!(line, 0.0u"SU")
+    PSY.set_x!(line, -0.1u"SU")
     vptdf = VirtualPTDF(sys)
     nr = PNM.get_network_reduction_data(vptdf)
     arc = PNM.get_arc_tuple(line, nr)
@@ -618,6 +618,39 @@ end
     @test abs(modified[f, t]) < 1e-5
 end
 
+@testset "Woodbury: negative-susceptance full outage matches the rebuilt network" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    line = PSY.get_component(Line, sys, "Line10")
+    PSY.set_r!(line, 0.0u"SU")
+    PSY.set_x!(line, -0.1u"SU")
+    vptdf = VirtualPTDF(sys)
+    mod = NetworkModification(vptdf, line)
+
+    PSY.set_available!(line, false)
+    ref = PTDF(sys)
+    PSY.set_available!(line, true)
+
+    vmodf = VirtualMODF(sys)
+    ctg = ContingencySpec(1, mod)
+    vmodf.contingency_cache[1] = ctg
+    vmodf_batched = VirtualMODF(sys)
+    batched_ctg = ContingencySpec(1, mod)
+    populate_cache(vmodf_batched, [batched_ctg]; monitored = PNM.get_arc_axis(ref))
+
+    bus_ax = PNM.get_bus_axis(vptdf)
+    for arc in PNM.get_arc_axis(ref)
+        expected = [ref[arc, bus] for bus in bus_ax]
+        arc_ix = PNM.get_arc_lookup(vptdf)[arc]
+        @test isapprox(
+            get_post_modification_ptdf_row(vptdf, arc_ix, mod),
+            expected;
+            atol = 1e-8,
+        )
+        @test isapprox(vmodf[arc, ctg], expected; atol = 1e-8)
+        @test isapprox(vmodf_batched[arc, batched_ctg], expected; atol = 1e-8)
+    end
+end
+
 # `build_two_parallel_degree_two_chains` with chain A's second segment replaced by a phase
 # shifter, so exactly one of the two sibling chains carries an angle.
 function _mk_shifted_grouped_chain_system(; alpha = 0.15, pst_x = 0.2)
@@ -635,9 +668,9 @@ function _mk_shifted_grouped_chain_system(; alpha = 0.15, pst_x = 0.2)
     add_component!(sys, arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "PST_10_3",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = arc, tap = 1.0, α = alpha, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = pst_x,
@@ -679,4 +712,53 @@ end
     am = only(NetworkModification(vptdf, unshifted).arc_modifications)
     @test iszero(am.delta_shift_injection)
     @test am.delta_b ≈ -1 / (1 / 5.0 + 1 / (1 / 0.21))
+end
+
+@testset "Woodbury correction: buffer form matches allocating form, allocation-free" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    vptdf = VirtualPTDF(sys)
+    core = PNM.get_core(vptdf)
+    arc_sus = core.arc_susceptances
+    n_arcs = length(PNM.get_arc_axis(vptdf))
+    buf_zm = zeros(4)
+    buf_coeff = zeros(4)
+    for arcs in ([1], [1, 2], [1, 2, 3])
+        mod = NetworkModification(
+            "outage_$(join(arcs, "_"))",
+            [ArcModification(e, -arc_sus[e]) for e in arcs],
+        )
+        wf = compute_woodbury_factors(vptdf, mod)
+        for m in 1:n_arcs
+            m in arcs && continue
+            b_pre = arc_sus[m]
+            b_post = PNM._post_modification_susceptance(arc_sus, m, wf)
+            z0 = vptdf[PNM.get_arc_axis(vptdf)[m], :] ./ b_pre
+            expected = PNM._woodbury_correction!(copy(z0), core.BA, b_pre, b_post, m, wf)
+            z = copy(z0)
+            PNM._woodbury_correction!(z, buf_zm, buf_coeff, core.BA, b_pre, b_post, m, wf)
+            @test z == expected
+            @test z ≈ apply_woodbury_correction(vptdf, m, wf) atol = 1e-12
+            copyto!(z, z0)
+            @test (@allocated PNM._woodbury_correction!(
+                z, buf_zm, buf_coeff, core.BA, b_pre, b_post, m, wf,
+            )) == 0
+        end
+    end
+end
+
+@testset "NetworkModification: BA_Matrix classifies outages like VirtualPTDF" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    ybus = Ybus(sys)
+    ba = BA_Matrix(ybus)
+    vptdf = VirtualPTDF(ybus)
+    @test PNM._get_arc_susceptances(ba) == PNM._get_arc_susceptances(vptdf)
+    for line in PSY.get_components(Line, sys)
+        outage = PSY.FixedForcedOutage(; outage_status = 1.0)
+        PSY.add_supplemental_attribute!(sys, line, outage)
+        a = NetworkModification(ba, sys, outage)
+        b = NetworkModification(vptdf, sys, outage)
+        @test a.arc_modifications == b.arc_modifications
+        @test a.shunt_modifications == b.shunt_modifications
+        @test a.is_islanding == b.is_islanding
+    end
 end

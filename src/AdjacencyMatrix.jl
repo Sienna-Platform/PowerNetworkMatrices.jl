@@ -101,7 +101,6 @@ Construct an AdjacencyMatrix from a PowerSystems.System.
 # Keyword arguments
 - `network_reductions::Vector{NetworkReduction}=[]`: Network reduction algorithms to apply
 - `include_constant_impedance_loads::Bool=true`: Whether to include constant impedance loads as shunt admittances
-- `subnetwork_algorithm=iterative_union_find`: Algorithm for finding electrical islands
 
 # Returns
 - `AdjacencyMatrix`: An N x N adjacency matrix indexed with bus numbers showing connectivity

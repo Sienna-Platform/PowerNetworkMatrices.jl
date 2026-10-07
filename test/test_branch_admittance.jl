@@ -5,7 +5,7 @@
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     line = first(PSY.get_components(PSY.Line, sys))
     a = PNM.branch_admittance(line, PNM.NetworkReductionData())
-    r, x = PSY.get_r(line, PSY.SU), PSY.get_x(line, PSY.SU)
+    r, x = PSY.get_r(line, u"SU"), PSY.get_x(line, u"SU")
     y = inv(complex(r, x))
     @test a.g ≈ real(y)
     @test a.b ≈ imag(y)
@@ -35,23 +35,26 @@ end
     @test PNM._reduced_arc_equivalent_branch(nr, (2, 1)) !== nothing
 end
 
-@testset "branch_flow_limits MonitoredLine" begin
+@testset "branch_flow_limits Line with operational_flow_limit" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
-    ml = first(PSY.get_components(PSY.MonitoredLine, sys))
+    ml = first(
+        l for l in PSY.get_components(PSY.Line, sys) if
+        !isnothing(PSY.get_operational_flow_limit(l, u"SU"))
+    )
     fl = PNM.branch_flow_limits(ml)
-    psy_fl = PSY.get_flow_limits(ml, PSY.CU)
-    @test fl.from_to == psy_fl.from_to
-    @test fl.to_from == psy_fl.to_from
+    ofl = PSY.get_operational_flow_limit(ml, u"SU")
+    @test fl.from_to == ofl.from_to.max
+    @test fl.to_from == ofl.to_from.max
 end
 
 @testset "branch_flow_limits on a reduction aggregate" begin
-    # Detached on purpose: branch_flow_limits reads PSY.CU only. An asymmetric member must
-    # keep its own reverse limit.
+    # branch_flow_limits reads the system base, so the members are attached to the system.
+    # An asymmetric member must keep its own reverse limit.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
     buses = collect(PSY.get_components(PSY.ACBus, sys))
     arc = PSY.Arc(; from = buses[1], to = buses[2])
     function bfl_line(name)
-        return PSY.Line(; input_basis = PSY.CU,
+        return PSY.Line(; input_basis = u"CU",
             name = name,
             available = true,
             active_power_flow = 0.0,
@@ -66,7 +69,7 @@ end
         )
     end
     plain = bfl_line("bfl_line_1")
-    monitored = PSY.MonitoredLine(; input_basis = PSY.CU,
+    monitored = PSY.Line(; input_basis = u"CU",
         name = "bfl_monitored",
         available = true,
         active_power_flow = 0.0,
@@ -76,12 +79,20 @@ end
         x = 0.2,
         b = (from = 0.01, to = 0.01),
         g = (from = 0.0, to = 0.0),
-        flow_limits = (from_to = 200.0, to_from = 120.0),
+        operational_flow_limit = (
+            from_to = (min = -200.0, max = 200.0),
+            to_from = (min = -120.0, max = 120.0),
+        ),
         rating = 200.0,
         angle_limits = (min = -pi / 2, max = pi / 2),
     )
 
-    symmetric = PNM.BranchesParallel([plain, bfl_line("bfl_line_2")])
+    second = bfl_line("bfl_line_2")
+    for branch in (plain, second, monitored)
+        PSY.add_component!(sys, branch; skip_validation = true)
+    end
+
+    symmetric = PNM.BranchesParallel([plain, second])
     @test PNM.branch_flow_limits(symmetric).from_to == 200.0
     @test PNM.branch_flow_limits(symmetric).to_from == 200.0
 
@@ -222,7 +233,7 @@ end
     # winding tap, read back through the wrapper.
     tap = PSY.get_tap(windings[winding_number])
     pinned = (1 / PNM.get_equivalent_x(tw)) / tap
-    @test PNM.get_series_susceptance(tw, PSY.SU) ≈ pinned
+    @test PNM.get_series_susceptance(tw, u"SU") ≈ pinned
 
     # (b) Independent hand-derivation from the fixture's raw pairwise data, so (a) is not
     # purely self-referential. `case14_with_pst3w.raw`'s two 3W transformers both carry
@@ -234,9 +245,9 @@ end
     # (1/0.0001)/1.0 = +10000.0 exactly. Note the sign: `1/x` is positive for x > 0, whereas
     # the r-aware complex form `imag(1/(j*x)) = -1/x` is negative — the two forms are NOT
     # interchangeable.
-    r12, x12 = PSY.get_r_12(t, PSY.SU), PSY.get_x_12(t, PSY.SU)
-    r23, x23 = PSY.get_r_23(t, PSY.SU), PSY.get_x_23(t, PSY.SU)
-    r31, x31 = PSY.get_r_31(t, PSY.SU), PSY.get_x_31(t, PSY.SU)
+    r12, x12 = PSY.get_r_12(t, u"SU"), PSY.get_x_12(t, u"SU")
+    r23, x23 = PSY.get_r_23(t, u"SU"), PSY.get_x_23(t, u"SU")
+    r31, x31 = PSY.get_r_31(t, u"SU"), PSY.get_x_31(t, u"SU")
     z12, z23, z31 = complex(r12, x12), complex(r23, x23), complex(r31, x31)
     z_by_winding = (
         (z12 + z31 - z23) / 2,
@@ -246,21 +257,21 @@ end
     z_star = z_by_winding[winding_number]
     hand_derived_susceptance = (1 / imag(z_star)) / tap
     @test hand_derived_susceptance ≈ 10000.0
-    @test PNM.get_series_susceptance(tw, PSY.SU) ≈ hand_derived_susceptance
+    @test PNM.get_series_susceptance(tw, u"SU") ≈ hand_derived_susceptance
 
     # (c) Tap division: winding 3 of this transformer carries a non-unit tap (1.05) on the
     # same star-leg reactance (0.0001), so its susceptance must be 10000/1.05.
     tap3 = PSY.get_tap(windings[3])
     @test tap3 == 1.05
     tw3 = PNM.ThreeWindingTransformerCircuit(t, 3)
-    @test PNM.get_series_susceptance(tw3, PSY.SU) ≈ 10000.0 / 1.05
+    @test PNM.get_series_susceptance(tw3, u"SU") ≈ 10000.0 / 1.05
 
     # (d) `units` selects the reactance base, matching the `TwoWindingTransformer` and
     # generic `ACTransmission` methods. It was previously accepted and ignored, so a CU
     # request silently returned the SU value.
     circuit3 = PSY.get_circuits(t)[3]
-    @test PNM.get_series_susceptance(tw3, PSY.CU) ≈
-          (1 / PSY.get_x(circuit3, PSY.CU)) / tap3
+    @test PNM.get_series_susceptance(tw3, u"CU") ≈
+          (1 / PSY.get_x(circuit3, u"CU")) / tap3
 end
 
 @testset "branch_admittance applies the winding tap for all 3W windings" begin
@@ -326,6 +337,7 @@ end
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 138.0,
+        input_basis = u"CU",
     )
     busB = PSY.ACBus(;
         number = 2,
@@ -336,14 +348,15 @@ end
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 138.0,
+        input_basis = u"CU",
     )
     PSY.add_component!(sys, busA)
     PSY.add_component!(sys, busB)
     arc = PSY.Arc(; from = busA, to = busB)
     PSY.add_component!(sys, arc)
-    t = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+    t = PSY.TwoWindingTransformer(; input_basis = u"CU",
         name = "T2W",
-        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
             arc = arc,
             tap = 1.0,
             available = true,
@@ -359,10 +372,10 @@ end
     PSY.add_component!(sys, t)
 
     # circuit base_power (100.0) == system base, so CU == SU here.
-    @test PNM.get_series_susceptance(t, PSY.SU) ≈ 1 / 0.1
+    @test PNM.get_series_susceptance(t, u"SU") ≈ 1 / 0.1
     PSY.set_tap!(PSY.get_circuit(t), 1.05)
-    @test PNM.get_series_susceptance(t, PSY.SU) ≈ (1 / 0.1) / 1.05
-    @test PNM.get_series_susceptance(t, PSY.SU) ≈ 9.523809523809524
+    @test PNM.get_series_susceptance(t, u"SU") ≈ (1 / 0.1) / 1.05
+    @test PNM.get_series_susceptance(t, u"SU") ≈ 9.523809523809524
 end
 
 @testset "Magnetizing shunt placement (2W enum + 3W enum, parent-resident)" begin
@@ -398,6 +411,7 @@ end
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 138.0,
+            input_basis = u"CU",
         )
         busB = PSY.ACBus(;
             number = 2,
@@ -408,14 +422,15 @@ end
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 138.0,
+            input_basis = u"CU",
         )
         PSY.add_component!(sys, busA)
         PSY.add_component!(sys, busB)
         arc = PSY.Arc(; from = busA, to = busB)
         PSY.add_component!(sys, arc)
-        t = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        t = PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "T2W_shunt",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = arc,
                 available = true,
                 rating = 1.0,
@@ -567,7 +582,7 @@ end
     @test adm.g == real(ys)
     @test adm.b == imag(ys)
     # The line's real conductance now flows through, rather than being zeroed.
-    g_psy = PSY.get_g(line, PSY.SU)
+    g_psy = PSY.get_g(line, u"SU")
     @test PNM.get_equivalent_g_from(eb) == g_psy.from
     @test PNM.get_equivalent_g_to(eb) == g_psy.to
 end
@@ -580,14 +595,14 @@ end
     add_component!(sys, arc)
     _add_test_line!(sys, "L12", arc, 0.01, 0.1)
     line = PSY.get_component(Line, sys, "L12")
-    @test PNM._series_susceptance_raw(line, PSY.SU) ==
-          PNM.get_series_susceptance(line, PSY.SU)
+    @test PNM._series_susceptance_raw(line, u"SU") ==
+          PNM.get_series_susceptance(line, u"SU")
 
     arc2 = Arc(; from = buses[1], to = buses[3])
     add_component!(sys, arc2)
-    t = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+    t = PSY.TwoWindingTransformer(; input_basis = u"CU",
         name = "T13",
-        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
             arc = arc2, tap = 1.05, α = 0.0, available = true,
             active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
             base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.2,
@@ -595,17 +610,17 @@ end
         magnetizing_shunt = Complex(0.0, 0.0),
     )
     add_component!(sys, t)
-    @test PNM._series_susceptance_raw(t, PSY.SU) == PNM.get_series_susceptance(t, PSY.SU)
+    @test PNM._series_susceptance_raw(t, u"SU") == PNM.get_series_susceptance(t, u"SU")
     # A circuit is a delegation target, not a segment: the raw layer answers for it, the
     # public accessor takes only the transformer.
-    @test PNM._series_susceptance_raw(PSY.get_circuit(t), PSY.SU) ==
-          PNM._series_susceptance_raw(t, PSY.SU)
-    @test_throws MethodError PNM.get_series_susceptance(PSY.get_circuit(t), PSY.SU)
+    @test PNM._series_susceptance_raw(PSY.get_circuit(t), u"SU") ==
+          PNM._series_susceptance_raw(t, u"SU")
+    @test_throws MethodError PNM.get_series_susceptance(PSY.get_circuit(t), u"SU")
 
     # Only the raw layer may answer for a degenerate branch.
-    PSY.set_x!(line, 0.0 * PSY.SU)
-    PSY.set_r!(line, 0.0 * PSY.SU)
-    @test PNM._series_susceptance_raw(line, PSY.SU) == Inf
+    PSY.set_x!(line, 0.0u"SU")
+    PSY.set_r!(line, 0.0u"SU")
+    @test PNM._series_susceptance_raw(line, u"SU") == Inf
 end
 
 @testset "get_series_susceptance rejects a non-finite result" begin
@@ -616,7 +631,7 @@ end
     zi = PSY.get_component(Line, sys, "ZI")
 
     err = try
-        PNM.get_series_susceptance(zi, PSY.SU)
+        PNM.get_series_susceptance(zi, u"SU")
         nothing
     catch e
         e
@@ -640,9 +655,9 @@ end
     add_component!(sys, zi_arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "ZI_TAP",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = zi_arc, tap = tap, α = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,

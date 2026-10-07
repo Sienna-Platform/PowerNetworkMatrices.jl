@@ -35,6 +35,7 @@ function _build_meshed_3wt_loop_system()
         magnitude = 1.0,
         voltage_limits = (min = 0.9, max = 1.1),
         base_voltage = 138.0,
+        input_basis = u"CU",
     )
     b1 = mkbus(1, "B1", PSY.ACBusTypes.REF)
     b2 = mkbus(2, "B2", PSY.ACBusTypes.PV)
@@ -43,7 +44,7 @@ function _build_meshed_3wt_loop_system()
     star = mkbus(99, "STAR", PSY.ACBusTypes.PQ)
     foreach(b -> PSY.add_component!(sys, b), (b1, b2, b10, b3, star))
     for (bus, name) in ((b1, "g1"), (b2, "g2"))
-        gen = PSY.ThermalStandard(; input_basis = PSY.CU,
+        gen = PSY.ThermalStandard(; input_basis = u"CU",
             name = name,
             available = true,
             status = PSY.OperationalStates.ONLINE,
@@ -62,7 +63,7 @@ function _build_meshed_3wt_loop_system()
         )
         PSY.add_component!(sys, gen)
     end
-    load = PSY.PowerLoad(; input_basis = PSY.CU,
+    load = PSY.PowerLoad(; input_basis = u"CU",
         name = "load_star",
         available = true,
         bus = star,
@@ -76,7 +77,7 @@ function _build_meshed_3wt_loop_system()
     function mkline(name, f, t, x)
         arc = PSY.Arc(; from = f, to = t)
         PSY.add_component!(sys, arc)
-        line = PSY.Line(; input_basis = PSY.CU,
+        line = PSY.Line(; input_basis = u"CU",
             name = name,
             available = true,
             active_power_flow = 0.0,
@@ -108,7 +109,7 @@ function _build_meshed_3wt_loop_system()
         (z31 + z23 - z12) / 2,
     )
     circuits = ntuple(
-        i -> PSY.TransformerCircuit(; input_basis = PSY.CU,
+        i -> PSY.TransformerCircuit(; input_basis = u"CU",
             arc = arcs[i],
             available = true,
             base_power = 100.0,
@@ -119,7 +120,7 @@ function _build_meshed_3wt_loop_system()
         ),
         3,
     )
-    t3w = PSY.ThreeWindingTransformer(; input_basis = PSY.CU,
+    t3w = PSY.ThreeWindingTransformer(; input_basis = u"CU",
         name = "T3W",
         primary_circuit = circuits[1],
         secondary_circuit = circuits[2],
@@ -232,8 +233,8 @@ end
     @test chain_alpha != 0.0
 
     group = PNM.BranchesParallel(PNM.BranchesSeries[shifted, plain])
-    b_shifted = PNM.get_series_susceptance(shifted, PSY.SU)
-    b_plain = PNM.get_series_susceptance(plain, PSY.SU)
+    b_shifted = PNM.get_series_susceptance(shifted, u"SU")
+    b_plain = PNM.get_series_susceptance(plain, u"SU")
     expected = b_shifted * chain_alpha / (b_shifted + b_plain)
     @test isapprox(PNM.get_series_phase_shift(group, nrd), expected; rtol = 1e-10)
 end
@@ -259,6 +260,15 @@ end
     chains = PNM.find_degree2_chains(A, Set{Int}())
     @test length(chains) == 2
     @test Set(Set(c) for c in chains) == Set([Set([1, 3, 4, 2]), Set([1, 5, 6, 2])])
+end
+
+@testset "find_degree2_chains keeps a chain parallel to a direct line on request" begin
+    # Paths 1-3-2 and 1-4-2 beside the direct line 1-2: both chains end on adjacent buses.
+    edges = [(1, 3), (3, 2), (1, 2), (1, 4), (2, 4)]
+    A = _adjacency_from_edges(edges, 4)
+    @test isempty(PNM.find_degree2_chains(A, Set{Int}()))
+    @test PNM.find_degree2_chains(A, Set{Int}(); require_valid_endpoints = false) ==
+          [[1, 3, 2], [1, 4, 2]]
 end
 
 @testset "find_degree2_chains returns opposite-traversal siblings separately" begin
@@ -320,7 +330,7 @@ composite arc's endpoints host an injector, so a `WardReduction` naming only [1,
 study buses drops bus 4 and, with it, the whole (2, 4) composite arc — while (1, 3) survives
 untouched in `parallel_branch_map`.
 
-This is the system used to exercise `_remake_reverse_parallel_branch_map!`: removing the
+This is the system used to exercise `_remake_reverse_composite_branch_map`: removing the
 (2, 4) composite arc forces the reverse-map rebuild, and since that rebuild recomputes the
 map from every surviving entry in `parallel_branch_map`, the (1, 3) composite arc's
 recursive registration goes through the rebuild too even though it was never itself removed.
@@ -350,6 +360,7 @@ function _build_two_composite_arcs_system()
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
+            input_basis = u"CU",
         )
         PSY.add_component!(sys, b)
         buses[n] = b
@@ -365,7 +376,7 @@ function _build_two_composite_arcs_system()
     end
     PSY.add_component!(
         sys,
-        ThermalStandard(; input_basis = PSY.CU, name = "G1", available = true,
+        ThermalStandard(; input_basis = u"CU", name = "G1", available = true,
             status = PSY.OperationalStates.ONLINE, bus = buses[1],
             active_power = 1.0, reactive_power = 0.0, rating = 2.0,
             prime_mover_type =
@@ -377,7 +388,7 @@ function _build_two_composite_arcs_system()
     )
     PSY.add_component!(
         sys,
-        PowerLoad(; input_basis = PSY.CU, name = "D3", available = true, bus = buses[3],
+        PowerLoad(; input_basis = u"CU", name = "D3", available = true, bus = buses[3],
             active_power = 1.0,
             reactive_power = 0.0, base_power = 100.0, max_active_power = 1.0,
             max_reactive_power = 0.0),
@@ -447,9 +458,9 @@ end
     add_component!(sys, zi_arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "ZI_T",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = zi_arc, tap = 1.05, α = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
@@ -468,9 +479,9 @@ end
 
     # The zero-impedance segment contributes no reactance: the chain is the two lines alone.
     @test PNM._series_reactance(
-        PSY.get_component(PSY.TwoWindingTransformer, sys, "ZI_T"), PSY.SU) == 0.0
-    @test PNM._series_susceptance_raw(chain, PSY.SU) ≈ 1 / 0.2
-    @test isfinite(PNM._series_susceptance_raw(chain, PSY.SU))
+        PSY.get_component(PSY.TwoWindingTransformer, sys, "ZI_T"), u"SU") == 0.0
+    @test PNM._series_susceptance_raw(chain, u"SU") ≈ 1 / 0.2
+    @test isfinite(PNM._series_susceptance_raw(chain, u"SU"))
 
     # ZI_T's x = 0.0 cannot catch a reciprocal slip, since 0 * tap == 0 either way. A tapped
     # leg with non-zero x can.
@@ -482,9 +493,9 @@ end
     add_component!(sys2, tap_arc)
     add_component!(
         sys2,
-        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "TAP_T",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = tap_arc, tap = 1.05, α = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.2,
@@ -501,12 +512,12 @@ end
     )
     # 0.1 + 0.2 * 1.05 = 0.31.
     @test PNM._series_reactance(
-        PSY.get_component(PSY.TwoWindingTransformer, sys2, "TAP_T"), PSY.SU) ≈ 0.2 * 1.05
-    @test PNM._series_susceptance_raw(tap_chain, PSY.SU) ≈ 1 / (0.1 + 0.2 * 1.05)
+        PSY.get_component(PSY.TwoWindingTransformer, sys2, "TAP_T"), u"SU") ≈ 0.2 * 1.05
+    @test PNM._series_susceptance_raw(tap_chain, u"SU") ≈ 1 / (0.1 + 0.2 * 1.05)
 
     # An all-zero chain is genuinely degenerate; the raw layer may still report `Inf`.
-    PSY.set_x!(PSY.get_component(Line, sys, "L12"), 0.0 * PSY.SU)
-    PSY.set_x!(PSY.get_component(Line, sys, "L34"), 0.0 * PSY.SU)
+    PSY.set_x!(PSY.get_component(Line, sys, "L12"), 0.0u"SU")
+    PSY.set_x!(PSY.get_component(Line, sys, "L34"), 0.0u"SU")
     all_zero = PNM.BranchesSeries((1, 4))
     PNM.add_branch!(all_zero, PSY.get_component(Line, sys, "L12"), :FromTo)
     PNM.add_branch!(
@@ -515,7 +526,7 @@ end
         :FromTo,
     )
     PNM.add_branch!(all_zero, PSY.get_component(Line, sys, "L34"), :FromTo)
-    @test PNM._series_susceptance_raw(all_zero, PSY.SU) == Inf
+    @test PNM._series_susceptance_raw(all_zero, u"SU") == Inf
 end
 
 @testset "_get_complete_chain walks a long path without overflowing the call stack" begin

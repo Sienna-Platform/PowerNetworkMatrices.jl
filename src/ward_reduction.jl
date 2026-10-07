@@ -24,7 +24,7 @@ end
 get_study_buses(nr::WardReduction) = nr.study_buses
 
 """
-    get_ward_reduction(data, bus_lookup, bus_axis, arc_axis, boundary_buses, ref_bus_numbers, study_buses, subnetwork_bus_axis)
+    get_ward_reduction(data, bus_lookup, arc_axis, boundary_buses, ref_bus_numbers, study_buses, subnetwork_bus_axis)
 
 Perform Ward reduction to create an equivalent network representation.
 
@@ -35,7 +35,6 @@ buses based on impedance criteria, and equivalent admittances are computed.
 # Arguments
 - `data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int}`: Admittance matrix of the system
 - `bus_lookup::Dict{Int, Int}`: Dictionary mapping bus numbers to matrix indices
-- `bus_axis::Vector{Int}`: Vector of all bus numbers in the system
 - `arc_axis::Vector{Tuple{Int, Int}}`: Vector of all arc tuples in the system
 - `boundary_buses::Set{Int}`: Set of boundary bus numbers between study and external areas
 - `ref_bus_numbers::Set{Int}`: Set of reference bus numbers
@@ -48,7 +47,6 @@ buses based on impedance criteria, and equivalent admittances are computed.
 function get_ward_reduction(
     data::SparseArrays.SparseMatrixCSC{YBUS_ELTYPE, Int},
     bus_lookup::Dict{Int, Int},
-    bus_axis::Vector{Int},
     arc_axis::Vector{Tuple{Int, Int}},
     boundary_buses::Set{Int},
     ref_bus_numbers::Set{Int},
@@ -66,6 +64,7 @@ function get_ward_reduction(
     )
     boundary_buses = collect(intersect(boundary_buses, Set(all_buses)))
 
+    boundary_bus_indices = [subnetwork_bus_lookup[x] for x in boundary_buses]
     external_buses = setdiff(all_buses, study_buses)
     n_buses = length(all_buses)
 
@@ -79,8 +78,6 @@ function get_ward_reduction(
         bus_reduction_map_index[first_ref_study_bus] = Set(external_buses)
     else
         K = klu_factorize(subnetwork_data)
-        boundary_bus_indices = [subnetwork_bus_lookup[x] for x in boundary_buses]
-        boundary_bus_numbers = collect(boundary_buses)
         n_boundary = length(boundary_buses)
         E = SparseArrays.sparse(
             boundary_bus_indices,
@@ -94,7 +91,7 @@ function get_ward_reduction(
         for b in external_buses
             row_index = subnetwork_bus_lookup[b]
             closest_j = argmin(abs2.(view(Z_boundary_cols, row_index, :)))
-            push!(bus_reduction_map_index[boundary_bus_numbers[closest_j]], b)
+            push!(bus_reduction_map_index[boundary_buses[closest_j]], b)
         end
     end
     reverse_bus_search_map =
@@ -102,7 +99,6 @@ function get_ward_reduction(
 
     #Populate matrices for computing external equivalent
     external_bus_indices = [subnetwork_bus_lookup[x] for x in external_buses]
-    boundary_bus_indices = [subnetwork_bus_lookup[x] for x in boundary_buses]
     y_ee = subnetwork_data[external_bus_indices, external_bus_indices]
     y_be = subnetwork_data[
         boundary_bus_indices,
@@ -116,6 +112,7 @@ function get_ward_reduction(
     # Eq. (2.16) from https://core.ac.uk/download/pdf/79564835.pdf.
     y_ee_cache = klu_factorize(y_ee)
     y_eq = y_be * solve_sparse(y_ee_cache, y_eb)
+    _check_ward_equivalent_symmetry(y_eq, boundary_buses)
     #Loop upper diagonal of Yeq
     for ix in 1:length(boundary_buses)
         for jx in ix:length(boundary_buses)
@@ -129,11 +126,14 @@ function get_ward_reduction(
                         available = true,
                         active_power_flow = 0.0,
                         reactive_power_flow = 0.0,
-                        max_flow = 1e6,
+                        operational_flow_limit = (
+                            from_to = (min = -1e6, max = 1e6),
+                            to_from = (min = -1e6, max = 1e6),
+                        ),
                         arc = PSY.Arc(nothing),
                         r = real(arc_impedance),
                         x = imag(arc_impedance),
-                        input_basis = PSY.CU,
+                        input_basis = u"CU",
                     )
                     Y11, Y12, _, Y22 = ybus_branch_entries(generic_arc_impedance)
                     @assert isapprox(-1.0 * Y12, y_eq[ix, jx])
@@ -167,4 +167,28 @@ function get_ward_reduction(
     reverse_bus_search_map,
     added_arc_impedance_map,
     added_admittance_map
+end
+
+const WARD_SYMMETRY_RTOL = 1e-8
+
+# GenericArcImpedance is symmetric and the equivalent is built from the upper triangle only, so
+# an asymmetric y_eq (phase shifters in the external area) would be dropped silently.
+function _check_ward_equivalent_symmetry(y_eq::AbstractMatrix, boundary_buses::Vector{Int})
+    scale = maximum(abs, y_eq; init = 0.0)
+    n = length(boundary_buses)
+    for ix in 1:n, jx in (ix + 1):n
+        asymmetry = abs(y_eq[ix, jx] - y_eq[jx, ix])
+        if asymmetry > WARD_SYMMETRY_RTOL * scale
+            throw(
+                IS.DataFormatError(
+                    "Ward equivalent is asymmetric between boundary buses " *
+                    "$(boundary_buses[ix]) and $(boundary_buses[jx]): " *
+                    "|y_eq[i,j] - y_eq[j,i]| = $(asymmetry) (scale $(scale)). " *
+                    "A phase-shifting transformer in the external area cannot be " *
+                    "represented by a symmetric GenericArcImpedance equivalent.",
+                ),
+            )
+        end
+    end
+    return
 end

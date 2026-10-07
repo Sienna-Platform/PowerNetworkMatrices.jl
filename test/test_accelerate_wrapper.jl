@@ -76,18 +76,6 @@ end
         return copy(wba)
     end
     @test isapprox(ABA * result, b; atol = 1e-9)
-
-    m = which(
-        PNM.with_solver,
-        (
-            typeof(identity),
-            PNM.AAFactorCache,
-            Vector{Vector{Float64}},
-            Vector{Vector{Float64}},
-            ReentrantLock,
-        ),
-    )
-    @test Base.unwrap_unionall(m.sig).parameters[3] === PNM.AAFactorCache
 end
 
 @testset "AccelerateWrapper: KLU vs AA per-column solve parity" begin

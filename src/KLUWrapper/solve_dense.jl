@@ -1,3 +1,15 @@
+function _check_solve_args(cache::KLULinSolveCache, B::StridedVecOrMat)
+    is_factored(cache) || error("KLULinSolveCache: not factored yet.")
+    n = _dim(cache)
+    size(B, 1) == Int(n) || throw(DimensionMismatch(
+        "size(B, 1) = $(size(B, 1)), cache n = $(Int(n))",
+    ))
+    stride(B, 1) == 1 || throw(ArgumentError(
+        "B must have unit stride in the first dimension.",
+    ))
+    return n
+end
+
 """
     solve!(cache, B) -> B
 
@@ -9,45 +21,25 @@ function solve!(
     cache::KLULinSolveCache{Tv, Ti},
     B::StridedVecOrMat{Tv},
 ) where {Tv, Ti}
-    is_factored(cache) || error("KLULinSolveCache: not factored yet.")
-    n = _dim(cache)
-    size(B, 1) == Int(n) || throw(DimensionMismatch(
-        "size(B, 1) = $(size(B, 1)), cache n = $(Int(n))",
-    ))
-    stride(B, 1) == 1 || throw(ArgumentError(
-        "B must have unit stride in the first dimension.",
-    ))
-    nrhs = size(B, 2)
-    nrhs == 0 && return B
-    # Snapshot KLU's preconditions plus identity info — gated by
-    # `KLU_POOL_DEBUG`. `klu_l_solve` returns FALSE with `KLU_INVALID` when
-    # any of {Numeric, Symbolic, B} is NULL, when `ldim < Numeric->n`, or
-    # when `nrhs < 0`. The extra identity fields (`cache_id`, raw pointer
-    # values) let the reader cross-reference the per-thread `@error` logs:
-    # matching `cache_id` or `numeric_ptr` across threads is the smoking
-    # gun for shared state. Off in production (zero runtime cost via
-    # `@static if`); flip the const in `KLUWrapper.jl` to re-enable.
-    @static if KLU_POOL_DEBUG
-        pre_numeric = cache.numeric
-        pre_symbolic = cache.symbolic
-        pre_b_ptr = pointer(B)
+    return _with_owner(cache) do
+        n = _check_solve_args(cache, B)
+        nrhs = size(B, 2)
+        nrhs == 0 && return B
+        cache.lean_active && return _lean_solve_columns!(cache, B)
+        ok = _solve_call(
+            Tv, Ti, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common,
+        )
+        ok == 0 && klu_throw(cache.common[], "klu_solve")
+        return B
     end
-    ok = _solve_call(
-        Tv, Ti, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common,
-    )
-    if ok == 0
-        @static if KLU_POOL_DEBUG
-            @error "KLU klu_solve precondition snapshot" tid =
-                Threads.threadid() cache_id = objectid(cache) common_addr =
-                UInt(Base.pointer_from_objref(cache.common)) numeric_ptr =
-                UInt(pre_numeric) symbolic_ptr = UInt(pre_symbolic) b_ptr =
-                UInt(pre_b_ptr) ldim_n = Int(n) nrhs = Int(nrhs) pre_numeric_null =
-                (pre_numeric == C_NULL) pre_symbolic_null =
-                (pre_symbolic == C_NULL) pre_b_null = (pre_b_ptr == C_NULL) post_numeric_null =
-                (cache.numeric == C_NULL) post_symbolic_null =
-                (cache.symbolic == C_NULL) status = Int(cache.common[].status)
-        end
-        klu_throw(cache.common[], "klu_solve")
+end
+
+_lean_solve_columns!(cache::KLULinSolveCache, B::StridedVector) =
+    lean_solve!(B, cache.lean_plan, cache.lean_vals)
+
+function _lean_solve_columns!(cache::KLULinSolveCache, B::StridedMatrix)
+    for j in axes(B, 2)
+        lean_solve!(view(B, :, j), cache.lean_plan, cache.lean_vals)
     end
     return B
 end
@@ -64,22 +56,18 @@ function tsolve!(
     B::StridedVecOrMat{Tv};
     conjugate::Bool = false,
 ) where {Tv, Ti}
-    is_factored(cache) || error("KLULinSolveCache: not factored yet.")
-    n = _dim(cache)
-    size(B, 1) == Int(n) || throw(DimensionMismatch(
-        "size(B, 1) = $(size(B, 1)), cache n = $(Int(n))",
-    ))
-    stride(B, 1) == 1 || throw(ArgumentError(
-        "B must have unit stride in the first dimension.",
-    ))
-    nrhs = size(B, 2)
-    nrhs == 0 && return B
-    ok = _tsolve_call(
-        Tv, Ti, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common;
-        conjugate = conjugate,
-    )
-    ok == 0 && klu_throw(cache.common[], "klu_tsolve")
-    return B
+    return _with_owner(cache) do
+        n = _check_solve_args(cache, B)
+        _require_klu_numeric(cache, "tsolve!")
+        nrhs = size(B, 2)
+        nrhs == 0 && return B
+        ok = _tsolve_call(
+            Tv, Ti, cache.symbolic, cache.numeric, n, nrhs, pointer(B), cache.common;
+            conjugate = conjugate,
+        )
+        ok == 0 && klu_throw(cache.common[], "klu_tsolve")
+        return B
+    end
 end
 
 """

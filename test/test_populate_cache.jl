@@ -98,8 +98,8 @@ end
             uuid,
             NetworkModification("populate_ctg_$e", [ArcModification(e, -b_e)]),
         )
-        PNM.get_contingency_cache(v_pop)[uuid] = ctg
-        PNM.get_contingency_cache(v_lazy)[uuid] = ctg
+        PNM.get_registered_contingencies(v_pop)[uuid] = ctg
+        PNM.get_registered_contingencies(v_lazy)[uuid] = ctg
         push!(ctgs, ctg)
     end
 
@@ -129,7 +129,7 @@ end
         uuid,
         NetworkModification("populate_tuple_ctg", [ArcModification(e, -b_e)]),
     )
-    PNM.get_contingency_cache(vmodf)[uuid] = ctg
+    PNM.get_registered_contingencies(vmodf)[uuid] = ctg
 
     # Monitor by arc bus-pair tuple
     mon_tuple = PNM.get_arc_axis(vmodf)[2]
@@ -180,8 +180,8 @@ end
         uuid,
         NetworkModification("shared_core_ctg", [ArcModification(e, -b_e)]),
     )
-    PNM.get_contingency_cache(vmodf)[uuid] = ctg
-    PNM.get_contingency_cache(vmodf_i)[uuid] = ctg
+    PNM.get_registered_contingencies(vmodf)[uuid] = ctg
+    PNM.get_registered_contingencies(vmodf_i)[uuid] = ctg
 
     monitored = collect(1:min(4, size(vmodf, 1)))
     populate_cache(vmodf, [ctg]; monitored = monitored)

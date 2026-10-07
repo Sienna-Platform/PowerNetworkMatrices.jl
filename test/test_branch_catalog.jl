@@ -61,7 +61,7 @@ end
     PSY.add_component!(sys, zi_arc)
     PSY.add_component!(
         sys,
-        PSY.Line(; input_basis = PSY.CU,
+        PSY.Line(; input_basis = u"CU",
             name = "zi_line", available = true, active_power_flow = 0.0,
             reactive_power_flow = 0.0, arc = zi_arc, r = 0.0, x = 1.0e-5,
             b = (from = 0.0, to = 0.0), rating = 10.0,
@@ -337,4 +337,15 @@ end
         e
     end
     @test occursin("series chain", err.msg)
+end
+
+@testset "BranchCatalog bulk-loads name buckets with the last write winning" begin
+    staged = PNM._VectorsByType{Pair{String, Tuple{Int, Int}}}()
+    for (name, arc) in
+        (("b", (1, 2)), ("a", (3, 4)), ("b", (5, 6)), ("c", (7, 8)), ("b", (9, 10)))
+        PNM._push_by_type!(staged, PSY.Line, name => arc)
+    end
+    name_to_arc = PNM.NAME_TO_ARC()
+    PNM._sorted_name_buckets!(name_to_arc, staged)
+    @test collect(name_to_arc[PSY.Line]) == ["a" => (3, 4), "b" => (9, 10), "c" => (7, 8)]
 end

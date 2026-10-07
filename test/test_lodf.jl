@@ -103,8 +103,15 @@
 
     # test if error is thrown in case other linear solvers are called
     @test_throws ErrorException LODF(A, ABA, BA; linear_solver = "Dense")
+    @test_throws r"needs a factorized ABA" LODF(A, ABA_Matrix(sys5), BA)
 
     @test_throws ErrorException LODF(A, P5; linear_solver = "XXX")
+    @test_throws ErrorException LODF(sys5; linear_solver = "XXX")
+    @test isapprox(
+        LODF(sys5; linear_solver = "Dense", tol = eps()).data,
+        LODF(sys5; linear_solver = "KLU", tol = eps()).data;
+        atol = 1e-10,
+    )
 
     # test if error is thrown in case `tol` is defined in PTDF
     P5 = PTDF(sys5; tol = 1e-3)
@@ -185,5 +192,48 @@ end
             @test isapprox(element_1, element_3, atol = 1e-5)
             @test isapprox(element_2, element_3, atol = 1e-5)
         end
+    end
+end
+
+@testset "LODF: negative-reactance outage matches the flow change it predicts" begin
+    # A series capacitor drives H[e,e] = PTDF·A[e,e] above 1, so the LODF denominator
+    # 1 - H[e,e] is negative rather than vanishing; it must not be clamped.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    line = PSY.get_component(Line, sys, "Line10")
+    PSY.set_r!(line, 0.0u"SU")
+    PSY.set_x!(line, -0.1u"SU")
+    pre = PTDF(sys)
+    lodf = LODF(sys)
+    lodf_from_ptdf = LODF(IncidenceMatrix(sys), PTDF(sys; tol = eps()); tol = eps())
+    vlodf = VirtualLODF(sys)
+    e = PNM.get_arc_tuple(line, PNM.get_network_reduction_data(pre))
+    @test PNM.get_PTDF_A_diag(PNM.get_core(vlodf))[PNM.get_arc_lookup(vlodf)[e]] > 1
+
+    PSY.set_available!(line, false)
+    post = PTDF(sys)
+    PSY.set_available!(line, true)
+    buses = PNM.get_bus_axis(pre)
+    injection = randn(MersenneTwister(1), length(buses))
+    injection .-= sum(injection) / length(injection)
+    flow(ptdf, arc) = sum(ptdf[arc, bus] * injection[i] for (i, bus) in enumerate(buses))
+    for l in PNM.get_arc_axis(post)
+        expected = (flow(post, l) - flow(pre, l)) / flow(pre, e)
+        @test isapprox(lodf[l, e], expected; atol = 1e-8)
+        @test isapprox(lodf_from_ptdf[l, e], expected; atol = 1e-8)
+        @test isapprox(vlodf[l, :][PNM.get_arc_lookup(vlodf)[e]], expected; atol = 1e-8)
+    end
+
+    # Partial outage: halving the susceptance is doubling the reactance.
+    e_ix = PNM.get_arc_lookup(vlodf)[e]
+    b_e = PNM._get_arc_susceptances(vlodf)[e_ix]
+    full = PNM.get_partial_lodf_row(vlodf, e_ix, -b_e)
+    half = PNM.get_partial_lodf_row(vlodf, e_ix, -b_e / 2)
+    PSY.set_x!(line, -0.2u"SU")
+    halved = PTDF(sys)
+    for l in PNM.get_arc_axis(post)
+        l_ix = PNM.get_arc_lookup(vlodf)[l]
+        @test isapprox(full[l_ix], lodf[l, e]; atol = 1e-8)
+        expected = (flow(halved, l) - flow(pre, l)) / flow(pre, e)
+        @test isapprox(half[l_ix], expected; atol = 1e-8)
     end
 end

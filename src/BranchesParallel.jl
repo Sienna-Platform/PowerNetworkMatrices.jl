@@ -58,15 +58,9 @@ function invalidate_equivalent_ybus!(segment)
     return
 end
 
-function add_branch!(bp::BranchesParallel{T}, branch::T) where {T <: PSY.ACTransmission}
+function add_branch!(bp::AbstractBranchesParallel, branch::PSY.ACTransmission)
     push!(bp.branches, branch)
     invalidate_equivalent_ybus!(bp)
-    return
-end
-
-function add_branch!(mbp::MixedBranchesParallel, branch::PSY.ACTransmission)
-    push!(mbp.branches, branch)
-    invalidate_equivalent_ybus!(mbp)
     return
 end
 
@@ -104,7 +98,7 @@ get_name(bp::AbstractBranchesParallel) =
 # The substitute reactance cancels in a ratio unless the group mixes degenerate and finite
 # members; then only the reduction's configured value gives a defined share.
 function _require_epsilon_independent(bp::AbstractBranchesParallel)
-    degenerate = count(br -> !isfinite(_series_susceptance_raw(br, PSY.SU)), bp)
+    degenerate = count(br -> !isfinite(_series_susceptance_raw(br, u"SU")), bp)
     if !iszero(degenerate) && degenerate != length(bp)
         error(
             "Parallel group $(get_name(bp)) mixes $(degenerate) zero-impedance and " *
@@ -178,18 +172,9 @@ function compute_parallel_multiplier(
     return _parallel_multiplier(parallel_branch_set, branch, ZERO_IMPEDANCE_X_EPSILON)
 end
 
-function get_series_susceptance(
-    segment::AbstractBranchesParallel,
-    units::IS.AbstractUnitSystem,
-)
-    v = _series_susceptance_raw(segment, units)
-    isfinite(v) || _throw_non_finite_susceptance(segment, v)
-    return v
-end
-
 _series_susceptance_raw(
     segment::AbstractBranchesParallel,
-    units::IS.AbstractUnitSystem,
+    units,
 )::Float64 = sum(_series_susceptance_raw(branch, units) for branch in segment.branches)
 
 # `get_equivalent_physical_branch_parameters` / `populate_equivalent_ybus!` for parallel and
@@ -361,7 +346,7 @@ _entry_matches(group::BranchesParallel, predicate) =
 # representation of its arc.
 function _entry_matches(group::MixedBranchesParallel, predicate)
     _is_unfiltered(predicate) ||
-        _warn_mixed_group("Parallel circuit", _get_segment_components(group))
+        _warn_mixed_group("Parallel circuit", leaf_components(group))
     return all(_entry_matches(member, predicate)::Bool for member in group)
 end
 

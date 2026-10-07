@@ -127,6 +127,9 @@ end
     # test isempty when VirtualLODF is created (cache must be empty)
     vlodf = VirtualLODF(sys)
     @test isempty(vlodf) == true
+    vlodf_queried = VirtualLODF(sys)
+    vlodf_queried[first(PNM.get_arc_axis(vlodf_queried)), :]
+    @test !isempty(vlodf_queried)
 
     # test eachindex and axes
     @test length(eachindex(vlodf)) ==
@@ -219,7 +222,9 @@ end
         for solver_name in backends
             solver = PNM.resolve_linear_solver(solver_name)
             K = PNM._create_factorization(solver, ABA)
-            fast = PNM._get_PTDF_A_diag(K, BA.data, A.data, ref_pos)
+            valid_ix = setdiff(1:size(BA.data, 1), ref_pos)
+            b2v = PNM._build_bus_to_valid_idx(size(BA.data, 1), valid_ix)
+            fast = PNM._get_PTDF_A_diag(K, BA.data, A.data, valid_ix, b2v)
             ref = _reference_ptdf_a_diag(K, BA.data, A.data, ref_pos)
             @test fast ≈ ref atol = 1e-12 rtol = 0
         end

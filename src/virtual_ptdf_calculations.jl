@@ -18,11 +18,10 @@ factorization is computed once.
 
 # Thread-safety
 
-Concurrent `getindex` is safe but serialized: every libklu solve is wrapped
-by `_LIBKLU_LOCK` (process-wide) and the core's `solver_lock`, and the row
-cache is guarded by `cache_lock`. Multiple threads can call `getindex`
-simultaneously; their libklu work runs one at a time, while the JuMP-side work
-(in callers) parallelizes freely.
+Concurrent `getindex` is safe but serialized: every solve runs under the
+core's `solver_lock`, and the row cache is guarded by `cache_lock`. Multiple
+threads can call `getindex` simultaneously; their solves run one at a time,
+while the JuMP-side work (in callers) parallelizes freely.
 
 # Fields
 - `core::VirtualFactorCore`:
@@ -69,24 +68,6 @@ get_cache(M::VirtualPTDF) = getfield(M, :cache)
 get_cache_lock(M::VirtualPTDF) = getfield(M, :cache_lock)
 get_dist_slack(M::VirtualPTDF) = getfield(M, :dist_slack)
 get_dist_slack_normalized(M::VirtualPTDF) = getfield(M, :dist_slack_normalized)
-
-# Accessors forward to the core.
-get_axes(M::VirtualPTDF) = get_axes(get_core(M))
-get_lookup(M::VirtualPTDF) = get_lookup(get_core(M))
-get_ref_bus(M::VirtualPTDF) = get_ref_bus(get_core(M))
-get_ref_bus_position(M::VirtualPTDF) = get_ref_bus_position(get_core(M))
-get_network_reduction_data(M::VirtualPTDF) = get_network_reduction_data(get_core(M))
-get_branch_catalog(M::VirtualPTDF) = get_branch_catalog(get_core(M))
-get_bus_lookup(M::VirtualPTDF) = get_bus_lookup(get_core(M))
-get_arc_lookup(M::VirtualPTDF) = get_arc_lookup(get_core(M))
-get_system_uuid(M::VirtualPTDF) = get_system_uuid(get_core(M))
-get_arc_axis(M::VirtualPTDF) = get_arc_axis(get_core(M))
-get_bus_axis(M::VirtualPTDF) = get_bus_axis(get_core(M))
-get_tol(M::VirtualPTDF) = get_tol(get_core(M))
-get_cutoff(M::VirtualPTDF) = get_cutoff(get_core(M))
-_get_BA(M::VirtualPTDF) = _get_BA(get_core(M))
-_get_arc_susceptances(M::VirtualPTDF) = _get_arc_susceptances(get_core(M))
-_get_valid_ix(M::VirtualPTDF) = _get_valid_ix(get_core(M))
 
 function Base.show(io::IO, ::MIME{Symbol("text/plain")}, array::VirtualPTDF)
     summary(io, array)
@@ -136,8 +117,10 @@ struct with an empty cache.
         Dictionary of weights to be used as distributed slack bus.
 - `linear_solver::String = _default_linear_solver()`:
         Linear solver to use for factorization. Options: "KLU", "AppleAccelerateLU".
-- `tol::Float64 = eps()`:
-        Tolerance related to sparsification and values to drop.
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
+        Tolerance for row sparsification. A `Float64` applies a fixed absolute cutoff; the
+        default [`AutoTolerance`](@ref) applies a relative per-row cutoff so requested rows
+        stay sparse on large systems.
 - `max_cache_size::Int`:
         max cache size in MiB (initialized as MAX_CACHE_SIZE_MiB).
 - `persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}()`:
@@ -257,9 +240,7 @@ Gives the cartesian indexes of the PTDF matrix (same as the BA one).
 """
 Base.eachindex(vptdf::VirtualPTDF) = CartesianIndices(size(vptdf))
 
-if isdefined(Base, :print_array) # 0.7 and later
-    Base.print_array(io::IO, X::VirtualPTDF) = "VirtualPTDF"
-end
+Base.print_array(io::IO, X::VirtualPTDF) = "VirtualPTDF"
 
 """
     _use_dist_slack(vptdf::VirtualPTDF) -> Bool
@@ -283,8 +264,12 @@ function _use_dist_slack(vptdf::VirtualPTDF)::Bool
     return true
 end
 
-function _compute_ptdf_row(vptdf::VirtualPTDF, row::Int)::Vector{Float64}
-    core = get_core(vptdf)
+# `core` is the matrix's own core or a `worker_core` of it, whose factorization the row is solved on.
+function _compute_ptdf_row(
+    vptdf::VirtualPTDF,
+    row::Int,
+    core::VirtualFactorCore = get_core(vptdf),
+)::Vector{Float64}
     dist_slack_normalized = get_dist_slack_normalized(vptdf)
     use_dist_slack = _use_dist_slack(vptdf)
 
@@ -307,11 +292,14 @@ function _getindex(
     row::Int,
     column::Union{Int, Colon},
 )
-    return cached_row_lookup(
-        get_cache(vptdf), get_cache_lock(vptdf), row, column, get_cutoff(vptdf),
-    ) do
-        _compute_ptdf_row(vptdf, row)
-    end
+    stored = _cached_row(
+        () -> _compute_ptdf_row(vptdf, row),
+        get_cache(vptdf),
+        get_cache_lock(vptdf),
+        row,
+        get_cutoff(vptdf),
+    )
+    return stored[column]
 end
 
 function Base.getindex(vptdf::VirtualPTDF, branch_name::String, bus)
@@ -354,3 +342,22 @@ Get the cached PTDF row data from a [`VirtualPTDF`](@ref) matrix.
 Returns a dictionary mapping row indices to lazily computed row vectors.
 """
 get_ptdf_data(mat::VirtualPTDF) = get_cache(mat).temp_cache
+
+"""
+    get_ptdf_row(vptdf::VirtualPTDF, arc::Tuple{Int, Int}) -> Union{Vector{Float64}, SparseVector{Float64}}
+
+Return the PTDF row for `arc` as the cache's own stored vector, without copying; on a miss the
+row is computed and cached first. The row is dense, or a `SparseVector` when the matrix's
+tolerance sparsifies rows. Treat it as read-only: mutating it corrupts the cache. It stays valid
+after the cache evicts it. Use `vptdf[arc, :]` for a private copy.
+"""
+function get_ptdf_row(vptdf::VirtualPTDF, arc::Tuple{Int, Int})
+    row = get_arc_lookup(vptdf)[arc]
+    return _cached_row(
+        () -> _compute_ptdf_row(vptdf, row),
+        get_cache(vptdf),
+        get_cache_lock(vptdf),
+        row,
+        get_cutoff(vptdf),
+    )
+end

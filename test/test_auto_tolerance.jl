@@ -122,15 +122,15 @@ end
 
     # Explicit Float64 is an absolute cutoff, honored verbatim (backward compat).
     p_num = PTDF(A, BA; tol = 1e-3)
-    @test PNM.get_tol(p_num)[] == 1e-3
+    @test PNM.get_tol(p_num) == 1e-3
     p_eps = PTDF(A, BA; tol = eps())
-    @test PNM.get_tol(p_eps)[] == eps()
+    @test PNM.get_tol(p_eps) == eps()
 
     # The dense PTDF is the small-system path: AutoTolerance is a NO-OP there. It
     # stays an exact, dense `Matrix{Float64}` (so `DC_PTDF_Matrix` and downstream
     # dispatch are preserved); sparsification is reserved for VirtualPTDF.
     p_auto = PTDF(A, BA; tol = AutoTolerance(; data_precision = 1e-2))
-    @test PNM.get_tol(p_auto)[] == eps()
+    @test PNM.get_tol(p_auto) == eps()
     @test isapprox(get_ptdf_data(p_auto), get_ptdf_data(p_eps); atol = NO_OP_BUILD_ATOL)
     # Dense storage is preserved -> matches the DC_PTDF_Matrix alias (the data
     # field is a Matrix{Float64}, so downstream dispatch is unaffected).
@@ -212,25 +212,25 @@ end
     ABA = ABA_Matrix(sys; factorize = true)
 
     l_num = LODF(A, ABA, BA; tol = 1e-3)
-    @test PNM.get_tol(l_num)[] == 1e-3
+    @test PNM.get_tol(l_num) == 1e-3
 
     # The dense LODF is the small-system path: AutoTolerance is a no-op (eps), so
     # the result is identical to the exact LODF. Sparsification is a VirtualLODF
     # feature; pass a Float64 tol to sparsify a dense LODF explicitly.
     l_exact = LODF(A, ABA, BA; tol = eps())
     l_auto = LODF(A, ABA, BA; tol = AutoTolerance(; data_precision = 1e-2))
-    @test PNM.get_tol(l_auto)[] == eps()
+    @test PNM.get_tol(l_auto) == eps()
     @test isapprox(l_auto.data, l_exact.data; atol = NO_OP_BUILD_ATOL)
 
     # System constructor: AutoTolerance routes through the ABA path and is a no-op.
     l_sys_auto = LODF(sys; tol = AutoTolerance(; data_precision = 1e-2))
-    @test PNM.get_tol(l_sys_auto)[] == eps()
+    @test PNM.get_tol(l_sys_auto) == eps()
 
     # from-PTDF constructor: AutoTolerance is a no-op (eps), so the default
     # LODF(A, ptdf) keeps working and stays exact.
     P = PTDF(A, BA; tol = eps())
     l_from_ptdf = LODF(A, P; tol = AutoTolerance())
-    @test PNM.get_tol(l_from_ptdf)[] == eps()
+    @test PNM.get_tol(l_from_ptdf) == eps()
 end
 
 @testset "LODF preserves -1.0 diagonal under aggressive tol" begin
@@ -284,7 +284,7 @@ end
                 tol = AutoTolerance(; data_precision = 1e-3),
             )
         p_eps = PTDF(A, BA; linear_solver = solver, tol = eps())
-        @test PNM.get_tol(p_auto)[] == eps()
+        @test PNM.get_tol(p_auto) == eps()
         @test isapprox(
             get_ptdf_data(p_auto),
             get_ptdf_data(p_eps);

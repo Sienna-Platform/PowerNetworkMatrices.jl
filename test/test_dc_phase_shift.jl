@@ -97,6 +97,7 @@ end
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
+            input_basis = u"CU",
         )
         add_component!(sys, b)
         push!(buses, b)
@@ -106,7 +107,7 @@ end
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(; input_basis = PSY.CU,
+            Line(; input_basis = u"CU",
                 name = name,
                 available = true,
                 active_power_flow = 0.0,
@@ -126,9 +127,9 @@ end
     add_component!(sys, arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "PST",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = arc,
                 tap = 1.05,
                 α = 0.15,
@@ -151,8 +152,8 @@ end
 
     line = PSY.get_component(Line, sys, "L1")
     pst = PSY.get_component(PSY.TwoWindingTransformer, sys, "PST")
-    b_line = PNM.get_series_susceptance(line, PSY.SU)
-    b_pst = PNM.get_series_susceptance(pst, PSY.SU)
+    b_line = PNM.get_series_susceptance(line, u"SU")
+    b_pst = PNM.get_series_susceptance(pst, u"SU")
     # PST's own arc is (2, 3); through `nr` bus 3 remaps to bus 1, giving (2, 1), which
     # disagrees with the group's (1, 2) frame -- its α enters negated.
     expected = (b_pst * -0.15) / (b_line + b_pst)
@@ -162,9 +163,9 @@ end
 @testset "dc phase shift: series chain sums segment angles" begin
     # Copy of the "Two transformers in series with different phase angle" construction
     # (test/test_equivalent_getters.jl:401-432): t1 α=0, t3 α=0.2, joined by a degree-two bus.
-    t1 = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+    t1 = PSY.TwoWindingTransformer(; input_basis = u"CU",
         name = "tfw_1",
-        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
             arc = PSY.Arc(nothing),
             tap = 1.0,
             available = true,
@@ -179,9 +180,9 @@ end
         ),
         magnetizing_shunt = 0.01 + im * 0.02,
     )
-    t3 = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+    t3 = PSY.TwoWindingTransformer(; input_basis = u"CU",
         name = "tfw_3",
-        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
             arc = PSY.Arc(nothing),
             tap = 1.0,
             α = 0.2,
@@ -212,6 +213,7 @@ end
             base_voltage = 1.0,
             area = nothing,
             load_zone = nothing,
+            input_basis = u"CU",
         )
         add_component!(sys, bus)
     end
@@ -233,7 +235,7 @@ end
 
     @test PNM.get_series_phase_shift(bs, nr) ≈ 0.2      # 0 + 0.2, orientation :FromTo
     @test PNM.arc_dc_phase_shift(nr, arc) ≈ 0.2
-    b_eq = PNM.get_series_susceptance(bs, PSY.SU)
+    b_eq = PNM.get_series_susceptance(bs, u"SU")
     @test PNM.arc_dc_shift_injection(nr, arc) ≈ b_eq * 0.2
     # Cross-check against the existing numeric extraction (small-angle agreement).
     @test PNM.arc_dc_phase_shift(nr, arc) ≈
@@ -306,9 +308,9 @@ end
     # A shifted member in the same degenerate group still yields a finite injection.
     sys_shifted = _mk_zi_parallel_sys([(0.0, 0.0), (0.0, 0.1)])
     zi_arc = PSY.get_component(Line, sys_shifted, "ZI2")
-    pst = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+    pst = PSY.TwoWindingTransformer(; input_basis = u"CU",
         name = "PST_ZI",
-        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
             arc = PSY.get_arc(zi_arc), tap = 1.0, α = 0.15, available = true,
             active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
             base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.2,
@@ -336,9 +338,9 @@ end
     add_component!(sys, pst_arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "PST_ZI",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = pst_arc, tap = 1.0, α = 0.15, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,

@@ -88,7 +88,7 @@
 
     # auxiliary function
     PRTS_sparse = PTDF(RTS; tol = 1e-3)
-    @test PNM.get_tol(PRTS_sparse).x == Base.RefValue(1e-3).x
+    @test PNM.get_tol(PRTS_sparse) == 1e-3
 end
 
 @testset "Test PTDF matrices for 10 bus system with 2 reference buses" begin
@@ -118,23 +118,6 @@ end
     end
 end
 
-@testset "Test serialization of PTDF matrices to HDF5" begin
-    sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
-    P5 = PTDF(sys5; linear_solver = "KLU")
-    P5_sparse = PTDF(sys5; linear_solver = "KLU", tol = 1e-3)
-    for ptdf in (P5, P5_sparse)
-        for compress in (true, false)
-            path = mktempdir()
-            filename = joinpath(path, "ptdf.h5")
-            @test !isfile(filename)
-            to_hdf5(ptdf, filename; compress = compress)
-            @test isfile(filename)
-            ptdf2 = PTDF(filename)
-            @test ptdf == ptdf2
-        end
-    end
-end
-
 @testset "Test System with isolated buses" begin
     sys_1 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     PSY.add_component!(
@@ -148,6 +131,7 @@ end
             magnitude = 1.1,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
+            input_basis = u"CU",
         ),
     )
     PSY.add_component!(
@@ -161,6 +145,7 @@ end
             magnitude = 1.1,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
+            input_basis = u"CU",
         ),
     )
     ptdf_1 = PTDF(sys_1)
@@ -181,12 +166,13 @@ end
             magnitude = 1.1,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
+            input_basis = u"CU",
         ),
     )
 
     add_component!(
         sys_2,
-        PSY.Line(; input_basis = PSY.CU,
+        PSY.Line(; input_basis = u"CU",
             name = "7",
             available = branch_2.available,
             active_power_flow = branch_2.active_power_flow,
@@ -198,7 +184,7 @@ end
             r = branch_2.r,
             x = branch_2.x,
             b = branch_2.b,
-            rating = get_rating(branch_2, PSY.CU),
+            rating = get_rating(branch_2, u"CU"),
             angle_limits = get_angle_limits(branch_2),
         ),
     )

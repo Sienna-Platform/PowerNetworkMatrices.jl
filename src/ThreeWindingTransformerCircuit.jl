@@ -57,8 +57,6 @@ get_winding_number(tw::ThreeWindingTransformerCircuit) = tw.winding_number
 # `get_$field` and calls it whenever PSY exposes that name, so a wrapper with a `circuit` field
 # and no `PSY.get_circuit` method throws a MethodError on display.
 PSY.get_circuit(tw::ThreeWindingTransformerCircuit) = tw.circuit
-# Lets callers key reduction maps by the parent transformer type.
-get_transformer_type(tw::ThreeWindingTransformerCircuit) = typeof(tw.transformer)
 
 function get_name(three_wt_circuit::ThreeWindingTransformerCircuit)
     transformer = get_transformer(three_wt_circuit)
@@ -85,7 +83,7 @@ the value the matrices actually use should call `get_effective_series_susceptanc
 """
 function get_series_susceptance(
     segment::ThreeWindingTransformerCircuit,
-    units::IS.AbstractUnitSystem,
+    units,
 )
     v = _series_susceptance_raw(segment, units)
     isfinite(v) || _throw_non_finite_susceptance(segment, v)
@@ -94,7 +92,7 @@ end
 
 _series_susceptance_raw(
     segment::ThreeWindingTransformerCircuit,
-    units::IS.AbstractUnitSystem,
+    units,
 ) = _series_susceptance_raw(segment.circuit, units)
 
 function get_series_phase_shift(tw::ThreeWindingTransformerCircuit)
@@ -106,31 +104,31 @@ end
 
 Star-leg resistance (pu, system base) of this circuit.
 """
-get_equivalent_r(tw::ThreeWindingTransformerCircuit) = PSY.get_r(tw.circuit, PSY.SU)
+get_equivalent_r(tw::ThreeWindingTransformerCircuit) = PSY.get_r(tw.circuit, u"SU")
 
 """
     get_equivalent_x(tw::ThreeWindingTransformerCircuit)
 
 Star-leg reactance (pu, system base) of this circuit.
 """
-get_equivalent_x(tw::ThreeWindingTransformerCircuit) = PSY.get_x(tw.circuit, PSY.SU)
+get_equivalent_x(tw::ThreeWindingTransformerCircuit) = PSY.get_x(tw.circuit, u"SU")
 
 """
     get_equivalent_rating(tw::ThreeWindingTransformerCircuit)
 
-The circuit's own rating (MVA, device base). May be `nothing` when unset, mirroring how a
-`PSY.Line`'s rating is surfaced; there is no parent-level rating to fall back to.
+The circuit's own rating, per unit on the system base. May be `nothing` when unset, mirroring
+how a `PSY.Line`'s rating is surfaced; there is no parent-level rating to fall back to.
 """
 get_equivalent_rating(tw::ThreeWindingTransformerCircuit) =
-    PSY.get_rating(tw.circuit, PSY.CU)
+    PSY.get_rating(tw.circuit, u"SU")
 
-# Shared by the 2W and 3W methods: `PSY.TransformerCircuit`'s `rating_b` (MVA, device base),
-# falling back to its normal rating when unset.
+# Shared by the 2W and 3W methods: `PSY.TransformerCircuit`'s `rating_b`, per unit on the
+# system base, falling back to its normal rating when unset.
 function _circuit_emergency_rating(c::PSY.TransformerCircuit, name::AbstractString)
-    rating_b = PSY.get_rating_b(c, PSY.CU)
+    rating_b = PSY.get_rating_b(c, u"SU")
     if isnothing(rating_b)
         @debug "$name has no 'rating_b' defined; using normal-operation rating."
-        return PSY.get_rating(c, PSY.CU)
+        return PSY.get_rating(c, u"SU")
     end
     return rating_b
 end
@@ -138,7 +136,7 @@ end
 """
     get_equivalent_emergency_rating(tw::ThreeWindingTransformerCircuit)
 
-The circuit's `rating_b` (MVA, device base), falling back to its normal rating as the 2W
+The circuit's `rating_b`, per unit on the system base, falling back to its normal rating as the 2W
 method does. May be `nothing`.
 """
 get_equivalent_emergency_rating(tw::ThreeWindingTransformerCircuit) =

@@ -14,6 +14,9 @@ Full outage: `delta_b = -b_arc`. Single circuit on double-circuit: `delta_b = -b
 - `delta_y12::ComplexF32`: Change in Pi-model mutual admittance (from -> to).
 - `delta_y21::ComplexF32`: Change in Pi-model mutual admittance (to -> from).
 - `delta_y22::ComplexF32`: Change in Pi-model self-admittance at the to bus.
+- `opened::Int`: Number of the arc's members taken out of service: one per tripped branch,
+  every member for a full arc outage, zero for a partial change. A `Ybus` modified in place
+  treats an arc whose members are all out as removed.
 """
 struct ArcModification
     arc_index::Int
@@ -23,14 +26,17 @@ struct ArcModification
     delta_y12::ComplexF32
     delta_y21::ComplexF32
     delta_y22::ComplexF32
+    opened::Int
 end
 
 """
-Convenience constructor for an unshifted arc with no Pi-model deltas.
+Convenience constructor for an unshifted arc with no Pi-model deltas and no members opened.
+It changes only the DC susceptance. [`apply_ybus_modification!`](@ref) leaves the Ybus
+admittances unchanged for it and never removes the arc, even when `delta_b = -b_arc`.
 """
 function ArcModification(arc_index::Int, delta_b::Float64)
     z = zero(YBUS_ELTYPE)
-    return ArcModification(arc_index, delta_b, 0.0, z, z, z, z)
+    return ArcModification(arc_index, delta_b, 0.0, z, z, z, z, 0)
 end
 
 """
@@ -54,8 +60,10 @@ Merge ArcModifications that target the same arc index.
 """
 function _merge_arc_modifications(mods::Vector{ArcModification})
     length(mods) <= 1 && return mods
-    by_arc =
-        Dict{Int, Tuple{Float64, Float64, ComplexF64, ComplexF64, ComplexF64, ComplexF64}}()
+    by_arc = Dict{
+        Int,
+        Tuple{Float64, Float64, ComplexF64, ComplexF64, ComplexF64, ComplexF64, Int},
+    }()
     for m in mods
         prev = get(
             by_arc,
@@ -67,6 +75,7 @@ function _merge_arc_modifications(mods::Vector{ArcModification})
                 zero(ComplexF64),
                 zero(ComplexF64),
                 zero(ComplexF64),
+                0,
             ),
         )
         by_arc[m.arc_index] = (
@@ -76,6 +85,7 @@ function _merge_arc_modifications(mods::Vector{ArcModification})
             prev[4] + m.delta_y12,
             prev[5] + m.delta_y21,
             prev[6] + m.delta_y22,
+            prev[7] + m.opened,
         )
     end
     return [
@@ -87,6 +97,7 @@ function _merge_arc_modifications(mods::Vector{ArcModification})
             YBUS_ELTYPE(vals[4]),
             YBUS_ELTYPE(vals[5]),
             YBUS_ELTYPE(vals[6]),
+            vals[7],
         ) for (idx, vals) in sort!(collect(by_arc); by = first)
     ]
 end
@@ -156,24 +167,8 @@ end
 # `label` is intentionally excluded from hash and equality so that physically
 # identical modifications compare equal regardless of naming. The woodbury_cache
 # in VirtualMODF relies on this property for cache hits across naming paths.
-function Base.hash(m::NetworkModification, h::UInt)
-    h = hash(length(m.arc_modifications), h)
-    for mod in m.arc_modifications
-        h = hash(mod.arc_index, h)
-        h = hash(mod.delta_b, h)
-        h = hash(mod.delta_shift_injection, h)
-        h = hash(mod.delta_y11, h)
-        h = hash(mod.delta_y12, h)
-        h = hash(mod.delta_y21, h)
-        h = hash(mod.delta_y22, h)
-    end
-    for smod in m.shunt_modifications
-        h = hash(smod.bus_index, h)
-        h = hash(smod.delta_y, h)
-    end
-    h = hash(m.is_islanding, h)
-    return h
-end
+Base.hash(m::NetworkModification, h::UInt) =
+    hash((m.arc_modifications, m.shunt_modifications, m.is_islanding), h)
 
 Base.:(==)(a::NetworkModification, b::NetworkModification) =
     a.arc_modifications == b.arc_modifications &&
@@ -208,6 +203,9 @@ Computed from van Dijk et al. Eq. 29:
 - `W_inv::Matrix{Float64}`: Pre-inverted W = (A⁻¹ + U⊤B⁻¹U)⁻¹ (M × M). For M ≤ 2, computed analytically; for M > 2, computed via LU factorization.
 - `arc_indices::Vector{Int}`: Arc indices of modified arcs
 - `delta_b::Vector{Float64}`: Susceptance changes per modified arc
+- `arc_out::Vector{Bool}`: Per modified arc, whether the modification opens every member of
+  the arc. Set from member counts, because the summed `delta_b` of a lossy parallel group
+  does not cancel the arc susceptance exactly.
 - `is_islanding::Bool`: Whether this contingency islands the network
 - `bus_island_labels::Vector{Int}`: Post-contingency connected-component label per
   bus position, used to force entries of buses disconnected from the monitored arc
@@ -218,6 +216,7 @@ struct WoodburyFactors
     W_inv::Matrix{Float64}
     arc_indices::Vector{Int}
     delta_b::Vector{Float64}
+    arc_out::Vector{Bool}
     is_islanding::Bool
     bus_island_labels::Vector{Int}
 end

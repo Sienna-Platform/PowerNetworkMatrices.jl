@@ -18,49 +18,69 @@ the package.
 module KLUWrapper
 
 import LinearAlgebra
+import ..LinearSolverCache
 import SparseArrays
 import SparseArrays: SparseMatrixCSC, getcolptr, rowvals, nonzeros, nzrange
 
 """
-    KLU_POOL_DEBUG :: Bool
-
-Compile-time gate for the KLU wrapper's runtime diagnostics — currently
-just the precondition snapshot in `solve!` that fires when `klu_l_solve`
-returns FALSE. When `false`, the snapshot is folded out by `@static if`
-and contributes zero runtime cost. Flip to `true` when reproducing the
-libklu cross-cache concurrency failure documented on `_LIBKLU_LOCK`.
-
-This is a `const` rather than a `Preferences.@load_preference` flag so
-that toggling it forces a precompile rebuild and the production binary
-never carries the diagnostic code.
-"""
-const KLU_POOL_DEBUG = false
-
-"""
     _LIBKLU_LOCK :: ReentrantLock
 
-Process-wide lock that serializes every libklu ccall. `libklu` corrupts
-internal state under concurrent access even when the caller hands out
-distinct `Numeric`/`Symbolic`/`Common` triples per thread (i.e. the
-access pattern KLU's user guide implies is supported). The corruption
-manifests two ways: an intermittent `KLU_INVALID` return with all input
-pointers still valid both pre- and post-call, and a `SIGSEGV` inside
-`klu_l_solve` (`klu_solve.c:118` in v7.8.3, the row-permutation read in
-the `nrhs == 1` chunk). The pre-call snapshot dump in `solve!` made
-both modes reproducible on macOS and confirmed the deterministic
-Windows-MinGW failure was the same bug. This lock is the only
-mechanism we have evidence for that prevents both modes.
+Process-wide lock that serializes every libklu ccall except the frees, on
+Windows only.
+
+It was added for two failures under concurrent use of distinct
+`Numeric`/`Symbolic`/`Common` triples: an intermittent `KLU_INVALID` return
+with all input pointers valid, and a `SIGSEGV` inside `klu_l_solve`
+(`klu_solve.c:118` in v7.8.3, the row-permutation read in the `nrhs == 1`
+chunk). Those are attributed, with medium-high confidence, to Julia-side
+use-after-free rather than to libklu: `deepcopy` aliasing the raw handles
+(now refused by `deepcopy_internal`) and finalizers freeing handles at exit
+under unawaited tasks (now skipped via `_PROCESS_EXITING`).
+
+libklu, libamd, libbtf and libcolamd keep no writable globals, and libklu
+links no BLAS; the one shared table is SuiteSparse_config's allocator hooks,
+pinned to `jl_malloc` before any cache exists (by `__init__` on Julia 1.12+,
+by SparseArrays at load on earlier versions). The evidence for lock-free use
+is `test/test_klu_threaded.jl` "Distinct caches in parallel". One cache used by
+two tasks at once is still unsafe; the per-cache `owner` flag raises on it.
+Windows keeps the lock until a stress run shows that lock-free calls are safe on the
+MinGW libklu. The run must repeat the distinct-caches test in `test/test_klu_threaded.jl`
+many times with no `KLU_INVALID` and no SIGSEGV.
 """
 const _LIBKLU_LOCK = ReentrantLock()
 
 """
     @klu_lock expr
 
-Evaluate `expr` while holding `_LIBKLU_LOCK`. Wrap every libklu ccall
-so that no two libklu entries can run concurrently in the process.
+Evaluate `expr` while holding `_LIBKLU_LOCK` on Windows; elsewhere a
+pass-through. Wraps every libklu ccall except the frees.
 """
 macro klu_lock(expr)
-    return :(@lock _LIBKLU_LOCK $(esc(expr)))
+    @static if Sys.iswindows()
+        return :(@lock _LIBKLU_LOCK $(esc(expr)))
+    else
+        return esc(expr)
+    end
+end
+
+# Set at exit, before Julia runs the remaining finalizers, so a finalizer never frees a
+# handle that an unawaited task is still factoring or solving on; the OS reclaims it.
+const _PROCESS_EXITING = Threads.Atomic{Bool}(false)
+
+function _mark_process_exiting()
+    _PROCESS_EXITING[] = true
+    return nothing
+end
+
+function __init__()
+    # Julia 1.12+ switches SuiteSparse to jl_malloc lazily, on first CHOLMOD/UMFPACK use.
+    # A libc-born libklu block later freed through jl_free corrupts GC accounting and
+    # triggers a collection on nearly every allocation. Switch before any cache exists.
+    @static if isdefined(SparseArrays.LibSuiteSparse, :init_suitesparse)
+        SparseArrays.LibSuiteSparse.init_suitesparse()
+    end
+    atexit(_mark_process_exiting)
+    return nothing
 end
 
 export KLULinSolveCache,
@@ -74,14 +94,11 @@ export KLULinSolveCache,
     tsolve!,
     solve_sparse!,
     solve_sparse,
-    sort_factors!,
     condest!,
-    rcond!,
-    n_valid,
-    is_factored,
-    get_reuse_symbolic
+    is_factored
 
 include("klu_jll_bindings.jl")
+include("lean_lu.jl")
 include("klu_cache.jl")
 include("solve_dense.jl")
 include("solve_sparse_rhs.jl")

@@ -78,22 +78,6 @@ end
     @test_throws ErrorException aba[rb, :]
 end
 
-# 3-bus system: ref bus 1 tied to bus 2 by a normal line, plus parallel members on arc (2, 3)
-# carrying the supplied (r, x) pairs (used to force a degenerate net series admittance).
-function _mk_parallel_cancel_sys(member_rx::Vector{Tuple{Float64, Float64}})
-    sys, buses = _mk_bus_system(3)
-    arc12 = Arc(; from = buses[1], to = buses[2])
-    add_component!(sys, arc12)
-    _add_test_line!(sys, "L12", arc12, 0.01, 0.1)  # keeps the ref bus connected
-    # Parallel members share one Arc (2, 3), as real parallel branches do.
-    arc23 = Arc(; from = buses[2], to = buses[3])
-    add_component!(sys, arc23)
-    for (k, (r, x)) in enumerate(member_rx)
-        _add_test_line!(sys, "L23_$k", arc23, r, x)
-    end
-    return sys
-end
-
 @testset "BA/ABA: degenerate net series admittance stays finite" begin
     # b = 1 / imag(1 / Yt) blows up for two degenerate parallel combinations; both must give
     # finite b = 0. Case 1: admittances cancel (Yt = 0 -> NaN). Case 2: reactances cancel but
@@ -118,9 +102,9 @@ end
         _add_test_line!(sys, "L12", arc12, 0.0, 0.1)
         arc23 = Arc(; from = buses[2], to = buses[3])
         add_component!(sys, arc23)
-        pst = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        pst = PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "PST23",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 available = true,
                 arc = arc23,
                 tap = 1.05,
@@ -147,7 +131,7 @@ end
     end
 
     _, pst = _mk_pst_sys(0.0)
-    target = PNM.get_series_susceptance(pst, PSY.SU)  # 1 / (tap * x) = 1 / (1.05 * 0.2)
+    target = PNM.get_series_susceptance(pst, u"SU")  # 1 / (tap * x) = 1 / (1.05 * 0.2)
     for α in (0.0, 0.3, -0.5)
         sys, _ = _mk_pst_sys(α)
         b = _pst_susceptance(sys)
@@ -272,5 +256,45 @@ end
             (X[ix[f], ix[n]] - X[ix[t], ix[n]]) / x;
             atol = 1e-8,
         )
+    end
+end
+
+@testset "ABA_Matrix factorizes with the requested backend" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    aba_klu = ABA_Matrix(sys; factorize = true, linear_solver = "KLU")
+    @test typeof(aba_klu.K) == PNM.KLULinSolveCache{Float64, Int64}
+    @test is_factorized(aba_klu)
+    b = collect(range(1.0, 2.0; length = size(aba_klu.data, 1)))
+    x_klu = copy(b)
+    PNM.solve!(aba_klu.K, x_klu)
+    @test isapprox(aba_klu.data * x_klu, b; atol = 1e-10)
+
+    # Default is unchanged: KLU.
+    @test typeof(ABA_Matrix(sys; factorize = true).K) ==
+          PNM.KLULinSolveCache{Float64, Int64}
+    # Unsupported backends fail loudly at construction.
+    @test_throws ErrorException ABA_Matrix(sys; factorize = true, linear_solver = "Dense")
+    @test_throws ErrorException ABA_Matrix(sys; factorize = true, linear_solver = "bogus")
+
+    if PNM._has_apple_accelerate_backend()
+        aba_aa = ABA_Matrix(sys; factorize = true, linear_solver = "AppleAccelerateLU")
+        @test typeof(aba_aa.K) == PNM.AAFactorCache
+        @test is_factorized(aba_aa)
+        x_aa = copy(b)
+        PNM.AccelerateWrapper.solve!(aba_aa.K, x_aa)
+        @test isapprox(x_aa, x_klu; atol = 1e-10)
+        # LODF(A, ABA, BA) needs a KLU factorization: loud, actionable error.
+        A = IncidenceMatrix(sys)
+        BA = BA_Matrix(sys)
+        err = try
+            LODF(A, aba_aa, BA)
+            nothing
+        catch e
+            e
+        end
+        @test typeof(err) == ErrorException
+        @test occursin("linear_solver = \"KLU\"", err.msg)
+    else
+        @info "Skipped AppleAccelerate ABA tests (backend unavailable on this platform)"
     end
 end

@@ -62,6 +62,15 @@ end
     @test length(cache) == cache.max_num_keys
 end
 
+@testset "RowCache: a row written around the LRU order is reported as such" begin
+    row_size = 8
+    cache = PNM.RowCache(3 * row_size, Set{Int}(), row_size)
+    PNM.set_persistent_row!(cache, 1, [1.0])
+    PNM.set_persistent_row!(cache, 2, [1.0])
+    cache.temp_cache[99] = [1.0]
+    @test_throws r"RowCache API" setindex!(cache, [1.0], 3)
+end
+
 @testset "RowCache: empty! clears the persistent keys" begin
     row_size = 8
     cache = PNM.RowCache(10 * row_size, Set([1, 2]), row_size)
@@ -70,4 +79,20 @@ end
     @test isempty(cache.persistent_cache_keys)
     @test isempty(cache.temp_cache)
     @test isempty(cache.access_order)
+end
+
+@testset "_cached_row returns stored storage that survives eviction" begin
+    row_bytes = 3 * sizeof(Float64)
+    cache = PNM.RowCache(2 * row_bytes, Set{Int}(), row_bytes)
+    lk = ReentrantLock()
+    cutoff = PNM.AbsoluteCutoff(eps(Float64))
+    r1 = PNM._cached_row(() -> [1.0, 2.0, 3.0], cache, lk, 1, cutoff)
+    @test r1 === cache[1]
+    @test PNM._cached_row(() -> error("must not recompute a hit"), cache, lk, 1, cutoff) ===
+          r1
+    for k in 2:4
+        PNM._cached_row(() -> fill(Float64(k), 3), cache, lk, k, cutoff)
+    end
+    @test !haskey(cache, 1)
+    @test r1 == [1.0, 2.0, 3.0]
 end

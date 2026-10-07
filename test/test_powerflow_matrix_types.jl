@@ -2,10 +2,10 @@
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
 
     @testset "DC_ABA_Matrix_Factorized" begin
-        if PNM._has_apple_accelerate_backend()
-            M = ABA_Matrix(sys; factorize = true)
-            @test M isa PNM.DC_ABA_Matrix_Factorized
-        end
+        M = ABA_Matrix(sys; factorize = true)
+        @test M isa PNM.DC_ABA_Matrix_Factorized
+        # PowerFlows uses the alias as an invariant type parameter of PowerFlowData.
+        @test isconcretetype(PNM.DC_ABA_Matrix_Factorized)
     end
 
     @testset "DC_ABA_Matrix_Unfactorized" begin

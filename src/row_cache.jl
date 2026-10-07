@@ -10,8 +10,6 @@ Structure used for saving the rows of the Virtual PTDF and LODF matrix.
         Dictionary saving the row of the PTDF/LODF matrix
 - `persistent_cache_keys::Set{Int}`:
         Set listing the rows to keep in `temp_cache`
-- `max_cache_size::Int`
-        Defines the maximum allowed cache size (rows*row_size)
 - `max_num_keys::Int`
         Defines the maximum number of keys saved (rows of the matrix)
 - `access_order::Vector{Int}`:
@@ -20,7 +18,6 @@ Structure used for saving the rows of the Virtual PTDF and LODF matrix.
 struct RowCache{T <: Union{Vector{Float64}, SparseArrays.SparseVector{Float64}}}
     temp_cache::Dict{Int, T}
     persistent_cache_keys::Set{Int}
-    max_cache_size::Int
     max_num_keys::Int
     access_order::Vector{Int}
 end
@@ -54,7 +51,6 @@ function RowCache(max_cache_size::Int, persistent_rows::Set{Int}, row_size)
         # Copy: the cache mutates this set (pinning, and `empty!`), and the caller's own
         # set must not move under it.
         copy(persistent_rows),
-        max_cache_size,
         max_num_keys,
         sizehint!(Vector{Int}(), max_num_keys),
     )
@@ -213,19 +209,13 @@ function purge_one!(cache::RowCache)
             return
         end
     end
-    # Fallback: if access_order is out of sync, use old method
-    for k in keys(cache.temp_cache)
-        if k ∉ cache.persistent_cache_keys
-            delete!(cache.temp_cache, k)
-            break
-        end
-    end
     return
 end
 
 """
 Check saved rows in cache and delete one not belonging to `persistent_cache_keys`.
-Errors when every row is pinned.
+Errors when no row can be evicted: every row is pinned, or the unpinned rows were written
+around the cache's LRU tracking.
 """
 function check_cache_size!(cache::RowCache; new_add::Bool = false)
     limit = cache.max_num_keys - Int(new_add)
@@ -234,56 +224,44 @@ function check_cache_size!(cache::RowCache; new_add::Bool = false)
         1
     purge_one!(cache)
     if length(cache.temp_cache) > limit
+        if all(k -> k in cache.persistent_cache_keys, keys(cache.temp_cache))
+            error(
+                "RowCache holds $(length(cache.temp_cache)) rows at capacity " *
+                "max_num_keys = $(cache.max_num_keys) and every one of them is pinned, so " *
+                "no row can be evicted. Increase `max_cache_size` or pin fewer rows.",
+            )
+        end
         error(
-            "RowCache holds $(length(cache.temp_cache)) rows at capacity " *
-            "max_num_keys = $(cache.max_num_keys) and every one of them is pinned, so " *
-            "no row can be evicted. Increase `max_cache_size` or pin fewer rows.",
+            "RowCache is at capacity max_num_keys = $(cache.max_num_keys) but its LRU order " *
+            "tracks none of the unpinned rows, so none can be evicted. A row was written " *
+            "into the cache's dictionary directly instead of through the RowCache API.",
         )
     end
     return
 end
 
 """
-    cached_row_lookup(compute_row, cache, cache_lock, row, column, tol) -> value
+    _cached_row(compute_row, cache, cache_lock, row, cutoff) -> RowCacheValue
 
-Shared cache-fast-path / compute / double-checked-insert pattern used by
-`VirtualPTDF._getindex` and `VirtualLODF._getindex`. Acquires `cache_lock`
-to test for a hit, runs `compute_row` outside the lock on a miss
-(KLU solves dominate the cost), then takes the lock again to insert. A
-concurrent producer that wins the insert race wins; the other side
-returns the winner's row.
-
-`compute_row` is the first positional argument so callers can pass the
-miss-path computation as a `do … end` block:
-
-```julia
-return cached_row_lookup(
-    vlodf.cache, vlodf.cache_lock, row, column, vlodf.tol,
-) do
-    _compute_lodf_row(vlodf, row)
-end
-```
-
-`cutoff` is the resolved `SparsificationCutoff` stored on the matrix: an
-`AbsoluteCutoff` drops below a fixed value, a `RelativeCutoff` drops below
-`fraction · max|row|` so columns of large cases stay sparse.
+Return the cached row object for `row` itself (no copy), computing, applying `cutoff` to, and
+inserting it on a miss. Acquires `cache_lock` to test for a hit, runs `compute_row` outside the
+lock (solves dominate the cost), then takes the lock again to insert; a concurrent producer that
+wins the insert race wins, and every caller gets the winner's stored row.
 """
-function cached_row_lookup(
+function _cached_row(
     compute_row,
     cache::RowCache,
     cache_lock::ReentrantLock,
     row::Int,
-    column::Union{Int, Colon},
     cutoff::SparsificationCutoff,
 )
     @lock cache_lock begin
-        haskey(cache, row) && return cache.temp_cache[row][column]
+        haskey(cache, row) && return cache.temp_cache[row]
     end
-    row_data = compute_row()
-    stored = apply_cutoff(cutoff, row_data)
+    stored = apply_cutoff(cutoff, compute_row())
     @lock cache_lock begin
-        haskey(cache, row) && return cache.temp_cache[row][column]
+        haskey(cache, row) && return cache.temp_cache[row]
         cache[row] = stored
-        return cache[row][column]
+        return stored
     end
 end

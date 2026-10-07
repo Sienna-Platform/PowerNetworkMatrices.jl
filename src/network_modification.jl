@@ -1,37 +1,18 @@
-# Compared as magnitudes: delta_b from _get_arc_susceptances is -|b|, but _ba_arc_susceptance
-# is signed, so a signed test would call a full outage of a negative-reactance arc (3W star
-# leg, series compensation) partial. -|b| is the correct delta regardless: arc_sus (BA's
-# convention) is always the positive-by-construction DC susceptance magnitude, with direction
-# carried by BA's own +-1 incidence entries, not by the branch's physical sign. Negating the
-# signed _ba_arc_susceptance instead would double-negate on a negative-reactance arc and get
-# the update backwards -- confirmed by test_network_modification.jl's "negative-susceptance
-# full outage" case, where scaling by delta_b/b_arc on the signed value doubles the branch
-# instead of removing it.
+# Compared as magnitudes: delta_b is a change in |b| (-|b| for a full outage), but
+# _ba_arc_susceptance is signed, so a signed test would call a full outage of a
+# negative-reactance arc (3W star leg, series compensation) partial. Consumers that need the
+# signed change recover it from BA: the Woodbury kernel multiplies by the arc's sign
+# (`_arc_susceptance_sign`), and Ybus deltas scale by `delta_b / |b_arc|`.
 _is_full_outage(delta_b::Float64, b_arc::Float64) =
     isapprox(abs(delta_b), abs(b_arc); atol = YBUS_DELTA_TOL, rtol = sqrt(eps(Float32)))
 
 # Negated Pi-model entries: the delta that cancels the arc's contribution (full outage).
-function _negated_pi_model(entries::NTuple{4, <:Complex})::NTuple{4, YBUS_ELTYPE}
-    return (
-        YBUS_ELTYPE(-entries[1]),
-        YBUS_ELTYPE(-entries[2]),
-        YBUS_ELTYPE(-entries[3]),
-        YBUS_ELTYPE(-entries[4]),
-    )
-end
+_negated_pi_model(entries::NTuple{4, <:Complex})::NTuple{4, YBUS_ELTYPE} =
+    map(e -> YBUS_ELTYPE(-e), entries)
 
 # Scaled Pi-model entries: the delta for a partial susceptance change on a direct arc.
-function _scaled_pi_model(
-    entries::NTuple{4, <:Complex},
-    scale::Float64,
-)::NTuple{4, YBUS_ELTYPE}
-    return (
-        YBUS_ELTYPE(scale * entries[1]),
-        YBUS_ELTYPE(scale * entries[2]),
-        YBUS_ELTYPE(scale * entries[3]),
-        YBUS_ELTYPE(scale * entries[4]),
-    )
-end
+_scaled_pi_model(entries::NTuple{4, <:Complex}, scale::Float64)::NTuple{4, YBUS_ELTYPE} =
+    map(e -> YBUS_ELTYPE(scale * e), entries)
 
 """
     _member_outage_ybus_delta(bp, nr, component) -> NTuple{4, YBUS_ELTYPE}
@@ -270,6 +251,7 @@ function NetworkModification(mat::PowerNetworkMatrix, arc::Tuple{Int, Int})
                 dy12,
                 dy21,
                 dy22,
+                _outaged_member_count(nr, arc),
             ),
         ],
     )
@@ -282,10 +264,7 @@ Construct a `NetworkModification` from a branch component using network
 reduction reverse maps to classify the branch as direct, parallel, or series.
 """
 function NetworkModification(mat::PowerNetworkMatrix, branch::PSY.ACTransmission)
-    nr = get_network_reduction_data(mat)
-    arc_lookup = get_arc_lookup(mat)
-    arc_sus = _get_arc_susceptances(mat)
-    mods = _classify_branch_modification(nr, arc_lookup, arc_sus, branch)
+    _, mods = _classify_outage_components(mat, [branch])
     return NetworkModification(get_name(branch), mods)
 end
 
@@ -298,10 +277,7 @@ each one. For a partial outage (single winding trip), use a
 `ThreeWindingTransformerCircuit` instead.
 """
 function NetworkModification(mat::PowerNetworkMatrix, branch::PSY.ThreeWindingTransformer)
-    nr = get_network_reduction_data(mat)
-    arc_lookup = get_arc_lookup(mat)
-    arc_sus = _get_arc_susceptances(mat)
-    mods = _classify_branch_modification(nr, arc_lookup, arc_sus, branch)
+    _, mods = _classify_outage_components(mat, [branch])
     return NetworkModification(
         PSY.get_name(branch),
         mods,
@@ -368,52 +344,10 @@ function NetworkModification(mat::PowerNetworkMatrix, sys::PSY.System, outage::P
         error("No valid arc or shunt modifications found for outage.")
     end
 
-    nr = get_network_reduction_data(mat)
-    arc_lookup = get_arc_lookup(mat)
-    arc_sus = _get_arc_susceptances(mat)
-    bus_lookup = get_bus_lookup(mat)
-
-    # Pass 1: classify components. Series branches on the same arc must be
-    # grouped so their combined Δb is computed correctly.
-    direct_mods = ArcModification[]
-    parallel_mods = ArcModification[]
-    series_components_by_arc = Dict{Int, Vector{PSY.ACTransmission}}()
-    series_arc_tuples = Dict{Int, Tuple{Int, Int}}()
-    component_names = String[]
-    shunt_mods = ShuntModification[]
-
-    for component in all_components
-        _classify_outage_component!(
-            nr,
-            arc_lookup,
-            arc_sus,
-            bus_lookup,
-            component,
-            direct_mods,
-            parallel_mods,
-            series_components_by_arc,
-            series_arc_tuples,
-            shunt_mods,
-            component_names,
-        )
-    end
-
-    # Pass 2: compute series Δb with all tripped components grouped
-    series_mods = ArcModification[]
-    for (arc_idx, tripped) in series_components_by_arc
-        arc_tuple = series_arc_tuples[arc_idx]
-        series_chain = nr.series_branch_map[arc_tuple]
-        delta_b = _compute_series_outage_delta_b(series_chain, tripped, nr)
-        delta_shift =
-            _compute_series_outage_delta_shift_injection(series_chain, tripped, nr)
-        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
-        push!(
-            series_mods,
-            ArcModification(arc_idx, delta_b, delta_shift, dy11, dy12, dy21, dy22),
-        )
-    end
-
-    mods = vcat(direct_mods, parallel_mods, series_mods)
+    acc, mods = _classify_outage_components(mat, all_components)
+    direct_mods = acc.direct_mods
+    shunt_mods = acc.shunt_mods
+    component_names = acc.component_names
 
     if isempty(mods) && isempty(shunt_mods)
         @info "No valid arc or shunt modifications found for outage. " *
@@ -464,15 +398,61 @@ function _parallel_arc_modification(
         dy12,
         dy21,
         dy22,
+        1,
     )
 end
 
-"""
-    _classify_outage_component!(nr, arc_lookup, arc_sus, bus_lookup, component, ...) -> nothing
+struct _OutageAccumulator
+    direct_mods::Vector{ArcModification}
+    parallel_mods::Vector{ArcModification}
+    series_components_by_arc::Dict{Int, Vector{PSY.ACTransmission}}
+    series_arc_tuples::Dict{Int, Tuple{Int, Int}}
+    shunt_mods::Vector{ShuntModification}
+    component_names::Vector{String}
+end
 
-Classify a single outage component via multiple dispatch. ACTransmission branches are
-classified into direct/parallel/series arc modifications. Shunt components produce
-diagonal admittance changes. Unsupported component types are silently ignored.
+_OutageAccumulator() = _OutageAccumulator(
+    ArcModification[],
+    ArcModification[],
+    Dict{Int, Vector{PSY.ACTransmission}}(),
+    Dict{Int, Tuple{Int, Int}}(),
+    ShuntModification[],
+    String[],
+)
+
+# Classify `components`, then compute each series arc's Δb once with all its tripped
+# components grouped. Returns the accumulator and the combined arc modifications.
+function _classify_outage_components(mat::PowerNetworkMatrix, components)
+    nr = get_network_reduction_data(mat)
+    arc_lookup = get_arc_lookup(mat)
+    arc_sus = _get_arc_susceptances(mat)
+    bus_lookup = get_bus_lookup(mat)
+    acc = _OutageAccumulator()
+    for component in components
+        _classify_outage_component!(nr, arc_lookup, arc_sus, bus_lookup, component, acc)
+    end
+    series_mods = ArcModification[]
+    for (arc_idx, tripped) in acc.series_components_by_arc
+        arc_tuple = acc.series_arc_tuples[arc_idx]
+        series_chain = nr.series_branch_map[arc_tuple]
+        delta_b = _compute_series_outage_delta_b(series_chain, tripped, nr)
+        delta_shift =
+            _compute_series_outage_delta_shift_injection(series_chain, tripped, nr)
+        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
+        push!(
+            series_mods,
+            ArcModification(arc_idx, delta_b, delta_shift, dy11, dy12, dy21, dy22, 1),
+        )
+    end
+    return acc, vcat(acc.direct_mods, acc.parallel_mods, series_mods)
+end
+
+"""
+    _classify_outage_component!(nr, arc_lookup, arc_sus, bus_lookup, component, acc) -> nothing
+
+Classify a single outage component via multiple dispatch into the `_OutageAccumulator`.
+ACTransmission branches are classified into direct/parallel/series arc modifications. Shunt
+components produce diagonal admittance changes. Unsupported component types are skipped.
 """
 function _classify_outage_component!(
     nr::NetworkReductionData,
@@ -480,12 +460,7 @@ function _classify_outage_component!(
     arc_susceptances::Vector{Float64},
     ::Dict{Int, Int},
     component::PSY.ACTransmission,
-    direct_mods::Vector{ArcModification},
-    parallel_mods::Vector{ArcModification},
-    series_components_by_arc::Dict{Int, Vector{PSY.ACTransmission}},
-    series_arc_tuples::Dict{Int, Tuple{Int, Int}},
-    ::Vector{ShuntModification},
-    component_names::Vector{String},
+    acc::_OutageAccumulator,
 )
     tag, arc_tuple = _resolve_branch_arc(nr, component)
 
@@ -495,27 +470,27 @@ function _classify_outage_component!(
         delta_shift = -arc_dc_shift_injection(nr, arc_tuple)
         dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc, component)
         push!(
-            direct_mods,
-            ArcModification(arc_idx, -b_arc, delta_shift, dy11, dy12, dy21, dy22),
+            acc.direct_mods,
+            ArcModification(arc_idx, -b_arc, delta_shift, dy11, dy12, dy21, dy22, 1),
         )
     elseif tag === :parallel
         push!(
-            parallel_mods,
+            acc.parallel_mods,
             _parallel_arc_modification(nr, arc_lookup, arc_tuple, component),
         )
     elseif tag === :series
         arc_idx = arc_lookup[arc_tuple]
-        if !haskey(series_components_by_arc, arc_idx)
-            series_components_by_arc[arc_idx] = PSY.ACTransmission[]
-            series_arc_tuples[arc_idx] = arc_tuple
+        if !haskey(acc.series_components_by_arc, arc_idx)
+            acc.series_components_by_arc[arc_idx] = PSY.ACTransmission[]
+            acc.series_arc_tuples[arc_idx] = arc_tuple
         end
-        push!(series_components_by_arc[arc_idx], component)
+        push!(acc.series_components_by_arc[arc_idx], component)
     else
         @info "Branch $(get_name(component)) not found in any reduction map. " *
               "The component may have been eliminated by a radial reduction."
         return
     end
-    push!(component_names, get_name(component))
+    push!(acc.component_names, get_name(component))
     return
 end
 
@@ -525,17 +500,12 @@ function _classify_outage_component!(
     ::Vector{Float64},
     bus_lookup::Dict{Int, Int},
     component::Union{PSY.FixedAdmittance, PSY.SwitchedAdmittance},
-    ::Vector{ArcModification},
-    ::Vector{ArcModification},
-    ::Dict{Int, Vector{PSY.ACTransmission}},
-    ::Dict{Int, Tuple{Int, Int}},
-    shunt_mods::Vector{ShuntModification},
-    component_names::Vector{String},
+    acc::_OutageAccumulator,
 )
     bus_ix = get_bus_index(component, bus_lookup, nr)
     Y = PSY.get_Y(component)
-    push!(shunt_mods, ShuntModification(bus_ix, YBUS_ELTYPE(-Y)))
-    push!(component_names, PSY.get_name(component))
+    push!(acc.shunt_mods, ShuntModification(bus_ix, YBUS_ELTYPE(-Y)))
+    push!(acc.component_names, PSY.get_name(component))
     return
 end
 
@@ -545,19 +515,14 @@ function _classify_outage_component!(
     ::Vector{Float64},
     bus_lookup::Dict{Int, Int},
     component::PSY.StandardLoad,
-    ::Vector{ArcModification},
-    ::Vector{ArcModification},
-    ::Dict{Int, Vector{PSY.ACTransmission}},
-    ::Dict{Int, Tuple{Int, Int}},
-    shunt_mods::Vector{ShuntModification},
-    component_names::Vector{String},
+    acc::_OutageAccumulator,
 )
     bus_ix = get_bus_index(component, bus_lookup, nr)
     Y =
-        PSY.get_impedance_active_power(component, PSY.SU) -
-        im * PSY.get_impedance_reactive_power(component, PSY.SU)
-    push!(shunt_mods, ShuntModification(bus_ix, YBUS_ELTYPE(-Y)))
-    push!(component_names, PSY.get_name(component))
+        PSY.get_impedance_active_power(component, u"SU") -
+        im * PSY.get_impedance_reactive_power(component, u"SU")
+    push!(acc.shunt_mods, ShuntModification(bus_ix, YBUS_ELTYPE(-Y)))
+    push!(acc.component_names, PSY.get_name(component))
     return
 end
 
@@ -567,12 +532,7 @@ function _classify_outage_component!(
     ::Vector{Float64},
     ::Dict{Int, Int},
     component::PSY.Component,
-    ::Vector{ArcModification},
-    ::Vector{ArcModification},
-    ::Dict{Int, Vector{PSY.ACTransmission}},
-    ::Dict{Int, Tuple{Int, Int}},
-    ::Vector{ShuntModification},
-    ::Vector{String},
+    ::_OutageAccumulator,
 )
     @info "Component $(PSY.get_name(component)) ($(typeof(component))) " *
           "is not supported for outage classification. Skipping."
@@ -585,12 +545,7 @@ function _classify_outage_component!(
     arc_susceptances::Vector{Float64},
     bus_lookup::Dict{Int, Int},
     component::PSY.ThreeWindingTransformer,
-    direct_mods::Vector{ArcModification},
-    parallel_mods::Vector{ArcModification},
-    series_components_by_arc::Dict{Int, Vector{PSY.ACTransmission}},
-    series_arc_tuples::Dict{Int, Tuple{Int, Int}},
-    shunt_mods::Vector{ShuntModification},
-    component_names::Vector{String},
+    acc::_OutageAccumulator,
 )
     # An unavailable parent transformer is already out of service, so it cannot be
     # outaged; skip it regardless of the per-winding availability flags. This mirrors
@@ -604,91 +559,10 @@ function _classify_outage_component!(
             continue
         end
         _classify_outage_component!(
-            nr,
-            arc_lookup,
-            arc_susceptances,
-            bus_lookup,
-            winding,
-            direct_mods,
-            parallel_mods,
-            series_components_by_arc,
-            series_arc_tuples,
-            shunt_mods,
-            component_names,
+            nr, arc_lookup, arc_susceptances, bus_lookup, winding, acc,
         )
     end
     return
-end
-
-"""
-    _classify_branch_modification(nr, arc_lookup, arc_susceptances, branch) -> Vector{ArcModification}
-
-Classify a single branch component into the appropriate arc modification using
-the network reduction reverse maps. For single-branch modifications only;
-use `_classify_outage_component!` for multi-component outages with series grouping.
-"""
-
-"""
-    _classify_branch_modification(nr, arc_lookup, arc_susceptances, branch::PSY.ThreeWindingTransformer) -> Vector{ArcModification}
-
-Classify a `ThreeWindingTransformer` by decomposing it into its three winding arcs
-and classifying each one individually. Returns arc modifications for all windings
-present in the network.
-"""
-function _classify_branch_modification(
-    nr::NetworkReductionData,
-    arc_lookup::Dict,
-    arc_susceptances::Vector{Float64},
-    branch::PSY.ThreeWindingTransformer,
-)::Vector{ArcModification}
-    # An unavailable parent transformer is already out of service and produces no
-    # modifications, irrespective of the per-winding availability flags.
-    if !PSY.get_available(branch)
-        return ArcModification[]
-    end
-    mods = ArcModification[]
-    for (winding_num, circuit) in enumerate(PSY.get_circuits(branch))
-        winding = ThreeWindingTransformerCircuit(branch, circuit, winding_num)
-        if !get_equivalent_available(winding)
-            continue
-        end
-        append!(
-            mods,
-            _classify_branch_modification(nr, arc_lookup, arc_susceptances, winding),
-        )
-    end
-    return mods
-end
-
-function _classify_branch_modification(
-    nr::NetworkReductionData,
-    arc_lookup::Dict,
-    arc_susceptances::Vector{Float64},
-    branch::PSY.ACTransmission,
-)::Vector{ArcModification}
-    tag, arc_tuple = _resolve_branch_arc(nr, branch)
-
-    if tag === :direct
-        arc_idx = arc_lookup[arc_tuple]
-        b_arc = arc_susceptances[arc_idx]
-        delta_shift = -arc_dc_shift_injection(nr, arc_tuple)
-        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc, branch)
-        return [ArcModification(arc_idx, -b_arc, delta_shift, dy11, dy12, dy21, dy22)]
-    elseif tag === :parallel
-        return [_parallel_arc_modification(nr, arc_lookup, arc_tuple, branch)]
-    elseif tag === :series
-        arc_idx = arc_lookup[arc_tuple]
-        series_chain = nr.series_branch_map[arc_tuple]
-        delta_b = _compute_series_outage_delta_b(series_chain, branch, nr)
-        delta_shift =
-            _compute_series_outage_delta_shift_injection(series_chain, [branch], nr)
-        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
-        return [ArcModification(arc_idx, delta_b, delta_shift, dy11, dy12, dy21, dy22)]
-    else
-        @info "Branch $(get_name(branch)) not found in any reduction map. " *
-              "The component may have been eliminated by a radial reduction."
-        return ArcModification[]
-    end
 end
 
 # --- Accumulation helpers for Ybus deltas ---
@@ -770,9 +644,363 @@ end
     apply_ybus_modification(ybus::Ybus, mod::NetworkModification) -> SparseMatrixCSC
 
 Apply a canonical NetworkModification to a Ybus, returning the modified sparse matrix.
-Convenience wrapper around `compute_ybus_delta`.
+Convenience wrapper around `compute_ybus_delta`. The off-diagonals of a bus pair left with no
+arc member in service are dropped, matching the exact zeros
+[`apply_ybus_modification!`](@ref) writes there.
 """
 function apply_ybus_modification(ybus::Ybus, mod::NetworkModification)
-    delta = compute_ybus_delta(ybus, mod)
-    return ybus.data + delta
+    Y = ybus.data + compute_ybus_delta(ybus, mod)
+    arc_ax = get_arc_axis(ybus)
+    bus_lookup = get_bus_lookup(ybus)
+    live = _live_members_after(ybus, mod)
+    for (k, m) in enumerate(mod.arc_modifications)
+        _is_dead_pair(ybus, mod, live, k) || continue
+        arc = arc_ax[m.arc_index]
+        f_ix = bus_lookup[arc[1]]
+        t_ix = bus_lookup[arc[2]]
+        Y[f_ix, t_ix] = zero(YBUS_ELTYPE)
+        Y[t_ix, f_ix] = zero(YBUS_ELTYPE)
+    end
+    return SparseArrays.dropzeros!(Y)
+end
+
+# Members of each modified arc still in service after `mod`, in `mod.arc_modifications` order.
+function _live_members_after(ybus::Ybus, mod::NetworkModification)
+    live = Vector{Int}(undef, length(mod.arc_modifications))
+    for (k, m) in enumerate(mod.arc_modifications)
+        live[k] = ybus.arc_live_members[m.arc_index] - m.opened
+        if live[k] < 0
+            error(
+                "The modification opens $(m.opened) member(s) of arc $(m.arc_index), which " *
+                "has $(ybus.arc_live_members[m.arc_index]) in service.",
+            )
+        end
+    end
+    return live
+end
+
+# True when modified arc `k` has no member left and no anti-parallel twin keeps its bus pair
+# coupled: the pair's two off-diagonals hold nothing but Float32 residue.
+function _is_dead_pair(
+    ybus::Ybus,
+    mod::NetworkModification,
+    live::Vector{Int},
+    k::Int,
+)
+    iszero(live[k]) || return false
+    arc = get_arc_axis(ybus)[mod.arc_modifications[k].arc_index]
+    twin = (arc[2], arc[1])
+    twin_ix = get(get_arc_lookup(ybus), twin, 0)
+    if iszero(twin_ix)
+        return true
+    end
+    for (j, m) in enumerate(mod.arc_modifications)
+        m.arc_index == twin_ix && return iszero(live[j])
+    end
+    return iszero(ybus.arc_live_members[twin_ix])
+end
+
+# Each modified arc's remaining share of its base BA susceptance after `mod`, in the order of
+# `mod.arc_modifications` (one per arc). `delta_b` is a magnitude-space change against the base
+# susceptance, so sequential member trips add their fractions. A lossy group's susceptance is
+# not the sum of its members', so the fractions of a fully tripped group need not reach zero;
+# the member count decides that instead.
+function _arc_susceptance_scales(
+    ybus::Ybus,
+    mod::NetworkModification,
+    live::Vector{Int},
+)
+    nr = get_network_reduction_data(ybus)
+    arc_ax = get_arc_axis(ybus)
+    scales = Vector{Float64}(undef, length(mod.arc_modifications))
+    for (k, m) in enumerate(mod.arc_modifications)
+        if iszero(live[k])
+            scales[k] = 0.0
+            continue
+        end
+        scale = ybus.arc_susceptance_scale[m.arc_index]
+        b = _ba_arc_susceptance(nr, arc_ax[m.arc_index])
+        if iszero(b)
+            # Exact zero is `_ba_arc_susceptance`'s "no DC coupling"; BA scales any other b.
+            scales[k] = scale
+        else
+            scales[k] = scale + m.delta_b / abs(b)
+        end
+    end
+    return scales
+end
+
+# Position of the stored entry (i, j) in `nonzeros(A)`. Row indices are sorted within a column
+# in a canonical SparseMatrixCSC, so a binary search over the column finds it.
+function _stored_index(A::SparseArrays.SparseMatrixCSC, i::Int, j::Int)
+    rows = SparseArrays.rowvals(A)
+    r = SparseArrays.nzrange(A, j)
+    p = searchsortedfirst(view(rows, r), i)
+    if p > length(r) || rows[r[p]] != i
+        error(
+            "Entry ($i, $j) is not stored in the matrix; an in-place network modification " *
+            "must stay inside the base sparsity pattern. Ybus construction drops an entry " *
+            "whose branch admittances cancel exactly; use `apply_ybus_modification` for " *
+            "a modification that touches one.",
+        )
+    end
+    return r[p]
+end
+
+# Positions in `nonzeros(Y)` of every bus-admittance entry `mod` touches, with the matching
+# deltas: four per arc modification, then one per shunt modification. Positions can repeat
+# where arcs share a bus.
+function _ybus_entries(
+    Y::SparseArrays.SparseMatrixCSC,
+    bus_lookup::Dict{Int, Int},
+    arc_ax::Vector{Tuple{Int, Int}},
+    mod::NetworkModification,
+)
+    n = 4 * length(mod.arc_modifications) + length(mod.shunt_modifications)
+    positions = Vector{Int}(undef, n)
+    deltas = Vector{YBUS_ELTYPE}(undef, n)
+    k = 0
+    for m in mod.arc_modifications
+        arc = arc_ax[m.arc_index]
+        f_ix = bus_lookup[arc[1]]
+        t_ix = bus_lookup[arc[2]]
+        positions[k + 1] = _stored_index(Y, f_ix, f_ix)
+        positions[k + 2] = _stored_index(Y, f_ix, t_ix)
+        positions[k + 3] = _stored_index(Y, t_ix, f_ix)
+        positions[k + 4] = _stored_index(Y, t_ix, t_ix)
+        deltas[(k + 1):(k + 4)] .= (m.delta_y11, m.delta_y12, m.delta_y21, m.delta_y22)
+        k += 4
+    end
+    for s in mod.shunt_modifications
+        k += 1
+        positions[k] = _stored_index(Y, s.bus_index, s.bus_index)
+        deltas[k] = s.delta_y
+    end
+    return positions, deltas
+end
+
+_arc_row_entries(::Nothing, bus_lookup, arc_ax, mod::NetworkModification, row_deltas) =
+    (Int[], YBUS_ELTYPE[])
+
+# Positions in `nonzeros(mat.data)` of the from- and to-bus entries in each modified arc's row,
+# two per arc modification, with the deltas `row_deltas(m)` assigns them.
+function _arc_row_entries(
+    mat::ArcAdmittanceMatrix,
+    bus_lookup::Dict{Int, Int},
+    arc_ax::Vector{Tuple{Int, Int}},
+    mod::NetworkModification,
+    row_deltas::F,
+) where {F}
+    arc_lookup = get_arc_lookup(mat)
+    positions = Vector{Int}(undef, 2 * length(mod.arc_modifications))
+    deltas = Vector{YBUS_ELTYPE}(undef, length(positions))
+    for (n, m) in enumerate(mod.arc_modifications)
+        arc = arc_ax[m.arc_index]
+        row = get(arc_lookup, arc, 0)
+        if iszero(row)
+            error("Arc $(arc) is not present in the arc-admittance matrix.")
+        end
+        positions[2n - 1] = _stored_index(mat.data, row, bus_lookup[arc[1]])
+        positions[2n] = _stored_index(mat.data, row, bus_lookup[arc[2]])
+        deltas[2n - 1], deltas[2n] = row_deltas(m)
+    end
+    return positions, deltas
+end
+
+_from_to_deltas(m::ArcModification) = (m.delta_y11, m.delta_y12)
+_to_from_deltas(m::ArcModification) = (m.delta_y21, m.delta_y22)
+
+# Every entry `mod` touches in `ybus`'s bus matrix and both arc admittance matrices, resolved
+# before anything is written so a missing entry leaves `ybus` unchanged.
+function _modified_entries(
+    ybus::Ybus,
+    bus_lookup::Dict{Int, Int},
+    mod::NetworkModification,
+)
+    arc_ax = get_arc_axis(ybus)
+    return (
+        _ybus_entries(ybus.data, bus_lookup, arc_ax, mod),
+        _arc_row_entries(
+            ybus.arc_admittance_from_to, bus_lookup, arc_ax, mod, _from_to_deltas,
+        ),
+        _arc_row_entries(
+            ybus.arc_admittance_to_from, bus_lookup, arc_ax, mod, _to_from_deltas,
+        ),
+    )
+end
+
+# Repeated positions are summed in input order before the one add, which is how `sparse`
+# combines duplicates, so the result matches the out-of-place `ybus.data + delta` bit for bit.
+function _add_deltas!(
+    A::SparseArrays.SparseMatrixCSC,
+    (positions, deltas)::Tuple{Vector{Int}, Vector{YBUS_ELTYPE}},
+)
+    nz = SparseArrays.nonzeros(A)
+    order = sortperm(positions; alg = Base.Sort.MergeSort)
+    k = 1
+    while k <= length(order)
+        p = positions[order[k]]
+        delta = deltas[order[k]]
+        k += 1
+        while k <= length(order) && positions[order[k]] == p
+            delta += deltas[order[k]]
+            k += 1
+        end
+        nz[p] += delta
+    end
+    return
+end
+
+_add_deltas!(::Nothing, ::Tuple{Vector{Int}, Vector{YBUS_ELTYPE}}) = nothing
+_add_deltas!(A::ArcAdmittanceMatrix, entries::Tuple{Vector{Int}, Vector{YBUS_ELTYPE}}) =
+    _add_deltas!(A.data, entries)
+
+function _copy_entries!(
+    dst::SparseArrays.SparseMatrixCSC,
+    (dst_positions, _)::Tuple{Vector{Int}, Vector{YBUS_ELTYPE}},
+    src::SparseArrays.SparseMatrixCSC,
+    (src_positions, _)::Tuple{Vector{Int}, Vector{YBUS_ELTYPE}},
+)
+    dst_nz = SparseArrays.nonzeros(dst)
+    src_nz = SparseArrays.nonzeros(src)
+    for k in eachindex(dst_positions, src_positions)
+        dst_nz[dst_positions[k]] = src_nz[src_positions[k]]
+    end
+    return
+end
+
+_copy_entries!(::Nothing, dst_entries, ::Nothing, src_entries) = nothing
+_copy_entries!(
+    dst::ArcAdmittanceMatrix,
+    dst_entries,
+    src::ArcAdmittanceMatrix,
+    src_entries,
+) =
+    _copy_entries!(dst.data, dst_entries, src.data, src_entries)
+
+_check_arc_admittance_presence(::Nothing, ::Nothing) = nothing
+_check_arc_admittance_presence(::ArcAdmittanceMatrix, ::ArcAdmittanceMatrix) = nothing
+_check_arc_admittance_presence(work, base) = error(
+    "Only one of the working and base Ybus carries arc-admittance matrices. " *
+    "Cannot restore an in-place modification across different structures.",
+)
+
+"""
+    apply_ybus_modification!(ybus::Ybus, mod::NetworkModification)
+
+Add `mod`'s arc and shunt admittance deltas into `ybus` in place: the bus admittance matrix and,
+when present, both arc admittance matrices. The stored pattern is left untouched, so a
+factorization's symbolic analysis stays valid, and an entry the out-of-place
+[`apply_ybus_modification`](@ref) would drop stays stored as a zero. Otherwise the result
+matches it value for value. Undo exactly with [`restore_ybus_modification!`](@ref).
+
+Once every member of an arc is out of service, its arc admittance rows and DC susceptance are
+set to exact zeros, and so are its bus-pair off-diagonals unless an anti-parallel arc on the
+same buses is still in service; connectivity checks on `ybus.data` then see the removal. No
+other entry is rounded to zero, so a live branch beside a much stiffer tripped one keeps its
+admittance to Float32 accuracy. Opening more members than an arc has in service raises.
+
+Every position is resolved before anything is written: a delta on an entry outside the pattern
+raises an error and leaves `ybus` unchanged. Ybus construction drops an entry whose branch
+admittances cancel exactly, so a modification touching one must use the out-of-place form.
+
+Each modified arc's DC susceptance is tracked too, so [`BA_Matrix`](@ref), and the
+`ABA_Matrix`, `PTDF` and `VirtualPTDF` built from it, reflect the modification; a
+modification that islands part of the network makes `BA_Matrix(ybus)` raise instead. The
+topology is not updated: `adjacency_data`, the subnetwork axes, the network reduction data,
+`IncidenceMatrix`, `AdjacencyMatrix` and `find_subnetworks(ybus)` still describe the
+unmodified network; check the connectivity of a modified Ybus with
+`find_subnetworks(ybus.data, get_bus_axis(ybus))`.
+"""
+function apply_ybus_modification!(ybus::Ybus, mod::NetworkModification)
+    ybus_entries, from_to_entries, to_from_entries =
+        _modified_entries(ybus, get_bus_lookup(ybus), mod)
+    live = _live_members_after(ybus, mod)
+    scales = _arc_susceptance_scales(ybus, mod, live)
+    _add_deltas!(ybus.data, ybus_entries)
+    _add_deltas!(ybus.arc_admittance_from_to, from_to_entries)
+    _add_deltas!(ybus.arc_admittance_to_from, to_from_entries)
+    Y_nz = SparseArrays.nonzeros(ybus.data)
+    y_positions, _ = ybus_entries
+    for k in eachindex(mod.arc_modifications)
+        if _is_dead_pair(ybus, mod, live, k)
+            Y_nz[y_positions[4k - 2]] = zero(YBUS_ELTYPE)
+            Y_nz[y_positions[4k - 1]] = zero(YBUS_ELTYPE)
+        end
+        if iszero(live[k])
+            _zero_arc_rows!(ybus.arc_admittance_from_to, from_to_entries, k)
+            _zero_arc_rows!(ybus.arc_admittance_to_from, to_from_entries, k)
+        end
+    end
+    for (k, m) in enumerate(mod.arc_modifications)
+        ybus.arc_susceptance_scale[m.arc_index] = scales[k]
+        ybus.arc_live_members[m.arc_index] = live[k]
+    end
+    return
+end
+
+_zero_arc_rows!(::Nothing, entries, k::Int) = nothing
+
+function _zero_arc_rows!(
+    A::ArcAdmittanceMatrix,
+    (positions, _)::Tuple{Vector{Int}, Vector{YBUS_ELTYPE}},
+    k::Int,
+)
+    nz = SparseArrays.nonzeros(A.data)
+    nz[positions[2k - 1]] = zero(YBUS_ELTYPE)
+    nz[positions[2k]] = zero(YBUS_ELTYPE)
+    return
+end
+
+"""
+    restore_ybus_modification!(ybus::Ybus, base::Ybus, mod::NetworkModification)
+
+Copy `base`'s values back into exactly the entries [`apply_ybus_modification!`](@ref) wrote for
+`mod`. Exact: no floating-point drift accumulates across repeated apply/restore cycles. `base`
+must have `ybus`'s bus and arc axes, and every entry is looked up by `(row, column)` in each matrix
+separately, so a base that does not store an entry raises an error rather than supplying a
+value from the wrong position. All entries are resolved before any is written, so an error
+leaves `ybus` unchanged; a missing or extra pair of arc admittance matrices also raises one.
+"""
+function restore_ybus_modification!(
+    ybus::Ybus,
+    base::Ybus,
+    mod::NetworkModification,
+)
+    bus_ax = get_bus_axis(ybus)
+    base_bus_ax = get_bus_axis(base)
+    if !(bus_ax === base_bus_ax || bus_ax == base_bus_ax)
+        error(
+            "The two Ybus matrices have different bus axes; restore needs the base " *
+            "the modification was applied against.",
+        )
+    end
+    arc_ax = get_arc_axis(ybus)
+    base_arc_ax = get_arc_axis(base)
+    if !(arc_ax === base_arc_ax || arc_ax == base_arc_ax)
+        error(
+            "The two Ybus matrices have different arc axes; restore needs the base " *
+            "the modification was applied against.",
+        )
+    end
+    _check_arc_admittance_presence(ybus.arc_admittance_from_to, base.arc_admittance_from_to)
+    _check_arc_admittance_presence(ybus.arc_admittance_to_from, base.arc_admittance_to_from)
+    bus_lookup = get_bus_lookup(ybus)
+    work_y, work_from_to, work_to_from = _modified_entries(ybus, bus_lookup, mod)
+    base_y, base_from_to, base_to_from = _modified_entries(base, bus_lookup, mod)
+
+    _copy_entries!(ybus.data, work_y, base.data, base_y)
+    _copy_entries!(
+        ybus.arc_admittance_from_to, work_from_to,
+        base.arc_admittance_from_to, base_from_to,
+    )
+    _copy_entries!(
+        ybus.arc_admittance_to_from, work_to_from,
+        base.arc_admittance_to_from, base_to_from,
+    )
+    for m in mod.arc_modifications
+        ybus.arc_susceptance_scale[m.arc_index] = base.arc_susceptance_scale[m.arc_index]
+        ybus.arc_live_members[m.arc_index] = base.arc_live_members[m.arc_index]
+    end
+    return
 end

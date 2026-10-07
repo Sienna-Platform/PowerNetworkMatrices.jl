@@ -215,99 +215,28 @@ function _get_branch_map_entries(
     return entries
 end
 
-"""
-    _should_visit_node(node::Int, reduced_indices::BitVector, irreducible_indices::BitVector)
-
-Determines whether a node should be visited during network traversal.
-
-# Arguments
-- `node::Int`: The index of the node to check.
-- `reduced_indices::BitVector`: Bitmask of indices that have already been reduced.
-- `irreducible_indices::BitVector`: Bitmask of indices that cannot be reduced.
-
-# Returns
-- `Bool`: `true` if the node should be visited, `false` otherwise.
-"""
-function _should_visit_node(
-    node::Int,
-    reduced_indices::BitVector,
-    irreducible_indices::BitVector,
-)
-    if irreducible_indices[node]
-        return false
-    end
-    if reduced_indices[node]
-        return false
-    end
-    return true
-end
-
-"""
-    _is_final_node(node::Int, adj_matrix::SparseArrays.SparseMatrixCSC, reduced_indices::BitVector, irreducible_indices::BitVector)
-
-Determines if a node is a final node in a path traversal.
-
-# Arguments
-- `node::Int`: The index of the node to check.
-- `adj_matrix::SparseArrays.SparseMatrixCSC`: The adjacency matrix of the network.
-- `reduced_indices::BitVector`: Bitmask of indices that have already been reduced.
-- `irreducible_indices::BitVector`: Bitmask of indices that should not be reduced.
-
-# Returns
-- `Bool`: `true` if the node is a final node, `false` otherwise.
-"""
+# A chain stops at any node that is not degree two, already consumed, or irreducible.
 function _is_final_node(
     node::Int,
     adj_matrix::SparseArrays.SparseMatrixCSC,
     reduced_indices::BitVector,
     irreducible_indices::BitVector,
 )
-    if !_is_2degree_node(adj_matrix, node)
-        return true
-    end
-    if reduced_indices[node]
-        return true
-    end
-    if irreducible_indices[node]
-        return true
-    end
-    return false
+    return !_is_2degree_node(adj_matrix, node) ||
+           reduced_indices[node] ||
+           irreducible_indices[node]
 end
 
-"""
-    _is_2degree_node(adj_matrix::SparseArrays.SparseMatrixCSC, node::Int)
+_is_2degree_node(adj_matrix::SparseArrays.SparseMatrixCSC, node::Int) =
+    length(SparseArrays.nzrange(adj_matrix, node)) == 2
 
-Checks if a node has exactly two connections in the network.
-
-# Arguments
-- `adj_matrix::SparseArrays.SparseMatrixCSC`: The adjacency matrix of the network.
-- `node::Int`: The index of the node to check.
-
-# Returns
-- `Bool`: `true` if the node has exactly two neighbors, `false` otherwise.
-"""
-function _is_2degree_node(adj_matrix::SparseArrays.SparseMatrixCSC, node::Int)
-    neighbor_count = SparseArrays.nzrange(adj_matrix, node)
-    return length(neighbor_count) == 2
-end
-
-"""
-    _get_neighbors(adj_matrix::SparseArrays.SparseMatrixCSC, node::Int)
-
-Get all neighbors of a given node from the adjacency matrix.
-For undirected graphs, checks both directions.
-"""
 function _get_neighbors(adj_matrix::SparseArrays.SparseMatrixCSC, node::Int)
     nzrange = SparseArrays.nzrange(adj_matrix, node)
     @assert length(nzrange) == 2
     return rowvals(adj_matrix)[nzrange]
 end
 
-"""
-    _get_complete_chain(adj_matrix::SparseArrays.SparseMatrixCSC, start_node::Int, reduced_indices::Set{Int}, irreducible_indices::Set{Int})
-
-Build a complete chain of degree-2 nodes starting from a given node.
-"""
+# Chain of degree-2 nodes through `start_node`, extended both ways.
 function _get_complete_chain(
     adj_matrix::SparseArrays.SparseMatrixCSC,
     start_node::Int,
@@ -337,18 +266,8 @@ function _get_complete_chain(
     return current_chain
 end
 
-"""
-    _get_partial_chain!(current_chain::Vector{Int},
-                       adj_matrix::SparseArrays.SparseMatrixCSC,
-                       current_node::Int,
-                       prev_node::Int,
-                       reduced_indices::BitVector,
-                       irreducible_indices::BitVector)
-
-Extend `current_chain` in one direction from `current_node`, avoiding `prev_node`. Iterative,
-not recursive: one stack frame per bus would overflow on a long radial chain (the same failure
-`_surviving_root!` was de-recursed for).
-"""
+# Extend `current_chain` from `current_node`, avoiding `prev_node`. Iterative: a frame per bus
+# overflows the stack on a long radial chain.
 function _get_partial_chain!(
     current_chain::Vector{Int},
     adj_matrix::SparseArrays.SparseMatrixCSC,
@@ -386,11 +305,7 @@ function _get_partial_chain!(
     end
 end
 
-"""
-    _get_degree2_nodes(adj_matrix::SparseArrays.SparseMatrixCSC, irreducible_indices::Set{Int})
-
-Return all degree-2 nodes in the adjacency matrix, excluding irreducible indices.
-"""
+# Degree-2 nodes that are not irreducible.
 function _get_degree2_nodes(
     adj_matrix::SparseArrays.SparseMatrixCSC,
     irreducible_indices::BitVector,
@@ -417,10 +332,16 @@ A chain is a sequence of connected degree-2 nodes.
 Returns a vector of chains, each a vector of node indices whose first and last entries are the
 chain's terminal (non-degree-2 or irreducible) nodes. Several chains may share an endpoint pair;
 grouping them onto one arc is the caller's job.
+
+With `require_valid_endpoints = true` (default) a chain whose endpoints are already adjacent, or
+equal (a loop), is cut down to its longest sub-chain the reduction can fold. With `false` every
+complete chain is returned as found: still a series path, which is all a caller that never folds
+it (e.g. contingency grouping) needs.
 """
 function find_degree2_chains(
     adj_matrix::SparseArrays.SparseMatrixCSC,
-    irreducible_indices::Set{Int},
+    irreducible_indices::Set{Int};
+    require_valid_endpoints::Bool = true,
 )
     node_count = size(adj_matrix, 1)
     # Convert the exempt set into a BitVector for O(1) membership checks keyed by column
@@ -438,6 +359,10 @@ function find_degree2_chains(
         end
         chain_path =
             _get_complete_chain(adj_matrix, node, reduced_indices, irreducible_mask)
+        if !require_valid_endpoints
+            push!(chains, chain_path)
+            continue
+        end
         valid_chain_path = _find_longest_valid_chain(adj_matrix, chain_path)
         if !isempty(valid_chain_path)
             push!(chains, valid_chain_path)
@@ -454,17 +379,12 @@ function _find_longest_valid_chain(
         return chain_path
     end
     @info "Nodes $(chain_path[1]) and $(chain_path[end]) already have a parallel path or is circular, searching for valid subchains."
-    # Enumerate subchain index ranges (i, j) in descending length order and return the
-    # first whose endpoints form a valid chain. Avoids the prior O(n^2) materialization
-    # and sort of every contiguous subchain.
+    # Subchain index ranges (i, j) in descending length order; the first with valid endpoints wins.
     n = length(chain_path)
     for len in n:-1:3
         for i in 1:(n - len + 1)
-            j = i + len - 1
-            endpoint_i = chain_path[i]
-            endpoint_j = chain_path[j]
-            if endpoint_i != endpoint_j && adj_matrix[endpoint_i, endpoint_j] == 0
-                subchain = chain_path[i:j]
+            if _valid_endpoints(adj_matrix, chain_path[i], chain_path[i + len - 1])
+                subchain = chain_path[i:(i + len - 1)]
                 @info "found a valid subchain $subchain"
                 return subchain
             end
@@ -474,10 +394,8 @@ function _find_longest_valid_chain(
     return Vector{Int}()
 end
 
-function _is_valid_chain(adj_matrix::SparseArrays.SparseMatrixCSC, chain_path::Vector{Int})
-    if adj_matrix[chain_path[1], chain_path[end]] == 0 && chain_path[1] != chain_path[end]
-        return true
-    else
-        return false
-    end
-end
+_valid_endpoints(adj_matrix::SparseArrays.SparseMatrixCSC, a::Int, b::Int) =
+    a != b && iszero(adj_matrix[a, b])
+
+_is_valid_chain(adj_matrix::SparseArrays.SparseMatrixCSC, chain_path::Vector{Int}) =
+    _valid_endpoints(adj_matrix, chain_path[1], chain_path[end])

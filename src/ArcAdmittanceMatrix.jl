@@ -25,9 +25,6 @@ struct ArcAdmittanceMatrix{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}} <:
 end
 
 # functions to get stored data
-get_axes(M::ArcAdmittanceMatrix) = M.axes
-get_lookup(M::ArcAdmittanceMatrix) = M.lookup
-get_branch_catalog(M::ArcAdmittanceMatrix) = M.branch_catalog
 get_arc_axis(M::ArcAdmittanceMatrix) = M.axes[1]
 get_arc_lookup(M::ArcAdmittanceMatrix) = M.lookup[1]
 get_bus_axis(M::ArcAdmittanceMatrix) = M.axes[2]

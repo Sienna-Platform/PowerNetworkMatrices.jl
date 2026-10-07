@@ -16,11 +16,12 @@ function _create_factorization(
 end
 
 function _create_factorization(
-    ::LinearSolverType,
+    solver::LinearSolverType,
     ::SparseArrays.SparseMatrixCSC{Float64, Int},
 )
     return error(
-        "Only KLU and AppleAccelerateLU solvers are supported for VirtualPTDF factorization.",
+        "Only KLU and AppleAccelerateLU solvers are supported for this factorization; " *
+        "got $(typeof(solver)).",
     )
 end
 
@@ -28,12 +29,12 @@ end
 # Both overloads solve in place (zero-allocation hot path). KLU and Apple
 # Accelerate are the only supported backends; adding a new backend requires
 # extending this method.
-function _solve_factorization(K::KLULinSolveCache{Float64}, b::Vector{Float64})
+function _solve_factorization(K::KLULinSolveCache{Float64}, b::VecOrMat{Float64})
     solve!(K, b)
     return b
 end
 
-function _solve_factorization(K::AAFactorCache, b::Vector{Float64})
+function _solve_factorization(K::AAFactorCache, b::VecOrMat{Float64})
     AccelerateWrapper.solve!(K, b)
     return b
 end
@@ -66,12 +67,6 @@ end
 
 # --- Per-arc susceptance extraction ---
 
-"""
-Extract the effective susceptance for each arc from the BA matrix.
-For arc j, the susceptance is the absolute value of the first nonzero in BA column j.
-BA columns always have the structure [+b, -b] (from-bus and to-bus entries),
-so both nonzeros have the same magnitude.
-"""
 # BA columns always have the structure [+b, -b] (from-bus and to-bus entries), so the first
 # nonzero's magnitude is the arc's susceptance.
 function _ba_column_susceptance(
@@ -84,6 +79,10 @@ function _ba_column_susceptance(
     return abs(nzv[first(rng)])
 end
 
+"""
+Extract the effective susceptance for each arc from the BA matrix: the absolute value of
+the first nonzero in BA column j.
+"""
 function _extract_arc_susceptances(
     BA::SparseArrays.SparseMatrixCSC{Float64, Int},
 )::Vector{Float64}
@@ -135,7 +134,7 @@ end
 # --- PTDF·A diagonal ---
 
 """
-    _get_PTDF_A_diag(K, BA, A, ref_bus_positions) -> Vector{Float64}
+    _get_PTDF_A_diag(K, BA, A, valid_ix, bus_to_valid_idx) -> Vector{Float64}
 
 Compute `diag(PTDF · A)`. Each row of `A` has exactly two nonzeros (+1 at the
 from-bus, -1 at the to-bus), so the per-arc dot product reduces to two indexed
@@ -145,15 +144,12 @@ function _get_PTDF_A_diag(
     K,
     BA::SparseArrays.SparseMatrixCSC{Float64, Int},
     A::SparseArrays.SparseMatrixCSC{Int8, Int},
-    ref_bus_positions::Set{Int},
+    valid_ix::Vector{Int},
+    bus_to_valid_idx::Vector{Int},
 )
     n_branches = size(BA, 2)
-    n_buses = size(BA, 1)
     diag_ = zeros(n_branches)
-
-    valid_ix = setdiff(1:n_buses, ref_bus_positions)
     n_valid = length(valid_ix)
-    bus_to_valid_idx = _build_bus_to_valid_idx(n_buses, valid_ix)
 
     # Per-arc (from_valid, to_valid) via one transpose of A; 0 = ref bus.
     A_T = SparseArrays.sparse(transpose(A))

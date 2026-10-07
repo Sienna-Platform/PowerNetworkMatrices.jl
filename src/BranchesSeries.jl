@@ -1,75 +1,34 @@
 mutable struct BranchesSeries <: AbstractReductionAggregate
-    branches::Dict{DataType, Vector{PSY.ACTransmission}}
-    insertion_order::Vector{Tuple{DataType, Int}}
+    branches::Vector{PSY.ACTransmission}
     segment_orientations::Vector{Symbol}
     # The chain's endpoints in original bus numbers, remapped with `nr` on read. A chain can be
     # a member of a parallel group, where orientation is resolved against the group's frame.
     arc_key::Tuple{Int, Int}
     equivalent_ybus::CACHED_TWO_PORT
     equivalent_ybus_populated::Bool
-
-    function BranchesSeries(
-        branches::Dict{DataType, Vector{PSY.ACTransmission}},
-        insertion_order::Vector{Tuple{DataType, Int}},
-        segment_orientations::Vector{Symbol},
-        arc_key::Tuple{Int, Int},
-        equivalent_ybus::CACHED_TWO_PORT,
-        equivalent_ybus_populated::Bool,
-    )
-        n_members = sum(length, values(branches); init = 0)
-        if length(insertion_order) != n_members
-            error(
-                "BranchesSeries on arc $arc_key: $n_members member(s) but " *
-                "$(length(insertion_order)) insertion_order entries. Build chains with " *
-                "BranchesSeries(arc_key) and add_branch!.",
-            )
-        end
-        return new(
-            branches,
-            insertion_order,
-            segment_orientations,
-            arc_key,
-            equivalent_ybus,
-            equivalent_ybus_populated,
-        )
-    end
 end
 
-# More than one key means a chain mixing branch types.
-_has_mixed_types(bs::BranchesSeries) = length(bs.branches) > 1
+# More than one type means a chain mixing branch types.
+_has_mixed_types(bs::BranchesSeries) = !allequal(typeof, bs.branches)
 
 BranchesSeries(arc_key::Tuple{Int, Int}) = BranchesSeries(
-    Dict{DataType, Vector{PSY.ACTransmission}}(),
-    Vector{Tuple{DataType, Int}}(),
+    Vector{PSY.ACTransmission}(),
     Vector{Symbol}(),
     arc_key,
     EMPTY_TWO_PORT,
     false,
 )
 
-function add_branch!(
-    bs::BranchesSeries,
-    branch::T,
-    orientation,
-) where {T <: PSY.ACTransmission}
+function add_branch!(bs::BranchesSeries, branch::PSY.ACTransmission, orientation)
     invalidate_equivalent_ybus!(bs)
     push!(bs.segment_orientations, orientation)
-    members = get!(() -> Vector{PSY.ACTransmission}(), bs.branches, T)
-    push!(members, branch)
-    push!(bs.insertion_order, (T, length(members)))
+    push!(bs.branches, branch)
     return
 end
 
-# Integer position over `insertion_order` keeps chain sums inferable.
-function Base.iterate(bs::BranchesSeries, position::Int = 1)
-    if position > length(bs.insertion_order)
-        return nothing
-    end
-    type, idx = bs.insertion_order[position]
-    return (bs.branches[type][idx], position + 1)
-end
+Base.iterate(bs::BranchesSeries, state...) = iterate(bs.branches, state...)
 
-Base.length(bs::BranchesSeries) = length(bs.insertion_order)
+Base.length(bs::BranchesSeries) = length(bs.branches)
 
 Base.eltype(::Type{BranchesSeries}) = PSY.ACTransmission
 
@@ -144,33 +103,24 @@ frame rather than an identity.
 """
 get_name(bs::BranchesSeries) = "series_$(bs.arc_key[1])_$(bs.arc_key[2])"
 
-function get_series_susceptance(
-    series_chain::BranchesSeries,
-    units::IS.AbstractUnitSystem,
-)
-    v = _series_susceptance_raw(series_chain, units)
-    isfinite(v) || _throw_non_finite_susceptance(series_chain, v)
-    return v
-end
-
 # Series segments add impedance. Reading a leaf's `tap * x` directly lets a zero-impedance
 # segment contribute exactly 0.0, with no transient `Inf` for the sum to absorb.
-_series_reactance(b::PSY.ACTransmission, units::IS.AbstractUnitSystem) =
+_series_reactance(b::PSY.ACTransmission, units) =
     PSY.get_x(b, units)
-_series_reactance(t::PSY.TwoWindingTransformer, units::IS.AbstractUnitSystem) =
+_series_reactance(t::PSY.TwoWindingTransformer, units) =
     _series_reactance(PSY.get_circuit(t), units)
-_series_reactance(w::ThreeWindingTransformerCircuit, units::IS.AbstractUnitSystem) =
+_series_reactance(w::ThreeWindingTransformerCircuit, units) =
     _series_reactance(w.circuit, units)
-_series_reactance(c::PSY.TransformerCircuit, units::IS.AbstractUnitSystem) =
+_series_reactance(c::PSY.TransformerCircuit, units) =
     PSY.get_x(c, units) * PSY.get_tap(c)
 # A parallel group has no single reactance, so invert its susceptance sum; an all-zero
 # group gives `Inf` there and `inv(Inf) = 0.0` is the correct contribution.
-_series_reactance(seg::AbstractReductionAggregate, units::IS.AbstractUnitSystem) =
+_series_reactance(seg::AbstractReductionAggregate, units) =
     inv(_series_susceptance_raw(seg, units))
 
 function _series_susceptance_raw(
     series_chain::BranchesSeries,
-    units::IS.AbstractUnitSystem,
+    units,
 )::Float64
     return 1 / sum(_series_reactance(x, units) for x in series_chain)
 end
@@ -196,10 +146,12 @@ _series_member_rating(branch::PSY.ACTransmission) = get_equivalent_rating(branch
 """
     get_equivalent_rating(bs<:PSY.ACTransmission)
 
-Return the rating for PSY.ACTransmission branches.
+Return the rating for PSY.ACTransmission branches, per unit on the system base (`u"SU"`).
+Every equivalent rating is on the system base, so a series minimum or a parallel sum can
+combine members whose own base powers differ.
 """
 function get_equivalent_rating(bs::PSY.ACTransmission)
-    return PSY.get_rating(bs, PSY.CU)
+    return PSY.get_rating(bs, u"SU")
 end
 
 """
@@ -207,20 +159,24 @@ end
 
 A `TwoWindingTransformer` has no parent rating (there is no `get_rating(::TwoWindingTransformer)`);
 the rating lives on its single winding and may be `nothing`. Mirrors `branch_flow_limits`.
+The winding stores it per unit on its own `base_power`; it is returned on the system base.
 """
 function get_equivalent_rating(bs::PSY.TwoWindingTransformer)
-    return PSY.get_rating(PSY.get_circuit(bs), PSY.CU)
+    return PSY.get_rating(PSY.get_circuit(bs), u"SU")
 end
 
 """
     get_equivalent_rating(bs::PSY.GenericArcImpedance)
 
-Rating is assumed to be max_flow for GenericArcImpedance.
+The largest directional maximum of its `operational_flow_limit`, per unit on the system base.
+A generic arc without an `operational_flow_limit` is unbounded and returns `Inf`.
 """
 function get_equivalent_rating(bs::PSY.GenericArcImpedance)
-    # Detached synthetic ward equivalent: read the stored value with device base.
-    return PSY.get_max_flow(bs, PSY.CU)
+    return _largest_flow_limit(PSY.get_operational_flow_limit(bs, u"SU"))
 end
+
+_largest_flow_limit(::Nothing) = Inf
+_largest_flow_limit(ofl::NamedTuple) = max(ofl.from_to.max, ofl.to_from.max)
 
 """
     get_equivalent_emergency_rating(bs::BranchesSeries) -> Union{Nothing, Float64}
@@ -238,15 +194,15 @@ end
 """
     get_equivalent_emergency_rating(bs<:PSY.ACTransmission)
 
-Return the emergency rating for PSY.ACTransmission branches.
+Return the emergency rating for PSY.ACTransmission branches, per unit on the system base.
 """
 function get_equivalent_emergency_rating(branch::PSY.ACTransmission)
-    if isnothing(PSY.get_rating_b(branch, PSY.CU))
+    if isnothing(PSY.get_rating_b(branch, u"SU"))
         @debug "Branch $(get_name(branch)) has no 'rating_b' defined. Post-contingency limit is going to be set using normal-operation rating.
             \n Consider including post-contingency limits using set_rating_b!()."
-        return PSY.get_rating(branch, PSY.CU)
+        return PSY.get_rating(branch, u"SU")
     end
-    return PSY.get_rating_b(branch, PSY.CU)
+    return PSY.get_rating_b(branch, u"SU")
 end
 
 """
@@ -254,7 +210,8 @@ end
 
 `TwoWindingTransformer` carries its ratings on the winding (no parent
 `get_rating`/`get_rating_b`); falls back to the winding's normal-operation rating when
-`rating_b` is unset. May return `nothing` when the winding has neither rating.
+`rating_b` is unset. May return `nothing` when the winding has neither rating. Returned per
+unit on the system base, like [`get_equivalent_rating`](@ref).
 """
 get_equivalent_emergency_rating(branch::PSY.TwoWindingTransformer) =
     _circuit_emergency_rating(PSY.get_circuit(branch), "Winding of $(PSY.get_name(branch))")
@@ -265,8 +222,8 @@ get_equivalent_emergency_rating(branch::PSY.TwoWindingTransformer) =
 Return the emergency rating for PSY.GenericArcImpedance.
 """
 function get_equivalent_emergency_rating(branch::PSY.GenericArcImpedance)
-    @debug "GenericArcImpedance $(get_name(branch)) has no emergency rating. Using max_flow as a proxy instead."
-    return PSY.get_max_flow(branch, PSY.CU)
+    @debug "GenericArcImpedance $(get_name(branch)) has no emergency rating. Using its flow limit as a proxy instead."
+    return get_equivalent_rating(branch)
 end
 
 # Indexed only when EVERY segment is: a chain missing one is not a valid representation of
@@ -274,7 +231,7 @@ end
 # Recursive: might be nested, have BranchesParallel as link in degree 2 chain.
 function _entry_matches(chain::BranchesSeries, predicate)
     if _has_mixed_types(chain) && !_is_unfiltered(predicate)
-        _warn_mixed_group("Series circuit", _get_segment_components(chain))
+        _warn_mixed_group("Series circuit", leaf_components(chain))
     end
     return all(_entry_matches(segment, predicate)::Bool for segment in chain)
 end

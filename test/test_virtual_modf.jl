@@ -385,7 +385,7 @@ end
     # Mirrors the access pattern PowerSimulations uses in
     # `add_post_contingency_flow_expressions!`: many concurrent tasks query
     # `vmodf[arc, contingency_spec]` across DIFFERENT contingencies. With the
-    # single-cache solver + `_LIBKLU_LOCK`, all libklu work serializes; this
+    # single-cache solver + `solver_lock`, all solves serialize; this
     # test confirms the result is still correct under that serialization,
     # including the double-checked-insert path on `woodbury_cache` /
     # `row_caches` when two threads race on a first-time query.

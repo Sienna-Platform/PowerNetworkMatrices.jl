@@ -57,7 +57,7 @@
             !PSY.get_available(source) && continue
             bus = PSY.get_bus(source)
             bus_ix = bus_lookup[PSY.get_number(bus)]
-            bus_activepower_injection[bus_ix] += PSY.get_active_power(source, PSY.SU)
+            bus_activepower_injection[bus_ix] += PSY.get_active_power(source, u"SU")
         end
         bus_activepower_withdrawals = zeros(Float64, n_buses)
         loads = PSY.get_components(x -> !isa(x, PSY.FixedAdmittance), PSY.ElectricLoad, sys)
@@ -65,7 +65,7 @@
             !PSY.get_available(l) && continue
             bus = PSY.get_bus(l)
             bus_ix = bus_lookup[PSY.get_number(bus)]
-            bus_activepower_withdrawals[bus_ix] += PSY.get_active_power(l, PSY.SU)
+            bus_activepower_withdrawals[bus_ix] += PSY.get_active_power(l, u"SU")
         end
         power_injection =
             deepcopy(bus_activepower_injection - bus_activepower_withdrawals)
@@ -102,15 +102,7 @@ end
     ptdf = PTDF(sys)
     ptdf_rad = PTDF(sys; network_reductions = NetworkReduction[RadialReduction()])
     # test LODF from A, ABA and BA
-    test_value = false
-    try
-        lodf_rad_A_BA_ABA = LODF(A, ABA, BA_rad)
-    catch err
-        if err isa Exception
-            test_value = true
-        end
-    end
-    @test test_value
+    @test_throws r"Mismatch in .NetworkReduction." LODF(A, ABA, BA_rad)
 
     # test LODF from A, PTDF
     test_value = false

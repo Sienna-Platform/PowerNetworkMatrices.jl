@@ -172,9 +172,10 @@ end
 end
 
 @testset "14 bus; Ward reduction" begin
+    # 109 keeps the 110-109 phase shifter inside the study area; Ward refuses it outside.
     sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
-    study_buses = [101, 114, 110, 111]
-    boundary_buses = [101, 114, 110, 111]
+    study_buses = [101, 114, 110, 111, 109]
+    boundary_buses = [101, 114, 110, 111, 109]
     A = IncidenceMatrix(
         sys;
         network_reductions = NetworkReduction[WardReduction(study_buses)],
@@ -184,7 +185,7 @@ end
     nrd = get_network_reduction_data(ybus)
     @test Set(ybus.axes[1]) == Set(study_buses)
     @test length(nrd.added_admittance_map) == length(boundary_buses)
-    @test length(nrd.added_arc_impedance_map) == factorial(length(boundary_buses) - 1)
+    @test length(nrd.added_arc_impedance_map) == binomial(length(boundary_buses), 2)
     ybus_full = Ybus(sys)
     for i in study_buses, j in study_buses
         if i ∈ boundary_buses && j ∈ boundary_buses
@@ -282,8 +283,8 @@ end
 end
 
 function _set_zero_impedance!(branch)
-    set_r!(branch, 0.0 * PSY.SU)
-    set_x!(branch, 1e-5 * PSY.SU)
+    set_r!(branch, 0.0u"SU")
+    set_x!(branch, 1e-5u"SU")
 end
 
 @testset "ZeroImpedanceBranchReduction: chained bus merge" begin
@@ -306,8 +307,8 @@ end
 @testset "ZeroImpedanceBranchReduction: transformer arcs are excluded" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     t = get_component(TwoWindingTransformer, sys, "Trans4")  # from=7, to=8
-    set_r!(t, 0.0 * PSY.SU)
-    set_x!(t, 1e-5 * PSY.SU)
+    set_r!(t, 0.0u"SU")
+    set_x!(t, 1e-5u"SU")
 
     ybus = Ybus(sys)
     nrd = get_network_reduction_data(ybus)
@@ -325,8 +326,8 @@ end
     # admittance came out NaN and Ybus assembly died on the `isfinite` guard.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     t = get_component(TwoWindingTransformer, sys, "Trans4")
-    set_r!(t, 0.0 * PSY.SU)
-    set_x!(t, 0.0 * PSY.SU)
+    set_r!(t, 0.0u"SU")
+    set_x!(t, 0.0u"SU")
 
     min_x_eps = 1e-3
     eb = PNM.equivalent_branch(t; min_x_eps = min_x_eps)
@@ -361,12 +362,12 @@ end
     # Aggregate members get the configured substitute reactance, not the default.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     t = get_component(TwoWindingTransformer, sys, "Trans4")
-    set_r!(t, 0.0 * PSY.SU)
-    set_x!(t, 0.0 * PSY.SU)
+    set_r!(t, 0.0u"SU")
+    set_x!(t, 0.0u"SU")
     arc = PSY.get_arc(t)
-    sibling = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+    sibling = PSY.TwoWindingTransformer(; input_basis = u"CU",
         name = "Trans4_parallel",
-        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
             arc = arc, tap = 1.0, α = 0.0, available = true,
             active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
             base_power = 100.0,
@@ -420,7 +421,7 @@ end
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(; input_basis = PSY.CU,
+            Line(; input_basis = u"CU",
                 name = name,
                 available = true,
                 active_power_flow = 0.0,
@@ -438,9 +439,9 @@ end
     add_component!(sys, zi_arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "T12_zero_impedance",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = zi_arc, tap = 1.0, α = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
@@ -488,7 +489,7 @@ end
     )
     zi_arc = PSY.Arc(; from = busD, to = sec_bus)
     PSY.add_component!(sys, zi_arc)
-    zi_line = PSY.Line(; input_basis = PSY.CU,
+    zi_line = PSY.Line(; input_basis = u"CU",
         name = "zi_line",
         available = true,
         active_power_flow = 0.0,
@@ -590,8 +591,8 @@ end
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     for name in ("Line3", "Line6")
         line = get_component(Line, sys, name)
-        set_r!(line, 0.0 * PSY.SU)
-        set_x!(line, 0.0 * PSY.SU)
+        set_r!(line, 0.0u"SU")
+        set_x!(line, 0.0u"SU")
     end
     ybus = Ybus(sys; irreducible_buses = Set([4]))
     nrd = get_network_reduction_data(ybus)
@@ -606,8 +607,8 @@ end
     sys2 = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     for name in ("Line3", "Line6")
         line = get_component(Line, sys2, name)
-        set_r!(line, 0.0 * PSY.SU)
-        set_x!(line, 0.0 * PSY.SU)
+        set_r!(line, 0.0u"SU")
+        set_x!(line, 0.0u"SU")
     end
     ybus2 = Ybus(sys2; irreducible_buses = Set([2, 4]))
     nrd2 = get_network_reduction_data(ybus2)
@@ -626,8 +627,8 @@ end
         sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
         for name in ("Line3", "Line6", "Line4")
             line = get_component(Line, sys, name)
-            set_r!(line, 0.0 * PSY.SU)
-            set_x!(line, 0.0 * PSY.SU)
+            set_r!(line, 0.0u"SU")
+            set_x!(line, 0.0u"SU")
         end
         ybus = Ybus(sys; irreducible_buses = pinned)
         nrd = get_network_reduction_data(ybus)
@@ -648,8 +649,8 @@ end
     # makes it qualify and bus 3 merges into bus 2.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     line = get_component(Line, sys, "Line3")
-    set_r!(line, 0.0 * PSY.SU)
-    set_x!(line, 1e-3 * PSY.SU)  # susceptance ≈ 1 / 1e-3 = 1e3
+    set_r!(line, 0.0u"SU")
+    set_x!(line, 1e-3u"SU")  # susceptance ≈ 1 / 1e-3 = 1e3
 
     ybus_default = Ybus(sys)
     @test 3 ∈ PNM.get_bus_axis(ybus_default)
@@ -673,8 +674,8 @@ end
     # drops below the threshold, so the branch is retained instead.
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     line = get_component(Line, sys, "Line3")  # bus 2 → 3
-    set_r!(line, 0.0 * PSY.SU)
-    set_x!(line, 0.0 * PSY.SU)
+    set_r!(line, 0.0u"SU")
+    set_x!(line, 0.0u"SU")
 
     ybus_default = Ybus(sys)
     @test 3 ∉ PNM.get_bus_axis(ybus_default)  # merged with the default tiny substitute reactance
@@ -756,7 +757,7 @@ end
 
 @testset "ZeroImpedanceBranchReduction: column merge symmetric when survivor index > removed" begin
     # When ZIR merges a removed bus into a survivor whose bus index is GREATER than the
-    # removed bus's (i > j), `_accumulate_csc_col_into!` must still copy every mutual from
+    # removed bus's (i > j), the column merge must still copy every mutual from
     # the removed column. The old offset bookkeeping only held for i < j, so for i > j a
     # remapped arc's mutual was dropped on one side -> asymmetric Ybus -> BA computes
     # 1/imag(1/0) = NaN. Regression for that index-ordering bug.
@@ -831,6 +832,7 @@ end
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
+            input_basis = u"CU",
         )
         add_component!(sys, b)
         push!(buses, b)
@@ -840,7 +842,7 @@ end
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(; input_basis = PSY.CU,
+            Line(; input_basis = u"CU",
                 name = name,
                 available = true,
                 active_power_flow = 0.0,
@@ -890,6 +892,7 @@ end
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
+            input_basis = u"CU",
         )
         add_component!(sys, b)
         push!(buses, b)
@@ -899,7 +902,7 @@ end
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(; input_basis = PSY.CU,
+            Line(; input_basis = u"CU",
                 name = name,
                 available = true,
                 active_power_flow = 0.0,
@@ -960,6 +963,7 @@ end
             magnitude = 1.0,
             voltage_limits = (min = 0.9, max = 1.1),
             base_voltage = 230.0,
+            input_basis = u"CU",
         )
         add_component!(sys, b)
         push!(buses, b)
@@ -969,7 +973,7 @@ end
         add_component!(sys, arc)
         add_component!(
             sys,
-            Line(; input_basis = PSY.CU,
+            Line(; input_basis = u"CU",
                 name = name,
                 available = true,
                 active_power_flow = 0.0,
@@ -991,9 +995,9 @@ end
     add_component!(sys, arc)
     add_component!(
         sys,
-        PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+        PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "PST",
-            circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = arc,
                 tap = 1.05,
                 α = 0.15,
@@ -1116,7 +1120,7 @@ end
     # axes[2]) — so the (from-bus, arc) entry is `ba.data[bus_ix, arc_ix]`.
     ba = BA_Matrix(ybus)
     b_expected = sum(
-        PNM.get_series_susceptance(br, PSY.SU) for br in parallel[(1, 2)]
+        PNM.get_series_susceptance(br, u"SU") for br in parallel[(1, 2)]
     )
     arc_ix = findfirst(==((1, 2)), ba.axes[2])
     @test ba.data[bl[1], arc_ix] ≈ b_expected
@@ -1349,16 +1353,16 @@ end
     sys, buses = _mk_bus_system(2)
     arc = Arc(; from = buses[1], to = buses[2])
     add_component!(sys, arc)
-    line = Line(; input_basis = PSY.CU,
+    line = Line(; input_basis = u"CU",
         name = "L1", available = true, active_power_flow = 0.0,
         reactive_power_flow = 0.0, arc = arc, r = 0.0, x = 0.1,
         b = (from = 0.0, to = 0.0), rating = 1.0,
         angle_limits = (min = -1.5, max = 1.5),
     )
     add_component!(sys, line)
-    pst1 = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+    pst1 = PSY.TwoWindingTransformer(; input_basis = u"CU",
         name = "PST1",
-        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
             arc = arc, tap = 1.0, α = 0.0,
             available = true, active_power_flow = 0.0, reactive_power_flow = 0.0,
             rating = 1.0, base_power = 100.0, base_voltage_primary = 230.0,
@@ -1374,9 +1378,9 @@ end
     @test PNM.compute_parallel_multiplier(group, pst1) ≈ 5.0 / 15.0
 
     # Name collision across concrete types: was silently double-counted, now loud.
-    pst_same_name = PSY.TwoWindingTransformer(; input_basis = PSY.CU,
+    pst_same_name = PSY.TwoWindingTransformer(; input_basis = u"CU",
         name = PSY.get_name(line),
-        circuit = PSY.TransformerCircuit(; input_basis = PSY.CU,
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
             arc = arc, tap = 1.0, α = 0.0,
             available = true, active_power_flow = 0.0, reactive_power_flow = 0.0,
             rating = 1.0, base_power = 100.0, base_voltage_primary = 230.0,
@@ -1651,12 +1655,15 @@ end
     add_component!(sys, arc2)
     add_component!(
         sys,
-        PSY.GenericArcImpedance(; input_basis = PSY.CU,
+        PSY.GenericArcImpedance(; input_basis = u"CU",
             name = "GAI_junction_to_stub",
             available = true,
             active_power_flow = 0.0,
             reactive_power_flow = 0.0,
-            max_flow = 100.0,
+            operational_flow_limit = (
+                from_to = (min = -100.0, max = 100.0),
+                to_from = (min = -100.0, max = 100.0),
+            ),
             arc = arc2,
             r = 0.02,
             x = 0.08,
@@ -1704,5 +1711,140 @@ end
         PNM.ZERO_IMPEDANCE_BRANCH_YBUS_SUSCEPTANCE_THRESHOLD,
         PNM.ZERO_IMPEDANCE_X_EPSILON,
         0.0,
+    )
+end
+
+function _test_arc_subnetwork_axis_partitions(ybus::Ybus)
+    @test Set(keys(ybus.arc_subnetwork_axis)) == Set(keys(ybus.subnetwork_axes))
+    @test sort(reduce(vcat, values(ybus.arc_subnetwork_axis))) ==
+          sort(PNM.get_arc_axis(ybus))
+    for (k, arcs) in ybus.arc_subnetwork_axis
+        island = Set(ybus.subnetwork_axes[k][1])
+        @test all(arc -> arc[1] in island && arc[2] in island, arcs)
+    end
+    return
+end
+
+function _zero_c_sys14_lines(names)
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    for name in names
+        line = get_component(Line, sys, name)
+        set_r!(line, 0.0u"SU")
+        set_x!(line, 0.0u"SU")
+    end
+    return sys
+end
+
+@testset "arc_subnetwork_axis carries surviving bus labels after a merge" begin
+    # Lines 2-3, 3-4 and 2-4 merge buses 2, 3 and 4 into one bus.
+    zeroed = ("Line3", "Line6", "Line4")
+
+    ybus = Ybus(_zero_c_sys14_lines(zeroed))
+    @test 2 ∈ PNM.get_bus_axis(ybus)
+    arcs = reduce(vcat, values(ybus.arc_subnetwork_axis))
+    @test (2, 7) ∈ arcs
+    @test (4, 7) ∉ arcs
+    _test_arc_subnetwork_axis_partitions(ybus)
+
+    ybus = Ybus(_zero_c_sys14_lines(zeroed); irreducible_buses = Set([4]))
+    @test 4 ∈ PNM.get_bus_axis(ybus)
+    arcs = reduce(vcat, values(ybus.arc_subnetwork_axis))
+    @test (4, 5) ∈ arcs
+    @test (2, 5) ∉ arcs
+    _test_arc_subnetwork_axis_partitions(ybus)
+
+    _test_arc_subnetwork_axis_partitions(
+        Ybus(
+            _zero_c_sys14_lines(zeroed);
+            network_reductions = NetworkReduction[RadialReduction(), DegreeTwoReduction()],
+        ),
+    )
+
+    # Line 1-2 merges the reference bus 1 into bus 2, so the island key moves to bus 2.
+    @test only(keys(Ybus(_zero_c_sys14_lines(())).subnetwork_axes)) == 1
+    ybus = Ybus(_zero_c_sys14_lines(("Line1",)); irreducible_buses = Set([2]))
+    @test 1 ∉ PNM.get_bus_axis(ybus)
+    @test only(keys(ybus.subnetwork_axes)) == 2
+    arcs = reduce(vcat, values(ybus.arc_subnetwork_axis))
+    @test (2, 5) ∈ arcs
+    @test (1, 5) ∉ arcs
+    _test_arc_subnetwork_axis_partitions(ybus)
+end
+
+@testset "arc_subnetwork_axis partitions the arc axis under every reduction" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    for reductions in (
+        NetworkReduction[RadialReduction()],
+        NetworkReduction[DegreeTwoReduction()],
+        NetworkReduction[RadialReduction(), DegreeTwoReduction()],
+    )
+        _test_arc_subnetwork_axis_partitions(Ybus(sys; network_reductions = reductions))
+    end
+
+    _test_arc_subnetwork_axis_partitions(
+        Ybus(
+            build_multi_island_composite_arc_system();
+            network_reductions = NetworkReduction[DegreeTwoReduction()],
+        ),
+    )
+
+    sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
+    _test_arc_subnetwork_axis_partitions(
+        Ybus(
+            sys;
+            network_reductions = NetworkReduction[WardReduction([101, 114, 110, 111, 109])],
+        ),
+    )
+end
+
+@testset "reduction validation rejects a stale arc subnetwork axis" begin
+    ybus = Ybus(_zero_c_sys14_lines(("Line3", "Line6", "Line4")))
+    subnetwork_axes = ybus.subnetwork_axes
+    arc_ax = PNM.get_arc_axis(ybus)
+    k = only(keys(subnetwork_axes))
+    good = ybus.arc_subnetwork_axis[k]
+
+    @test isnothing(
+        PNM._validate_arc_subnetwork_axis(
+            subnetwork_axes,
+            ybus.arc_subnetwork_axis,
+            arc_ax,
+        ),
+    )
+
+    # A pre-merge arc that is not on the reduced arc axis.
+    @test_throws r"not on the reduced arc axis or has an endpoint outside" PNM._validate_arc_subnetwork_axis(
+        subnetwork_axes, Dict(k => vcat(good, [(4, 7)])), arc_ax,
+    )
+    # An arc of the arc axis in no island.
+    @test_throws r"Each arc must belong to exactly" PNM._validate_arc_subnetwork_axis(
+        subnetwork_axes, Dict(k => good[2:end]), arc_ax,
+    )
+    # The same arc twice.
+    @test_throws r"Each arc must belong to exactly" PNM._validate_arc_subnetwork_axis(
+        subnetwork_axes, Dict(k => vcat(good, good[1:1])), arc_ax,
+    )
+    # A key that is not a bus subnetwork key.
+    @test !haskey(subnetwork_axes, k + 1000)
+    @test_throws r"not a bus subnetwork key" PNM._validate_arc_subnetwork_axis(
+        subnetwork_axes, Dict(k + 1000 => good), arc_ax,
+    )
+
+    # An arc on the arc axis, listed under an island that does not hold its endpoints.
+    y2 = Ybus(
+        build_multi_island_composite_arc_system();
+        network_reductions = NetworkReduction[DegreeTwoReduction()],
+    )
+    axes2 = y2.subnetwork_axes
+    arc_ax2 = PNM.get_arc_axis(y2)
+    @test isnothing(
+        PNM._validate_arc_subnetwork_axis(axes2, y2.arc_subnetwork_axis, arc_ax2),
+    )
+    moved = Dict(kk => copy(v) for (kk, v) in y2.arc_subnetwork_axis)
+    arc = pop!(moved[200])
+    push!(moved[1], arc)
+    @test arc in arc_ax2
+    @test_throws r"not on the reduced arc axis or has an endpoint outside" PNM._validate_arc_subnetwork_axis(
+        axes2, moved, arc_ax2,
     )
 end

@@ -250,14 +250,53 @@ _branch_multiplier(
 ############################## Index building ################################
 ##############################################################################
 
-_bucket_name_to_arc(name_to_arc::NAME_TO_ARC, T::DataType) =
-    get!(() -> DataStructures.SortedDict{String, ARC_ENTRY}(), name_to_arc, T)
+"""
+Values staged per bucket key, keys in first-encounter order. Each bucket is then built once,
+with concrete types, from the same insert sequence the per-entry writes used to apply.
+"""
+const _VectorsByType{P} = DataStructures.OrderedDict{DataType, Vector{P}}
 
-_bucket_entry_names(component_to_entry::COMPONENT_TO_ENTRY, T::DataType) =
-    get!(() -> Dict{String, String}(), component_to_entry, T)
+_push_by_type!(staged::_VectorsByType{P}, T::DataType, value) where {P} =
+    push!(get!(Vector{P}, staged, T), value)
 
-function _store!(bucket::Dict{K, V}, k, v) where {K, V}
-    bucket[k] = v
+function _fill_bucket!(bucket::Dict, pairs::Vector)
+    sizehint!(bucket, length(pairs))
+    for (k, v) in pairs
+        bucket[k] = v
+    end
+    return bucket
+end
+
+# `empty_bucket(first(pairs))` fixes the bucket's type, as the first insert used to.
+function _fill_buckets!(dest::Dict{DataType, Any}, staged::_VectorsByType, empty_bucket)
+    for (T, pairs) in staged
+        dest[T] = _fill_bucket!(empty_bucket(first(pairs)), pairs)
+    end
+    return
+end
+
+"""
+One `SortedDict` per type, bulk-loaded from the staged `name => arc` writes. The stable sort keeps
+writes to one name in order and the last one wins, as repeated `setindex!` did; a collision that
+drops an arc is `_validate_catalog_closure`'s to report.
+"""
+function _sorted_name_buckets!(
+    name_to_arc::NAME_TO_ARC,
+    staged::_VectorsByType{Pair{String, ARC_ENTRY}},
+)
+    for (T, pairs) in staged
+        sort!(pairs; by = first, alg = Base.Sort.DEFAULT_STABLE)
+        n = 0
+        for i in eachindex(pairs)
+            if i < lastindex(pairs) && first(pairs[i + 1]) == first(pairs[i])
+                continue
+            end
+            n += 1
+            pairs[n] = pairs[i]
+        end
+        resize!(pairs, n)
+        name_to_arc[T] = DataStructures.SortedDict{String, ARC_ENTRY}(Val(true), pairs)
+    end
     return
 end
 
@@ -275,34 +314,46 @@ function _record_arc!(arcs::ARC_TABLE, arc::ARC_ENTRY, entry)
 end
 
 """
-Index a forward (arc-keyed) reduction map under the buckets `bucket_types(entry)` names,
-creating each with `empty_bucket(entry)`.
+Stage a forward (arc-keyed) reduction map under the buckets `bucket_types(entry)` names.
 
 The parallel map's buckets are widened to `AbstractBranchesParallel` so a
 `MixedBranchesParallel` is reachable under every member type it contains.
 """
 function _index_forward!(
-    dest::Dict{DataType, Any},
+    staged::_VectorsByType,
+    names::_VectorsByType,
     arcs::ARC_TABLE,
-    name_to_arc::NAME_TO_ARC,
     source,
     predicate,
     bucket_types,
-    empty_bucket,
 )
     for (arc, entry) in source
-        _entry_matches(entry, predicate) || continue
-        name = _record_arc!(arcs, arc, entry)
-        for T in bucket_types(entry)
-            _store!(get!(() -> empty_bucket(entry), dest, T), arc, entry)
-            _bucket_name_to_arc(name_to_arc, T)[name] = arc
-        end
+        _index_forward_entry!(staged, names, arcs, arc, entry, predicate, bucket_types)
+    end
+    return
+end
+
+# Function barrier: one dynamic dispatch per entry, concrete below it.
+function _index_forward_entry!(
+    staged::_VectorsByType,
+    names::_VectorsByType,
+    arcs::ARC_TABLE,
+    arc::ARC_ENTRY,
+    entry::PSY.ACTransmission,
+    predicate::F,
+    bucket_types::G,
+) where {F, G}
+    _entry_matches(entry, predicate) || return
+    name = _record_arc!(arcs, arc, entry)
+    for T in bucket_types(entry)
+        _push_by_type!(staged, T, arc => entry)
+        _push_by_type!(names, T, name => arc)
     end
     return
 end
 
 """
-Index a reverse (entry-keyed) reduction map, recording which entry represents each member so
+Stage a reverse (entry-keyed) reduction map, recording which entry represents each member so
 a component absorbed into an aggregate can be redirected to the entry carrying its flow.
 
 The bucket *key* is `_get_segment_type(member)`, a PSY component type, while the bucket's key
@@ -310,41 +361,50 @@ The bucket *key* is `_get_segment_type(member)`, a PSY component type, while the
 type, holding `ThreeWindingTransformerCircuit` keys.
 """
 function _index_reverse!(
-    dest::Dict{DataType, Any},
+    staged::_VectorsByType,
+    entry_names::_VectorsByType,
     arcs::ARC_TABLE,
-    component_to_entry::COMPONENT_TO_ENTRY,
     source,
     predicate,
 )
     for (member, arc) in source
-        _entry_matches(member, predicate) || continue
-        # The forward pass owns `arcs`, and its verdict is the catalog's verdict. Reaching a
-        # different one here is not possible for a group matching on `any` -- acceptance
-        # there is a superset of its members' -- but `MixedBranchesParallel` matches on
-        # `all`, so a member can pass this predicate while its group did not. Redirecting it
-        # would name an entry that is not a row.
-        haskey(arcs, arc) || continue
-        T = _get_segment_type(member)
-        _store!(get!(() -> Dict{typeof(member), Tuple{Int, Int}}(), dest, T), member, arc)
-        # The name comes from the table, not from a second call to `_entry_name`: one
-        # computation, so forward and reverse cannot disagree about what the entry is called.
-        _bucket_entry_names(component_to_entry, T)[get_name(member)] = get_name(arcs[arc])
+        _index_reverse_entry!(staged, entry_names, arcs, member, arc, predicate)
     end
     return
 end
 
+function _index_reverse_entry!(
+    staged::_VectorsByType,
+    entry_names::_VectorsByType,
+    arcs::ARC_TABLE,
+    member::PSY.ACTransmission,
+    arc::ARC_ENTRY,
+    predicate::F,
+) where {F}
+    _entry_matches(member, predicate) || return
+    # `MixedBranchesParallel` matches on `all`, so a member can pass this predicate while its
+    # group fails. Skip such a member: the forward pass gave its arc no row in `arcs`.
+    haskey(arcs, arc) || return
+    T = _get_segment_type(member)
+    _push_by_type!(staged, T, member => arc)
+    # The name comes from the table, not from a second call to `_entry_name`: one
+    # computation, so forward and reverse cannot disagree about what the entry is called.
+    _push_by_type!(entry_names, T, get_name(member) => get_name(arcs[arc]))
+    return
+end
+
 """
-Index the series map. A chain is filed under every type appearing anywhere in it, so a caller
+Stage the series map. A chain is filed under every type appearing anywhere in it, so a caller
 iterating one branch type finds every chain that type participates in.
 
 One entry name per arc, not one per segment. Members reach their entry through
 `component_to_entry`, which is where the per-component view belongs.
 """
 function _index_series!(
-    dest::Dict{DataType, Any},
+    staged::_VectorsByType,
     arcs::ARC_TABLE,
-    name_to_arc::NAME_TO_ARC,
-    component_to_entry::COMPONENT_TO_ENTRY,
+    names::_VectorsByType,
+    entry_names::_VectorsByType,
     source,
     predicate,
 )
@@ -361,20 +421,17 @@ function _index_series!(
         for segment in chain
             segment_name = get_name(segment)
             for T in _get_concrete_types(segment)
-                _store!(
-                    get!(() -> Dict{Tuple{Int, Int}, BranchesSeries}(), dest, T),
-                    arc,
-                    chain,
-                )
-                _bucket_name_to_arc(name_to_arc, T)[segment_name] = arc
+                _push_by_type!(staged, T, arc => chain)
+                _push_by_type!(names, T, segment_name => arc)
             end
             # A leaf redirects to the row its flow is reported under -- its segment, which
             # for a plain branch is the leaf itself.
             for component in leaf_components(segment)
-                _bucket_entry_names(
-                    component_to_entry,
+                _push_by_type!(
+                    entry_names,
                     _get_segment_type(component),
-                )[get_name(component)] = segment_name
+                    get_name(component) => segment_name,
+                )
             end
         end
     end
@@ -382,19 +439,21 @@ function _index_series!(
 end
 
 # Names come from `_index_series!`, which sees the segment structure this map flattens away.
-function _index_reverse_series!(dest::Dict{DataType, Any}, source, predicate)
+function _index_reverse_series!(staged::_VectorsByType, source, predicate)
     for (member, arc) in source
-        _entry_matches(member, predicate) || continue
-        _store!(
-            get!(
-                () -> Dict{PSY.ACTransmission, Tuple{Int, Int}}(),
-                dest,
-                _get_segment_type(member),
-            ),
-            member,
-            arc,
-        )
+        _index_reverse_series_entry!(staged, member, arc, predicate)
     end
+    return
+end
+
+function _index_reverse_series_entry!(
+    staged::_VectorsByType,
+    member::PSY.ACTransmission,
+    arc::ARC_ENTRY,
+    predicate::F,
+) where {F}
+    _entry_matches(member, predicate) || return
+    _push_by_type!(staged, _get_segment_type(member), member => arc)
     return
 end
 
@@ -418,23 +477,38 @@ function _build_component_name_index(
 )
     index = COMPONENT_NAME_INDEX()
     for (arc, entry) in nrd.direct_branch_map
-        _entry_matches(entry, predicate) || continue
-        push!(
-            _name_candidates(index, get_name(entry)),
-            (typeof(entry), arc),
-        )
+        _index_direct_name!(index, entry, arc, predicate)
     end
     for (member, arc) in nrd.reverse_parallel_branch_map
-        _entry_matches(member, predicate) || continue
-        # Same forward-pass verdict as `_index_reverse!` (MixedBranchesParallel matches `all`).
-        haskey(arcs, arc) || continue
-        _entry_carries(get_entry(arcs[arc]), member) || continue
-        push!(
-            _name_candidates(index, get_name(member)),
-            (typeof(member), arc),
-        )
+        _index_parallel_member_name!(index, arcs, member, arc, predicate)
     end
     return index
+end
+
+function _index_direct_name!(
+    index::COMPONENT_NAME_INDEX,
+    entry::PSY.ACTransmission,
+    arc::ARC_ENTRY,
+    predicate::F,
+) where {F}
+    _entry_matches(entry, predicate) || return
+    push!(_name_candidates(index, get_name(entry)), (typeof(entry), arc))
+    return
+end
+
+function _index_parallel_member_name!(
+    index::COMPONENT_NAME_INDEX,
+    arcs::ARC_TABLE,
+    member::PSY.ACTransmission,
+    arc::ARC_ENTRY,
+    predicate::F,
+) where {F}
+    _entry_matches(member, predicate) || return
+    # Skip a member whose arc has no row (see `_index_reverse!`).
+    haskey(arcs, arc) || return
+    _entry_carries(get_entry(arcs[arc]), member) || return
+    push!(_name_candidates(index, get_name(member)), (typeof(member), arc))
+    return
 end
 
 """
@@ -445,6 +519,7 @@ Either leaves an arc that carries flow but that no component-type query can reac
 """
 function _validate_catalog_closure(nrd::NetworkReductionData, name_to_arc::NAME_TO_ARC)
     indexed = Set{Tuple{Int, Int}}()
+    sizehint!(indexed, sum(length, values(name_to_arc); init = 0))
     for by_name in values(name_to_arc)
         for arc in values(by_name)
             push!(indexed, arc)
@@ -490,38 +565,52 @@ design.
 function BranchCatalog(nrd::NetworkReductionData, predicate)
     maps = BranchMapsByType()
     arcs = ARC_TABLE()
+    names = _VectorsByType{Pair{String, ARC_ENTRY}}()
+    entry_names = _VectorsByType{Pair{String, String}}()
+
+    direct = _VectorsByType{Pair{ARC_ENTRY, PSY.ACTransmission}}()
+    _index_forward!(direct, names, arcs, nrd.direct_branch_map, predicate,
+        entry -> (_get_segment_type(entry),))
+    _fill_buckets!(maps.direct_branch_map, direct,
+        ((_, entry),) -> Dict{Tuple{Int, Int}, typeof(entry)}())
+
+    reverse_direct = _VectorsByType{Pair{PSY.ACTransmission, ARC_ENTRY}}()
+    _index_reverse!(reverse_direct, entry_names, arcs, nrd.reverse_direct_branch_map,
+        predicate)
+    _fill_buckets!(maps.reverse_direct_branch_map, reverse_direct,
+        ((member, _),) -> Dict{typeof(member), Tuple{Int, Int}}())
+
+    parallel = _VectorsByType{Pair{ARC_ENTRY, AbstractBranchesParallel}}()
+    _index_forward!(parallel, names, arcs, nrd.parallel_branch_map, predicate,
+        _get_concrete_types)
+    # Value type is `AbstractBranchesParallel`: a per-type bucket holds either a
+    # `BranchesParallel{T}` or a `MixedBranchesParallel` that includes a `T`.
+    _fill_buckets!(maps.parallel_branch_map, parallel,
+        _ -> Dict{Tuple{Int, Int}, AbstractBranchesParallel}())
+
+    reverse_parallel = _VectorsByType{Pair{PSY.ACTransmission, ARC_ENTRY}}()
+    _index_reverse!(reverse_parallel, entry_names, arcs, nrd.reverse_parallel_branch_map,
+        predicate)
+    _fill_buckets!(maps.reverse_parallel_branch_map, reverse_parallel,
+        ((member, _),) -> Dict{typeof(member), Tuple{Int, Int}}())
+
+    series = _VectorsByType{Pair{ARC_ENTRY, BranchesSeries}}()
+    _index_series!(series, arcs, names, entry_names, nrd.series_branch_map, predicate)
+    _fill_buckets!(maps.series_branch_map, series,
+        _ -> Dict{Tuple{Int, Int}, BranchesSeries}())
+
+    reverse_series = _VectorsByType{Pair{PSY.ACTransmission, ARC_ENTRY}}()
+    _index_reverse_series!(reverse_series, nrd.reverse_series_branch_map, predicate)
+    # Same key type as `reverse_series_branch_map` in `NetworkReductionData`.
+    _fill_buckets!(maps.reverse_series_branch_map, reverse_series,
+        _ -> Dict{PSY.ACTransmission, Tuple{Int, Int}}())
+
     name_to_arc = NAME_TO_ARC()
+    _sorted_name_buckets!(name_to_arc, names)
     component_to_entry = COMPONENT_TO_ENTRY()
-
-    _index_forward!(
-        maps.direct_branch_map, arcs, name_to_arc, nrd.direct_branch_map,
-        predicate,
-        entry -> (_get_segment_type(entry),),
-        entry -> Dict{Tuple{Int, Int}, typeof(entry)}(),
-    )
-    _index_reverse!(
-        maps.reverse_direct_branch_map, arcs, component_to_entry,
-        nrd.reverse_direct_branch_map, predicate,
-    )
-
-    _index_forward!(
-        maps.parallel_branch_map, arcs, name_to_arc, nrd.parallel_branch_map,
-        predicate,
-        _get_concrete_types,
-        _ -> _empty_parallel_branch_map(),
-    )
-    _index_reverse!(
-        maps.reverse_parallel_branch_map, arcs, component_to_entry,
-        nrd.reverse_parallel_branch_map, predicate,
-    )
-
-    _index_series!(
-        maps.series_branch_map, arcs, name_to_arc, component_to_entry,
-        nrd.series_branch_map, predicate,
-    )
-    _index_reverse_series!(
-        maps.reverse_series_branch_map, nrd.reverse_series_branch_map, predicate,
-    )
+    for (T, pairs) in entry_names
+        component_to_entry[T] = _fill_bucket!(Dict{String, String}(), pairs)
+    end
 
     if _is_unfiltered(predicate)
         _validate_catalog_closure(nrd, name_to_arc)

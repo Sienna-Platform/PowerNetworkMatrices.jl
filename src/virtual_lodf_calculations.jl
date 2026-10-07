@@ -18,8 +18,8 @@ arc×arc axes/lookup). A single core can be shared with a `VirtualPTDF` /
 # Thread-safety
 
 Concurrent `getindex` (and `get_partial_lodf_row`) is safe but serialized:
-every libklu solve runs under `_LIBKLU_LOCK` (process-wide) and the core's
-`solver_lock`, and the row cache is guarded by `cache_lock`.
+every solve runs under the core's `solver_lock`, and the row cache is guarded
+by `cache_lock`.
 
 # Fields
 - `core::VirtualFactorCore`:
@@ -28,8 +28,6 @@ every libklu solve runs under `_LIBKLU_LOCK` (process-wide) and the core's
         Element-wise reciprocal `1 / (1 - H[e,e])` (with `H[e,e]` clamped by
         `LODF_ENTRY_TOLERANCE`). The raw, unclamped `H[e,e]` lives on the core as
         `PTDF_A_diag`.
-- `dist_slack::Vector{Float64}`:
-        Distributed slack weights (retained for API symmetry).
 - `axes<:NTuple{2, Vector}`:
         Tuple of two vectors of branch (arc) identifiers (row and column).
 - `lookup<:NTuple{2, Dict}`:
@@ -51,7 +49,6 @@ struct VirtualLODF{
 } <: PowerNetworkMatrix{Float64}
     core::C
     inv_PTDF_A_diag::Vector{Float64}
-    dist_slack::Vector{Float64}
     axes::Ax
     lookup::L
     subnetwork_axes::Dict{Int, Ax}
@@ -66,7 +63,6 @@ end
 function Base.getproperty(vlodf::VirtualLODF, name::Symbol)
     if name === :core ||
        name === :inv_PTDF_A_diag ||
-       name === :dist_slack ||
        name === :axes ||
        name === :lookup ||
        name === :subnetwork_axes ||
@@ -85,7 +81,6 @@ end
 # accessors instead of `getfield`.
 get_core(M::VirtualLODF) = getfield(M, :core)
 get_inv_PTDF_A_diag(M::VirtualLODF) = getfield(M, :inv_PTDF_A_diag)
-get_dist_slack(M::VirtualLODF) = getfield(M, :dist_slack)
 get_subnetwork_axes(M::VirtualLODF) = getfield(M, :subnetwork_axes)
 get_cache(M::VirtualLODF) = getfield(M, :cache)
 get_cache_lock(M::VirtualLODF) = getfield(M, :cache_lock)
@@ -95,10 +90,6 @@ get_cache_lock(M::VirtualLODF) = getfield(M, :cache_lock)
 get_axes(M::VirtualLODF) = getfield(M, :axes)
 get_lookup(M::VirtualLODF) = getfield(M, :lookup)
 get_ref_bus(M::VirtualLODF) = sort!(collect(keys(get_subnetwork_axes(M))))
-# Arc-indexed wrapper: no get_bus_lookup(M::VirtualLODF) exists, so this throws MethodError
-# on any call. Pre-existing; see the LODF note in lodf_calculations.jl.
-get_ref_bus_position(M::VirtualLODF) =
-    [get_bus_lookup(M)[x] for x in keys(get_subnetwork_axes(M))]
 get_network_reduction_data(M::VirtualLODF) = get_network_reduction_data(get_core(M))
 get_branch_catalog(M::VirtualLODF) = get_branch_catalog(get_core(M))
 get_arc_lookup(M::VirtualLODF) = get_lookup(M)[1]
@@ -126,12 +117,15 @@ struct with an empty cache.
 # Keyword Arguments
 - `linear_solver::String = _default_linear_solver()`: Linear solver for the
         ABA factorization.
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
+        Tolerance for row sparsification. A `Float64` applies a fixed absolute cutoff; the
+        default [`AutoTolerance`](@ref) applies a relative per-row cutoff so requested rows
+        stay sparse on large systems.
 - `network_reductions::Vector{NetworkReduction}`:
         Network reductions applied when computing the matrix.
 """
 function VirtualLODF(
     sys::PSY.System;
-    dist_slack::Vector{Float64} = Float64[],
     linear_solver::String = _default_linear_solver(),
     tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
@@ -139,9 +133,6 @@ function VirtualLODF(
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
     kwargs...,
 )
-    if length(dist_slack) != 0
-        @info "Distributed bus"
-    end
     resolve_linear_solver(linear_solver)
     Ymatrix = Ybus(
         sys;
@@ -156,7 +147,6 @@ function VirtualLODF(
     )
     return VirtualLODF(
         core;
-        dist_slack = dist_slack,
         max_cache_size = max_cache_size,
         persistent_arcs = persistent_arcs,
     )
@@ -164,9 +154,10 @@ end
 
 # A bridge arc islands the network when it is outaged, so `1 - H[e,e]` collapses and the
 # LODF scaling is undefined. Both LODF paths clamp such a diagonal to zero — a denominator
-# of exactly 1 — instead of dividing by a vanishing number.
+# of exactly 1 — instead of dividing by a vanishing number. Only a vanishing denominator is
+# clamped: a negative-reactance arc can push H[e,e] above 1, a valid negative denominator.
 function _clamped_ptdf_a_diag(h_ee::Float64)
-    if h_ee > 1 - LODF_ENTRY_TOLERANCE
+    if abs(1 - h_ee) < LODF_ENTRY_TOLERANCE
         return 0.0
     end
     return h_ee
@@ -179,7 +170,6 @@ the clamped `inv_PTDF_A_diag`.
 """
 function VirtualLODF(
     core::VirtualFactorCore;
-    dist_slack::Vector{Float64} = Float64[],
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}(),
 )
@@ -206,7 +196,6 @@ function VirtualLODF(
     return VirtualLODF(
         core,
         inv_PTDF_A_diag,
-        dist_slack,
         axes,
         look_up,
         subnetwork_axes,
@@ -221,13 +210,11 @@ sharing its [`VirtualFactorCore`](@ref).
 """
 function VirtualLODF(
     vptdf::VirtualPTDF;
-    dist_slack::Vector{Float64} = Float64[],
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}(),
 )
     return VirtualLODF(
         get_core(vptdf);
-        dist_slack = dist_slack,
         max_cache_size = max_cache_size,
         persistent_arcs = persistent_arcs,
     )
@@ -240,7 +227,6 @@ Checks if the VirtualLODF holds any stored state.
 """
 function Base.isempty(vlodf::VirtualLODF)
     isempty(get_inv_PTDF_A_diag(vlodf)) && return true
-    isempty(get_dist_slack(vlodf)) && return true
     isempty(get_axes(vlodf)) && return true
     isempty(get_lookup(vlodf)) && return true
     isempty(get_subnetwork_axes(vlodf)) && return true
@@ -261,9 +247,7 @@ Gives the cartesian indexes of the LODF matrix.
 """
 Base.eachindex(vlodf::VirtualLODF) = CartesianIndices(size(vlodf))
 
-if isdefined(Base, :print_array) # 0.7 and later
-    Base.print_array(io::IO, X::VirtualLODF) = "VirtualLODF"
-end
+Base.print_array(io::IO, X::VirtualLODF) = "VirtualLODF"
 
 # Compute the LODF row for `row`. Pure computation: no cache reads/writes, no
 # tolerance application.
@@ -290,11 +274,14 @@ function _getindex(
     row::Int,
     column::Union{Int, Colon},
 )
-    return cached_row_lookup(
-        get_cache(vlodf), get_cache_lock(vlodf), row, column, get_cutoff(vlodf),
-    ) do
-        _compute_lodf_row(vlodf, row)
-    end
+    stored = _cached_row(
+        () -> _compute_lodf_row(vlodf, row),
+        get_cache(vlodf),
+        get_cache_lock(vlodf),
+        row,
+        get_cutoff(vlodf),
+    )
+    return stored[column]
 end
 
 """
@@ -345,22 +332,28 @@ end
 get_cutoff(mat::VirtualLODF) = get_cutoff(get_core(mat))
 
 """
-    _getindex_partial(vlodf, arc_idx, delta_b) -> Vector{Float64}
+    get_partial_lodf_row(vlodf::VirtualLODF, arc_idx::Int, delta_b::Float64) -> Vector{Float64}
 
-Compute the partial LODF column for a susceptance change `delta_b` on arc `arc_idx`.
+Compute the LODF row for a partial susceptance change `delta_b` on arc `arc_idx`.
 
-Concurrent callers serialize on the core `solver_lock` and `_LIBKLU_LOCK`.
+For a full outage, set `delta_b = -arc_susceptance`. For a single circuit outage
+on a double-circuit arc, set `delta_b = -b_circuit`.
+
+Concurrent callers serialize on the core `solver_lock`.
 
 Uses the Sherman-Morrison (matrix inversion lemma) formula:
 
     partial_LODF[ℓ, e] = α · (b_ℓ / b_e) · H[ℓ,e] / (1 - α · H[e,e])
 
-where α = -Δb / b_e and H[e,e] is `PTDF_A_diag[e]` clamped by
+where α = -Δb / |b_e|, `b_ℓ` and `b_e` are signed DC susceptances, and H[e,e] is
+`PTDF_A_diag[e]` clamped by
 `_clamped_ptdf_a_diag`, the same clamp `inv_PTDF_A_diag` carries. When
 `delta_b = -b_e` (full outage) this reduces to the standard LODF column; the
 self-element is overridden to -1.0 for a full outage.
+
+$(TYPEDSIGNATURES)
 """
-function _getindex_partial(
+function get_partial_lodf_row(
     vlodf::VirtualLODF,
     arc_idx::Int,
     delta_b::Float64,
@@ -403,8 +396,14 @@ function _getindex_partial(
         # Step 6: Partial LODF column scaled by b_ℓ/b_e, in place on the fresh `H_col`. The
         # operand order is load-bearing: float multiply does not reassociate, and `s * (a * h)`
         # is what every stored reference row was produced with.
+        # `H_col` carries the signed b_e, so the ratio b_ℓ / b_e must be signed too; the
+        # magnitudes flip the row wherever ℓ and e differ in sign (series compensation).
+        b_e_signed = core.arc_susceptance_signs[arc_idx] * b_arc
         partial_lodf = H_col
-        partial_lodf .= (alpha / (denom * b_arc)) .* (core.arc_susceptances .* partial_lodf)
+        partial_lodf .=
+            (alpha / (denom * b_e_signed)) .* (
+                (core.arc_susceptance_signs .* core.arc_susceptances) .* partial_lodf
+            )
 
         # Full-outage self-element convention: -1.0.
         if abs(delta_b + b_arc) < eps() * b_arc
@@ -413,24 +412,6 @@ function _getindex_partial(
 
         return partial_lodf
     end
-end
-
-"""
-    get_partial_lodf_row(vlodf::VirtualLODF, arc_idx::Int, delta_b::Float64) -> Vector{Float64}
-
-Compute the LODF row for a partial susceptance change `delta_b` on arc `arc_idx`.
-
-For a full outage, set `delta_b = -arc_susceptance`. For a single circuit outage
-on a double-circuit arc, set `delta_b = -b_circuit`.
-
-$(TYPEDSIGNATURES)
-"""
-function get_partial_lodf_row(
-    vlodf::VirtualLODF,
-    arc_idx::Int,
-    delta_b::Float64,
-)
-    return _getindex_partial(vlodf, arc_idx, delta_b)
 end
 
 """
@@ -446,5 +427,5 @@ function get_partial_lodf_row(
     delta_b::Float64,
 )
     arc_idx = get_lookup(vlodf)[1][arc]
-    return _getindex_partial(vlodf, arc_idx, delta_b)
+    return get_partial_lodf_row(vlodf, arc_idx, delta_b)
 end

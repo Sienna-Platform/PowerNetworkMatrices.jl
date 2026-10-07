@@ -24,8 +24,11 @@ Degree-two chains are ordinary aggregates, not a separate structure:
   - `BranchesSeries` carries its own `arc_key`, giving it an arc identity so it can either stand alone in `series_branch_map` or sit as a member of a `BranchesParallel`.
     Every method that reads that identity dispatches on `AbstractReductionAggregate`, and `_subset_two_port` resolves members with `nr`. `ybus_branch_entries` takes `nr` in every signature — the `nr`-less single-branch overload was deleted because it returned an impedance-correction-free π-model, silently disagreeing with the stamped Ybus.
   - A grouped chain is **not** in `series_branch_map`, so a series-map membership test is false for it and `BA_Matrix` takes its susceptance from the general `Y_ft`/`Y_tf` path rather than from components. Downstream code keyed on series-map membership misses these chains.
-  - `_apply_reduction` writes every composite arc into both `adjacency_data` and `arc_subnetwork_axis`.
+  - `_apply_reduction` writes every composite arc into `adjacency_data`.
     Without that, `AdjacencyMatrix(ybus)` reflected the pre-reduction graph — missing every arc the reduction created — while `IncidenceMatrix(ybus)` was correct, because it builds from `get_arc_axis(nr)`.
+  - `arc_subnetwork_axis` is not patched incrementally. `_apply_reduction` rebuilds it from the final branch maps with `_make_arc_subnetwork_axis`, as the unreduced build does, so composite arcs reach it only through that rebuild.
+    The old incremental patch kept pre-merge arc labels after a bus merge and stale arcs after a Ward reduction.
+    `_validate_arc_subnetwork_axis` checks the island lists against `get_arc_axis(nr)`, and `_validate_arc_admittance_axis` checks that the arc axis of `arc_admittance_from_to` equals it too: `BA_Matrix` takes its columns from the arc-admittance matrices but its island arc lists from `arc_subnetwork_axis`.
   - `_apply_reduction` ends by calling `_validate_surviving_arc_keys(nr, bus_ax)`: every arc the reduction still exposes must have both endpoints on the reduced bus axis.
     An arc key stranded on an eliminated bus is invisible at the point of use — the arc axis and the branch maps stay internally consistent, so the reduction reports success and the failure surfaces later as a bare `KeyError` from whichever consumer first resolves arc endpoints (`IncidenceMatrix` is usually first), possibly several reductions downstream of the one that caused it.
     Keep this assertion at the end of any new apply path.
@@ -53,7 +56,7 @@ Series data lives on **`PSY.TransformerCircuit <: DeviceParameter`** (not a `Com
   - `get_arc` exists for `TwoWindingTransformer` (delegating to its circuit) but **not** for `ThreeWindingTransformer` — it has three arcs. `get_from_bus`/`get_to_bus` inherit that limitation.
   - No `nothing`-sentinel confusion: 3W pairwise PSS/E fields (`r_12`,`x_12`,`r_23`,`x_23`,`r_31`,`x_31`,`base_power_12/23/31`) are legitimately `Union{Nothing,Float64}` and validated **all-or-none**. `base_power_13` was renamed `base_power_31`.
 
-**PNM now owns the series-impedance API PSY deleted.** `get_series_susceptance` moved here, with six methods: the blanket `ACTransmission` `1/x`, the tap-dividing `TransformerCircuit` leaf, two delegating arms (`TwoWindingTransformer`, `ThreeWindingTransformerCircuit`), and the two aggregate reductions (`BranchesParallel.jl` sums, `BranchesSeries.jl` reciprocal-sums). There is no PSY fallback to defer to; a missing method is PNM's bug. The winding-group `get_α` derivations also went away — `get_α(circuit)` is now a plain stored field.
+**PNM now owns the series-impedance API PSY deleted.** `get_series_susceptance` moved here as two public methods: the blanket `ACTransmission` one (which also covers `TwoWindingTransformer`, `BranchesParallel`, and `BranchesSeries`) and the `ThreeWindingTransformerCircuit` arm. The per-type arithmetic lives in `_series_susceptance_raw` (`BranchAdmittance.jl`): the `ACTransmission` `1/x`, the tap-dividing `TransformerCircuit` leaf, delegating arms (`TwoWindingTransformer`, `ThreeWindingTransformerCircuit`), and the two aggregate reductions (`BranchesParallel.jl` sums, `BranchesSeries.jl` reciprocal-sums). There is no PSY fallback to defer to; a missing method is PNM's bug. The winding-group `get_α` derivations also went away — `get_α(circuit)` is now a plain stored field.
 
 The `ThreeWindingTransformerCircuit` arm is load-bearing: the wrapper subtypes `PSY.ACTransmission`, not `PSY.TransformerCircuit`, so deleting it silently falls through to the **tap-free** blanket method rather than erroring.
 
@@ -65,9 +68,9 @@ The `ThreeWindingTransformerCircuit` arm is load-bearing: the wrapper subtypes `
 
 ## Source layout
 
-  - Core: `PowerNetworkMatrix.jl` (abstract `PowerNetworkMatrix{T} <: AbstractArray{T,2}`), `definitions.jl` (`AUTO_TOLERANCE_BUS_LIMIT = 2000`, `ZERO_IMPEDANCE_X_EPSILON = 1e-6`, `abstract type AbstractReductionAggregate`), `linalg_settings.jl`, `serialization.jl` (HDF5; dense PTDF only — virtual matrices are not serialized)
+  - Core: `PowerNetworkMatrix.jl` (abstract `PowerNetworkMatrix{T} <: AbstractArray{T,2}`), `definitions.jl` (`AUTO_TOLERANCE_BUS_LIMIT = 2000`, `ZERO_IMPEDANCE_X_EPSILON = 1e-6`, `abstract type AbstractReductionAggregate`), `linalg_settings.jl`
   - Matrices: `Ybus.jl`, `YbusACBranches.jl`, `ArcAdmittanceMatrix.jl`, `IncidenceMatrix.jl`, `AdjacencyMatrix.jl`, `BA_ABA_matrices.jl`, `ptdf_calculations.jl` (N_arcs×N_buses, transposed storage), `lodf_calculations.jl` (diagonal = −1.0), `virtual_{ptdf,lodf,modf}_calculations.jl`, `row_cache.jl` (LRU, default 100 MiB)
-  - Modification/contingency: `modf_definitions.jl` (`ArcModification`, `ShuntModification`, `ContingencySpec`, `WoodburyFactors`), `network_modification.jl`, `woodbury_kernel.jl`, `ybus_contingencies.jl` — **mainline in psy6**; POM's branch-side N-1 builds on `VirtualMODF`/`ContingencySpec`
+  - Modification/contingency: `modf_definitions.jl` (`ArcModification`, `ShuntModification`, `ContingencySpec`, `WoodburyFactors`), `network_modification.jl`, `woodbury_kernel.jl` — **mainline in psy6**; POM's branch-side N-1 builds on `VirtualMODF`/`ContingencySpec`
   - Reductions: `NetworkReduction.jl`, `NetworkReductionData.jl`, `ReductionContainer.jl`, `reduction_helpers.jl`, `radial_reduction.jl`, `degree_two_reduction.jl`, `ward_reduction.jl`, `zero_impedance_branch_reduction.jl` (the spec) + `apply_zero_impedance_reduction.jl` (the merge), `BranchesParallel.jl`, `BranchesSeries.jl`, `ThreeWindingTransformerCircuit.jl`, `EquivalentBranch.jl`
   - Connectivity: `connectivity_checks.jl`, `subnetworks.jl`
   - Solvers: `KLUWrapper/` (internal), `AccelerateWrapper/` (macOS built-in), `ext/MKLPardisoExt.jl` (x86_64 weakdep)
@@ -77,7 +80,8 @@ Exports live only in the main module file.
 ## Hard rules
 
   - **Never export or re-export any `KLUWrapper` symbol** (`KLULinSolveCache`, `solve!`, `klu_factorize`, …). Downstream reaches them qualified: `PowerNetworkMatrices.KLUWrapper.foo`.
-  - **Per-arc PTDF/MODF KLU solve cost is inherent** — do not propose RHS batching or thread-parallelizing the build loop; Sienna queries rows incrementally and KLU can't do concurrent solves.
+  - **Per-arc PTDF/MODF KLU solve cost is inherent** — do not propose RHS batching; Sienna queries rows incrementally.
+  - **Parallel KLU solves need one factorization per thread.** `worker_core` (`src/virtual_workers.jl`) gives each worker its own KLU factorization, scratch and lock, so workers solve concurrently and match the parent bit for bit. One shared KLU cache is not safe for concurrent solves: its `solver_lock` serializes them. Apple Accelerate workers share the parent's factorization and lock and serialize, because concurrent AA calls have segfaulted.
   - Only Int64 KLU caches are built internally; the Int32 variants exist solely for PowerFlows' `J_INDEX_TYPE`. Any downstream cache-type Union must list both.
   - Contingency fixtures: to make a contingency merely *exist*, use `PSY.FixedForcedOutage(; outage_status=1.0)` + `add_supplemental_attribute!` — never fabricate `GeometricDistributionForcedOutage` stochastic parameters.
 

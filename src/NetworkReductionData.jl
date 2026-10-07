@@ -31,12 +31,7 @@ function Base.empty!(b::BranchMapsByType)
     return
 end
 
-function Base.:(==)(a::BranchMapsByType, b::BranchMapsByType)
-    for f in _BRANCH_MAPS_BY_TYPE_FIELDS
-        getfield(a, f) == getfield(b, f) || return false
-    end
-    return true
-end
+Base.:(==)(a::BranchMapsByType, b::BranchMapsByType) = _fieldwise_equal(a, b)
 
 """
     NetworkReductionData
@@ -57,7 +52,7 @@ network reduction algorithms.
 - `reverse_series_branch_map::Dict{PSY.ACTransmission, Tuple{Int, Int}}`: Reverse series mappings
 - `removed_buses::Set{Int}`: Set of buses eliminated from the network
 - `removed_arcs::Set{Tuple{Int, Int}}`: Set of arcs eliminated from the network
-- `merged_bus_pairs::Dict{Int, Int}`: Maps removed bus number to surviving bus number for zero-impedance branch bus merges; drives row/column summation in `_merge_ybus_buses!`
+- `merged_bus_pairs::Dict{Int, Int}`: Maps removed bus number to surviving bus number for zero-impedance branch bus merges; drives row/column summation in `_apply_reduction`
 - `removed_arc_to_surviving_bus::Dict{Tuple{Int, Int}, Int}`: Maps removed arcs to the connected surviving bus number (occurs for radial reduction or Ward reduction)
 - `boundary_bus_to_removed_arcs::Dict{Int, Set{Tuple{Int, Int}}}`: Maps boundary buses to the set of removed arcs connected to them
 - `added_admittance_map::Dict{Int, PSY.FixedAdmittance}`: Admittances added to buses during reduction
@@ -130,13 +125,11 @@ _has_leaf(x::PSY.ACTransmission, br::PSY.ACTransmission) = x === br
 _has_leaf(x::AbstractReductionAggregate, br::PSY.ACTransmission) =
     any(m -> _has_leaf(m, br), x)
 
-_get_segment_components(x) = leaf_components(x)
 _get_segment_type(::T) where {T <: PSY.ACBranch} = T
 _get_segment_type(::BranchesParallel{T}) where {T <: PSY.ACTransmission} = T
 _get_segment_type(::MixedBranchesParallel) = MixedBranchesParallel
-# The 3W reduction maps are keyed by the parent transformer type
-# (`PSY.ThreeWindingTransformer`), so 3W entries are looked up by the transformer type.
-_get_segment_type(w::ThreeWindingTransformerCircuit) = get_transformer_type(w)
+# The 3W reduction maps are keyed by the parent transformer type, not `PSY.TransformerCircuit`.
+_get_segment_type(::ThreeWindingTransformerCircuit) = PSY.ThreeWindingTransformer
 
 """
 The bucket keys an entry is filed under: the type of every physical branch at its leaves, so
@@ -148,12 +141,6 @@ parent transformer type -- never a PNM aggregate wrapper.
 function _get_concrete_types(entry)
     return unique(DataType[_get_segment_type(leaf) for leaf in leaf_components(entry)])
 end
-
-# Construct an empty per-slot dict for `BranchMapsByType.parallel_branch_map`.
-# Value type is `AbstractBranchesParallel` so that the same per-type bucket can
-# hold either a homogeneous `BranchesParallel{T}` or a `MixedBranchesParallel`
-# that includes a branch of type `T`.
-_empty_parallel_branch_map() = Dict{Tuple{Int, Int}, AbstractBranchesParallel}()
 
 get_irreducible_buses(rb::NetworkReductionData) = rb.irreducible_buses
 """
@@ -232,34 +219,6 @@ function Base.empty!(rb::NetworkReductionData)
 end
 
 """
-   get_retained_branches_names(network_reduction_data::NetworkReductionData)
-
-Gets the branch names that are retained after network reduction. This method only returns the
-branch names from non-three winding transformer branches that have a one-to-one correspondence with
-arcs after the reduction. This does not include parallel branches or branches that have been reduced as
-part of a series chain of degree two nodes.
-
-# Arguments
-- `network_reduction_data::NetworkReductionData`
-
-# Returns
-- `Vector{String}`: Vector of the retained branch names.
-"""
-function get_retained_branches_names(network_reduction_data::NetworkReductionData)
-    return [
-        PSY.get_name(branch) for
-        branch in keys(network_reduction_data.reverse_direct_branch_map) if
-        !_is_three_winding_circuit(branch)
-    ]
-end
-
-_is_three_winding_circuit(::PSY.ACTransmission) = false
-_is_three_winding_circuit(::ThreeWindingTransformerCircuit) = true
-
-_ac_transmission_type(x::PSY.ACTransmission) = typeof(x)
-_ac_transmission_type(w::ThreeWindingTransformerCircuit) = get_transformer_type(w)
-
-"""
    get_ac_transmission_types(network_reduction_data::NetworkReductionData)
 
 Gets the concrete types of all AC transmission branches included in an instance of NetworkReductionData
@@ -272,7 +231,7 @@ Gets the concrete types of all AC transmission branches included in an instance 
 """
 function get_ac_transmission_types(network_reduction_data::NetworkReductionData)
     direct_types = Set{DataType}(
-        _ac_transmission_type.(keys(network_reduction_data.reverse_direct_branch_map)),
+        _get_segment_type.(keys(network_reduction_data.reverse_direct_branch_map)),
     )
     parallel_types =
         Set{DataType}(typeof.(keys(network_reduction_data.reverse_parallel_branch_map)))
@@ -285,14 +244,8 @@ end
 ########################### Auxiliary functions ##############################
 ##############################################################################
 
-function isequal(rb1::NetworkReductionData, rb2::NetworkReductionData)
-    for field in fieldnames(NetworkReductionData)
-        if getfield(rb1, field) != getfield(rb2, field)
-            return false
-        end
-    end
-    return true
-end
+isequal(rb1::NetworkReductionData, rb2::NetworkReductionData) =
+    _fieldwise_equal(rb1, rb2)
 
 """
 Interface to obtain the parent bus number of a reduced bus when radial branches are eliminated

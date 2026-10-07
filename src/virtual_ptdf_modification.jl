@@ -1,9 +1,4 @@
 """
-Public API for computing post-modification PTDF rows from a `VirtualPTDF`
-and a `NetworkModification`, using the Woodbury matrix identity.
-"""
-
-"""
     compute_woodbury_factors(vptdf, mod) -> WoodburyFactors
 
 Precompute Woodbury correction factors for a network modification.
@@ -12,9 +7,7 @@ arcs, making this the recommended path for optimization loops where
 factors are computed once per modification and many rows are queried.
 
 !!! note
-    Concurrent callers serialize on the per-cache `solver_lock` and
-    `_LIBKLU_LOCK` (KLU backend) or just the per-cache `solver_lock`
-    (AppleAccelerate backend).
+    Concurrent callers serialize on the per-cache `solver_lock`.
 
 $(TYPEDSIGNATURES)
 """
@@ -33,27 +26,16 @@ precomputed Woodbury factors. Accepts either an integer arc index
 or a `Tuple{Int, Int}` bus pair.
 
 !!! note
-    Concurrent callers serialize on the per-cache `solver_lock` and
-    `_LIBKLU_LOCK` (KLU backend) or just the per-cache `solver_lock`
-    (AppleAccelerate backend).
+    Concurrent callers serialize on the per-cache `solver_lock`.
 
 $(TYPEDSIGNATURES)
 """
 function apply_woodbury_correction(
     vptdf::VirtualPTDF,
-    monitored_arc::Int,
+    monitored_arc::Union{Int, Tuple{Int, Int}},
     wf::WoodburyFactors,
 )::Vector{Float64}
-    return _apply_woodbury_correction(vptdf, monitored_arc, wf)
-end
-
-function apply_woodbury_correction(
-    vptdf::VirtualPTDF,
-    monitored_arc::Tuple{Int, Int},
-    wf::WoodburyFactors,
-)::Vector{Float64}
-    m_idx = get_arc_lookup(vptdf)[monitored_arc]
-    return _apply_woodbury_correction(vptdf, m_idx, wf)
+    return _apply_woodbury_correction(vptdf, _resolve_arc_index(vptdf, monitored_arc), wf)
 end
 
 """
@@ -71,16 +53,7 @@ $(TYPEDSIGNATURES)
 """
 function get_post_modification_ptdf_row(
     vptdf::VirtualPTDF,
-    monitored_arc::Int,
-    mod::NetworkModification,
-)::Vector{Float64}
-    wf = compute_woodbury_factors(vptdf, mod)
-    return apply_woodbury_correction(vptdf, monitored_arc, wf)
-end
-
-function get_post_modification_ptdf_row(
-    vptdf::VirtualPTDF,
-    monitored_arc::Tuple{Int, Int},
+    monitored_arc::Union{Int, Tuple{Int, Int}},
     mod::NetworkModification,
 )::Vector{Float64}
     wf = compute_woodbury_factors(vptdf, mod)
@@ -97,15 +70,7 @@ $(TYPEDSIGNATURES)
 """
 function Base.getindex(
     vptdf::VirtualPTDF,
-    monitored::Int,
-    mod::NetworkModification,
-)
-    return get_post_modification_ptdf_row(vptdf, monitored, mod)
-end
-
-function Base.getindex(
-    vptdf::VirtualPTDF,
-    monitored::Tuple{Int, Int},
+    monitored::Union{Int, Tuple{Int, Int}},
     mod::NetworkModification,
 )
     return get_post_modification_ptdf_row(vptdf, monitored, mod)
@@ -124,17 +89,7 @@ $(TYPEDSIGNATURES)
 """
 function get_post_modification_ptdf_row(
     vptdf::VirtualPTDF,
-    monitored_arc::Int,
-    sys::PSY.System,
-    outage::PSY.Outage,
-)::Vector{Float64}
-    mod = NetworkModification(vptdf, sys, outage)
-    return get_post_modification_ptdf_row(vptdf, monitored_arc, mod)
-end
-
-function get_post_modification_ptdf_row(
-    vptdf::VirtualPTDF,
-    monitored_arc::Tuple{Int, Int},
+    monitored_arc::Union{Int, Tuple{Int, Int}},
     sys::PSY.System,
     outage::PSY.Outage,
 )::Vector{Float64}

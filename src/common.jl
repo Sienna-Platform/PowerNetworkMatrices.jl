@@ -16,11 +16,7 @@ function _build_bus_to_valid_idx(n_buses::Int, valid_ix::Vector{Int})
 end
 
 function get_bus_index(bus_no::Int, bus_lookup::Dict{Int, Int}, nr::NetworkReductionData)
-    if haskey(nr.reverse_bus_search_map, bus_no)
-        return bus_lookup[nr.reverse_bus_search_map[bus_no]]
-    else
-        return bus_lookup[bus_no]
-    end
+    return bus_lookup[get_mapped_bus_number(nr, bus_no)]
 end
 
 function get_bus_index(
@@ -39,30 +35,23 @@ function get_bus_indices(arc::PSY.Arc, bus_lookup::Dict{Int, Int}, nr::NetworkRe
 end
 
 function check_arc_validity(arc::PSY.Arc, name::String)
-    if PSY.get_bustype(PSY.get_from(arc)) == ACBusTypes.ISOLATED
-        throw(
-            IS.ConflictingInputsError(
-                "Branch or arc $(name) is set available and connected to isolated bus " *
-                "$(IS.get_name(PSY.get_from(arc)))",
-            ),
-        )
-    end
-    if PSY.get_bustype(PSY.get_to(arc)) == ACBusTypes.ISOLATED
-        throw(
-            IS.ConflictingInputsError(
-                "Branch or arc $(name) is set available and connected to isolated bus " *
-                "$(IS.get_name(PSY.get_to(arc)))",
-            ),
-        )
+    for bus in (PSY.get_from(arc), PSY.get_to(arc))
+        if PSY.get_bustype(bus) == ACBusTypes.ISOLATED
+            throw(
+                IS.ConflictingInputsError(
+                    "Branch or arc $(name) is set available and connected to isolated bus " *
+                    "$(IS.get_name(bus))",
+                ),
+            )
+        end
     end
     return
 end
 
 function _remap_pair(nr::NetworkReductionData, bus_pair::Tuple{Int, Int})
-    reverse_bus_search_map = get_reverse_bus_search_map(nr)
     return (
-        get(reverse_bus_search_map, bus_pair[1], bus_pair[1]),
-        get(reverse_bus_search_map, bus_pair[2], bus_pair[2]),
+        get_mapped_bus_number(nr, bus_pair[1]),
+        get_mapped_bus_number(nr, bus_pair[2]),
     )
 end
 
@@ -90,79 +79,6 @@ end
 
 get_arc_tuple(arc::PSY.Arc) =
     (PSY.get_number(PSY.get_from(arc)), PSY.get_number(PSY.get_to(arc)))
-
-# Available shunt components whose bus survived the reduction (a shunt on an eliminated bus
-# is already folded into its parent bus's diagonal).
-function _get_retained_shunts(
-    ::Type{T},
-    sys::PSY.System,
-    reverse_bus_search_map::Dict{Int, Int},
-) where {T <: PSY.StaticInjection}
-    collection = Vector{T}()
-    for sa in PSY.get_components(PSY.get_available, T, sys)
-        if !haskey(reverse_bus_search_map, PSY.get_number(PSY.get_bus(sa)))
-            push!(collection, sa)
-        end
-    end
-    return collection
-end
-
-get_switched_admittances(sys::PSY.System, reverse_bus_search_map::Dict{Int, Int}) =
-    _get_retained_shunts(PSY.SwitchedAdmittance, sys, reverse_bus_search_map)
-
-get_fixed_admittances(sys::PSY.System, reverse_bus_search_map::Dict{Int, Int}) =
-    _get_retained_shunts(PSY.FixedAdmittance, sys, reverse_bus_search_map)
-
-function _add_branch_to_lookup!(
-    branch_lookup::Dict{String, Int},
-    ::Dict{String, Vector{String}},
-    branch_type::Vector{DataType},
-    branch::PSY.ACTransmission,
-    branch_number::Int,
-)
-    branch_lookup[PSY.get_name(branch)] = branch_number
-    push!(branch_type, typeof(branch))
-    return
-end
-
-function _add_branch_to_lookup!(
-    branch_lookup::Dict{String, Int},
-    transformer_3w_lookup::Dict{String, Vector{String}},
-    branch_type::Vector{DataType},
-    branch::PSY.ThreeWindingTransformer,
-    branch_number::Int,
-)
-    tr3w_name = PSY.get_name(branch)
-    transformer_3w_lookup[tr3w_name] = Vector{String}(undef, 3)
-    for (i, side) in enumerate(["primary", "secondary", "tertiary"])
-        side_name = "$(tr3w_name)__$side"
-        branch_lookup[side_name] = branch_number - 3 + i
-        transformer_3w_lookup[tr3w_name][i] = side_name
-        push!(branch_type, typeof(branch))
-    end
-    return
-end
-
-"""
-Gets the indices  of the reference (slack) buses.
-NOTE:
-- the indices  corresponds to the columns of zeros belonging to the PTDF matrix.
-- BA and ABA matrix miss the columns related to the reference buses.
-"""
-function find_slack_positions(buses)
-    return find_slack_positions(buses, make_ax_ref(buses))
-end
-
-function find_slack_positions(buses, bus_lookup::Dict{Int, Int})::Set{Int}
-    slack_position = sort([
-        bus_lookup[PSY.get_number(n)] for
-        n in buses if PSY.get_bustype(n) == ACBusTypes.REF
-    ])
-    if length(slack_position) == 0
-        error("Slack bus not identified in the Bus/buses list, can't build NetworkMatrix")
-    end
-    return Set{Int}(slack_position)
-end
 
 """
 Validates that the user bus input is consistent with the ybus axes and the prior reductions.
@@ -276,7 +192,6 @@ function sparsify(dense_array::Vector{Float64}, tol::Float64)
 end
 
 """
-    _get_equivalent_physical_branch_parameters(equivalent_ybus::AbstractMatrix{<:Complex})
     _get_equivalent_physical_branch_parameters(
         equivalent_ybus::AbstractMatrix{<:Complex},
         segment::AbstractReductionAggregate,
@@ -305,13 +220,6 @@ in a real part of the phase shift angle. This can occur when a lossy phase-shift
 circuit is in parallel with other branches. Such a group has no single π equivalent; use \
 `arc_equivalent_branches` (or `equivalent_partitions`) for the exact multi-branch \
 representation."
-end
-
-function _phase_shift_tap_shift(y_12::Complex, y_21::Complex)
-    isapprox(y_12, y_21) && return 1.0, 0.0
-    ratio = log(y_21 / y_12) / 2
-    isapprox(0.0, real(ratio); atol = 1e-6) || error(_phase_shift_error_message())
-    return 1.0, imag(ratio)
 end
 
 function _phase_shift_tap_shift(
@@ -343,13 +251,6 @@ function _build_equivalent_branch(equivalent_ybus::AbstractMatrix{<:Complex}, ta
     g_to = real(y_22 - y_l)
     b_to = imag(y_22 - y_l)
     return EquivalentBranch(r, x, g_from, b_from, g_to, b_to, tap, shift)
-end
-
-function _get_equivalent_physical_branch_parameters(
-    equivalent_ybus::AbstractMatrix{<:Complex},
-)
-    tap, shift = _phase_shift_tap_shift(equivalent_ybus[2, 1], equivalent_ybus[1, 2])
-    return _build_equivalent_branch(equivalent_ybus, tap, shift)
 end
 
 function _get_equivalent_physical_branch_parameters(
@@ -452,7 +353,7 @@ _zero_impedance_susceptance(bs::BranchesSeries, min_x_eps::Float64)::Float64 =
 # A guard on the raw layer, not a parallel implementation: non-degenerate branches keep one
 # source of truth.
 function _finite_series_susceptance(segment::PSY.ACTransmission, min_x_eps::Float64)
-    b = _series_susceptance_raw(segment, PSY.SU)
+    b = _series_susceptance_raw(segment, u"SU")
     isfinite(b) && return b
     return _zero_impedance_susceptance(segment, min_x_eps)
 end
@@ -609,18 +510,16 @@ end
 # `test_arc_resolution_characterization.jl`. Non-throwing: callers gate on `found`, not on the
 # placeholder entry.
 function _probe_arc_entry(nr::NetworkReductionData, arc::Tuple{Int, Int})
-    direct = get(get_direct_branch_map(nr), arc, nothing)
-    isnothing(direct) || return (true, direct, false)
+    direct_map = get_direct_branch_map(nr)
+    haskey(direct_map, arc) && return (true, direct_map[arc], false)
     rev = (arc[2], arc[1])
     for map in (get_series_branch_map(nr), get_parallel_branch_map(nr))
-        forward = get(map, arc, nothing)
-        isnothing(forward) || return (true, forward, false)
-        reversed = get(map, rev, nothing)
-        isnothing(reversed) || return (true, reversed, true)
+        haskey(map, arc) && return (true, map[arc], false)
+        haskey(map, rev) && return (true, map[rev], true)
     end
-    added = get(get_added_arc_impedance_map(nr), arc, nothing)
-    isnothing(added) || return (true, added, false)
-    return (false, direct, false)
+    added_map = get_added_arc_impedance_map(nr)
+    haskey(added_map, arc) && return (true, added_map[arc], false)
+    return (false, nothing, false)
 end
 
 function _resolve_arc_entry(nr::NetworkReductionData, arc::Tuple{Int, Int})
@@ -697,11 +596,9 @@ function arc_dc_shift_injection(nr::NetworkReductionData, arc::Tuple{Int, Int})
     return injection
 end
 
-# b of the map entry owning `arc` (orientation-symmetric, so no reverse negation). Only
-# reached for shifted arcs, which are always direct/parallel/series -- never Ward-added.
-# Susceptance is orientation-symmetric, so a reverse hit needs no sign change. An added Ward arc
-# is rejected rather than answered: it carries no series element the DC shift injection can use,
-# and this is only ever reached for a shifted arc, which is never Ward-added.
+# b of the map entry owning `arc`. Susceptance is orientation-symmetric, so a reverse hit needs
+# no sign change. An added Ward arc is rejected rather than answered: it carries no series
+# element the DC shift injection can use, and only shifted arcs reach here.
 _dc_entry_susceptance(br::PSY.ACTransmission, min_x_eps::Float64) =
     _finite_series_susceptance(br, min_x_eps)
 _dc_entry_susceptance(br::PSY.GenericArcImpedance, ::Float64) = error(
@@ -745,7 +642,7 @@ end
 # tap, no α) -- the loss-estimate equivalent that exists even when a lossy shifted group has
 # no single-π representation. Orientation-symmetric.
 function _dc_series_impedance(br::PSY.ACTransmission)
-    return complex(PSY.get_r(br, PSY.SU), PSY.get_x(br, PSY.SU))
+    return complex(PSY.get_r(br, u"SU"), PSY.get_x(br, u"SU"))
 end
 
 function _dc_series_impedance(t::PSY.TwoWindingTransformer)
@@ -753,7 +650,7 @@ function _dc_series_impedance(t::PSY.TwoWindingTransformer)
 end
 
 function _dc_series_impedance(c::PSY.TransformerCircuit)
-    return complex(PSY.get_r(c, PSY.SU), PSY.get_x(c, PSY.SU))
+    return complex(PSY.get_r(c, u"SU"), PSY.get_x(c, u"SU"))
 end
 
 function _dc_series_impedance(tw::ThreeWindingTransformerCircuit)
@@ -1053,10 +950,7 @@ function has_time_series(
     ts_type::Type{T},
     ts_name::String,
 ) where {T <: PSY.TimeSeriesData}
-    if PSY.has_time_series(branch, ts_type, ts_name)
-        return true
-    end
-    return false
+    return PSY.has_time_series(branch, ts_type, ts_name)
 end
 
 function get_device_with_time_series(
@@ -1098,7 +992,7 @@ end
 
 """
     _resolve_branch_arc(nr::NetworkReductionData, component::PSY.ACTransmission)
-        -> Tuple{Symbol, Union{Tuple{Int, Int}, Nothing}}
+        -> Tuple{Symbol, Tuple{Int, Int}}
 
 Classify a branch component by looking up which reverse map it belongs to in the
 `NetworkReductionData`. Returns `(tag, arc_tuple)` where `tag` is one of:
@@ -1107,12 +1001,12 @@ Classify a branch component by looking up which reverse map it belongs to in the
 - `:series`       -- branch is part of a series chain on its arc
 - `:not_found`    -- branch is not in any map (e.g., eliminated by radial reduction)
 
-The second element is the arc tuple `(from_bus, to_bus)`, or `nothing` when `:not_found`.
+The second element is the arc tuple `(from_bus, to_bus)`, or `(0, 0)` when `:not_found`.
 """
 function _resolve_branch_arc(
     nr::NetworkReductionData,
     component::PSY.ACTransmission,
-)::Tuple{Symbol, Union{Tuple{Int, Int}, Nothing}}
+)::Tuple{Symbol, Tuple{Int, Int}}
     if haskey(nr.reverse_direct_branch_map, component)
         return (:direct, nr.reverse_direct_branch_map[component])
     elseif haskey(nr.reverse_parallel_branch_map, component)
@@ -1120,7 +1014,7 @@ function _resolve_branch_arc(
     elseif haskey(nr.reverse_series_branch_map, component)
         return (:series, nr.reverse_series_branch_map[component])
     else
-        return (:not_found, nothing)
+        return (:not_found, (0, 0))
     end
 end
 
@@ -1190,10 +1084,7 @@ function _segment_susceptance_after_outage(
     tripped_set::Set{<:PSY.ACTransmission},
     nr::NetworkReductionData,
 )::Float64
-    if segment ∈ tripped_set
-        return 0.0
-    end
-    return _finite_series_susceptance(segment, nr)
+    return _member_susceptance_after_outage(segment, tripped_set, nr)
 end
 
 function _segment_susceptance_after_outage(
