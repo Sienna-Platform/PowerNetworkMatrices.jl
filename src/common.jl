@@ -688,17 +688,15 @@ function _member_impedance_angle(br)
 end
 
 function _partition_members_by_impedance_angle(bp::AbstractBranchesParallel)
+    keyed = sort!([(_member_impedance_angle(br), br) for br in bp]; by = first)
     buckets = Vector{PSY.ACTransmission}[]
-    angles = Float64[]
-    for br in bp
-        θ = _member_impedance_angle(br)
-        ix = findfirst(a -> isapprox(a, θ; atol = PARTITION_ANGLE_ATOL), angles)
-        if isnothing(ix)
-            push!(angles, θ)
-            push!(buckets, PSY.ACTransmission[br])
-        else
-            push!(buckets[ix], br)
+    seed = -Inf
+    for (θ, br) in keyed
+        if θ - seed > PARTITION_ANGLE_ATOL
+            seed = θ
+            push!(buckets, PSY.ACTransmission[])
         end
+        push!(last(buckets), br)
     end
     return buckets
 end
@@ -764,7 +762,7 @@ return a single π and therefore throws on lossy shifted groups.
 """
 function equivalent_partitions(bp::AbstractBranchesParallel, nr::NetworkReductionData)
     reference = get_arc_tuple(bp, nr)
-    Y11, Y12, Y21, Y22 = _subset_two_port(bp, reference, nr)
+    (_, Y12, Y21, _) = _subset_two_port(bp, reference, nr)
     # Whole-group representability is checked BEFORE partitioning: a group with uniform α but
     # mixed impedance angles has several angle buckets yet still collapses to one π.
     if _is_single_pi_representable(Y12, Y21)
