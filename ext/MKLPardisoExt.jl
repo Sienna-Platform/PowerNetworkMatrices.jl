@@ -107,30 +107,12 @@ function PNM._make_pardiso_cache(
     ps = Pardiso.MKLPardisoSolver()
     _init_pardiso!(ps, T)
     cache = PNM.PardisoLinSolveCache{T}(
-        ps, A, Int[], Int[], false, T[], Matrix{T}(undef, 0, 0), false,
+        ps, A, Int[], Int[], false, T[], Matrix{T}(undef, 0, 0),
     )
-    finalizer(_finalize_pardiso_cache, cache)
     return cache
 end
 
-# Frees the native MKL handle once. Not safe to call from a finalizer; see
-# `_finalize_pardiso_cache`.
-function _release!(c::PNM.PardisoLinSolveCache)
-    c.released && return c
-    # Set first: a failed RELEASE_ALL then leaks once, but never frees twice.
-    c.released = true
-    Pardiso.set_phase!(c.ps, Pardiso.RELEASE_ALL)
-    Pardiso.pardiso(c.ps)
-    return c
-end
-
-# A finalizer runs inside the GC and must not block. RELEASE_ALL can deadlock there,
-# so the release runs in a task. `errormonitor` logs a failure of that task.
-function _finalize_pardiso_cache(c::PNM.PardisoLinSolveCache)
-    c.released && return
-    errormonitor(@async _release!(c))
-    return
-end
+# The Pardiso.jl solver object frees the MKL handle in its own finalizer.
 
 function _same_pattern(cache::PNM.PardisoLinSolveCache, A::SparseMatrixCSC)
     return size(A, 1) == length(cache.colptr) - 1 &&
@@ -142,12 +124,12 @@ function PNM.symbolic_factor!(
     cache::PNM.PardisoLinSolveCache{T},
     A::SparseMatrixCSC{T},
 ) where {T}
+    cache.is_factored = false
     cache.A = A
     cache.colptr = Vector{Int}(getcolptr(A))
     cache.rowval = Vector{Int}(rowvals(A))
     Pardiso.set_phase!(cache.ps, Pardiso.ANALYSIS)
     Pardiso.pardiso(cache.ps, cache.A, T[])
-    cache.is_factored = false
     return cache
 end
 
@@ -163,6 +145,7 @@ function PNM.numeric_refactor!(
             ),
         )
     end
+    cache.is_factored = false
     cache.A = A
     Pardiso.set_phase!(cache.ps, Pardiso.NUM_FACT)
     Pardiso.pardiso(cache.ps, cache.A, T[])
@@ -178,8 +161,8 @@ function PNM.full_factor!(
     return PNM.numeric_refactor!(cache, A)
 end
 
-# Pardiso solves out of place. The persistent scratch buffers keep the solves free of
-# allocations on the Julia side.
+# Pardiso solves out of place. The scratch buffers only avoid an allocation of the
+# output. Pardiso.jl converts the index arrays on each call.
 function PNM.solve!(cache::PNM.PardisoLinSolveCache{T}, b::StridedVector{T}) where {T}
     cache.is_factored || error("PardisoLinSolveCache: call full_factor! before solve!.")
     Pardiso.set_phase!(cache.ps, Pardiso.SOLVE_ITERATIVE_REFINE)

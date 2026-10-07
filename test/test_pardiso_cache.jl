@@ -86,7 +86,8 @@ end
             !(all(isfinite, x) &&
                 LinearAlgebra.norm(x - v) <= 1e-6 * LinearAlgebra.norm(v))
         catch e
-            typeof(e) == Pardiso.PardisoException
+            typeof(e) == Pardiso.PardisoException ||
+                typeof(e) == Pardiso.PardisoPosDefException
         end
         @test detected
     end

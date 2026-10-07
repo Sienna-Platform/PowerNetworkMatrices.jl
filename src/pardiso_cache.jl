@@ -21,7 +21,6 @@ mutable struct PardisoLinSolveCache{T <: Union{Float64, ComplexF64}} <: LinearSo
     is_factored::Bool
     scratch::Vector{T}
     scratch_mat::Matrix{T}
-    released::Bool
 end
 
 """
@@ -44,8 +43,9 @@ is_factored(cache::PardisoLinSolveCache) = cache.is_factored
 
 function Base.deepcopy_internal(::PardisoLinSolveCache, ::IdDict)
     return error(
-        "deepcopy of a PardisoLinSolveCache is unsafe: the copy would hold the same MKL " *
-        "Pardiso handle and release its memory a second time. Share the owning matrix by " *
-        "reference, or build a new factorization.",
+        "deepcopy of a PardisoLinSolveCache is unsafe: the copy would share one native " *
+        "MKL Pardiso factorization with the original. Two caches on one factorization " *
+        "corrupt it, and the copy would use freed memory after the original is collected. " *
+        "Share the owning matrix by reference, or build a new factorization.",
     )
 end
