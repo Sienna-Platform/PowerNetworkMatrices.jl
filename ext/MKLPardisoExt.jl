@@ -81,19 +81,6 @@ end
 _pardiso_matrix_type(::Type{Float64}) = Pardiso.REAL_NONSYM
 _pardiso_matrix_type(::Type{ComplexF64}) = Pardiso.COMPLEX_NONSYM
 
-# The order is necessary: matrix type, then init (it sets the defaults for that type),
-# then the iparm changes, then the transpose flag.
-function _init_pardiso!(ps, ::Type{T}) where {T}
-    Pardiso.set_matrixtype!(ps, _pardiso_matrix_type(T))
-    Pardiso.pardisoinit(ps)
-    Pardiso.set_iparm!(ps, 8, 2)
-    # Pardiso reads CSR and Julia stores CSC. For MKL, `fix_iparm!(ps, :N)` sets
-    # iparm[12] = 2, a plain transpose (not conjugate), so Pardiso solves A·x = b for
-    # real and complex A.
-    Pardiso.fix_iparm!(ps, :N)
-    return ps
-end
-
 function PNM._make_pardiso_cache(
     A::SparseMatrixCSC{T},
 ) where {T <: Union{Float64, ComplexF64}}
@@ -105,7 +92,15 @@ function PNM._make_pardiso_cache(
         )
     end
     ps = Pardiso.MKLPardisoSolver()
-    _init_pardiso!(ps, T)
+    # The order is necessary: matrix type, then init (it sets the defaults for that type),
+    # then the iparm changes, then the transpose flag.
+    Pardiso.set_matrixtype!(ps, _pardiso_matrix_type(T))
+    Pardiso.pardisoinit(ps)
+    Pardiso.set_iparm!(ps, 8, 2)
+    # Pardiso reads CSR and Julia stores CSC. For MKL, `fix_iparm!(ps, :N)` sets
+    # iparm[12] = 2, a plain transpose (not conjugate), so Pardiso solves A·x = b for
+    # real and complex A.
+    Pardiso.fix_iparm!(ps, :N)
     cache = PNM.PardisoLinSolveCache{T}(
         ps, A, Int[], Int[], false, T[], Matrix{T}(undef, 0, 0),
     )

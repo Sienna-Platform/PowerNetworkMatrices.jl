@@ -107,29 +107,15 @@ end
 
 function _buildlodf(
     ::SparseArrays.SparseMatrixCSC{Int8, Int},
-    ::AAFactorCache,
+    ::LinearSolverCache,
     ::SparseArrays.SparseMatrixCSC{Float64, Int},
     ::Set{Int},
     ::LinearSolverType,
 )
     return error(
-        "LODF(A, ABA, BA) needs an ABA factorized with KLU; this ABA was factorized with " *
-        "AppleAccelerate. Build it with `ABA_Matrix(...; factorize = true, " *
-        "linear_solver = \"KLU\")`, or use `LODF(sys; linear_solver = \"AppleAccelerateLU\")`.",
-    )
-end
-
-function _buildlodf(
-    ::SparseArrays.SparseMatrixCSC{Int8, Int},
-    ::PardisoLinSolveCache,
-    ::SparseArrays.SparseMatrixCSC{Float64, Int},
-    ::Set{Int},
-    ::LinearSolverType,
-)
-    return error(
-        "LODF(A, ABA, BA) needs an ABA factorized with KLU; this ABA was factorized with " *
-        "MKLPardiso. Build it with `ABA_Matrix(...; factorize = true, " *
-        "linear_solver = \"KLU\")`, or use `LODF(sys; linear_solver = \"MKLPardiso\")`.",
+        "LODF(A, ABA, BA) needs an ABA factorized with KLU. Build it with " *
+        "`ABA_Matrix(...; factorize = true, linear_solver = \"KLU\")`, or use " *
+        "`LODF(sys; linear_solver)` with the backend of this ABA.",
     )
 end
 

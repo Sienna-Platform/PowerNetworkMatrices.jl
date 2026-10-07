@@ -226,12 +226,7 @@ power flow analysis, sensitivity calculations, and linear power system studies.
 struct ABA_Matrix{
     Ax <: NTuple{2, Vector},
     L <: NTuple{2, Dict},
-    F <: Union{
-        Nothing,
-        KLULinSolveCache{Float64, Int64},
-        AAFactorCache{Float64},
-        PardisoLinSolveCache{Float64},
-    },
+    F <: Union{Nothing, LinearSolverCache},
 } <: PowerNetworkMatrix{Float64}
     data::SparseArrays.SparseMatrixCSC{Float64, Int}
     axes::Ax
