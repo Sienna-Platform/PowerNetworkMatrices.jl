@@ -203,6 +203,9 @@ Computed from van Dijk et al. Eq. 29:
 - `W_inv::Matrix{Float64}`: Pre-inverted W = (A⁻¹ + U⊤B⁻¹U)⁻¹ (M × M). For M ≤ 2, computed analytically; for M > 2, computed via LU factorization.
 - `arc_indices::Vector{Int}`: Arc indices of modified arcs
 - `delta_b::Vector{Float64}`: Susceptance changes per modified arc
+- `arc_out::Vector{Bool}`: Per modified arc, whether the modification opens every member of
+  the arc. Set from member counts, because the summed `delta_b` of a lossy parallel group
+  does not cancel the arc susceptance exactly.
 - `is_islanding::Bool`: Whether this contingency islands the network
 - `bus_island_labels::Vector{Int}`: Post-contingency connected-component label per
   bus position, used to force entries of buses disconnected from the monitored arc
@@ -213,6 +216,7 @@ struct WoodburyFactors
     W_inv::Matrix{Float64}
     arc_indices::Vector{Int}
     delta_b::Vector{Float64}
+    arc_out::Vector{Bool}
     is_islanding::Bool
     bus_island_labels::Vector{Int}
 end

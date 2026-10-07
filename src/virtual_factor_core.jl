@@ -171,8 +171,8 @@ end
 """
     VirtualFactorCore(ybus::Ybus; linear_solver, tol, system_uuid) -> VirtualFactorCore
 
-Build the shared factorization core from a `Ybus`. This is the single place that
-constructs the incidence matrix, BA matrix, ABA matrix, and its factorization.
+Build the shared factorization core from a `Ybus`: the incidence matrix, BA matrix, ABA matrix,
+and its factorization. `worker_core` rebuilds the ABA matrix and factorization of an existing core.
 """
 function VirtualFactorCore(
     ybus::Ybus;

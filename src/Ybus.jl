@@ -1048,18 +1048,20 @@ function _make_arc_subnetwork_axis(
     subnetworks::Dict{Int, Set{Int}},
     nr::NetworkReductionData,
 )
-    arc_ax = get_arc_axis(nr)
-    arc_subnetwork_axis = Dict{Int, Vector{Tuple{Int, Int}}}()
-    for k in keys(subnetworks)
-        arc_subnetwork_axis[k] = Vector{Tuple{Int, Int}}()
+    arc_subnetwork_axis = Dict{Int, Vector{Tuple{Int, Int}}}(
+        k => Vector{Tuple{Int, Int}}() for k in keys(subnetworks)
+    )
+    bus_to_subnetwork = Dict{Int, Int}()
+    for (k, buses) in subnetworks
+        for bus in buses
+            bus_to_subnetwork[bus] = k
+        end
     end
-    for arc in arc_ax
-        for (k, v) in subnetworks
-            if arc[1] ∈ v || arc[2] in v
-                subnetwork = get!(arc_subnetwork_axis, k, Vector{Tuple{Int, Int}}())
-                push!(subnetwork, arc)
-                break
-            end
+    for arc in get_arc_axis(nr)
+        if haskey(bus_to_subnetwork, arc[1])
+            push!(arc_subnetwork_axis[bus_to_subnetwork[arc[1]]], arc)
+        elseif haskey(bus_to_subnetwork, arc[2])
+            push!(arc_subnetwork_axis[bus_to_subnetwork[arc[2]]], arc)
         end
     end
     return arc_subnetwork_axis
@@ -1165,6 +1167,21 @@ function _resolve_arc_admittance(
         valid = findall(arc -> arc[1] != arc[2], arc_ax)
         arc_ax = arc_ax[valid]
         arc_keep_ixs = arc_keep_ixs[valid]
+        # A merge can leave a branch anti-parallel to a surviving key, which
+        # `_remap_merged_bus_in_branch_maps!` folds into that key's group. Relabel its row into
+        # the key's frame, where its ToFrom row is the FromTo current, so the collapse below
+        # sums it into the group's row as `_subset_two_port` does.
+        forward_keys = Set(get_arc_axis(nr))
+        for k in eachindex(arc_ax)
+            arc = arc_ax[k]
+            reversed = (arc[2], arc[1])
+            (arc in forward_keys || !(reversed in forward_keys)) && continue
+            r = arc_keep_ixs[k]
+            ft_row = new_y_ft.data[r, :]
+            new_y_ft.data[r, :] = new_y_tf.data[r, :]
+            new_y_tf.data[r, :] = ft_row
+            arc_ax[k] = reversed
+        end
         # Collapse duplicates that appear when a bus merge maps two winding arcs to the
         # same (from, to) label (e.g. primary and secondary windings both become (X, S)).
         # Sum their rows so the combined admittance is preserved, then drop the extras.
@@ -1422,6 +1439,39 @@ reduced bus axis. Every arc the reduction retains must resolve to surviving buse
     return
 end
 
+# Every arc on the reduced arc axis must sit in exactly one island's arc list, inside that
+# island's buses. A drift here gives the same arc two keys depending on which axis a consumer
+# reads, and the miss surfaces far downstream of the reduction that caused it.
+function _validate_arc_subnetwork_axis(
+    subnetwork_axes::Dict,
+    arc_subnetwork_axis::Dict{Int, Vector{Tuple{Int, Int}}},
+    arc_ax::Vector{Tuple{Int, Int}},
+)
+    arcs = Set(arc_ax)
+    seen = Set{Tuple{Int, Int}}()
+    n_listed = 0
+    for (k, island_arcs) in arc_subnetwork_axis
+        haskey(subnetwork_axes, k) || error(
+            "Network reduction left arc subnetwork key $k, which is not a bus subnetwork key.",
+        )
+        island = Set(subnetwork_axes[k][1])
+        for arc in island_arcs
+            (arc in arcs && arc[1] in island && arc[2] in island) || error(
+                "Network reduction left arc $arc in the arc list of subnetwork $k, but the arc \
+is not on the reduced arc axis or has an endpoint outside the subnetwork.",
+            )
+            push!(seen, arc)
+        end
+        n_listed += length(island_arcs)
+    end
+    (n_listed == length(seen) == length(arcs)) || error(
+        "Network reduction left $(length(arcs)) arcs on the arc axis, but the subnetwork arc \
+lists hold $n_listed entries for $(length(seen)) distinct arcs. Each arc must belong to exactly \
+one subnetwork.",
+    )
+    return
+end
+
 function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     # These quantities are modified and used to construct the new Ybus
     data = get_data(ybus)
@@ -1504,14 +1554,12 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
         )
     end
 
-    subnetwork_axes, arc_subnetwork_axis = _make_subnetwork_axes(
-        ybus,
-        bus_numbers_to_remove,
-        nr_new.removed_arcs,
-        union(
-            Set(keys(nr_new.added_arc_impedance_map)),
-            Set(arc for (arc, _) in composite_entries),
-        ),
+    subnetwork_axes = _make_subnetwork_axes(ybus, bus_numbers_to_remove)
+    # Derived from the final branch maps, like the unreduced build, so the island arc lists
+    # cannot keep a label that a bus merge or an anti-parallel fold already retired.
+    arc_subnetwork_axis = _make_arc_subnetwork_axis(
+        Dict(k => Set(v[1]) for (k, v) in subnetwork_axes),
+        nr,
     )
 
     arc_admittance_from_to, arc_admittance_to_from = _resolve_arc_admittance(
@@ -1531,6 +1579,7 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
         nr.merged_bus_pairs = nr_new.merged_bus_pairs
     end
     _validate_surviving_arc_keys(nr, bus_ax)
+    _validate_arc_subnetwork_axis(subnetwork_axes, arc_subnetwork_axis, get_arc_axis(nr))
     return Ybus(
         data,
         adjacency_data,
@@ -1796,14 +1845,8 @@ function _update_bus_maps!(
     return
 end
 
-function _make_subnetwork_axes(
-    ybus::Ybus,
-    bus_numbers_to_remove::Vector{Int},
-    arcs_to_remove::Set{Tuple{Int, Int}},
-    arcs_to_add::Set{Tuple{Int, Int}},
-)
+function _make_subnetwork_axes(ybus::Ybus, bus_numbers_to_remove::Vector{Int})
     subnetwork_axes = deepcopy(ybus.subnetwork_axes)
-    arc_subnetwork_axis = deepcopy(ybus.arc_subnetwork_axis)
     subnetwork_key_removed = Set{Int}()
     for k in keys(subnetwork_axes)
         if k in bus_numbers_to_remove
@@ -1828,8 +1871,6 @@ function _make_subnetwork_axes(
         end
         delete!(subnetwork_axes, k)
         subnetwork_axes[new_ref_bus] = (axis_1, axis_2)
-        # If a reference bus key is reduced, change the arc subnetwork axis key as well:
-        arc_subnetwork_axis[new_ref_bus] = pop!(arc_subnetwork_axis, k)
         @warn "Original reference bus $k removed during reduction; reassigning the subnetwork reference bus to $new_ref_bus."
     end
     empty_subnetwork_keys = Set{Int}()
@@ -1841,18 +1882,8 @@ function _make_subnetwork_axes(
     for k in empty_subnetwork_keys
         @warn "Subnetwork with reference bus $k has no remaining buses after reduction and will be removed from the Ybus."
         delete!(subnetwork_axes, k)
-        delete!(arc_subnetwork_axis, k)
     end
-    for (k, values) in arc_subnetwork_axis
-        subnetwork_buses = Set(subnetwork_axes[k][1])
-        local_arcs_to_add =
-            Set(
-                arc for arc in arcs_to_add if
-                arc[1] in subnetwork_buses && arc[2] in subnetwork_buses
-            )
-        arc_subnetwork_axis[k] = union(setdiff(values, arcs_to_remove), local_arcs_to_add)
-    end
-    return subnetwork_axes, arc_subnetwork_axis
+    return subnetwork_axes
 end
 
 function _modify_removed_arc_connections!(

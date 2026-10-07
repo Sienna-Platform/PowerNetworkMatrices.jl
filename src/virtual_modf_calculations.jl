@@ -389,6 +389,10 @@ function _compute_modf_entry(
     return _apply_woodbury_correction(vmodf, monitored_idx, wf)
 end
 
+# Per-modification row cache: one n_bus-long row per monitored arc.
+_new_modf_row_cache(vmodf::VirtualMODF) =
+    RowCache(get_max_cache_size_bytes(vmodf), Set{Int}(), size(vmodf)[2] * sizeof(Float64))
+
 # --- getindex: by integer monitored index + NetworkModification ---
 
 """
@@ -400,13 +404,9 @@ $(TYPEDSIGNATURES)
 function Base.getindex(vmodf::VirtualMODF, monitored_idx::Int, mod::NetworkModification)
     core = get_core(vmodf)
     row_caches = get_row_caches(vmodf)
-    max_bytes = get_max_cache_size_bytes(vmodf)
     cutoff = get_cutoff(vmodf)
     return @lock core.solver_lock begin
-        rc = get!(row_caches, mod) do
-            row_size = length(core.temp_data[1]) * sizeof(Float64)
-            RowCache(max_bytes, Set{Int}(), row_size)
-        end
+        rc = get!(() -> _new_modf_row_cache(vmodf), row_caches, mod)
         if haskey(rc, monitored_idx)
             return copy(rc[monitored_idx])
         end

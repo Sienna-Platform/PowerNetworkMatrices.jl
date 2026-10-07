@@ -3,10 +3,7 @@
 
 Invert the M×M Woodbury W; closed form for M ≤ 2, LU otherwise.
 """
-function _invert_woodbury_W(
-    W_mat::Matrix{Float64},
-    M::Int,
-)::Tuple{Matrix{Float64}, Bool}
+function _invert_woodbury_W(W_mat::Matrix{Float64}, M::Int)::Tuple{Matrix{Float64}, Bool}
     if iszero(M)
         # M = 0 (hand-built modifications only; registration rejects it): getri! rejects 0×0.
         return Matrix{Float64}(undef, 0, 0), false
@@ -49,6 +46,9 @@ end
 # the pinv-based Woodbury correction leaves the stale pre-contingency value there.
 # These helpers identify the disconnected buses by connectivity and zero them.
 
+_removes_arc(arc_sus::Vector{Float64}, m::ArcModification) =
+    abs(arc_sus[m.arc_index] + m.delta_b) < MODF_ISLANDING_TOLERANCE
+
 # Connected-component label (a representative bus position) of every bus in the
 # post-contingency network: the base topology minus the arcs this modification
 # fully outages (post-contingency susceptance ≈ 0). A partially-reduced arc still
@@ -62,7 +62,7 @@ function _post_contingency_bus_labels(
 )::Vector{Int}
     removed = Set{Int}()
     for m in modifications
-        if abs(arc_sus[m.arc_index] + m.delta_b) < MODF_ISLANDING_TOLERANCE
+        if _removes_arc(arc_sus, m)
             push!(removed, m.arc_index)
         end
     end
@@ -81,6 +81,70 @@ function _post_contingency_bus_labels(
         uf[i] = get_representative(uf, i)
     end
     return uf
+end
+
+# Labeler for `_woodbury_factors_from_Z`: a modification that fully outages exactly one bridge of
+# the base `BA` graph copies the base component labels and relabels the bridge's far side, O(n_bus)
+# instead of a union-find over every arc; any other modification runs
+# `_post_contingency_bus_labels`. The partition is the union-find's, the representatives are not:
+# base labels are DFS roots and a far side takes its child endpoint, never a root.
+struct BridgeLabels
+    tree::BridgeTree
+    base::Vector{Int}
+end
+
+function BridgeLabels(BA::SparseArrays.SparseMatrixCSC{Float64, Int})
+    rv = SparseArrays.rowvals(BA)
+    edges = Vector{Tuple{Int, Int}}(undef, size(BA, 2))
+    for e in 1:size(BA, 2)
+        rng = SparseArrays.nzrange(BA, e)
+        length(rng) <= 2 ||
+            error("BA column $e has $(length(rng)) nonzeros; an arc has at most two.")
+        # A column with fewer than two nonzeros connects nothing: a self-loop, which
+        # `find_bridges` ignores.
+        if length(rng) == 2
+            edges[e] = (rv[first(rng)], rv[last(rng)])
+        else
+            edges[e] = (1, 1)
+        end
+    end
+    n_bus = size(BA, 1)
+    tree = find_bridges(n_bus, edges)
+    base = zeros(Int, n_bus)
+    i = 1
+    while i <= n_bus
+        root = tree.preorder[i]
+        for p in i:tree.last[root]
+            base[tree.preorder[p]] = root
+        end
+        i = tree.last[root] + 1
+    end
+    return BridgeLabels(tree, base)
+end
+
+function (bl::BridgeLabels)(
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    arc_sus::Vector{Float64},
+    modifications::Tuple{Vararg{ArcModification}},
+    n_bus::Int,
+)::Vector{Int}
+    removed = 0
+    n_removed = 0
+    for m in modifications
+        if _removes_arc(arc_sus, m)
+            removed = m.arc_index
+            n_removed += 1
+        end
+    end
+    if !isone(n_removed) || !is_bridge(bl.tree, removed)
+        return _post_contingency_bus_labels(BA, arc_sus, modifications, n_bus)
+    end
+    labels = copy(bl.base)
+    far = bl.tree.far_end[removed]
+    for b in bridge_far_side(bl.tree, removed)
+        labels[b] = far
+    end
+    return labels
 end
 
 # Force entries of buses disconnected from the monitored arc to exactly zero.
@@ -118,13 +182,14 @@ function _arc_susceptance_sign(
 end
 
 """
-    _woodbury_factors_from_Z(Z, BA, signs, arc_sus, modifications) -> WoodburyFactors
+    _woodbury_factors_from_Z(Z, BA, signs, arc_sus, modifications, arc_out[, labeler]) -> WoodburyFactors
 
 Assemble the Woodbury factors from an already-resolved `Z`, whose column `j` is
 `B⁻¹ν_j` for the `j`-th modified arc in full-bus space. The callers differ only
 in how they obtain `Z`: one solve per arc in the kernel path, a lookup into the
 batched pre-contingency solves in `populate_cache`. `signs[e]` is the sign of arc `e`'s DC
-susceptance (`VirtualFactorCore.arc_susceptance_signs`).
+susceptance (`VirtualFactorCore.arc_susceptance_signs`). Islanding labels come from
+`labeler(BA, arc_sus, modifications, n_bus)`, e.g. a `BridgeLabels`.
 """
 function _woodbury_factors_from_Z(
     Z::Matrix{Float64},
@@ -132,7 +197,9 @@ function _woodbury_factors_from_Z(
     signs::Vector{Float64},
     arc_sus::Vector{Float64},
     modifications::Tuple{Vararg{ArcModification}},
-)::WoodburyFactors
+    arc_out::Vector{Bool},
+    labeler::F = _post_contingency_bus_labels,
+)::WoodburyFactors where {F}
     M = length(modifications)
     n_bus = size(Z, 1)
 
@@ -174,10 +241,45 @@ function _woodbury_factors_from_Z(
     labels = Int[]
     if is_island
         @debug "Contingency islands the network; using pinv-based Woodbury correction."
-        labels = _post_contingency_bus_labels(BA, arc_sus, modifications, n_bus)
+        labels = labeler(BA, arc_sus, modifications, n_bus)
     end
 
-    return WoodburyFactors(Z, W_inv, arc_indices, delta_b_vec, is_island, labels)
+    return WoodburyFactors(Z, W_inv, arc_indices, delta_b_vec, arc_out, is_island, labels)
+end
+
+# zm_Z = ν_mᵀ Z[:, eachindex(zm_Z)], ν_m = BA[:, m] / b_pre (BA's sign convention, not A's).
+function _monitored_Z!(
+    zm_Z::AbstractVector{Float64},
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    m::Int,
+    b_pre::Float64,
+    Z::Matrix{Float64},
+)
+    ba_nzv = SparseArrays.nonzeros(BA)
+    ba_rv = SparseArrays.rowvals(BA)
+    fill!(zm_Z, 0.0)
+    @inbounds for nz_idx in SparseArrays.nzrange(BA, m)
+        row = ba_rv[nz_idx]
+        coeff = ba_nzv[nz_idx] / b_pre
+        for j in eachindex(zm_Z)
+            zm_Z[j] += coeff * Z[row, j]
+        end
+    end
+    return zm_Z
+end
+
+# Per modified arc: true when the modification opens every member. Counts members instead of
+# comparing susceptances, because the group susceptance is not the exact sum of its members'.
+function _arcs_fully_opened(
+    core::VirtualFactorCore,
+    modifications::Tuple{Vararg{ArcModification}},
+)::Vector{Bool}
+    nr = get_network_reduction_data(core)
+    arc_ax = get_arc_axis(core)
+    return Bool[
+        m.opened > 0 && m.opened >= _arc_member_count(nr, arc_ax[m.arc_index]) for
+        m in modifications
+    ]
 end
 
 # Susceptance of the monitored arc once the modifications are applied.
@@ -193,6 +295,21 @@ function _post_modification_susceptance(
         end
     end
     return b_mon
+end
+
+# True when the modifications take the monitored arc out of service: all its members are open,
+# or the post-modification susceptance is exactly zero (a DC-only `ArcModification`).
+function _monitored_arc_out(
+    arc_sus::Vector{Float64},
+    monitored_idx::Int,
+    wf::WoodburyFactors,
+)::Bool
+    for (j, idx) in enumerate(wf.arc_indices)
+        if idx == monitored_idx && wf.arc_out[j]
+            return true
+        end
+    end
+    return iszero(_post_modification_susceptance(arc_sus, monitored_idx, wf))
 end
 
 """
@@ -211,7 +328,14 @@ function _woodbury_correction!(
 )::Vector{Float64}
     M = length(wf.arc_indices)
     return _woodbury_correction!(
-        z_m, zeros(M), zeros(M), BA, b_mon_pre, b_mon_post, monitored_idx, wf,
+        z_m,
+        zeros(M),
+        zeros(M),
+        BA,
+        b_mon_pre,
+        b_mon_post,
+        monitored_idx,
+        wf,
     )
 end
 
@@ -235,18 +359,7 @@ function _woodbury_correction!(
     zm_Z = view(zm_Z_buf, 1:M)
     correction_coeff = view(coeff_buf, 1:M)
 
-    # ν_m⊤ · Z  (1 × M vector)
-    # Use BA[:,m]/b instead of A[m,:] for consistent sign convention.
-    ba_nzv = SparseArrays.nonzeros(BA)
-    ba_rv = SparseArrays.rowvals(BA)
-    fill!(zm_Z, 0.0)
-    @inbounds for nz_idx in nzrange(BA, monitored_idx)
-        row = ba_rv[nz_idx]
-        coeff = ba_nzv[nz_idx] / b_mon_pre
-        for j in 1:M
-            zm_Z[j] += coeff * wf.Z[row, j]
-        end
-    end
+    _monitored_Z!(zm_Z, BA, monitored_idx, b_mon_pre, wf.Z)
 
     # Woodbury correction: z_m -= Z · (W⁻¹ · zm_Z), then scale by b_mon_post.
     LinearAlgebra.mul!(correction_coeff, wf.W_inv, zm_Z)
@@ -260,17 +373,26 @@ end
 
 # Solves and the scratch slot go through `with_solver`, which holds the core's `solver_lock`.
 """
-    _compute_woodbury_factors(mat, modifications) -> WoodburyFactors
+    _compute_woodbury_factors(mat, modifications[, labeler]) -> WoodburyFactors
 
-Woodbury factors `Z[:,j] = B⁻¹ν_j` for each modified arc, on a `VirtualPTDF` or `VirtualMODF`.
+Woodbury factors `Z[:,j] = B⁻¹ν_j` for each modified arc, on a `VirtualPTDF`, a `VirtualMODF`
+or a `VirtualFactorCore` (solving on that core's factorization).
 """
-function _compute_woodbury_factors(
+_compute_woodbury_factors(
     mat::Union{VirtualPTDF, VirtualMODF},
     modifications::Tuple{Vararg{ArcModification}},
-)::WoodburyFactors
-    core = get_core(mat)
+) = _compute_woodbury_factors(get_core(mat), modifications)
+
+function _compute_woodbury_factors(
+    core::VirtualFactorCore,
+    modifications::Tuple{Vararg{ArcModification}},
+    labeler::F = _post_contingency_bus_labels,
+)::WoodburyFactors where {F}
     return with_solver(
-        core.K, core.work_ba_col, core.temp_data, core.solver_lock,
+        core.K,
+        core.work_ba_col,
+        core.temp_data,
+        core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
         Z = Matrix{Float64}(undef, length(temp_data), length(modifications))
         for (j, mod) in enumerate(modifications)
@@ -285,29 +407,47 @@ function _compute_woodbury_factors(
             )
         end
         return _woodbury_factors_from_Z(
-            Z, core.BA, core.arc_susceptance_signs, core.arc_susceptances, modifications,
+            Z,
+            core.BA,
+            core.arc_susceptance_signs,
+            core.arc_susceptances,
+            modifications,
+            _arcs_fully_opened(core, modifications),
+            labeler,
         )
     end
 end
 
-function _apply_woodbury_correction(
+_apply_woodbury_correction(
     mat::Union{VirtualPTDF, VirtualMODF},
     monitored_idx::Int,
     wf::WoodburyFactors,
+) = _apply_woodbury_correction(get_core(mat), monitored_idx, wf)
+
+function _apply_woodbury_correction(
+    core::VirtualFactorCore,
+    monitored_idx::Int,
+    wf::WoodburyFactors,
 )::Vector{Float64}
-    core = get_core(mat)
     arc_sus = core.arc_susceptances
     return with_solver(
-        core.K, core.work_ba_col, core.temp_data, core.solver_lock,
+        core.K,
+        core.work_ba_col,
+        core.temp_data,
+        core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
-        b_mon = _post_modification_susceptance(arc_sus, monitored_idx, wf)
-        if abs(b_mon) < eps()
+        if _monitored_arc_out(arc_sus, monitored_idx, wf)
             return zeros(length(temp_data))
         end
+        b_mon = _post_modification_susceptance(arc_sus, monitored_idx, wf)
         # z_m = B⁻¹ν_m / b_mon_pre.
         b_mon_pre = arc_sus[monitored_idx]
         lin_solve = _solve_ba_column!(
-            K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, monitored_idx,
+            K_solver,
+            work_ba_col,
+            core.BA,
+            core.bus_to_valid_idx,
+            monitored_idx,
         )
         _gather_to_buses!(temp_data, core.valid_ix, lin_solve, b_mon_pre)
         _woodbury_correction!(temp_data, core.BA, b_mon_pre, b_mon, monitored_idx, wf)

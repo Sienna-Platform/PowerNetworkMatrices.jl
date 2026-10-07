@@ -45,3 +45,32 @@ end
     @test all(b.is_bridge)
     @test length(PNM.bridge_far_side(b, 1)) == n - 1
 end
+
+function _first_seen(labels::Vector{Int})
+    d = Dict{Int, Int}()
+    return [get!(d, l, length(d) + 1) for l in labels]
+end
+
+@testset "BridgeLabels partitions like the union-find" begin
+    rng = Random.Xoshiro(29)
+    for trial in 1:100
+        n = rand(rng, 2:25)
+        edges = [(rand(rng, 1:n), rand(rng, 1:n)) for _ in 1:rand(rng, 1:(2 * n))]
+        edges = [e for e in edges if e[1] != e[2]]
+        isempty(edges) && continue
+        m = length(edges)
+        rows = vcat(first.(edges), last.(edges))
+        cols = vcat(1:m, 1:m)
+        BA = SparseArrays.sparse(rows, cols, vcat(ones(m), -ones(m)), n, m)
+        sus = ones(m)
+        bl = PNM.BridgeLabels(BA)
+        cases =
+            Tuple{Vararg{PNM.ArcModification}}[(PNM.ArcModification(e, -1.0),) for e in 1:m]
+        push!(cases, (PNM.ArcModification(1, -0.5),))
+        m > 1 && push!(cases, (PNM.ArcModification(1, -1.0), PNM.ArcModification(m, -1.0)))
+        for mods in cases
+            uf = PNM._post_contingency_bus_labels(BA, sus, mods, n)
+            @test _first_seen(bl(BA, sus, mods, n)) == _first_seen(uf)
+        end
+    end
+end

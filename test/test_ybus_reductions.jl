@@ -1713,3 +1713,128 @@ end
         0.0,
     )
 end
+
+function _test_arc_subnetwork_axis_partitions(ybus::Ybus)
+    @test Set(keys(ybus.arc_subnetwork_axis)) == Set(keys(ybus.subnetwork_axes))
+    @test sort(reduce(vcat, values(ybus.arc_subnetwork_axis))) ==
+          sort(PNM.get_arc_axis(ybus))
+    for (k, arcs) in ybus.arc_subnetwork_axis
+        island = Set(ybus.subnetwork_axes[k][1])
+        @test all(arc -> arc[1] in island && arc[2] in island, arcs)
+    end
+    return
+end
+
+function _zero_c_sys14_lines(names)
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    for name in names
+        line = get_component(Line, sys, name)
+        set_r!(line, 0.0u"SU")
+        set_x!(line, 0.0u"SU")
+    end
+    return sys
+end
+
+@testset "arc_subnetwork_axis carries surviving bus labels after a merge" begin
+    # Lines 2-3, 3-4 and 2-4 merge buses 2, 3 and 4 into one bus.
+    zeroed = ("Line3", "Line6", "Line4")
+
+    ybus = Ybus(_zero_c_sys14_lines(zeroed))
+    @test 2 ∈ PNM.get_bus_axis(ybus)
+    arcs = reduce(vcat, values(ybus.arc_subnetwork_axis))
+    @test (2, 7) ∈ arcs
+    @test (4, 7) ∉ arcs
+    _test_arc_subnetwork_axis_partitions(ybus)
+
+    ybus = Ybus(_zero_c_sys14_lines(zeroed); irreducible_buses = Set([4]))
+    @test 4 ∈ PNM.get_bus_axis(ybus)
+    arcs = reduce(vcat, values(ybus.arc_subnetwork_axis))
+    @test (4, 5) ∈ arcs
+    @test (2, 5) ∉ arcs
+    _test_arc_subnetwork_axis_partitions(ybus)
+
+    _test_arc_subnetwork_axis_partitions(
+        Ybus(
+            _zero_c_sys14_lines(zeroed);
+            network_reductions = NetworkReduction[RadialReduction(), DegreeTwoReduction()],
+        ),
+    )
+end
+
+@testset "arc_subnetwork_axis partitions the arc axis under every reduction" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    for reductions in (
+        NetworkReduction[RadialReduction()],
+        NetworkReduction[DegreeTwoReduction()],
+        NetworkReduction[RadialReduction(), DegreeTwoReduction()],
+    )
+        _test_arc_subnetwork_axis_partitions(Ybus(sys; network_reductions = reductions))
+    end
+
+    _test_arc_subnetwork_axis_partitions(
+        Ybus(
+            build_multi_island_composite_arc_system();
+            network_reductions = NetworkReduction[DegreeTwoReduction()],
+        ),
+    )
+
+    sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
+    _test_arc_subnetwork_axis_partitions(
+        Ybus(
+            sys;
+            network_reductions = NetworkReduction[WardReduction([101, 114, 110, 111, 109])],
+        ),
+    )
+end
+
+@testset "reduction validation rejects a stale arc subnetwork axis" begin
+    ybus = Ybus(_zero_c_sys14_lines(("Line3", "Line6", "Line4")))
+    subnetwork_axes = ybus.subnetwork_axes
+    arc_ax = PNM.get_arc_axis(ybus)
+    k = only(keys(subnetwork_axes))
+    good = ybus.arc_subnetwork_axis[k]
+
+    @test isnothing(
+        PNM._validate_arc_subnetwork_axis(
+            subnetwork_axes,
+            ybus.arc_subnetwork_axis,
+            arc_ax,
+        ),
+    )
+
+    # A pre-merge arc that is not on the reduced arc axis.
+    @test_throws r"not on the reduced arc axis or has an endpoint outside" PNM._validate_arc_subnetwork_axis(
+        subnetwork_axes, Dict(k => vcat(good, [(4, 7)])), arc_ax,
+    )
+    # An arc of the arc axis in no island.
+    @test_throws r"Each arc must belong to exactly" PNM._validate_arc_subnetwork_axis(
+        subnetwork_axes, Dict(k => good[2:end]), arc_ax,
+    )
+    # The same arc twice.
+    @test_throws r"Each arc must belong to exactly" PNM._validate_arc_subnetwork_axis(
+        subnetwork_axes, Dict(k => vcat(good, good[1:1])), arc_ax,
+    )
+    # A key that is not a bus subnetwork key.
+    @test !haskey(subnetwork_axes, k + 1000)
+    @test_throws r"not a bus subnetwork key" PNM._validate_arc_subnetwork_axis(
+        subnetwork_axes, Dict(k + 1000 => good), arc_ax,
+    )
+
+    # An arc on the arc axis, listed under an island that does not hold its endpoints.
+    y2 = Ybus(
+        build_multi_island_composite_arc_system();
+        network_reductions = NetworkReduction[DegreeTwoReduction()],
+    )
+    axes2 = y2.subnetwork_axes
+    arc_ax2 = PNM.get_arc_axis(y2)
+    @test isnothing(
+        PNM._validate_arc_subnetwork_axis(axes2, y2.arc_subnetwork_axis, arc_ax2),
+    )
+    moved = Dict(kk => copy(v) for (kk, v) in y2.arc_subnetwork_axis)
+    arc = pop!(moved[200])
+    push!(moved[1], arc)
+    @test arc in arc_ax2
+    @test_throws r"not on the reduced arc axis or has an endpoint outside" PNM._validate_arc_subnetwork_axis(
+        axes2, moved, arc_ax2,
+    )
+end

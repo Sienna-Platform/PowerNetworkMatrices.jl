@@ -29,12 +29,12 @@ end
 # Both overloads solve in place (zero-allocation hot path). KLU and Apple
 # Accelerate are the only supported backends; adding a new backend requires
 # extending this method.
-function _solve_factorization(K::KLULinSolveCache{Float64}, b::Vector{Float64})
+function _solve_factorization(K::KLULinSolveCache{Float64}, b::VecOrMat{Float64})
     solve!(K, b)
     return b
 end
 
-function _solve_factorization(K::AAFactorCache, b::Vector{Float64})
+function _solve_factorization(K::AAFactorCache, b::VecOrMat{Float64})
     AccelerateWrapper.solve!(K, b)
     return b
 end
