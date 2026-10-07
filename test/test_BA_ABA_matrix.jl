@@ -298,3 +298,33 @@ end
         @info "Skipped AppleAccelerate ABA tests (backend unavailable on this platform)"
     end
 end
+
+@testset "ABA_Matrix factorizes with MKLPardiso" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    if !PNM._has_mkl_pardiso_ext()
+        @test_throws ErrorException ABA_Matrix(
+            sys;
+            factorize = true,
+            linear_solver = "MKLPardiso",
+        )
+    elseif Pardiso.mkl_is_available()
+        aba_klu = ABA_Matrix(sys; factorize = true, linear_solver = "KLU")
+        aba_p = ABA_Matrix(sys; factorize = true, linear_solver = "MKLPardiso")
+        @test typeof(aba_p.K) == PNM.PardisoLinSolveCache{Float64}
+        @test is_factorized(aba_p)
+        b = collect(range(1.0, 2.0; length = size(aba_p.data, 1)))
+        x_p = copy(b)
+        PNM.solve!(aba_p.K, x_p)
+        x_klu = copy(b)
+        PNM.solve!(aba_klu.K, x_klu)
+        @test isapprox(x_p, x_klu; atol = 1e-10)
+        err = try
+            LODF(IncidenceMatrix(sys), aba_p, BA_Matrix(sys))
+            nothing
+        catch e
+            e
+        end
+        @test typeof(err) == ErrorException
+        @test occursin("linear_solver = \"KLU\"", err.msg)
+    end
+end

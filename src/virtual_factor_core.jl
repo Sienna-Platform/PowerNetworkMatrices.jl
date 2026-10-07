@@ -168,6 +168,18 @@ end
 
 # --- Constructor ---
 
+# The virtual matrices solve through `_solve_factorization`, which has KLU and
+# AppleAccelerate arms only.
+_check_virtual_solver(::LinearSolverType) = nothing
+
+function _check_virtual_solver(::MKLPardisoSolver)
+    return error(
+        "VirtualPTDF, VirtualLODF, and VirtualMODF support the \"KLU\" and " *
+        "\"AppleAccelerateLU\" solvers; got \"MKLPardiso\". Use " *
+        "`PTDF(sys; linear_solver = \"MKLPardiso\")` for a dense matrix.",
+    )
+end
+
 """
     VirtualFactorCore(ybus::Ybus; linear_solver, tol, system_uuid) -> VirtualFactorCore
 
@@ -181,6 +193,7 @@ function VirtualFactorCore(
     system_uuid::Union{Base.UUID, Nothing} = nothing,
 )
     solver = resolve_linear_solver(linear_solver)
+    _check_virtual_solver(solver)
     ref_bus_positions = get_ref_bus_position(ybus)
     A = IncidenceMatrix(ybus)
     BA = BA_Matrix(ybus)

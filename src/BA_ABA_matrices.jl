@@ -210,9 +210,10 @@ power flow analysis, sensitivity calculations, and linear power system studies.
         Mapping from reference bus numbers to their corresponding subnetwork axes
 - `ref_bus_position::Vector{Int}`:
         Vector containing the original indices of reference buses before matrix reduction
-- `K::F <: Union{Nothing, KLULinSolveCache{Float64, Int64}, AAFactorCache{Float64}}`:
-        Optional factorization: a `KLULinSolveCache{Float64, Int64}` (KLU) or `AAFactorCache{Float64}`
-        (AppleAccelerate), per the constructor's `linear_solver`; `nothing` if unfactorized
+- `K::F`:
+        Optional factorization: a `KLULinSolveCache{Float64, Int64}` (KLU),
+        `AAFactorCache{Float64}` (AppleAccelerate), or `PardisoLinSolveCache{Float64}`
+        (MKL Pardiso), per the constructor's `linear_solver`; `nothing` if unfactorized
 - `branch_catalog::BranchCatalog`:
         Container for network reduction information applied during matrix construction
 
@@ -225,7 +226,12 @@ power flow analysis, sensitivity calculations, and linear power system studies.
 struct ABA_Matrix{
     Ax <: NTuple{2, Vector},
     L <: NTuple{2, Dict},
-    F <: Union{Nothing, KLULinSolveCache{Float64, Int64}, AAFactorCache{Float64}},
+    F <: Union{
+        Nothing,
+        KLULinSolveCache{Float64, Int64},
+        AAFactorCache{Float64},
+        PardisoLinSolveCache{Float64},
+    },
 } <: PowerNetworkMatrix{Float64}
     data::SparseArrays.SparseMatrixCSC{Float64, Int}
     axes::Ax
@@ -254,8 +260,9 @@ for DC power flow analysis and power system sensitivity studies.
 - `factorize::Bool = false`:
         Whether to perform factorization during construction for efficient linear system solving
 - `linear_solver::String = "KLU"`:
-        Backend for the factorization when `factorize = true`: "KLU" or "AppleAccelerateLU"
-        (macOS 15.5+). Other values raise an error. `LODF(A, ABA, BA)` and the
+        Backend for the factorization when `factorize = true`: "KLU",
+        "AppleAccelerateLU" (macOS 15.5+), or "MKLPardiso" (x86_64 Linux or Windows;
+        load `Pardiso` first). Other values raise an error. `LODF(A, ABA, BA)` and the
         `DC_ABA_Matrix_Factorized` alias PowerFlows dispatches on both require "KLU".
 - `network_reductions::Vector{NetworkReduction} = NetworkReduction[]`:
         Vector of network reduction algorithms to apply before matrix construction
@@ -304,8 +311,9 @@ via the computed Ybus matrix.
 - `factorize::Bool = false`:
         Whether to perform factorization during construction for efficient linear system solving
 - `linear_solver::String = "KLU"`:
-        Backend for the factorization when `factorize = true`: "KLU" or "AppleAccelerateLU"
-        (macOS 15.5+). Other values raise an error. `LODF(A, ABA, BA)` and the
+        Backend for the factorization when `factorize = true`: "KLU",
+        "AppleAccelerateLU" (macOS 15.5+), or "MKLPardiso" (x86_64 Linux or Windows;
+        load `Pardiso` first). Other values raise an error. `LODF(A, ABA, BA)` and the
         `DC_ABA_Matrix_Factorized` alias PowerFlows dispatches on both require "KLU".
 
 # Returns
