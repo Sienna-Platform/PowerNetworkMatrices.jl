@@ -1713,3 +1713,76 @@ end
         0.0,
     )
 end
+
+function _test_arc_subnetwork_axis_partitions(ybus::Ybus)
+    @test Set(keys(ybus.arc_subnetwork_axis)) == Set(keys(ybus.subnetwork_axes))
+    @test sort(reduce(vcat, values(ybus.arc_subnetwork_axis))) ==
+          sort(PNM.get_arc_axis(ybus))
+    for (k, arcs) in ybus.arc_subnetwork_axis
+        island = Set(ybus.subnetwork_axes[k][1])
+        @test all(arc -> arc[1] in island && arc[2] in island, arcs)
+    end
+    return
+end
+
+function _zero_c_sys14_lines(names)
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    for name in names
+        line = get_component(Line, sys, name)
+        set_r!(line, 0.0u"SU")
+        set_x!(line, 0.0u"SU")
+    end
+    return sys
+end
+
+@testset "arc_subnetwork_axis carries surviving bus labels after a merge" begin
+    # Lines 2-3, 3-4 and 2-4 merge buses 2, 3 and 4 into one bus.
+    zeroed = ("Line3", "Line6", "Line4")
+
+    ybus = Ybus(_zero_c_sys14_lines(zeroed))
+    @test 2 ∈ PNM.get_bus_axis(ybus)
+    arcs = reduce(vcat, values(ybus.arc_subnetwork_axis))
+    @test (2, 7) ∈ arcs
+    @test (4, 7) ∉ arcs
+    _test_arc_subnetwork_axis_partitions(ybus)
+
+    ybus = Ybus(_zero_c_sys14_lines(zeroed); irreducible_buses = Set([4]))
+    @test 4 ∈ PNM.get_bus_axis(ybus)
+    arcs = reduce(vcat, values(ybus.arc_subnetwork_axis))
+    @test (4, 5) ∈ arcs
+    @test (2, 5) ∉ arcs
+    _test_arc_subnetwork_axis_partitions(ybus)
+
+    _test_arc_subnetwork_axis_partitions(
+        Ybus(
+            _zero_c_sys14_lines(zeroed);
+            network_reductions = NetworkReduction[RadialReduction(), DegreeTwoReduction()],
+        ),
+    )
+end
+
+@testset "arc_subnetwork_axis partitions the arc axis under every reduction" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    for reductions in (
+        NetworkReduction[RadialReduction()],
+        NetworkReduction[DegreeTwoReduction()],
+        NetworkReduction[RadialReduction(), DegreeTwoReduction()],
+    )
+        _test_arc_subnetwork_axis_partitions(Ybus(sys; network_reductions = reductions))
+    end
+
+    _test_arc_subnetwork_axis_partitions(
+        Ybus(
+            build_multi_island_composite_arc_system();
+            network_reductions = NetworkReduction[DegreeTwoReduction()],
+        ),
+    )
+
+    sys = PSB.build_system(PSSEParsingTestSystems, "psse_14_network_reduction_test_system")
+    _test_arc_subnetwork_axis_partitions(
+        Ybus(
+            sys;
+            network_reductions = NetworkReduction[WardReduction([101, 114, 110, 111, 109])],
+        ),
+    )
+end

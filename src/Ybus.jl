@@ -1519,14 +1519,12 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
         )
     end
 
-    subnetwork_axes, arc_subnetwork_axis = _make_subnetwork_axes(
-        ybus,
-        bus_numbers_to_remove,
-        nr_new.removed_arcs,
-        union(
-            Set(keys(nr_new.added_arc_impedance_map)),
-            Set(arc for (arc, _) in composite_entries),
-        ),
+    subnetwork_axes = _make_subnetwork_axes(ybus, bus_numbers_to_remove)
+    # Derived from the final branch maps, like the unreduced build, so the island arc lists
+    # cannot keep a label that a bus merge or an anti-parallel fold already retired.
+    arc_subnetwork_axis = _make_arc_subnetwork_axis(
+        Dict(k => Set(v[1]) for (k, v) in subnetwork_axes),
+        nr,
     )
 
     arc_admittance_from_to, arc_admittance_to_from = _resolve_arc_admittance(
@@ -1811,14 +1809,8 @@ function _update_bus_maps!(
     return
 end
 
-function _make_subnetwork_axes(
-    ybus::Ybus,
-    bus_numbers_to_remove::Vector{Int},
-    arcs_to_remove::Set{Tuple{Int, Int}},
-    arcs_to_add::Set{Tuple{Int, Int}},
-)
+function _make_subnetwork_axes(ybus::Ybus, bus_numbers_to_remove::Vector{Int})
     subnetwork_axes = deepcopy(ybus.subnetwork_axes)
-    arc_subnetwork_axis = deepcopy(ybus.arc_subnetwork_axis)
     subnetwork_key_removed = Set{Int}()
     for k in keys(subnetwork_axes)
         if k in bus_numbers_to_remove
@@ -1843,8 +1835,6 @@ function _make_subnetwork_axes(
         end
         delete!(subnetwork_axes, k)
         subnetwork_axes[new_ref_bus] = (axis_1, axis_2)
-        # If a reference bus key is reduced, change the arc subnetwork axis key as well:
-        arc_subnetwork_axis[new_ref_bus] = pop!(arc_subnetwork_axis, k)
         @warn "Original reference bus $k removed during reduction; reassigning the subnetwork reference bus to $new_ref_bus."
     end
     empty_subnetwork_keys = Set{Int}()
@@ -1856,18 +1846,8 @@ function _make_subnetwork_axes(
     for k in empty_subnetwork_keys
         @warn "Subnetwork with reference bus $k has no remaining buses after reduction and will be removed from the Ybus."
         delete!(subnetwork_axes, k)
-        delete!(arc_subnetwork_axis, k)
     end
-    for (k, values) in arc_subnetwork_axis
-        subnetwork_buses = Set(subnetwork_axes[k][1])
-        local_arcs_to_add =
-            Set(
-                arc for arc in arcs_to_add if
-                arc[1] in subnetwork_buses && arc[2] in subnetwork_buses
-            )
-        arc_subnetwork_axis[k] = union(setdiff(values, arcs_to_remove), local_arcs_to_add)
-    end
-    return subnetwork_axes, arc_subnetwork_axis
+    return subnetwork_axes
 end
 
 function _modify_removed_arc_connections!(
