@@ -1437,6 +1437,39 @@ reduced bus axis. Every arc the reduction retains must resolve to surviving buse
     return
 end
 
+# Every arc on the reduced arc axis must sit in exactly one island's arc list, inside that
+# island's buses. A drift here gives the same arc two keys depending on which axis a consumer
+# reads, and the miss surfaces far downstream of the reduction that caused it.
+function _validate_arc_subnetwork_axis(
+    subnetwork_axes::Dict,
+    arc_subnetwork_axis::Dict{Int, Vector{Tuple{Int, Int}}},
+    arc_ax::Vector{Tuple{Int, Int}},
+)
+    arcs = Set(arc_ax)
+    seen = Set{Tuple{Int, Int}}()
+    n_listed = 0
+    for (k, island_arcs) in arc_subnetwork_axis
+        haskey(subnetwork_axes, k) || error(
+            "Network reduction left arc subnetwork key $k, which is not a bus subnetwork key.",
+        )
+        island = Set(subnetwork_axes[k][1])
+        for arc in island_arcs
+            (arc in arcs && arc[1] in island && arc[2] in island) || error(
+                "Network reduction left arc $arc in the arc list of subnetwork $k, but the arc \
+is not on the reduced arc axis or has an endpoint outside the subnetwork.",
+            )
+            push!(seen, arc)
+        end
+        n_listed += length(island_arcs)
+    end
+    (n_listed == length(seen) == length(arcs)) || error(
+        "Network reduction left $(length(arcs)) arcs on the arc axis, but the subnetwork arc \
+lists hold $n_listed entries for $(length(seen)) distinct arcs. Each arc must belong to exactly \
+one subnetwork.",
+    )
+    return
+end
+
 function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     # These quantities are modified and used to construct the new Ybus
     data = get_data(ybus)
@@ -1544,6 +1577,7 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
         nr.merged_bus_pairs = nr_new.merged_bus_pairs
     end
     _validate_surviving_arc_keys(nr, bus_ax)
+    _validate_arc_subnetwork_axis(subnetwork_axes, arc_subnetwork_axis, get_arc_axis(nr))
     return Ybus(
         data,
         adjacency_data,

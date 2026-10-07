@@ -1786,3 +1786,55 @@ end
         ),
     )
 end
+
+@testset "reduction validation rejects a stale arc subnetwork axis" begin
+    ybus = Ybus(_zero_c_sys14_lines(("Line3", "Line6", "Line4")))
+    subnetwork_axes = ybus.subnetwork_axes
+    arc_ax = PNM.get_arc_axis(ybus)
+    k = only(keys(subnetwork_axes))
+    good = ybus.arc_subnetwork_axis[k]
+
+    @test isnothing(
+        PNM._validate_arc_subnetwork_axis(
+            subnetwork_axes,
+            ybus.arc_subnetwork_axis,
+            arc_ax,
+        ),
+    )
+
+    # A pre-merge arc that is not on the reduced arc axis.
+    @test_throws r"not on the reduced arc axis or has an endpoint outside" PNM._validate_arc_subnetwork_axis(
+        subnetwork_axes, Dict(k => vcat(good, [(4, 7)])), arc_ax,
+    )
+    # An arc of the arc axis in no island.
+    @test_throws r"Each arc must belong to exactly" PNM._validate_arc_subnetwork_axis(
+        subnetwork_axes, Dict(k => good[2:end]), arc_ax,
+    )
+    # The same arc twice.
+    @test_throws r"Each arc must belong to exactly" PNM._validate_arc_subnetwork_axis(
+        subnetwork_axes, Dict(k => vcat(good, good[1:1])), arc_ax,
+    )
+    # A key that is not a bus subnetwork key.
+    @test !haskey(subnetwork_axes, k + 1000)
+    @test_throws r"not a bus subnetwork key" PNM._validate_arc_subnetwork_axis(
+        subnetwork_axes, Dict(k + 1000 => good), arc_ax,
+    )
+
+    # An arc on the arc axis, listed under an island that does not hold its endpoints.
+    y2 = Ybus(
+        build_multi_island_composite_arc_system();
+        network_reductions = NetworkReduction[DegreeTwoReduction()],
+    )
+    axes2 = y2.subnetwork_axes
+    arc_ax2 = PNM.get_arc_axis(y2)
+    @test isnothing(
+        PNM._validate_arc_subnetwork_axis(axes2, y2.arc_subnetwork_axis, arc_ax2),
+    )
+    moved = Dict(kk => copy(v) for (kk, v) in y2.arc_subnetwork_axis)
+    arc = pop!(moved[200])
+    push!(moved[1], arc)
+    @test arc in arc_ax2
+    @test_throws r"not on the reduced arc axis or has an endpoint outside" PNM._validate_arc_subnetwork_axis(
+        axes2, moved, arc_ax2,
+    )
+end
