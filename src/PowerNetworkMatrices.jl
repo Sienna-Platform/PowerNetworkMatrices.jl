@@ -107,6 +107,7 @@ include("AccelerateWrapper/AccelerateWrapper.jl")
 import .AccelerateWrapper: AAFactorCache, aa_factorize
 
 include("linalg_settings.jl")
+include("pardiso_cache.jl")
 include("solver_dispatch.jl")
 include("iterative_refinement.jl")
 
