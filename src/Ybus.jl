@@ -1048,18 +1048,20 @@ function _make_arc_subnetwork_axis(
     subnetworks::Dict{Int, Set{Int}},
     nr::NetworkReductionData,
 )
-    arc_ax = get_arc_axis(nr)
-    arc_subnetwork_axis = Dict{Int, Vector{Tuple{Int, Int}}}()
-    for k in keys(subnetworks)
-        arc_subnetwork_axis[k] = Vector{Tuple{Int, Int}}()
+    arc_subnetwork_axis = Dict{Int, Vector{Tuple{Int, Int}}}(
+        k => Vector{Tuple{Int, Int}}() for k in keys(subnetworks)
+    )
+    bus_to_subnetwork = Dict{Int, Int}()
+    for (k, buses) in subnetworks
+        for bus in buses
+            bus_to_subnetwork[bus] = k
+        end
     end
-    for arc in arc_ax
-        for (k, v) in subnetworks
-            if arc[1] ∈ v || arc[2] in v
-                subnetwork = get!(arc_subnetwork_axis, k, Vector{Tuple{Int, Int}}())
-                push!(subnetwork, arc)
-                break
-            end
+    for arc in get_arc_axis(nr)
+        if haskey(bus_to_subnetwork, arc[1])
+            push!(arc_subnetwork_axis[bus_to_subnetwork[arc[1]]], arc)
+        elseif haskey(bus_to_subnetwork, arc[2])
+            push!(arc_subnetwork_axis[bus_to_subnetwork[arc[2]]], arc)
         end
     end
     return arc_subnetwork_axis
