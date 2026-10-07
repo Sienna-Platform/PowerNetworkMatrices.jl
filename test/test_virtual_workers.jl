@@ -46,13 +46,13 @@ end
     @test_throws ErrorException VirtualPTDF(vptdf, other)
 end
 
-@testset "worker_core on Apple Accelerate shares the parent's lock" begin
+@testset "worker_core on Apple Accelerate shares the parent's lock and factorization" begin
     if PNM._has_apple_accelerate_backend()
         sys = _workers_sys14()
         vptdf = VirtualPTDF(sys; linear_solver = "AppleAccelerate")
         w = PNM.worker_core(vptdf)
         @test w.solver_lock === PNM.get_core(vptdf).solver_lock
-        @test w.K !== PNM.get_core(vptdf).K
+        @test w.K === PNM.get_core(vptdf).K
         vptdf_w = VirtualPTDF(vptdf, w)
         for arc in PNM.get_arc_axis(vptdf)
             @test vptdf_w[arc, :] ≈ vptdf[arc, :] atol = 1e-10
@@ -201,6 +201,48 @@ end
             @test flow ≈ PNM.LinearAlgebra.dot(row, p) atol = 1e-12
         end
     end
+end
+
+# Line1 plus a lossy parallel line with a different r and x on the same arc, both under one
+# outage: the group susceptance is not the exact sum of its members', so a susceptance test
+# cannot tell that the whole arc is out.
+@testset "A full outage of a lossy parallel group zeroes the monitored arc" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    line1 = PSY.get_component(PSY.Line, sys, "Line1")
+    twin = PSY.Line(;
+        input_basis = u"CU",
+        name = "Line1_twin",
+        available = true,
+        active_power_flow = 0.0,
+        reactive_power_flow = 0.0,
+        arc = PSY.get_arc(line1),
+        r = 0.031,
+        x = 0.173,
+        b = (from = 0.0, to = 0.0),
+        g = (from = 0.0, to = 0.0),
+        rating = 100.0,
+        angle_limits = (min = -π / 2, max = π / 2),
+    )
+    PSY.add_component!(sys, twin)
+    outage = PSY.FixedForcedOutage(; outage_status = 1.0)
+    PSY.add_supplemental_attribute!(sys, line1, outage)
+    PSY.add_supplemental_attribute!(sys, twin, outage)
+    vmodf = VirtualMODF(sys; linear_solver = "KLU")
+    ctg = only(values(get_registered_contingencies(vmodf)))
+    mod = ctg.modification
+    e = only(mod.arc_modifications).arc_index
+    @test only(mod.arc_modifications).opened == 2
+    wf = PNM.compute_woodbury_factors(vmodf, mod)
+    @test wf.arc_out == [true]
+    b_post = PNM._post_modification_susceptance(vmodf.arc_susceptances, e, wf)
+    @test !iszero(b_post)
+
+    @test all(iszero, vmodf[e, ctg])
+    n_bus = size(vmodf.BA, 1)
+    P = randn(Random.Xoshiro(3), n_bus, 2)
+    P .-= sum(P; dims = 1) ./ n_bus
+    θ = PNM.solve_bus_angles!(zeros(n_bus, 2), vmodf, P)
+    @test all(iszero, PNM.arc_flows!(zeros(1, 2), vmodf, θ, [e], wf))
 end
 
 _buffered_flow_allocations(flows, core, θ, arcs, wf, scratch) =

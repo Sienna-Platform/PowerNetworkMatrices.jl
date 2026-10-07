@@ -77,7 +77,8 @@ Exports live only in the main module file.
 ## Hard rules
 
   - **Never export or re-export any `KLUWrapper` symbol** (`KLULinSolveCache`, `solve!`, `klu_factorize`, …). Downstream reaches them qualified: `PowerNetworkMatrices.KLUWrapper.foo`.
-  - **Per-arc PTDF/MODF KLU solve cost is inherent** — do not propose RHS batching or thread-parallelizing the build loop; Sienna queries rows incrementally and KLU can't do concurrent solves.
+  - **Per-arc PTDF/MODF KLU solve cost is inherent** — do not propose RHS batching; Sienna queries rows incrementally.
+  - **Parallel KLU solves need one factorization per thread.** `worker_core` (`src/virtual_workers.jl`) gives each worker its own KLU factorization, scratch and lock, so workers solve concurrently and match the parent bit for bit. One shared KLU cache is not safe for concurrent solves: its `solver_lock` serializes them. Apple Accelerate workers share the parent's factorization and lock and serialize, because concurrent AA calls have segfaulted.
   - Only Int64 KLU caches are built internally; the Int32 variants exist solely for PowerFlows' `J_INDEX_TYPE`. Any downstream cache-type Union must list both.
   - Contingency fixtures: to make a contingency merely *exist*, use `PSY.FixedForcedOutage(; outage_status=1.0)` + `add_supplemental_attribute!` — never fabricate `GeometricDistributionForcedOutage` stochastic parameters.
 

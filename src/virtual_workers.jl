@@ -7,35 +7,42 @@ get_core(core::VirtualFactorCore) = core
 
 # Apple Accelerate calls have segfaulted when concurrent, even on distinct factorizations, so a
 # worker core on that backend shares its parent's lock: workers serialize. KLU's distinct caches
-# are safe to use concurrently, so each worker gets its own lock.
+# are safe to use concurrently, so each worker gets its own lock. An AA worker also shares the
+# parent's factorization: with a shared lock, a second one would never solve concurrently.
 _worker_lock(::KLULinSolveCache{Float64}, ::ReentrantLock) = ReentrantLock()
 _worker_lock(::AAFactorCache, parent::ReentrantLock) = parent
 
-_factorize_like(
+# The KLU worker factors its own ABA. The AA worker reuses the parent's factorization: AA's
+# internal scratch is safe only because every access holds the shared lock. Nothing refactors a
+# core's `K` after it is built.
+function _worker_factorization(
     ::KLULinSolveCache{Float64},
-    ABA::SparseArrays.SparseMatrixCSC{Float64, Int},
-) =
-    _create_factorization(KLUSolver(), ABA)
-_factorize_like(::AAFactorCache, ABA::SparseArrays.SparseMatrixCSC{Float64, Int}) =
-    _create_factorization(AppleAccelerateLUSolver(), ABA)
+    core::VirtualFactorCore,
+    lock::ReentrantLock,
+)
+    n_bus = size(core.BA, 1)
+    ref = Set{Int}(setdiff(1:n_bus, core.valid_ix))
+    ABA = calculate_ABA_matrix(core.A, core.BA, ref)
+    return @lock lock _create_factorization(KLUSolver(), ABA)
+end
+_worker_factorization(::AAFactorCache, core::VirtualFactorCore, ::ReentrantLock) = core.K
 
 """
     worker_core(mat) -> VirtualFactorCore
 
 A new core sharing the read-only topology of `mat`'s core (a `VirtualPTDF`, `VirtualMODF` or
-`VirtualFactorCore`) with its own factorization of the same ABA matrix, its own solve scratch
-and its own `solver_lock`. On KLU the factorization is deterministic, so every solve on the
-worker equals the same solve on the original bit for bit, and workers solve concurrently. On
-Apple Accelerate the worker shares the parent's lock, so its solves serialize with the parent's
-and every other worker's. The lazy `PTDF_A_diag` and branch susceptances start empty.
+`VirtualFactorCore`) with its own solve scratch. On KLU the worker also has its own
+factorization of the same ABA matrix and its own `solver_lock`. The factorization is
+deterministic, so every solve on the worker equals the same solve on the original bit for bit,
+and workers solve concurrently. On Apple Accelerate the worker shares the parent's
+factorization and lock, so its solves serialize with the parent's and every other worker's.
+The lazy `PTDF_A_diag` and branch susceptances start empty.
 """
 function worker_core(mat)
     core = get_core(mat)
     n_bus = size(core.BA, 1)
-    ref = Set{Int}(setdiff(1:n_bus, core.valid_ix))
-    ABA = calculate_ABA_matrix(core.A, core.BA, ref)
     lock = _worker_lock(core.K, core.solver_lock)
-    K = @lock lock _factorize_like(core.K, ABA)
+    K = _worker_factorization(core.K, core, lock)
     return VirtualFactorCore(
         K,
         core.BA,
@@ -401,14 +408,14 @@ function arc_flows!(
     LinearAlgebra.mul!(c, transpose(wf.W_inv), u)
     zm_Z = view(scratch.zm_Z, 1:M)
     for (q, m) in enumerate(arcs)
-        b_post = _post_modification_susceptance(arc_sus, m, wf)
-        if abs(b_post) < eps()
+        if _monitored_arc_out(arc_sus, m, wf)
             for t in 1:T
                 flows[q, t] = 0.0
             end
             continue
         end
         b_pre = arc_sus[m]
+        b_post = _post_modification_susceptance(arc_sus, m, wf)
         _monitored_Z!(zm_Z, BA, m, b_pre, wf.Z)
         for t in 1:T
             acc = _ba_dot(BA, m, θ, t) / b_pre

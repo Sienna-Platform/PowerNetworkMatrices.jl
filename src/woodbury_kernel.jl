@@ -182,7 +182,7 @@ function _arc_susceptance_sign(
 end
 
 """
-    _woodbury_factors_from_Z(Z, BA, signs, arc_sus, modifications[, labeler]) -> WoodburyFactors
+    _woodbury_factors_from_Z(Z, BA, signs, arc_sus, modifications, arc_out[, labeler]) -> WoodburyFactors
 
 Assemble the Woodbury factors from an already-resolved `Z`, whose column `j` is
 `B⁻¹ν_j` for the `j`-th modified arc in full-bus space. The callers differ only
@@ -197,6 +197,7 @@ function _woodbury_factors_from_Z(
     signs::Vector{Float64},
     arc_sus::Vector{Float64},
     modifications::Tuple{Vararg{ArcModification}},
+    arc_out::Vector{Bool},
     labeler::F = _post_contingency_bus_labels,
 )::WoodburyFactors where {F}
     M = length(modifications)
@@ -243,7 +244,7 @@ function _woodbury_factors_from_Z(
         labels = labeler(BA, arc_sus, modifications, n_bus)
     end
 
-    return WoodburyFactors(Z, W_inv, arc_indices, delta_b_vec, is_island, labels)
+    return WoodburyFactors(Z, W_inv, arc_indices, delta_b_vec, arc_out, is_island, labels)
 end
 
 # zm_Z = ν_mᵀ Z[:, eachindex(zm_Z)], ν_m = BA[:, m] / b_pre (BA's sign convention, not A's).
@@ -267,6 +268,20 @@ function _monitored_Z!(
     return zm_Z
 end
 
+# Per modified arc: true when the modification opens every member. Counts members instead of
+# comparing susceptances, because the group susceptance is not the exact sum of its members'.
+function _arcs_fully_opened(
+    core::VirtualFactorCore,
+    modifications::Tuple{Vararg{ArcModification}},
+)::Vector{Bool}
+    nr = get_network_reduction_data(core)
+    arc_ax = get_arc_axis(core)
+    return Bool[
+        m.opened > 0 && m.opened >= _arc_member_count(nr, arc_ax[m.arc_index]) for
+        m in modifications
+    ]
+end
+
 # Susceptance of the monitored arc once the modifications are applied.
 function _post_modification_susceptance(
     arc_sus::Vector{Float64},
@@ -280,6 +295,21 @@ function _post_modification_susceptance(
         end
     end
     return b_mon
+end
+
+# True when the modifications take the monitored arc out of service: all its members are open,
+# or the post-modification susceptance is exactly zero (a DC-only `ArcModification`).
+function _monitored_arc_out(
+    arc_sus::Vector{Float64},
+    monitored_idx::Int,
+    wf::WoodburyFactors,
+)::Bool
+    for (j, idx) in enumerate(wf.arc_indices)
+        if idx == monitored_idx && wf.arc_out[j]
+            return true
+        end
+    end
+    return iszero(_post_modification_susceptance(arc_sus, monitored_idx, wf))
 end
 
 """
@@ -382,6 +412,7 @@ function _compute_woodbury_factors(
             core.arc_susceptance_signs,
             core.arc_susceptances,
             modifications,
+            _arcs_fully_opened(core, modifications),
             labeler,
         )
     end
@@ -405,10 +436,10 @@ function _apply_woodbury_correction(
         core.temp_data,
         core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
-        b_mon = _post_modification_susceptance(arc_sus, monitored_idx, wf)
-        if abs(b_mon) < eps()
+        if _monitored_arc_out(arc_sus, monitored_idx, wf)
             return zeros(length(temp_data))
         end
+        b_mon = _post_modification_susceptance(arc_sus, monitored_idx, wf)
         # z_m = B⁻¹ν_m / b_mon_pre.
         b_mon_pre = arc_sus[monitored_idx]
         lin_solve = _solve_ba_column!(
