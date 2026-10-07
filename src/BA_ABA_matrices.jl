@@ -210,8 +210,8 @@ power flow analysis, sensitivity calculations, and linear power system studies.
         Mapping from reference bus numbers to their corresponding subnetwork axes
 - `ref_bus_position::Vector{Int}`:
         Vector containing the original indices of reference buses before matrix reduction
-- `K::F <: Union{Nothing, KLULinSolveCache{Float64, Int64}, AAFactorCache}`:
-        Optional factorization: a `KLULinSolveCache{Float64, Int64}` (KLU) or `AAFactorCache`
+- `K::F <: Union{Nothing, KLULinSolveCache{Float64, Int64}, AAFactorCache{Float64}}`:
+        Optional factorization: a `KLULinSolveCache{Float64, Int64}` (KLU) or `AAFactorCache{Float64}`
         (AppleAccelerate), per the constructor's `linear_solver`; `nothing` if unfactorized
 - `branch_catalog::BranchCatalog`:
         Container for network reduction information applied during matrix construction
@@ -225,7 +225,7 @@ power flow analysis, sensitivity calculations, and linear power system studies.
 struct ABA_Matrix{
     Ax <: NTuple{2, Vector},
     L <: NTuple{2, Dict},
-    F <: Union{Nothing, KLULinSolveCache{Float64, Int64}, AAFactorCache},
+    F <: Union{Nothing, KLULinSolveCache{Float64, Int64}, AAFactorCache{Float64}},
 } <: PowerNetworkMatrix{Float64}
     data::SparseArrays.SparseMatrixCSC{Float64, Int}
     axes::Ax

@@ -278,7 +278,7 @@ end
 
     if PNM._has_apple_accelerate_backend()
         aba_aa = ABA_Matrix(sys; factorize = true, linear_solver = "AppleAccelerateLU")
-        @test typeof(aba_aa.K) == PNM.AAFactorCache
+        @test typeof(aba_aa.K) == PNM.AAFactorCache{Float64}
         @test is_factorized(aba_aa)
         x_aa = copy(b)
         PNM.AccelerateWrapper.solve!(aba_aa.K, x_aa)

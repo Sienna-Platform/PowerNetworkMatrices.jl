@@ -1,10 +1,17 @@
 # Direct bindings into Apple's libSparse.dylib (part of the Accelerate
-# framework). Only the entry points actually consumed by PowerNetworkMatrices
-# are wrapped — Float64-only, no Float32 mangled aliases, no QR / Cholesky-AtA
-# variants. Mangled names match what AppleAccelerate.jl uses; see
+# framework). Only the LU entry points used by PowerNetworkMatrices are
+# wrapped, for Float64 and ComplexF64. No Float32 variants, no QR or
+# Cholesky-AtA variants. Mangled names match what AppleAccelerate.jl uses; see
 # `/Library/Developer/CommandLineTools/SDKs/MacOSX*.sdk/System/Library/
 # Frameworks/Accelerate.framework/Versions/A/Frameworks/vecLib.framework/
 # Versions/A/Headers/Sparse/Solve.h` for the C declarations.
+#
+# The complex C structs (`SparseMatrixStructureComplex`,
+# `SparseOpaqueFactorization_Complex_Double`, `DenseMatrix_Complex_Double`,
+# `DenseVector_Complex_Double`) have the same size and field offsets as the
+# real structs. Only the attribute bitfield type is different, and it is also
+# 4 bytes. Thus one Julia struct serves both element types, and the element
+# type selects the mangled symbol.
 
 const LIBSPARSE =
     "/System/Library/Frameworks/Accelerate.framework/Versions/A/" *
@@ -117,22 +124,22 @@ function SparseSymbolicFactorOptions()
     )
 end
 
-struct DenseVector_t
+struct DenseVector_t{T <: Union{Float64, ComplexF64}}
     count::Cint
-    data::Ptr{Cdouble}
+    data::Ptr{T}
 end
 
-struct DenseMatrix_t
+struct DenseMatrix_t{T <: Union{Float64, ComplexF64}}
     rowCount::Cint
     columnCount::Cint
     columnStride::Cint
     attributes::att_type
-    data::Ptr{Cdouble}
+    data::Ptr{T}
 end
 
-struct SparseMatrix_t
+struct SparseMatrix_t{T <: Union{Float64, ComplexF64}}
     structure::SparseMatrixStructure
-    data::Ptr{Cdouble}
+    data::Ptr{T}
 end
 
 struct SparseOpaqueSymbolicFactorization
@@ -192,8 +199,8 @@ end
 # Build the Apple-side dense views at the ccall boundary. `StridedMatrix`'s
 # first-dimension stride must be 1 (the libSparse contract); we assert at the
 # call site, not here.
-function _dense_matrix(B::StridedMatrix{Cdouble})
-    return DenseMatrix_t(
+function _dense_matrix(B::StridedMatrix{T}) where {T <: Union{Float64, ComplexF64}}
+    return DenseMatrix_t{T}(
         Cint(size(B, 1)),
         Cint(size(B, 2)),
         Cint(stride(B, 2)),
@@ -202,8 +209,8 @@ function _dense_matrix(B::StridedMatrix{Cdouble})
     )
 end
 
-function _dense_vector(b::StridedVector{Cdouble})
-    return DenseVector_t(Cint(length(b)), pointer(b))
+function _dense_vector(b::StridedVector{T}) where {T <: Union{Float64, ComplexF64}}
+    return DenseVector_t{T}(Cint(length(b)), pointer(b))
 end
 
 # --- ccalls -----------------------------------------------------------------
@@ -216,6 +223,7 @@ end
 # Symbolic-only factor: analyzes the pattern, returns an opaque symbolic
 # factor. Can back many numeric factors on the same pattern.
 function _sparse_symbolic_factor(
+    ::Type{Float64},
     ftype::SparseFactorization_t,
     structure::SparseMatrixStructure,
     sym_opts::SparseSymbolicFactorOptions,
@@ -227,16 +235,41 @@ function _sparse_symbolic_factor(
     )::SparseOpaqueSymbolicFactorization
 end
 
+function _sparse_symbolic_factor(
+    ::Type{ComplexF64},
+    ftype::SparseFactorization_t,
+    structure::SparseMatrixStructure,
+    sym_opts::SparseSymbolicFactorOptions,
+)::SparseOpaqueSymbolicFactorization
+    return @ccall LIBSPARSE._Z12SparseFactorh28SparseMatrixStructureComplex27SparseSymbolicFactorOptions(
+        ftype::Cuint,
+        structure::SparseMatrixStructure,
+        sym_opts::SparseSymbolicFactorOptions,
+    )::SparseOpaqueSymbolicFactorization
+end
+
 # Numeric factor on top of an existing symbolic factor. Reusable: the
 # symbolic handle is not consumed.
 function _sparse_numeric_factor(
     symbolic::SparseOpaqueSymbolicFactorization,
-    matrix::SparseMatrix_t,
+    matrix::SparseMatrix_t{Float64},
     num_opts::SparseNumericFactorOptions,
 )::SparseOpaqueFactorization_t
     return @ccall LIBSPARSE._Z12SparseFactor33SparseOpaqueSymbolicFactorization19SparseMatrix_Double26SparseNumericFactorOptions(
         symbolic::SparseOpaqueSymbolicFactorization,
-        matrix::SparseMatrix_t,
+        matrix::SparseMatrix_t{Float64},
+        num_opts::SparseNumericFactorOptions,
+    )::SparseOpaqueFactorization_t
+end
+
+function _sparse_numeric_factor(
+    symbolic::SparseOpaqueSymbolicFactorization,
+    matrix::SparseMatrix_t{ComplexF64},
+    num_opts::SparseNumericFactorOptions,
+)::SparseOpaqueFactorization_t
+    return @ccall LIBSPARSE._Z12SparseFactor33SparseOpaqueSymbolicFactorization27SparseMatrix_Complex_Double26SparseNumericFactorOptions(
+        symbolic::SparseOpaqueSymbolicFactorization,
+        matrix::SparseMatrix_t{ComplexF64},
         num_opts::SparseNumericFactorOptions,
     )::SparseOpaqueFactorization_t
 end
@@ -251,12 +284,25 @@ end
 # this for any non-trivial size.
 function _sparse_solve_matrix_ws!(
     factor::SparseOpaqueFactorization_t,
-    B::DenseMatrix_t,
+    B::DenseMatrix_t{Float64},
     workspace::Ptr{Cvoid},
 )
     @ccall LIBSPARSE._Z11SparseSolve32SparseOpaqueFactorization_Double18DenseMatrix_DoublePv(
         factor::SparseOpaqueFactorization_t,
-        B::DenseMatrix_t,
+        B::DenseMatrix_t{Float64},
+        workspace::Ptr{Cvoid},
+    )::Cvoid
+    return nothing
+end
+
+function _sparse_solve_matrix_ws!(
+    factor::SparseOpaqueFactorization_t,
+    B::DenseMatrix_t{ComplexF64},
+    workspace::Ptr{Cvoid},
+)
+    @ccall LIBSPARSE._Z11SparseSolve40SparseOpaqueFactorization_Complex_Double26DenseMatrix_Complex_DoublePv(
+        factor::SparseOpaqueFactorization_t,
+        B::DenseMatrix_t{ComplexF64},
         workspace::Ptr{Cvoid},
     )::Cvoid
     return nothing
@@ -264,12 +310,25 @@ end
 
 function _sparse_solve_vector_ws!(
     factor::SparseOpaqueFactorization_t,
-    b::DenseVector_t,
+    b::DenseVector_t{Float64},
     workspace::Ptr{Cvoid},
 )
     @ccall LIBSPARSE._Z11SparseSolve32SparseOpaqueFactorization_Double18DenseVector_DoublePv(
         factor::SparseOpaqueFactorization_t,
-        b::DenseVector_t,
+        b::DenseVector_t{Float64},
+        workspace::Ptr{Cvoid},
+    )::Cvoid
+    return nothing
+end
+
+function _sparse_solve_vector_ws!(
+    factor::SparseOpaqueFactorization_t,
+    b::DenseVector_t{ComplexF64},
+    workspace::Ptr{Cvoid},
+)
+    @ccall LIBSPARSE._Z11SparseSolve40SparseOpaqueFactorization_Complex_Double26DenseVector_Complex_DoublePv(
+        factor::SparseOpaqueFactorization_t,
+        b::DenseVector_t{ComplexF64},
         workspace::Ptr{Cvoid},
     )::Cvoid
     return nothing
@@ -287,8 +346,15 @@ end
 # Frees the libSparse-side numeric / symbolic storage attached to an opaque
 # factor. Idempotent: a second call with a `SparseStatusReleased` handle is
 # a no-op on libSparse's side.
-function _sparse_cleanup_factor!(factor::SparseOpaqueFactorization_t)
+function _sparse_cleanup_factor!(::Type{Float64}, factor::SparseOpaqueFactorization_t)
     @ccall LIBSPARSE._Z13SparseCleanup32SparseOpaqueFactorization_Double(
+        factor::SparseOpaqueFactorization_t,
+    )::Cvoid
+    return nothing
+end
+
+function _sparse_cleanup_factor!(::Type{ComplexF64}, factor::SparseOpaqueFactorization_t)
+    @ccall LIBSPARSE._Z13SparseCleanup40SparseOpaqueFactorization_Complex_Double(
         factor::SparseOpaqueFactorization_t,
     )::Cvoid
     return nothing

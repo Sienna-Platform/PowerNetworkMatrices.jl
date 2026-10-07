@@ -17,7 +17,7 @@ allocate nothing in the solver.
 Not thread-safe (mutates per-cache scratch).
 """
 function solve_sparse!(
-    cache::AAFactorCache,
+    cache::AAFactorCache{Float64},
     B::SparseMatrixCSC{<:Number, Int},
     out::AbstractMatrix{Cdouble};
     block::Int = SPARSE_RHS_DEFAULT_BLOCK,
@@ -89,7 +89,7 @@ end
 
 """Allocating wrapper around `solve_sparse!`."""
 function solve_sparse(
-    cache::AAFactorCache,
+    cache::AAFactorCache{Float64},
     B::SparseMatrixCSC{<:Number, Int};
     block::Int = SPARSE_RHS_DEFAULT_BLOCK,
 )
