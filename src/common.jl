@@ -790,18 +790,16 @@ function _member_impedance_angle(br)
     return angle(z)
 end
 
-
 function _partition_members_by_impedance_angle(bp::AbstractBranchesParallel)
-    members = collect(PSY.ACTransmission, bp)
-    angles = map(_member_impedance_angle, members)
+    keyed = sort!([(_member_impedance_angle(br), br) for br in bp]; by = first)
     buckets = Vector{PSY.ACTransmission}[]
     seed = -Inf
-    for ix in sortperm(angles)
-        if angles[ix] - seed > PARTITION_ANGLE_ATOL
-            seed = angles[ix]
+    for (θ, br) in keyed
+        if θ - seed > PARTITION_ANGLE_ATOL
+            seed = θ
             push!(buckets, PSY.ACTransmission[])
         end
-        push!(last(buckets), members[ix])
+        push!(last(buckets), br)
     end
     return buckets
 end
