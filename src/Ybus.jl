@@ -1472,6 +1472,21 @@ one subnetwork.",
     return
 end
 
+# BA takes its columns from the arc-admittance matrices but its island arc lists from
+# arc_subnetwork_axis, which derives from the branch maps. The two must agree.
+function _validate_arc_admittance_axis(
+    arc_admittance::ArcAdmittanceMatrix,
+    arc_ax::Vector{Tuple{Int, Int}},
+)
+    Set(get_arc_axis(arc_admittance)) == Set(arc_ax) || error(
+        "Network reduction left an arc-admittance arc axis that differs from the arc axis \
+of the branch maps: $(length(get_arc_axis(arc_admittance))) arcs against $(length(arc_ax)).",
+    )
+    return
+end
+
+_validate_arc_admittance_axis(::Nothing, ::Vector{Tuple{Int, Int}}) = nothing
+
 function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     # These quantities are modified and used to construct the new Ybus
     data = get_data(ybus)
@@ -1580,6 +1595,7 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     end
     _validate_surviving_arc_keys(nr, bus_ax)
     _validate_arc_subnetwork_axis(subnetwork_axes, arc_subnetwork_axis, get_arc_axis(nr))
+    _validate_arc_admittance_axis(arc_admittance_from_to, get_arc_axis(nr))
     return Ybus(
         data,
         adjacency_data,

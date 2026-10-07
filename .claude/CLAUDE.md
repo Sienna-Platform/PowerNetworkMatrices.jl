@@ -24,8 +24,11 @@ Degree-two chains are ordinary aggregates, not a separate structure:
   - `BranchesSeries` carries its own `arc_key`, giving it an arc identity so it can either stand alone in `series_branch_map` or sit as a member of a `BranchesParallel`.
     Every method that reads that identity dispatches on `AbstractReductionAggregate`, and `_subset_two_port` resolves members with `nr`. `ybus_branch_entries` takes `nr` in every signature — the `nr`-less single-branch overload was deleted because it returned an impedance-correction-free π-model, silently disagreeing with the stamped Ybus.
   - A grouped chain is **not** in `series_branch_map`, so a series-map membership test is false for it and `BA_Matrix` takes its susceptance from the general `Y_ft`/`Y_tf` path rather than from components. Downstream code keyed on series-map membership misses these chains.
-  - `_apply_reduction` writes every composite arc into both `adjacency_data` and `arc_subnetwork_axis`.
+  - `_apply_reduction` writes every composite arc into `adjacency_data`.
     Without that, `AdjacencyMatrix(ybus)` reflected the pre-reduction graph — missing every arc the reduction created — while `IncidenceMatrix(ybus)` was correct, because it builds from `get_arc_axis(nr)`.
+  - `arc_subnetwork_axis` is not patched incrementally. `_apply_reduction` rebuilds it from the final branch maps with `_make_arc_subnetwork_axis`, as the unreduced build does, so composite arcs reach it only through that rebuild.
+    The old incremental patch kept pre-merge arc labels after a bus merge and stale arcs after a Ward reduction.
+    `_validate_arc_subnetwork_axis` checks the island lists against `get_arc_axis(nr)`, and `_validate_arc_admittance_axis` checks that the arc axis of `arc_admittance_from_to` equals it too: `BA_Matrix` takes its columns from the arc-admittance matrices but its island arc lists from `arc_subnetwork_axis`.
   - `_apply_reduction` ends by calling `_validate_surviving_arc_keys(nr, bus_ax)`: every arc the reduction still exposes must have both endpoints on the reduced bus axis.
     An arc key stranded on an eliminated bus is invisible at the point of use — the arc axis and the branch maps stay internally consistent, so the reduction reports success and the failure surfaces later as a bare `KeyError` from whichever consumer first resolves arc endpoints (`IncidenceMatrix` is usually first), possibly several reductions downstream of the one that caused it.
     Keep this assertion at the end of any new apply path.

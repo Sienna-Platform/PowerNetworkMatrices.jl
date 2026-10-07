@@ -1759,6 +1759,16 @@ end
             network_reductions = NetworkReduction[RadialReduction(), DegreeTwoReduction()],
         ),
     )
+
+    # Line 1-2 merges the reference bus 1 into bus 2, so the island key moves to bus 2.
+    @test only(keys(Ybus(_zero_c_sys14_lines(())).subnetwork_axes)) == 1
+    ybus = Ybus(_zero_c_sys14_lines(("Line1",)); irreducible_buses = Set([2]))
+    @test 1 ∉ PNM.get_bus_axis(ybus)
+    @test only(keys(ybus.subnetwork_axes)) == 2
+    arcs = reduce(vcat, values(ybus.arc_subnetwork_axis))
+    @test (2, 5) ∈ arcs
+    @test (1, 5) ∉ arcs
+    _test_arc_subnetwork_axis_partitions(ybus)
 end
 
 @testset "arc_subnetwork_axis partitions the arc axis under every reduction" begin
