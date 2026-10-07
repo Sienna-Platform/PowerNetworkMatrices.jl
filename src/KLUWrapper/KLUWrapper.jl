@@ -43,7 +43,9 @@ pinned to `jl_malloc` before any cache exists (by `__init__` on Julia 1.12+,
 by SparseArrays at load on earlier versions). The evidence for lock-free use
 is `test/test_klu_threaded.jl` "Distinct caches in parallel". One cache used by
 two tasks at once is still unsafe; the per-cache `owner` flag raises on it.
-Windows stays locked until a MinGW stress run exists.
+Windows keeps the lock until a stress run shows that lock-free calls are safe on the
+MinGW libklu. The run must repeat the distinct-caches test in `test/test_klu_threaded.jl`
+many times with no `KLU_INVALID` and no SIGSEGV.
 """
 const _LIBKLU_LOCK = ReentrantLock()
 

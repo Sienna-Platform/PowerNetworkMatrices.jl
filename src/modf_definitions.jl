@@ -31,6 +31,8 @@ end
 
 """
 Convenience constructor for an unshifted arc with no Pi-model deltas and no members opened.
+It changes only the DC susceptance. [`apply_ybus_modification!`](@ref) leaves the Ybus
+admittances unchanged for it and never removes the arc, even when `delta_b = -b_arc`.
 """
 function ArcModification(arc_index::Int, delta_b::Float64)
     z = zero(YBUS_ELTYPE)

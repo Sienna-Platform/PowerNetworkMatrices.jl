@@ -174,6 +174,57 @@ const _LEAN_SYS2000 =
     @test_throws ErrorException KW._factor_stats(PNM.KLULinSolveCache(A32))
 end
 
+@testset "KLU struct layout: mirrored header fields match klu_extract" begin
+    B1 = [4.0 1.0 0.0 1.0; 1.0 4.0 1.0 0.0; 0.0 1.0 4.0 1.0; 1.0 0.0 1.0 4.0]
+    B2 = [3.0 1.0 1.0; 1.0 3.0 0.0; 1.0 0.0 3.0]
+    A = SparseArrays.blockdiag(
+        SparseArrays.sparse(B1), SparseArrays.sparse(B2),
+        SparseArrays.sparse(fill(5.0, 1, 1)),
+    )
+    A[1, 5] = 1.0
+    A[2, 8] = 2.0
+    A[5, 8] = 1.0
+    A32 = SparseMatrixCSC{Float64, Int32}(A)
+    n = size(A32, 1)
+    cache = PNM.klu_factorize(A32)
+    shead = unsafe_load(Ptr{KW.KluSymbolicHead{Int32}}(cache.symbolic))
+    nhead = unsafe_load(Ptr{KW.KluNumericHead{Int32}}(cache.numeric))
+
+    # Buffers sized for a dense factor, so a wrong header cannot overrun them.
+    cap = n * n + n
+    lp = zeros(Cint, n + 1)
+    li = zeros(Cint, cap)
+    lx = zeros(Cdouble, cap)
+    up = zeros(Cint, n + 1)
+    ui = zeros(Cint, cap)
+    ux = zeros(Cdouble, cap)
+    fp = zeros(Cint, n + 1)
+    fi = zeros(Cint, cap)
+    fx = zeros(Cdouble, cap)
+    r = zeros(Cint, n + 1)
+    ok = GC.@preserve lp li lx up ui ux fp fi fx r KW.klu_extract(
+        reinterpret(KW.NumericPtr32, cache.numeric),
+        reinterpret(KW.SymbolicPtr32, cache.symbolic),
+        pointer(lp), pointer(li), pointer(lx),
+        pointer(up), pointer(ui), pointer(ux),
+        pointer(fp), pointer(fi), pointer(fx),
+        Ptr{Cint}(C_NULL), Ptr{Cint}(C_NULL), Ptr{Cdouble}(C_NULL), pointer(r),
+        cache.common,
+    )
+    @test ok == 1
+
+    nblocks = Int(shead.nblocks)
+    @test nblocks > 1
+    @test shead.n == n && nhead.n == n
+    @test shead.nz == SparseArrays.nnz(A32)
+    @test nhead.nblocks == shead.nblocks
+    @test r[nblocks + 1] == n
+    @test nhead.lnz == lp[n + 1]
+    @test nhead.unz == up[n + 1]
+    @test shead.nzoff == fp[n + 1]
+    @test nhead.lnz >= n && nhead.unz >= n
+end
+
 @testset "Lean LU matches KLU on its frozen order" begin
     J0, steps = _lean_jacobians(_LEAN_SYS2000)
     rng = Random.Xoshiro(7)
@@ -419,6 +470,30 @@ _dense_pattern(M) =
     KW.swap_lean_columns!(other, p2, ((1, 2),))
     @test other.lean_plan.q == p2.q
     @test_throws ArgumentError KW.swap_lean_columns!(cache, p2, ())
+end
+
+@testset "KLULinSolveCache shared swapped plan keeps its own column order" begin
+    pv = [0.0 10.0 1.0 -10.0; -1.0 2.0 -3.0 1.0; 0.0 -10.0 2.0 12.0; 0.0 -2.0 9.0 -1.0]
+    ref = copy(pv)
+    ref[:, 1] = [-1.0, 0.0, 0.0, 0.0]
+    ref[:, 2] = [0.0, -1.0, 0.0, 0.0]
+    A0 = _dense_pattern(pv)
+    A1 = _dense_pattern(ref)
+    plan = KW.build_lean_plan(A0)
+    src = PNM.KLULinSolveCache(A0)
+    KW.set_lean_plan!(src, plan)
+    KW.swap_lean_columns!(src, plan, ((1, 2),))
+    dst = PNM.KLULinSolveCache(A0)
+    KW.share_lean_plan!(dst, src)
+    PNM.symbolic_factor!(dst, A0)
+    PNM.numeric_refactor!(dst, A1)
+    @test dst.lean_active
+
+    KW.swap_lean_columns!(src, plan, ((3, 4),))
+    @test dst.lean_plan.q !== src.lean_plan.q
+    @test dst.lean_plan.q != src.lean_plan.q
+    b = [1.0, 2.0, 3.0, 4.0]
+    @test PNM.solve!(dst, copy(b)) ≈ Matrix(A1) \ b
 end
 
 @testset "KLULinSolveCache deferred analysis and re-pivot" begin

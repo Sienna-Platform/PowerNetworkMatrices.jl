@@ -56,18 +56,17 @@ mutable struct KLULinSolveCache{
     # is stale, so only `solve!` may run.
     lean_plan::LeanLUPlan
     lean_vals::LeanLUValues
-    # Column order of `lean_plan` while `swap_lean_columns!` has exchanged some of its columns.
-    lean_q::Vector{Int32}
     has_lean_plan::Bool
     lean_active::Bool
     # While set, `numeric_refactor!` skips the lean path (see `pause_lean!`).
     lean_paused::Bool
+    # Set by `defer_symbolic!`: `symbolic` is C_NULL until a KLU factorization needs it.
+    analyze_pending::Bool
+    # Counters: `lean_counts` and `cold_retries` read them.
     lean_attempts::Int
     lean_rejects::Int
     # Accepted lean factorizations whose solve the caller rejected (`repivot!`).
     lean_solve_failures::Int
-    # Set by `defer_symbolic!`: `symbolic` is C_NULL until a KLU factorization needs it.
-    analyze_pending::Bool
     # Deferred analyses that a KLU factorization then needed.
     late_analyses::Int
     # Solves the caller reran from scratch after failing on a reused pivot order.
@@ -84,6 +83,15 @@ function _acquire!(c::KLULinSolveCache)
     error(
         "KLULinSolveCache (n=$(size(c, 1))) used by two tasks at once; caches are not shareable.",
     )
+end
+
+@inline function _with_owner(f, c::KLULinSolveCache)
+    taken = _acquire!(c)
+    try
+        return f()
+    finally
+        taken && (c.owner[] = UInt(0))
+    end
 end
 
 @inline _dim(cache::KLULinSolveCache{Tv, Ti}) where {Tv, Ti} =
@@ -490,8 +498,7 @@ function KLULinSolveCache(
         Matrix{Tv}(undef, 0, 0),
         Ti[],
         Threads.Atomic{UInt}(0),
-        _NO_LEAN_PLAN, _NO_LEAN_VALUES, Int32[], false, false, false, 0, 0, 0, false, 0,
-        0,
+        _NO_LEAN_PLAN, _NO_LEAN_VALUES, false, false, false, false, 0, 0, 0, 0, 0,
     )
     finalizer(_finalize_klu_handles!, cache)
     return cache
@@ -585,8 +592,7 @@ is populated) and the symbolic factor is still valid.
 function _recover_factorization!(
     cache::KLULinSolveCache{Tv, Ti},
 ) where {Tv, Ti}
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         cache.symbolic == C_NULL && error(
             "KLULinSolveCache: cannot recover without a symbolic factor.",
         )
@@ -601,8 +607,6 @@ function _recover_factorization!(
         num == C_NULL && klu_throw(cache.common[], "klu_factor (recovery)")
         cache.numeric = num
         return cache
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
@@ -665,13 +669,10 @@ function symbolic_factor!(
     cache::KLULinSolveCache{Tv, Ti},
     A::SparseMatrixCSC{Tv, Ti},
 ) where {Tv, Ti}
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         _take_pattern!(cache, A)
         _analyze!(cache)
         return cache
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
@@ -687,13 +688,10 @@ function defer_symbolic!(
     cache::KLULinSolveCache{Tv, Ti},
     A::SparseMatrixCSC{Tv, Ti},
 ) where {Tv, Ti}
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         _take_pattern!(cache, A)
         cache.analyze_pending = true
         return cache
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
@@ -752,8 +750,7 @@ function symbolic_refactor!(
     cache::KLULinSolveCache{Tv, Ti},
     A::SparseMatrixCSC{Tv, Ti},
 ) where {Tv, Ti}
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         if !cache.reuse_symbolic
             return symbolic_factor!(cache, A)
         end
@@ -769,8 +766,6 @@ function symbolic_refactor!(
             _check_pattern_match(cache, A, "symbolic_refactor")
         end
         return cache
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
@@ -785,8 +780,7 @@ function numeric_refactor!(
     cache::KLULinSolveCache{Tv, Ti},
     A::SparseMatrixCSC{Tv, Ti},
 ) where {Tv, Ti}
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         cache.symbolic == C_NULL && !cache.analyze_pending &&
             error(
                 "KLULinSolveCache: call symbolic_factor! before numeric_refactor!.",
@@ -819,8 +813,6 @@ function numeric_refactor!(
             copyto!(cache.nzval, Anz)
         end
         return cache
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
@@ -836,13 +828,10 @@ function full_factor!(
     cache::KLULinSolveCache{Tv, Ti},
     A::SparseMatrixCSC{Tv, Ti},
 ) where {Tv, Ti}
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         symbolic_factor!(cache, A)
         numeric_refactor!(cache, A)
         return cache
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
@@ -860,13 +849,10 @@ function full_refactor!(
     cache::KLULinSolveCache{Tv, Ti},
     A::SparseMatrixCSC{Tv, Ti},
 ) where {Tv, Ti}
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         symbolic_refactor!(cache, A)
         numeric_refactor!(cache, A)
         return cache
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
@@ -914,15 +900,12 @@ Float64 only.
 function condest!(
     cache::KLULinSolveCache{Float64, Ti},
 ) where {Ti}
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         is_factored(cache) ||
             error("condest!: cache must be factored before condest.")
         _require_klu_numeric(cache, "condest!")
         _check_value_snapshot(cache, "condest!")
         return _condest!(cache, cache.nzval)
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
@@ -930,15 +913,12 @@ function condest!(
     cache::KLULinSolveCache{Float64, Ti},
     A::SparseMatrixCSC{Float64, Ti},
 ) where {Ti}
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         is_factored(cache) ||
             error("condest!: cache must be factored before condest.")
         _require_klu_numeric(cache, "condest!")
         _check_pattern_match(cache, A, "condest!")
         return _condest!(cache, nonzeros(A))
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
@@ -973,12 +953,14 @@ Route `numeric_refactor!` and `solve!` through the lean static-pivot LU on `plan
 must have been built (`build_lean_plan`) on a matrix with the cache's pattern. The plan is
 shared by reference; the cache gets its own LU values. A refactor whose pivot ratio falls
 below `LEAN_REJECT_RATIO * plan.rcond0`, or hits a zero or non-finite pivot, is redone
-with a fresh `klu_factor` in this cache and counted in `lean_counts`. While a lean
-factorization is current, `tsolve!`, `solve_sparse!` and `condest!` error.
+with a fresh `klu_factor` in this cache and counted in `lean_counts`.
+
+A lean factorization supports only `solve!`. `tsolve!`, `solve_sparse!` and `condest!` need a
+KLU numeric factorization and raise an error on a lean one. To use them, call
+`pause_lean!(cache, true)` and then `numeric_refactor!`, or call `pivoted_factor!`.
 """
 function set_lean_plan!(cache::KLULinSolveCache{Float64}, plan::LeanLUPlan)
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         _lean_plan_matches(cache, plan) || throw(
             ArgumentError("set_lean_plan!: the plan's pattern differs from the cache's."),
         )
@@ -990,8 +972,6 @@ function set_lean_plan!(cache::KLULinSolveCache{Float64}, plan::LeanLUPlan)
         cache.lean_active = false
         cache.lean_paused = false
         return cache
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
@@ -1019,8 +999,7 @@ pivot order, or `klu_factor` when there is none. For a caller whose matrices are
 repeat a lean reject. A paused cache keeps its plan; `pause_lean!(cache, false)` resumes.
 """
 function pause_lean!(cache::KLULinSolveCache, paused::Bool)
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         if paused && cache.lean_active
             # The KLU numeric is older than the lean factors; refactoring it would be stale.
             cache.lean_active = false
@@ -1028,17 +1007,17 @@ function pause_lean!(cache::KLULinSolveCache, paused::Bool)
         end
         cache.lean_paused = paused
         return cache
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
 """
     lean_counts(cache) -> (; attempts, rejects, solve_failures, late_analyses)
 
-Lean refactors tried on `cache`; how many failed the pivot-ratio test and fell back to
-`klu_factor`; how many passed it but were replaced by `repivot!` after their solve failed; and
-how many `defer_symbolic!` analyses a KLU factorization then needed.
+Return four counters for `cache`. `attempts` counts the lean refactors that the cache tried.
+`rejects` counts the lean refactors that failed the pivot-ratio test, so the cache used
+`klu_factor` instead. `solve_failures` counts the lean factorizations that passed the test but
+failed their solve, so `repivot!` replaced them. `late_analyses` counts the KLU factorizations
+that had to run the symbolic analysis that `defer_symbolic!` postponed.
 """
 function lean_counts(cache::KLULinSolveCache)
     return (;
@@ -1056,12 +1035,15 @@ Pivot on `plan`, the lean plan set on `cache`, with the two columns of each `(a,
 exchanged: the lean step that factored column `a` of the plan's matrix factors column `b`, and
 vice versa, each on its planned pivot row. Solutions come back in the original column order,
 and the pivot-ratio test still judges every refactor. A pair whose columns differ in pattern is
-left in place (a step's L/U pattern covers only its own column). An empty `pairs` restores
-`plan`'s own order.
+left in place (a step's L/U pattern covers only its own column). If the planned pivots then
+fail the pivot-ratio test, the refactor uses `klu_factor`. An empty `pairs` restores `plan`'s
+own order.
+
+PowerFlows uses it when a bus changes between PV and REF: the swap exchanges the bus's two
+state columns, so the planned pivots stay non-zero.
 """
 function swap_lean_columns!(cache::KLULinSolveCache{Float64}, plan::LeanLUPlan, pairs)
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         (cache.has_lean_plan && cache.lean_plan.p === plan.p) || throw(
             ArgumentError("swap_lean_columns!: `plan` is not the cache's lean plan."),
         )
@@ -1073,8 +1055,7 @@ function swap_lean_columns!(cache::KLULinSolveCache{Float64}, plan::LeanLUPlan, 
         end
         cache.lean_plan = plan
         isempty(pairs) && return cache
-        q = resize!(cache.lean_q, length(plan.q))
-        copyto!(q, plan.q)
+        q = copy(plan.q)
         for (a, b) in pairs
             _same_column_pattern(plan, a, b) || continue
             ia = findfirst(==(a), q)
@@ -1087,8 +1068,6 @@ function swap_lean_columns!(cache::KLULinSolveCache{Float64}, plan::LeanLUPlan, 
             plan.dep_lb, plan.dep_le, plan.a_colptr, plan.a_rowval,
         )
         return cache
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
@@ -1109,14 +1088,11 @@ factorization and pause the lean path, so the next `numeric_refactor!` pivots af
 `klu_factor` on the kept symbolic analysis. Counted in `cold_retries`.
 """
 function cold_restart!(cache::KLULinSolveCache)
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         drop_numeric!(cache)
         cache.lean_paused = true
         cache.cold_retries += 1
         return cache
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
@@ -1146,13 +1122,10 @@ lean plan. The next `numeric_refactor!` then factors afresh: lean first when a p
 otherwise `klu_factor`.
 """
 function drop_numeric!(cache::KLULinSolveCache)
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         cache.lean_active = false
         _drop_numeric!(cache)
         return cache
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
@@ -1167,8 +1140,7 @@ function pivoted_factor!(
     cache::KLULinSolveCache{Tv, Ti},
     A::SparseMatrixCSC{Tv, Ti},
 ) where {Tv, Ti}
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         _require_symbolic!(cache, "pivoted_factor!")
         cache.check_pattern && _check_pattern_match(cache, A, "pivoted_factor")
         drop_numeric!(cache)
@@ -1185,8 +1157,6 @@ function pivoted_factor!(
             copyto!(cache.nzval, Anz)
         end
         return cache
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
@@ -1198,14 +1168,11 @@ unchanged, so the symbolic analysis is kept. The lean path stays paused for the 
 solve (`pause_lean!`); a replaced lean factorization counts as a `lean_counts` solve failure.
 """
 function repivot!(cache::KLULinSolveCache, A::SparseMatrixCSC)
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         cache.lean_active && (cache.lean_solve_failures += 1)
         pivoted_factor!(cache, A)
         cache.lean_paused = true
         return cache
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
@@ -1224,8 +1191,7 @@ including its diagonal, summed over the BTF blocks), entries of the off-diagonal
 blocks, the number of blocks, and `klu_flops`'s flop count.
 """
 function _factor_stats(cache::KLULinSolveCache{Float64, Ti}) where {Ti}
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         _require_klu_numeric(cache, "_factor_stats")
         (cache.symbolic != C_NULL && cache.numeric != C_NULL) ||
             error("_factor_stats: cache has no KLU numeric factorization.")
@@ -1240,8 +1206,6 @@ function _factor_stats(cache::KLULinSolveCache{Float64, Ti}) where {Ti}
             nblocks = Int(shead.nblocks),
             flops = Float64(cache.common[].flops),
         )
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 

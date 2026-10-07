@@ -153,7 +153,7 @@ function BA_Matrix(ybus::Ybus)
     _warn_impedance_correction_in_dc(nr)
     bus_ax = get_bus_axis(ybus)
     bus_lookup = get_bus_lookup(ybus)
-    arc_ax = get_arc_axis(nr)
+    arc_ax = get_arc_axis(ybus)
     b_base = Float64[_ba_arc_susceptance(nr, arc) for arc in arc_ax]
     _check_modified_connectivity(ybus, arc_ax, nr, b_base)
     n_isolated_buses = length(get_isolated_buses(ybus))

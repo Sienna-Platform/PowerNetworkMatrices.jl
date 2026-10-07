@@ -771,13 +771,12 @@ end
     @test n_multi > 0
     @test SparseArrays.nonzeros(work.data) == SparseArrays.nonzeros(base.data)
 
-    # With the arc axis passed in, the cost is O(touched entries), independent of the size.
-    arc_ax = PNM.get_arc_axis(PNM.get_network_reduction_data(work))
+    # The cost is O(touched entries), independent of the size.
     mod = NetworkModification("n1", [first(single)])
-    apply_ybus_modification!(work, mod, arc_ax)
-    restore_ybus_modification!(work, base, mod, arc_ax)
-    @test (@allocated apply_ybus_modification!(work, mod, arc_ax)) < 4096
-    @test (@allocated restore_ybus_modification!(work, base, mod, arc_ax)) < 4096
+    apply_ybus_modification!(work, mod)
+    restore_ybus_modification!(work, base, mod)
+    @test (@allocated apply_ybus_modification!(work, mod)) < 4096
+    @test (@allocated restore_ybus_modification!(work, base, mod)) < 4096
     @test SparseArrays.nonzeros(work.data) == SparseArrays.nonzeros(base.data)
 end
 
@@ -865,6 +864,38 @@ end
     other = Ybus(PSB.build_system(PSB.PSITestSystems, "c_sys14"))
     @test_throws ErrorException restore_ybus_modification!(work, other, mod)
     @test SparseArrays.nonzeros(work.data) == applied
+end
+
+@testset "restore_ybus_modification! rejects a base with a different arc axis" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    work = Ybus(sys)
+    mod = NetworkModification(VirtualPTDF(sys), get_component(Line, sys, "1"))
+    apply_ybus_modification!(work, mod)
+    # Moving line "1" from (1, 2) to (2, 4) keeps the bus axis and changes the arc axis.
+    set_available!(get_component(Line, sys, "1"), false)
+    _add_arc_line!(sys, "moved", 2, 4, 0.01, 0.1)
+    base_moved = Ybus(sys)
+    @test PNM.get_bus_axis(base_moved) == PNM.get_bus_axis(work)
+    @test PNM.get_arc_axis(base_moved) != PNM.get_arc_axis(work)
+    @test_throws r"different arc axes" restore_ybus_modification!(work, base_moved, mod)
+end
+
+@testset "Ybus stores the arc axis of its reduction data" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    ybus = Ybus(
+        sys;
+        network_reductions = PNM.NetworkReduction[
+            PNM.RadialReduction(),
+            PNM.DegreeTwoReduction(),
+        ],
+    )
+    arc_ax = PNM.get_arc_axis(ybus)
+    @test arc_ax == PNM.get_arc_axis(PNM.get_network_reduction_data(ybus))
+    @test !isempty(arc_ax)
+    @test length(PNM.get_arc_lookup(ybus)) == length(arc_ax)
+    @test all(PNM.get_arc_lookup(ybus)[arc] == i for (i, arc) in enumerate(arc_ax))
+    @test length(ybus.arc_susceptance_scale) == length(arc_ax)
+    @test length(ybus.arc_live_members) == length(arc_ax)
 end
 
 # A direct arc's outage applied in place gives the DC matrices of the Ybus rebuilt with it out
@@ -983,12 +1014,11 @@ end
     _add_arc_line!(sys, "C32", 3, 2, 0.0, -0.2)
     work = Ybus(sys)
     nr = PNM.get_network_reduction_data(work)
-    arc_ax = PNM.get_arc_axis(nr)
-    arc_ix = findfirst(==((2, 3)), arc_ax)
+    arc_ix = PNM.get_arc_lookup(work)[(2, 3)]
     delta_b = -abs(PNM._ba_arc_susceptance(nr, (2, 3))) / 2
     dy = PNM._compute_arc_ybus_delta(nr, (2, 3), delta_b)
     mod = NetworkModification("half", [ArcModification(arc_ix, delta_b, 0.0, dy..., 0)])
-    apply_ybus_modification!(work, mod, arc_ax)
+    apply_ybus_modification!(work, mod)
     @test iszero(_bus_entry(work, 2, 3))
     @test work.arc_susceptance_scale[arc_ix] ≈ 0.5
 end

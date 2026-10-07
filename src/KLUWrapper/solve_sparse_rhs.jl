@@ -25,8 +25,7 @@ function solve_sparse!(
     out::AbstractMatrix{Tv};
     block::Int = SPARSE_RHS_DEFAULT_BLOCK,
 ) where {Tv, Ti, Tb <: Number}
-    taken = _acquire!(cache)
-    try
+    return _with_owner(cache) do
         is_factored(cache) || error("KLULinSolveCache: not factored yet.")
         _require_klu_numeric(cache, "solve_sparse!")
         block >= 1 || throw(ArgumentError("block must be >= 1; got $(block)"))
@@ -99,8 +98,6 @@ function solve_sparse!(
             j_start = j_end + 1
         end
         return out
-    finally
-        taken && (cache.owner[] = UInt(0))
     end
 end
 
