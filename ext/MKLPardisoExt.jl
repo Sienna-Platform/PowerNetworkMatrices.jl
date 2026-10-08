@@ -3,6 +3,7 @@ module MKLPardisoExt
 import PowerNetworkMatrices as PNM
 using Pardiso
 import SparseArrays
+import SparseArrays: SparseMatrixCSC, getcolptr, rowvals
 import LinearAlgebra
 
 """
@@ -75,6 +76,110 @@ function PNM._calculate_PTDF_matrix_MKLPardiso(
         error("Distributed bus specification doesn't match the number of buses.")
     end
     return
+end
+
+_pardiso_matrix_type(::Type{Float64}) = Pardiso.REAL_NONSYM
+_pardiso_matrix_type(::Type{ComplexF64}) = Pardiso.COMPLEX_NONSYM
+
+function PNM._make_pardiso_cache(
+    A::SparseMatrixCSC{T},
+) where {T <: Union{Float64, ComplexF64}}
+    if !Pardiso.mkl_is_available()
+        error(
+            "MKLPardiso backend selected but MKL is not available on this platform. " *
+            "MKL Pardiso requires x86_64 Linux or Windows; it is unavailable on Apple " *
+            "Silicon.",
+        )
+    end
+    ps = Pardiso.MKLPardisoSolver()
+    # The order is necessary: matrix type, then init (it sets the defaults for that type),
+    # then the iparm changes, then the transpose flag.
+    Pardiso.set_matrixtype!(ps, _pardiso_matrix_type(T))
+    Pardiso.pardisoinit(ps)
+    Pardiso.set_iparm!(ps, 8, 2)
+    # Pardiso reads CSR and Julia stores CSC. For MKL, `fix_iparm!(ps, :N)` sets
+    # iparm[12] = 2, a plain transpose (not conjugate), so Pardiso solves A·x = b for
+    # real and complex A.
+    Pardiso.fix_iparm!(ps, :N)
+    cache = PNM.PardisoLinSolveCache{T}(
+        ps, A, Int[], Int[], false, T[], Matrix{T}(undef, 0, 0),
+    )
+    return cache
+end
+
+# The Pardiso.jl solver object frees the MKL handle in its own finalizer.
+
+function _same_pattern(cache::PNM.PardisoLinSolveCache, A::SparseMatrixCSC)
+    return size(A, 1) == length(cache.colptr) - 1 &&
+           getcolptr(A) == cache.colptr &&
+           rowvals(A) == cache.rowval
+end
+
+function PNM.symbolic_factor!(
+    cache::PNM.PardisoLinSolveCache{T},
+    A::SparseMatrixCSC{T},
+) where {T}
+    cache.is_factored = false
+    cache.A = A
+    empty!(cache.colptr)
+    empty!(cache.rowval)
+    Pardiso.set_phase!(cache.ps, Pardiso.ANALYSIS)
+    Pardiso.pardiso(cache.ps, cache.A, T[])
+    cache.colptr = Vector{Int}(getcolptr(A))
+    cache.rowval = Vector{Int}(rowvals(A))
+    return cache
+end
+
+function PNM.numeric_refactor!(
+    cache::PNM.PardisoLinSolveCache{T},
+    A::SparseMatrixCSC{T},
+) where {T}
+    if !_same_pattern(cache, A)
+        throw(
+            ArgumentError(
+                "Cannot numeric_refactor!: the matrix has a different sparsity pattern " *
+                "than the last symbolic_factor!. Call full_factor! instead.",
+            ),
+        )
+    end
+    cache.is_factored = false
+    cache.A = A
+    Pardiso.set_phase!(cache.ps, Pardiso.NUM_FACT)
+    Pardiso.pardiso(cache.ps, cache.A, T[])
+    cache.is_factored = true
+    return cache
+end
+
+function PNM.full_factor!(
+    cache::PNM.PardisoLinSolveCache{T},
+    A::SparseMatrixCSC{T},
+) where {T}
+    PNM.symbolic_factor!(cache, A)
+    return PNM.numeric_refactor!(cache, A)
+end
+
+# Pardiso solves out of place. The scratch buffers only avoid an allocation of the
+# output. Pardiso.jl converts the index arrays on each call.
+function PNM.solve!(cache::PNM.PardisoLinSolveCache{T}, b::StridedVector{T}) where {T}
+    cache.is_factored || error("PardisoLinSolveCache: call full_factor! before solve!.")
+    Pardiso.set_phase!(cache.ps, Pardiso.SOLVE_ITERATIVE_REFINE)
+    if length(cache.scratch) != length(b)
+        resize!(cache.scratch, length(b))
+    end
+    Pardiso.pardiso(cache.ps, cache.scratch, cache.A, b)
+    copyto!(b, cache.scratch)
+    return b
+end
+
+function PNM.solve!(cache::PNM.PardisoLinSolveCache{T}, B::StridedMatrix{T}) where {T}
+    cache.is_factored || error("PardisoLinSolveCache: call full_factor! before solve!.")
+    Pardiso.set_phase!(cache.ps, Pardiso.SOLVE_ITERATIVE_REFINE)
+    if size(cache.scratch_mat) != size(B)
+        cache.scratch_mat = Matrix{T}(undef, size(B))
+    end
+    Pardiso.pardiso(cache.ps, cache.scratch_mat, cache.A, B)
+    copyto!(B, cache.scratch_mat)
+    return B
 end
 
 end # module

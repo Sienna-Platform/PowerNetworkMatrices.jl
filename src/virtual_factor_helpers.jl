@@ -16,12 +16,21 @@ function _create_factorization(
 end
 
 function _create_factorization(
+    ::MKLPardisoSolver,
+    ABA::SparseArrays.SparseMatrixCSC{Float64, Int},
+)
+    cache = PardisoLinSolveCache(ABA)
+    full_factor!(cache, ABA)
+    return cache
+end
+
+function _create_factorization(
     solver::LinearSolverType,
     ::SparseArrays.SparseMatrixCSC{Float64, Int},
 )
     return error(
-        "Only KLU and AppleAccelerateLU solvers are supported for this factorization; " *
-        "got $(typeof(solver)).",
+        "Only the KLU, AppleAccelerateLU, and MKLPardiso solvers are supported for this " *
+        "factorization; got $(typeof(solver)).",
     )
 end
 

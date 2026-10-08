@@ -1197,3 +1197,27 @@ function _add_star_buses!(sys, busD; numbers = (101, 102, 103))
         b
     end
 end
+
+# A complex system with the shape of a Ybus block: the c_sys14 Ybus without the
+# reference rows and columns, in ComplexF64 (`YBUS_ELTYPE` is ComplexF32).
+function _complex_ybus_block()
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    ybus = Ybus(sys)
+    keep = setdiff(1:size(ybus.data, 1), PNM.get_ref_bus_position(ybus))
+    return SparseArrays.SparseMatrixCSC{ComplexF64, Int}(ybus.data[keep, keep])
+end
+
+# A ring of `n` buses with no shunt. Each row sums to zero, so the matrix is numerically
+# singular, but every row and column has entries, so it is structurally nonsingular.
+function _floating_complex_ring(n::Int)
+    y = 1.0 - 10.0im
+    L = SparseArrays.spzeros(ComplexF64, n, n)
+    for k in 1:n
+        j = mod1(k + 1, n)
+        L[k, k] += y
+        L[j, j] += y
+        L[k, j] -= y
+        L[j, k] -= y
+    end
+    return L
+end

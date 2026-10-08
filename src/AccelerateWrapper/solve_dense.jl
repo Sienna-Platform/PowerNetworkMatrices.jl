@@ -11,7 +11,7 @@ Solve `A · X = B` in place, dispatching on the shape of `B`:
 Both overloads require `B` to have unit stride in the first dimension and
 the cache to be factored (`is_factored(cache) == true`).
 """
-function solve!(cache::AAFactorCache, B::StridedMatrix{Cdouble})
+function solve!(cache::AAFactorCache{T}, B::StridedMatrix{T}) where {T}
     is_factored(cache) || error("AAFactorCache: not factored yet.")
     n = cache.n
     size(B, 1) == n ||
@@ -26,7 +26,7 @@ function solve!(cache::AAFactorCache, B::StridedMatrix{Cdouble})
     return B
 end
 
-function solve!(cache::AAFactorCache, b::StridedVector{Cdouble})
+function solve!(cache::AAFactorCache{T}, b::StridedVector{T}) where {T}
     is_factored(cache) || error("AAFactorCache: not factored yet.")
     n = cache.n
     length(b) == n || throw(DimensionMismatch("length(b) = $(length(b)), cache n = $(n)"))
@@ -41,4 +41,4 @@ end
 
 Allocating solve, mirroring `LinearAlgebra.Factorization`'s API.
 """
-Base.:\(cache::AAFactorCache, B::StridedVecOrMat{Cdouble}) = solve!(cache, copy(B))
+Base.:\(cache::AAFactorCache{T}, B::StridedVecOrMat{T}) where {T} = solve!(cache, copy(B))

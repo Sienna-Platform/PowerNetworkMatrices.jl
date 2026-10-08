@@ -52,6 +52,13 @@ Specify the MKLPardiso solver:
 ptdf_matrix = PTDF(sys; linear_solver = "MKLPardiso")
 ```
 
+`ABA_Matrix` takes the same keyword for its factorization. Load `Pardiso` first:
+
+```julia
+using Pardiso
+aba = ABA_Matrix(sys; factorize = true, linear_solver = "MKLPardiso")
+```
+
 ## Performance Considerations
 
 ### System Size

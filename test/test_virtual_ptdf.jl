@@ -273,3 +273,15 @@ _getindex_alloc(v, arc) = @allocated v[arc, :]
     @test all(r -> r === rows[1], rows)
     @test rows[1] === get_ptdf_data(vfresh)[row_ix]
 end
+
+@testset "VirtualPTDF rejects MKLPardiso before it factors" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    err = try
+        VirtualPTDF(sys; linear_solver = "MKLPardiso")
+        nothing
+    catch e
+        e
+    end
+    @test typeof(err) == ErrorException
+    @test occursin("\"KLU\" and \"AppleAccelerateLU\"", err.msg)
+end

@@ -9,19 +9,20 @@ reuse them across many solves. The full CSC pattern of `A` is stored and the
 libSparse structure view is marked `ATT_ORDINARY`. No symmetry requirement
 (matches KLU's pivoting model).
 
-Float64 only. Requires macOS 15.5+ (enforced by the backend selection in
+The element type `T` is `Float64` or `ComplexF64`. `solve_sparse!` supports
+`Float64` only. Requires macOS 15.5+ (enforced by the backend selection in
 `linalg_settings.jl`).
 
 `reuse_symbolic` controls whether `symbolic_refactor!` keeps the analysis;
 `check_pattern` adds a structural-equality check on refactor calls and is
 only consulted when reusing.
 """
-mutable struct AAFactorCache <: LinearSolverCache
+mutable struct AAFactorCache{T <: Union{Float64, ComplexF64}} <: LinearSolverCache
     # Apple-side 0-based, narrower-integer copies of the full input CSC pattern.
     # Reused as-is across `numeric_refactor!` calls.
     columnStarts::Vector{Clong}
     rowIndices::Vector{Cint}
-    nzval::Vector{Cdouble}
+    nzval::Vector{T}
     n::Int
     # Count of stored entries: full `nnz(A)`.
     nnz::Int
@@ -30,7 +31,7 @@ mutable struct AAFactorCache <: LinearSolverCache
     reuse_symbolic::Bool
     check_pattern::Bool
     # Bounded reusable scratch for `solve_sparse!`. Lazy-grown on first call.
-    scratch::Matrix{Cdouble}
+    scratch::Matrix{T}
     col_map::Vector{Int}
     # Reusable libSparse solve workspace. Sized to
     # `static + nrhs * per_rhs` bytes; supplied to the workspace-aware
@@ -54,7 +55,7 @@ function Base.size(cache::AAFactorCache, d::Integer)
         return 1
     end
 end
-Base.eltype(::Type{AAFactorCache}) = Cdouble
+Base.eltype(::Type{AAFactorCache{T}}) where {T} = T
 
 """
     is_factored(cache::AAFactorCache) -> Bool
@@ -83,25 +84,25 @@ A finalizer frees libSparse handles on GC; call `Base.finalize(cache)` to
 release them eagerly.
 """
 function AAFactorCache(
-    A::SparseMatrixCSC{Float64, Int};
+    A::SparseMatrixCSC{T, Int};
     reuse_symbolic::Bool = true,
     check_pattern::Bool = true,
     scaling::SparseScaling_t = SparseScalingEquilibriationInf,
-)
+) where {T <: Union{Float64, ComplexF64}}
     n = size(A, 1)
     n == size(A, 2) || throw(DimensionMismatch("matrix must be square; got $(size(A))"))
     stored_nnz = SparseArrays.nnz(A)
-    cache = AAFactorCache(
+    cache = AAFactorCache{T}(
         Vector{Clong}(undef, n + 1),
         Vector{Cint}(undef, stored_nnz),
-        Vector{Cdouble}(undef, 0),
+        Vector{T}(undef, 0),
         n,
         stored_nnz,
         _null_symbolic(),
         _null_factorization(),
         reuse_symbolic,
         check_pattern,
-        Matrix{Cdouble}(undef, 0, 0),
+        Matrix{T}(undef, 0, 0),
         Int[],
         Float64[],
         scaling,
@@ -115,10 +116,7 @@ end
 
 # Copy A's full CSC pattern into `cache.columnStarts` / `cache.rowIndices`
 # as 0-based narrowed indices. Caller sized these to (n+1) and nnz.
-function _populate_pattern!(
-    cache::AAFactorCache,
-    A::SparseMatrixCSC{Float64, Int},
-)
+function _populate_pattern!(cache::AAFactorCache{T}, A::SparseMatrixCSC{T, Int}) where {T}
     cp = getcolptr(A)
     rv = rowvals(A)
     @inbounds for k in eachindex(cp)
@@ -131,10 +129,7 @@ function _populate_pattern!(
 end
 
 # Snapshot the full nonzeros into `cache.nzval`, growing if needed.
-function _populate_values!(
-    cache::AAFactorCache,
-    A::SparseMatrixCSC{Float64, Int},
-)
+function _populate_values!(cache::AAFactorCache{T}, A::SparseMatrixCSC{T, Int}) where {T}
     if length(cache.nzval) != cache.nnz
         resize!(cache.nzval, cache.nnz)
     end
@@ -148,10 +143,10 @@ end
 # stored pattern is identical to what was analyzed (full pattern, LU mode).
 # Apple's arrays are 0-based but we always store them 0-based — no flipping.
 function _check_pattern_match(
-    cache::AAFactorCache,
-    A::SparseMatrixCSC{Float64, Int},
+    cache::AAFactorCache{T},
+    A::SparseMatrixCSC{T, Int},
     op::AbstractString,
-)
+) where {T}
     n = cache.n
     if size(A, 1) != n || size(A, 2) != n
         throw(DimensionMismatch("Cannot $op: cache is $(n)×$(n) but A is $(size(A))."))
@@ -175,9 +170,9 @@ _pattern_mismatch(op::AbstractString) =
 Release the libSparse numeric and symbolic handles held by `cache`, leaving
 Julia-side state intact. Idempotent.
 """
-function _free_handles!(cache::AAFactorCache)
+function _free_handles!(cache::AAFactorCache{T}) where {T}
     if cache.numeric.status == SparseStatusOk
-        _sparse_cleanup_factor!(cache.numeric)
+        _sparse_cleanup_factor!(T, cache.numeric)
         cache.numeric = _null_factorization()
     end
     if cache.symbolic.status == SparseStatusOk
@@ -237,8 +232,8 @@ function _structure_view(cache::AAFactorCache)
     )
 end
 
-function _matrix_view(cache::AAFactorCache)
-    return SparseMatrix_t(_structure_view(cache), pointer(cache.nzval))
+function _matrix_view(cache::AAFactorCache{T}) where {T}
+    return SparseMatrix_t{T}(_structure_view(cache), pointer(cache.nzval))
 end
 
 """
@@ -248,7 +243,7 @@ Free any cached symbolic/numeric factor, replace the structural arrays with
 `A`'s full pattern, and analyze. Subsequent `numeric_refactor!` calls reuse
 the analysis.
 """
-function symbolic_factor!(cache::AAFactorCache, A::SparseMatrixCSC{Float64, Int})
+function symbolic_factor!(cache::AAFactorCache{T}, A::SparseMatrixCSC{T, Int}) where {T}
     n = cache.n
     if size(A, 1) != n || size(A, 2) != n
         throw(DimensionMismatch("Cannot factor: cache is $(n)×$(n) but A is $(size(A))."))
@@ -264,6 +259,7 @@ function symbolic_factor!(cache::AAFactorCache, A::SparseMatrixCSC{Float64, Int}
     end
     _populate_pattern!(cache, A)
     sym = _sparse_symbolic_factor(
+        T,
         SparseFactorizationLU,
         _structure_view(cache),
         SparseSymbolicFactorOptions(),
@@ -284,13 +280,13 @@ end
 Refresh the numeric factor on top of the existing symbolic analysis. Errors
 if `symbolic_factor!` has not been called yet.
 """
-function numeric_refactor!(cache::AAFactorCache, A::SparseMatrixCSC{Float64, Int})
+function numeric_refactor!(cache::AAFactorCache{T}, A::SparseMatrixCSC{T, Int}) where {T}
     cache.symbolic.status == SparseStatusOk ||
         error("AAFactorCache: call symbolic_factor! before numeric_refactor!.")
     cache.check_pattern && _check_pattern_match(cache, A, "numeric_refactor")
     _populate_values!(cache, A)
     if cache.numeric.status == SparseStatusOk
-        _sparse_cleanup_factor!(cache.numeric)
+        _sparse_cleanup_factor!(T, cache.numeric)
         cache.numeric = _null_factorization()
     end
     num = _sparse_numeric_factor(
@@ -300,7 +296,7 @@ function numeric_refactor!(cache::AAFactorCache, A::SparseMatrixCSC{Float64, Int
     )
     if num.status != SparseStatusOk
         # Same rationale as in symbolic_factor!: release before throwing.
-        _sparse_cleanup_factor!(num)
+        _sparse_cleanup_factor!(T, num)
         _libsparse_throw(num.status, "numeric factor")
     end
     cache.numeric = num
@@ -313,7 +309,7 @@ end
 If `cache.reuse_symbolic`, optionally verify the structure matches and reuse
 the existing analysis. Otherwise, rerun `symbolic_factor!`.
 """
-function symbolic_refactor!(cache::AAFactorCache, A::SparseMatrixCSC{Float64, Int})
+function symbolic_refactor!(cache::AAFactorCache{T}, A::SparseMatrixCSC{T, Int}) where {T}
     if !cache.reuse_symbolic
         return symbolic_factor!(cache, A)
     end
@@ -326,7 +322,7 @@ end
 
 Run a fresh symbolic analysis followed by a numeric factorization on `A`.
 """
-function full_factor!(cache::AAFactorCache, A::SparseMatrixCSC{Float64, Int})
+function full_factor!(cache::AAFactorCache{T}, A::SparseMatrixCSC{T, Int}) where {T}
     symbolic_factor!(cache, A)
     numeric_refactor!(cache, A)
     return cache
@@ -339,7 +335,7 @@ Refresh both factorizations on `A`. Defers to `symbolic_refactor!` (which
 reuses the existing analysis when `cache.reuse_symbolic` is set) followed by
 `numeric_refactor!`.
 """
-function full_refactor!(cache::AAFactorCache, A::SparseMatrixCSC{Float64, Int})
+function full_refactor!(cache::AAFactorCache{T}, A::SparseMatrixCSC{T, Int}) where {T}
     symbolic_refactor!(cache, A)
     numeric_refactor!(cache, A)
     return cache
@@ -353,11 +349,11 @@ Build a cache for `A` and immediately compute the full LU factorization. See
 `AAFactorCache` for the kwarg semantics.
 """
 function aa_factorize(
-    A::SparseMatrixCSC{Float64, Int};
+    A::SparseMatrixCSC{T, Int};
     reuse_symbolic::Bool = true,
     check_pattern::Bool = true,
     scaling::SparseScaling_t = SparseScalingEquilibriationInf,
-)
+) where {T <: Union{Float64, ComplexF64}}
     cache = AAFactorCache(
         A;
         reuse_symbolic = reuse_symbolic,
@@ -373,11 +369,11 @@ end
 Ensure `cache.scratch` is at least `n × block` and `cache.col_map` length
 `block`. Used by `solve_sparse!`.
 """
-@inline function _ensure_scratch!(cache::AAFactorCache, block::Int)
+@inline function _ensure_scratch!(cache::AAFactorCache{T}, block::Int) where {T}
     n = cache.n
     s = cache.scratch
     if size(s, 1) != n || size(s, 2) < block
-        cache.scratch = Matrix{Cdouble}(undef, n, block)
+        cache.scratch = Matrix{T}(undef, n, block)
     end
     if length(cache.col_map) < block
         resize!(cache.col_map, block)

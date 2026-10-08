@@ -46,7 +46,7 @@ else
     # Stub layer. Non-Apple builds never bind libSparse symbols, never codegen
     # the `@ccall` sites, and never instantiate `SparseOpaqueFactorization`.
     # The whole submodule reduces to these short bodies on Linux/Windows.
-    struct AAFactorCache <: LinearSolverCache end
+    struct AAFactorCache{T} <: LinearSolverCache end
 
     _unavailable() = error(
         "AccelerateWrapper is macOS-only (Sys.isapple() returned false). " *
