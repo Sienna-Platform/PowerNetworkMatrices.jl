@@ -9,9 +9,9 @@
 # The complex C structs (`SparseMatrixStructureComplex`,
 # `SparseOpaqueFactorization_Complex_Double`, `DenseMatrix_Complex_Double`,
 # `DenseVector_Complex_Double`) have the same size and field offsets as the
-# real structs. Only the attribute bitfield type is different, and it is also
-# 4 bytes. Thus one Julia struct serves both element types, and the element
-# type selects the mangled symbol.
+# real structs. The attribute bitfield type differs, but PNM only uses
+# `ATT_ORDINARY`, and it has the same value in both. Thus one Julia struct
+# serves both element types, and the element type selects the mangled symbol.
 
 const LIBSPARSE =
     "/System/Library/Frameworks/Accelerate.framework/Versions/A/" *
