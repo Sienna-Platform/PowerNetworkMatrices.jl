@@ -29,9 +29,20 @@ function get_bus_index(
 end
 
 function get_bus_indices(arc::PSY.Arc, bus_lookup::Dict{Int, Int}, nr::NetworkReductionData)
-    check_arc_validity(arc, IS.get_name(arc))
+    check_arc_validity(arc)
     fr_bus_number, to_bus_number = get_arc_tuple(arc, nr)
     return bus_lookup[fr_bus_number], bus_lookup[to_bus_number]
+end
+
+# Make the arc name only when the arc is not valid. On a large system, the name for each
+# branch takes measurable time to make.
+function check_arc_validity(arc::PSY.Arc)
+    for bus in (PSY.get_from(arc), PSY.get_to(arc))
+        if PSY.get_bustype(bus) == ACBusTypes.ISOLATED
+            check_arc_validity(arc, IS.get_name(arc))
+        end
+    end
+    return
 end
 
 function check_arc_validity(arc::PSY.Arc, name::String)
