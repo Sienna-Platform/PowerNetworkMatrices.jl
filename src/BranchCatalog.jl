@@ -545,6 +545,46 @@ function _validate_catalog_closure(nrd::NetworkReductionData, name_to_arc::NAME_
     return
 end
 
+function _fill_forward_buckets!(maps::BranchMapsByType, direct, parallel, series)
+    _fill_buckets!(maps.direct_branch_map, direct,
+        ((_, entry),) -> Dict{Tuple{Int, Int}, typeof(entry)}())
+    # Value type is `AbstractBranchesParallel`: a per-type bucket holds either a
+    # `BranchesParallel{T}` or a `MixedBranchesParallel` that includes a `T`.
+    _fill_buckets!(maps.parallel_branch_map, parallel,
+        _ -> Dict{Tuple{Int, Int}, AbstractBranchesParallel}())
+    _fill_buckets!(maps.series_branch_map, series,
+        _ -> Dict{Tuple{Int, Int}, BranchesSeries}())
+    return
+end
+
+# Put the reverse map `source` into `dest`. Return the entry names.
+function _fill_reverse_buckets!(
+    dest::Dict{DataType, Any},
+    arcs::ARC_TABLE,
+    source,
+    predicate,
+)
+    staged = _VectorsByType{Pair{PSY.ACTransmission, ARC_ENTRY}}()
+    entry_names = _VectorsByType{Pair{String, String}}()
+    _index_reverse!(staged, entry_names, arcs, source, predicate)
+    _fill_buckets!(dest, staged, ((member, _),) -> Dict{typeof(member), Tuple{Int, Int}}())
+    return entry_names
+end
+
+function _fill_reverse_series_buckets!(dest::Dict{DataType, Any}, source, predicate)
+    staged = _VectorsByType{Pair{PSY.ACTransmission, ARC_ENTRY}}()
+    _index_reverse_series!(staged, source, predicate)
+    # Same key type as `reverse_series_branch_map` in `NetworkReductionData`.
+    _fill_buckets!(dest, staged, _ -> Dict{PSY.ACTransmission, Tuple{Int, Int}}())
+    return
+end
+
+function _sorted_name_buckets_of(names::_VectorsByType{Pair{String, ARC_ENTRY}})
+    name_to_arc = NAME_TO_ARC()
+    _sorted_name_buckets!(name_to_arc, names)
+    return name_to_arc
+end
+
 """
     BranchCatalog(nrd::NetworkReductionData)
 
@@ -566,62 +606,71 @@ function BranchCatalog(nrd::NetworkReductionData, predicate)
     maps = BranchMapsByType()
     arcs = ARC_TABLE()
     names = _VectorsByType{Pair{String, ARC_ENTRY}}()
-    entry_names = _VectorsByType{Pair{String, String}}()
-
     direct = _VectorsByType{Pair{ARC_ENTRY, PSY.ACTransmission}}()
     _index_forward!(direct, names, arcs, nrd.direct_branch_map, predicate,
         entry -> (_get_segment_type(entry),))
-    _fill_buckets!(maps.direct_branch_map, direct,
-        ((_, entry),) -> Dict{Tuple{Int, Int}, typeof(entry)}())
-
-    reverse_direct = _VectorsByType{Pair{PSY.ACTransmission, ARC_ENTRY}}()
-    _index_reverse!(reverse_direct, entry_names, arcs, nrd.reverse_direct_branch_map,
-        predicate)
-    _fill_buckets!(maps.reverse_direct_branch_map, reverse_direct,
-        ((member, _),) -> Dict{typeof(member), Tuple{Int, Int}}())
-
     parallel = _VectorsByType{Pair{ARC_ENTRY, AbstractBranchesParallel}}()
     _index_forward!(parallel, names, arcs, nrd.parallel_branch_map, predicate,
         _get_concrete_types)
-    # Value type is `AbstractBranchesParallel`: a per-type bucket holds either a
-    # `BranchesParallel{T}` or a `MixedBranchesParallel` that includes a `T`.
-    _fill_buckets!(maps.parallel_branch_map, parallel,
-        _ -> Dict{Tuple{Int, Int}, AbstractBranchesParallel}())
-
-    reverse_parallel = _VectorsByType{Pair{PSY.ACTransmission, ARC_ENTRY}}()
-    _index_reverse!(reverse_parallel, entry_names, arcs, nrd.reverse_parallel_branch_map,
-        predicate)
-    _fill_buckets!(maps.reverse_parallel_branch_map, reverse_parallel,
-        ((member, _),) -> Dict{typeof(member), Tuple{Int, Int}}())
-
     series = _VectorsByType{Pair{ARC_ENTRY, BranchesSeries}}()
-    _index_series!(series, arcs, names, entry_names, nrd.series_branch_map, predicate)
-    _fill_buckets!(maps.series_branch_map, series,
-        _ -> Dict{Tuple{Int, Int}, BranchesSeries}())
+    series_entry_names = _VectorsByType{Pair{String, String}}()
+    _index_series!(
+        series,
+        arcs,
+        names,
+        series_entry_names,
+        nrd.series_branch_map,
+        predicate,
+    )
 
-    reverse_series = _VectorsByType{Pair{PSY.ACTransmission, ARC_ENTRY}}()
-    _index_reverse_series!(reverse_series, nrd.reverse_series_branch_map, predicate)
-    # Same key type as `reverse_series_branch_map` in `NetworkReductionData`.
-    _fill_buckets!(maps.reverse_series_branch_map, reverse_series,
-        _ -> Dict{PSY.ACTransmission, Tuple{Int, Int}}())
+    # The forward passes write to `arcs` and `names`, so they run in sequence. The subsequent
+    # steps only read these tables and write to their own outputs, so they run as tasks. The
+    # merge keeps the entry names in the order of the sequential passes because the fill
+    # keeps the last value.
+    forward_task = Threads.@spawn _fill_forward_buckets!(maps, direct, parallel, series)
+    reverse_direct_task = Threads.@spawn _fill_reverse_buckets!(
+        maps.reverse_direct_branch_map,
+        arcs,
+        nrd.reverse_direct_branch_map,
+        predicate,
+    )
+    reverse_parallel_task = Threads.@spawn _fill_reverse_buckets!(
+        maps.reverse_parallel_branch_map,
+        arcs,
+        nrd.reverse_parallel_branch_map,
+        predicate,
+    )
+    reverse_series_task = Threads.@spawn _fill_reverse_series_buckets!(
+        maps.reverse_series_branch_map,
+        nrd.reverse_series_branch_map,
+        predicate,
+    )
+    names_task = Threads.@spawn _sorted_name_buckets_of(names)
+    index_task = Threads.@spawn _build_component_name_index(nrd, arcs, predicate)
 
-    name_to_arc = NAME_TO_ARC()
-    _sorted_name_buckets!(name_to_arc, names)
+    entry_names = _VectorsByType{Pair{String, String}}()
+    for part in
+        (fetch(reverse_direct_task), fetch(reverse_parallel_task), series_entry_names)
+        for (T, pairs) in part
+            append!(get!(Vector{Pair{String, String}}, entry_names, T), pairs)
+        end
+    end
     component_to_entry = COMPONENT_TO_ENTRY()
     for (T, pairs) in entry_names
         component_to_entry[T] = _fill_bucket!(Dict{String, String}(), pairs)
     end
-
+    name_to_arc = fetch(names_task)
     if _is_unfiltered(predicate)
         _validate_catalog_closure(nrd, name_to_arc)
     end
-
+    wait(forward_task)
+    wait(reverse_series_task)
     return BranchCatalog(
         nrd,
         arcs,
         maps,
         name_to_arc,
         component_to_entry,
-        _build_component_name_index(nrd, arcs, predicate),
+        fetch(index_task),
     )
 end
