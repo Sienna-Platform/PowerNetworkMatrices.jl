@@ -460,8 +460,30 @@ function KLULinSolveCache(
         Matrix{Tv}(undef, 0, 0),
         Ti[],
     )
-    finalizer(_free_klu_handles!, cache)
+    finalizer(_finalize_klu_cache!, cache)
     return cache
+end
+
+"""
+GC finalizer for `KLULinSolveCache`. Must never block on `_LIBKLU_LOCK`: a
+finalizer can run while the current task is itself queued on that lock (e.g.
+from the scheduler inside `slowlock`), and a blocking `lock` there fails with
+"val already in a list" and can wedge the process. If the lock is busy, the
+finalizer re-registers itself and retries at a later GC. See "Safe use of
+Finalizers" in the Julia manual (multi-threading chapter).
+"""
+function _finalize_klu_cache!(cache::KLULinSolveCache)
+    if trylock(_LIBKLU_LOCK)
+        try
+            # The `@klu_lock` calls inside re-enter the (reentrant) lock.
+            _free_klu_handles!(cache)
+        finally
+            unlock(_LIBKLU_LOCK)
+        end
+    else
+        finalizer(_finalize_klu_cache!, cache)
+    end
+    return nothing
 end
 
 """
@@ -490,7 +512,8 @@ Release the libklu numeric and symbolic handles held by `cache`, leaving the
 Julia-side fields (`colptr`, `rowval`, `common`, `scratch`, `col_map`) intact
 so the cache remains structurally valid and re-factorable. Idempotent: a
 second call hits the `C_NULL` guards. Used both by `symbolic_factor!`
-mid-life (drop old handles before re-analyzing) and by the GC finalizer.
+mid-life (drop old handles before re-analyzing) and by the GC finalizer
+(through `_finalize_klu_cache!`, which must not block on the lock).
 """
 function _free_klu_handles!(
     cache::KLULinSolveCache{Tv, Ti},

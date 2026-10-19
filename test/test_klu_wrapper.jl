@@ -399,3 +399,24 @@ end
     X = PNM.solve_w_refinement(cache, A, b)
     @test isapprox(X, x_true, atol = 1e-10)
 end
+
+@testset "KLU wrapper: finalizer does not block on a busy libklu lock" begin
+    # A finalizer can run while the current task is queued on `_LIBKLU_LOCK`;
+    # blocking there fails ("val already in a list") and can hang the process.
+    KW = PNM.KLUWrapper
+    cache = PNM.klu_factorize(SparseArrays.sparse(4.0 * LinearAlgebra.I, 3, 3))
+    GC.gc()  # run pending finalizers of earlier caches while the lock is free
+
+    release = Base.Event()
+    holder = @async @lock KW._LIBKLU_LOCK wait(release)  # another task holds the lock
+    yield()
+    @test islocked(KW._LIBKLU_LOCK)
+    # Must return at once (deferring the free); in a task so blocking fails, not hangs.
+    fin = @async KW._finalize_klu_cache!(cache)
+    @test timedwait(() -> istaskdone(fin), 5.0) === :ok
+    @test PNM.is_factored(cache)
+    notify(release)
+    wait(holder)
+    KW._finalize_klu_cache!(cache)  # lock free now: handles are released
+    @test !PNM.is_factored(cache)
+end
