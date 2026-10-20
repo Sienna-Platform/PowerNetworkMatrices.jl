@@ -460,8 +460,19 @@ function KLULinSolveCache(
         Matrix{Tv}(undef, 0, 0),
         Ti[],
     )
-    finalizer(_free_klu_handles!, cache)
+    finalizer(_finalize_klu_cache!, cache)
     return cache
+end
+
+"""
+GC finalizer for `KLULinSolveCache`. Does nothing once the process is exiting
+(see `_EXITING`): the exit-time finalizer sweep also reaches caches that tasks
+on other threads are still using.
+"""
+function _finalize_klu_cache!(cache::KLULinSolveCache)
+    _EXITING[] && return nothing
+    _free_klu_handles!(cache)
+    return nothing
 end
 
 """
@@ -490,7 +501,8 @@ Release the libklu numeric and symbolic handles held by `cache`, leaving the
 Julia-side fields (`colptr`, `rowval`, `common`, `scratch`, `col_map`) intact
 so the cache remains structurally valid and re-factorable. Idempotent: a
 second call hits the `C_NULL` guards. Used both by `symbolic_factor!`
-mid-life (drop old handles before re-analyzing) and by the GC finalizer.
+mid-life (drop old handles before re-analyzing) and by the GC finalizer
+(through `_finalize_klu_cache!`).
 """
 function _free_klu_handles!(
     cache::KLULinSolveCache{Tv, Ti},

@@ -399,3 +399,62 @@ end
     X = PNM.solve_w_refinement(cache, A, b)
     @test isapprox(X, x_true, atol = 1e-10)
 end
+
+@testset "KLU wrapper: finalizer leaves handles alone once exiting" begin
+    KW = PNM.KLUWrapper
+    cache = PNM.klu_factorize(SparseArrays.sparse(4.0 * LinearAlgebra.I, 3, 3))
+    KW._EXITING[] = true
+    try
+        KW._finalize_klu_cache!(cache)
+        @test PNM.is_factored(cache)
+    finally
+        KW._EXITING[] = false
+    end
+    KW._finalize_klu_cache!(cache)
+    @test !PNM.is_factored(cache)
+end
+
+@testset "KLU wrapper: exit while other threads are solving does not crash" begin
+    # Each task solves with its own cache; the main task returns while they are still
+    # solving, so Julia runs the exit-time finalizers of caches that are in use.
+    # Runs in a child process with several threads, since a failure crashes it.
+    child = raw"""
+    using PowerNetworkMatrices, SparseArrays, LinearAlgebra
+    const PNM = PowerNetworkMatrices
+    m = 120  # 2D grid Laplacian, n = 14_400
+    T = spdiagm(-1 => fill(-1.0, m - 1), 0 => fill(4.0, m), 1 => fill(-1.0, m - 1))
+    E = spdiagm(-1 => fill(-1.0, m - 1), 1 => fill(-1.0, m - 1))
+    A = kron(sparse(1.0I, m, m), T) + kron(E, sparse(1.0I, m, m))
+    b = A * ones(size(A, 1))
+    n_tasks = 2 * Threads.nthreads()
+    started = Threads.Atomic{Int}(0)
+    for _ in 1:n_tasks
+        Threads.@spawn begin
+            K = PNM.klu_factorize(A)
+            Threads.atomic_add!(started, 1)
+            y = similar(b)
+            for i in 1:10^6
+                copyto!(y, b)
+                PNM.solve!(K, y)
+                i % 10 == 0 && yield()  # let the main task back onto its thread
+            end
+        end
+    end
+    while started[] < n_tasks
+        sleep(0.01)
+    end
+    sleep(0.5)
+    println("main returning")
+    """
+    cmd = `$(Base.julia_cmd()) --startup-file=no --threads=4
+        --project=$(Base.active_project()) -e $child`
+    out, err = IOBuffer(), IOBuffer()
+    p = run(pipeline(ignorestatus(cmd); stdout = out, stderr = err); wait = false)
+    timedwait(() -> process_exited(p), 600) === :ok || kill(p)
+    wait(p)
+    out_s, err_s = String(take!(out)), String(take!(err))
+    success(p) || @error "child process failed" p.exitcode p.termsignal err_s
+    @test success(p)
+    @test occursin("main returning", out_s)
+    @test !occursin("error in running finalizer", err_s)
+end
