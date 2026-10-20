@@ -318,7 +318,7 @@ end
     @test length(mod.arc_modifications) == 2
 end
 
-@testset "NetworkModification: ThreeWindingTransformer via Outage attribute" begin
+@testset "NetworkModification: ThreeWindingTransformer via UnplannedOutage attribute" begin
     sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
     trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
 
@@ -435,8 +435,32 @@ end
     bp = PNM.get_parallel_branch_map(nr)[(1, 3)]
     chain = PNM._outaged_group_member(bp, leaf)
     @test any(l === leaf for l in PNM.leaf_components(chain))
-    @test am.delta_b ≈ -PNM._finite_series_susceptance(chain, nr)
+    sibling = only(m for m in bp if m !== chain)
+    b_arc = PNM._get_arc_susceptances(vptdf)[am.arc_index]
+    @test am.delta_b ≈ PNM._ba_arc_susceptance(sibling, nr) - b_arc atol = 1e-12
     @test iszero(am.delta_shift_injection)
+
+    sys_ref = build_two_parallel_degree_two_chains()
+    PSY.set_available!(PSY.get_component(Line, sys_ref, "L_1_10"), false)
+    ptdf_ref = PTDF(sys_ref; network_reductions = reductions)
+    err = 0.0
+    for arc in PNM.get_arc_axis(vptdf)
+        haskey(PNM.get_arc_lookup(ptdf_ref), arc) || continue
+        row = vptdf[arc, mod]
+        for (j, bus) in enumerate(PNM.get_bus_axis(vptdf))
+            err = max(
+                err,
+                abs(
+                    row[j] -
+                    ptdf_ref[
+                        PNM.get_arc_lookup(ptdf_ref)[arc],
+                        PNM.get_bus_lookup(ptdf_ref)[bus],
+                    ],
+                ),
+            )
+        end
+    end
+    @test err < 1e-12
 
     # The arc loses exactly the tripped chain's two-port, not one segment's.
     Y11, Y12, Y21, Y22 = PNM.ybus_branch_entries(chain, nr)
@@ -761,4 +785,97 @@ end
         @test a.shunt_modifications == b.shunt_modifications
         @test a.is_islanding == b.is_islanding
     end
+end
+
+# c_sys14 with a lossless series capacitor of reactance `x_scale·x` beside the first line by
+# name. With `x_scale > -1` the capacitor outweighs the line and the group's net susceptance
+# is negative.
+function _c_sys14_with_series_capacitor(x_scale)
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    line = first(sort!(collect(PSY.get_components(Line, sys)); by = PSY.get_name))
+    capacitor = Line(;
+        input_basis = u"CU",
+        name = "series_capacitor",
+        available = true,
+        active_power_flow = 0.0,
+        reactive_power_flow = 0.0,
+        arc = PSY.get_arc(line),
+        r = 0.0,
+        x = x_scale * PSY.get_x(line, u"CU"),
+        b = (from = 0.0, to = 0.0),
+        rating = 10.0,
+        angle_limits = (min = -1.5, max = 1.5),
+        base_power = PSY.get_base_power(line),
+    )
+    PSY.add_component!(sys, capacitor)
+    return sys, line
+end
+
+@testset "NetworkModification: line beside a series capacitor trips as a rebuild" begin
+    for x_scale in (-0.5, -2.0)
+        sys, line = _c_sys14_with_series_capacitor(x_scale)
+        vptdf = VirtualPTDF(sys)
+        vmodf = VirtualMODF(vptdf, sys; automatically_register_outages = false)
+        nr = PNM.get_network_reduction_data(vptdf)
+        arc = PNM.get_arc_tuple(line, nr)
+        @test haskey(PNM.get_parallel_branch_map(nr), arc)
+        @test (PNM._ba_arc_susceptance(nr, arc) < 0) == (x_scale > -1)
+        mod = NetworkModification(vmodf, sys, [line])
+
+        ref_sys, ref_line = _c_sys14_with_series_capacitor(x_scale)
+        PSY.set_available!(ref_line, false)
+        ref = PTDF(ref_sys)
+        bus_ax = PNM.get_bus_axis(vptdf)
+        @test all(
+            isapprox(vmodf[a, mod], [ref[a, bus] for bus in bus_ax]; atol = 1e-8) for
+            a in PNM.get_arc_axis(ref)
+        )
+    end
+end
+
+# A lossless phase shifter named `name` on `arc`, with reactance `x` in system base.
+function _add_test_shifter!(sys, name, arc; α, x)
+    shifter = PSY.TwoWindingTransformer(; input_basis = u"CU",
+        name = name,
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
+            arc = arc, tap = 1.0, α = α, available = true,
+            active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 10.0,
+            base_power = PSY.get_base_power(sys),
+            base_voltage_primary = PSY.get_base_voltage(PSY.get_from(arc)),
+            r = 0.0, x = x,
+        ),
+        magnetizing_shunt = Complex(0.0, 0.0),
+    )
+    PSY.add_component!(sys, shifter)
+    return shifter
+end
+
+@testset "NetworkModification: tripped parallel members resolve the same in any order" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    line = first(sort!(collect(PSY.get_components(Line, sys)); by = PSY.get_name))
+    arc = PSY.get_arc(line)
+    # These angles make the members' shift injections sum differently by order.
+    shifters = PSY.ACTransmission[
+        _add_test_shifter!(sys, "shifter_$k", arc; α = α, x = 0.1) for
+        (k, α) in enumerate((0.01, 0.02, 0.03))
+    ]
+    vptdf = VirtualPTDF(sys)
+    nr = PNM.get_network_reduction_data(vptdf)
+    arc_tuple = PNM.get_arc_tuple(line, nr)
+    group = PNM.get_parallel_branch_map(nr)[arc_tuple]
+    @test length(group) == 4
+    orders = ([1, 2, 3], [1, 3, 2], [2, 1, 3], [2, 3, 1], [3, 1, 2], [3, 2, 1])
+    terms = [PNM._member_shift_injection(group, nr, m) for m in shifters]
+    @test length(unique(sum(terms[order]) for order in orders)) > 1
+
+    arc_lookup = PNM.get_arc_lookup(vptdf)
+    b_arc = PNM._get_arc_susceptances(vptdf)[arc_lookup[arc_tuple]]
+    mods = [
+        PNM._parallel_arc_modification(nr, arc_lookup, arc_tuple, b_arc, shifters[order])
+        for order in orders
+    ]
+    @test all(m == first(mods) for m in mods)
+    @test !iszero(first(mods).delta_shift_injection)
+    vmodf = VirtualMODF(vptdf, sys; automatically_register_outages = false)
+    @test NetworkModification(vmodf, sys, shifters).arc_modifications == (first(mods),)
 end

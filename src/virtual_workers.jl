@@ -155,7 +155,7 @@ end
     get_woodbury_factors(vmodf::VirtualMODF, contingency, solver::VirtualFactorCore) -> WoodburyFactors
 
 The cached Woodbury factors of `contingency` (a `NetworkModification`, `ContingencySpec`,
-registered `PSY.Outage` or outage id), computed on a miss on `solver`, a [`worker_core`](@ref)
+registered `PSY.UnplannedOutage` or outage id), computed on a miss on `solver`, a [`worker_core`](@ref)
 of `vmodf`. The cache is `vmodf`'s own, shared with `vmodf[m, contingency]`; the core's
 `solver_lock` is held only around cache reads and writes, never for the solves. Two workers
 missing on the same contingency both compute it and the first insert wins.

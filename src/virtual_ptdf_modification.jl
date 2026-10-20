@@ -61,6 +61,32 @@ function get_post_modification_ptdf_row(
 end
 
 """
+    get_post_modification_ptdf_rows(vptdf::VirtualPTDF, monitored_arc, mods) -> Vector{Vector{Float64}}
+
+The post-modification PTDF rows of one monitored arc (an index or a bus pair) under each
+modification in `mods`, from a single solve of the arc's base column:
+`rows[i] == get_post_modification_ptdf_row(vptdf, monitored_arc, mods[i])`, bit for bit,
+including `vptdf`'s distributed slack. No caching: each call recomputes every modification's
+Woodbury factors.
+
+!!! note
+    Concurrent callers serialize on the per-cache `solver_lock`.
+"""
+function get_post_modification_ptdf_rows(
+    vptdf::VirtualPTDF,
+    monitored_arc::Union{Int, Tuple{Int, Int}},
+    mods::AbstractVector{NetworkModification},
+)::Vector{Vector{Float64}}
+    factors = [compute_woodbury_factors(vptdf, mod) for mod in mods]
+    m = _resolve_arc_index(vptdf, monitored_arc)
+    rows = _woodbury_rows(get_core(vptdf), m, factors)
+    for (row, wf) in zip(rows, factors)
+        _apply_dist_slack!(row, vptdf, wf)
+    end
+    return rows
+end
+
+"""
     getindex(vptdf::VirtualPTDF, monitored::Int, mod::NetworkModification) -> Vector{Float64}
 
 Indexing overload for post-modification PTDF row queries.
@@ -76,13 +102,13 @@ function Base.getindex(
     return get_post_modification_ptdf_row(vptdf, monitored, mod)
 end
 
-# --- PSY.Outage convenience API ---
+# --- PSY.UnplannedOutage convenience API ---
 
 """
     get_post_modification_ptdf_row(vptdf, monitored_arc, sys, outage) -> Vector{Float64}
 
 Compute the post-contingency PTDF row for a monitored arc when the given
-`PSY.Outage` trips. Resolves the outage's associated branches through
+`PSY.UnplannedOutage` trips. Resolves the outage's associated branches through
 the system and builds the modification automatically.
 
 $(TYPEDSIGNATURES)
@@ -91,7 +117,7 @@ function get_post_modification_ptdf_row(
     vptdf::VirtualPTDF,
     monitored_arc::Union{Int, Tuple{Int, Int}},
     sys::PSY.System,
-    outage::PSY.Outage,
+    outage::PSY.UnplannedOutage,
 )::Vector{Float64}
     mod = NetworkModification(vptdf, sys, outage)
     return get_post_modification_ptdf_row(vptdf, monitored_arc, mod)

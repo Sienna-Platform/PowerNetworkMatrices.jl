@@ -728,6 +728,39 @@ function _resolve_antiparallel_adjacency!(
     return
 end
 
+# Closed switches are recorded and matched by name, so a switch from another system would
+# silently close whichever switch of `sys` shares its name.
+function _validate_closed_switches(
+    sys::PSY.System,
+    closed_switches::AbstractVector{<:PSY.DiscreteControlledACBranch},
+)
+    for switch in closed_switches
+        name = PSY.get_name(switch)
+        if PSY.get_component(typeof(switch), sys, name) !== switch
+            throw(
+                IS.ConflictingInputsError(
+                    "Closed switch $(name) is not a component of the system.",
+                ),
+            )
+        end
+    end
+    return
+end
+
+function _validate_schedule_pinned_buses(sys::PSY.System, schedule_pinned_buses)
+    isempty(schedule_pinned_buses) && return
+    bus_numbers = Set{Int}(PSY.get_number(b) for b in PSY.get_components(PSY.ACBus, sys))
+    missing_buses = sort!(collect(setdiff(Set{Int}(schedule_pinned_buses), bus_numbers)))
+    if !isempty(missing_buses)
+        throw(
+            IS.ConflictingInputsError(
+                "Schedule-pinned buses $(missing_buses) are not in the system.",
+            ),
+        )
+    end
+    return
+end
+
 """
     Ybus(
         sys::PSY.System;
@@ -754,6 +787,13 @@ and network reductions while maintaining connectivity analysis.
 - `irreducible_buses::IS.ComponentSelector=IS.make_selector()`: Components whose buses the network
   reductions must keep. See [`get_irreducible_bus_numbers`](@ref) for the buses that each selected
   component type keeps.
+- `closed_switches::AbstractVector{<:PSY.DiscreteControlledACBranch}`: switches included as
+  closed regardless of `branch_status`, provided they are available; their names are
+  recorded in the reduction container (`get_closed_switches`). Each must be a component of
+  `sys`.
+- `schedule_pinned_buses`: buses kept out of every reduction because a scheduled topology
+  change acts on them; recorded separately from `irreducible_buses`. Each must be a bus
+  number in `sys`.
 
 # Returns
 - `Ybus`: Constructed Y-bus matrix with network topology and electrical parameters
@@ -779,18 +819,28 @@ function _build_ybus(
     make_arc_admittance_matrices::Bool = false,
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
     include_constant_impedance_loads = true,
+    closed_switches::AbstractVector{<:PSY.DiscreteControlledACBranch} = PSY.DiscreteControlledACBranch[],
+    schedule_pinned_buses = Set{Int}(),
 )
     network_reductions, zero_impedance_reduction =
         _split_zero_impedance_reduction(network_reductions)
+    _validate_closed_switches(sys, closed_switches)
+    _validate_schedule_pinned_buses(sys, schedule_pinned_buses)
+    forced_closed = Set{String}()
+    for switch in closed_switches
+        PSY.get_available(switch) && push!(forced_closed, PSY.get_name(switch))
+    end
     ref_bus_numbers = Set{Int}()
     # Stored angles of the swing (REF) buses, used to pick the smallest-angle swing as the
     # representative when an island holds more than one (see `assign_reference_buses!`).
     ref_bus_angles = Dict{Int, Float64}()
-    # Seed the user set and ZIBR spec into the container so every reduction step and
-    # the assembly path can read them.
+    # Seed the build configuration and ZIBR spec into the container so every reduction
+    # step and the assembly path can read them.
     nr = NetworkReductionData(;
         reductions = ReductionContainer(;
             user_irreducible_buses = user_irreducible,
+            schedule_pinned_buses = Set{Int}(schedule_pinned_buses),
+            closed_switches = forced_closed,
             zero_impedance_reduction = zero_impedance_reduction,
         ),
     )
@@ -821,7 +871,7 @@ function _build_ybus(
         bus_lookup[b] = ix
     end
     build_impedance_correction_factors!(nr, sys)
-    branches = _get_ybus_two_terminal_ac_branches(sys)
+    branches = _get_ybus_two_terminal_ac_branches(sys, forced_closed)
     transformer_3W =
         _get_filtered_components(PSY.ThreeWindingTransformer, sys, PSY.get_available)
     fixed_admittances =

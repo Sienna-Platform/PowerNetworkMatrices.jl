@@ -21,7 +21,7 @@ _warn_or_rethrow_missing_component(e, uuid) = rethrow()
 
 # Call `f(component)` for each component `outage` declares monitored; a stale UUID warns and
 # is skipped.
-function _foreach_monitored_component(f, sys::PSY.System, outage::PSY.Outage)
+function _foreach_monitored_component(f, sys::PSY.System, outage::PSY.UnplannedOutage)
     for uuid in PSY.get_monitored_components(outage)
         local component
         try
@@ -38,7 +38,7 @@ end
 """
     _collect_protected_buses(sys) -> Set{Int}
 
-Buses to protect so every `PSY.Outage`'s outaged and monitored components
+Buses to protect so every `PSY.UnplannedOutage`'s outaged and monitored components
 remain queryable as arcs after reduction. Computed from `sys` alone (no `Ybus`
 needed) so the result can be folded into `irreducible_buses` *before* the base
 `Ybus` (and its auto-applied zero-impedance reduction) is built — otherwise a
@@ -47,7 +47,7 @@ known to need protecting.
 """
 function _collect_protected_buses(sys::PSY.System)
     buses = Set{Int}()
-    for outage in PSY.get_supplemental_attributes(PSY.Outage, sys)
+    for outage in PSY.get_supplemental_attributes(PSY.UnplannedOutage, sys)
         for component in PSY.get_associated_components(sys, outage)
             _accumulate_protected_buses!(buses, component)
         end
@@ -74,7 +74,7 @@ _push_if_branch!(::Set{PSY.ACTransmission}, ::PSY.Component) = nothing
 
 function _contingency_relevant_branches(sys::PSY.System)
     branches = Set{PSY.ACTransmission}()
-    for outage in PSY.get_supplemental_attributes(PSY.Outage, sys)
+    for outage in PSY.get_supplemental_attributes(PSY.UnplannedOutage, sys)
         for component in PSY.get_associated_components(sys, outage)
             _push_if_branch!(branches, component)
         end

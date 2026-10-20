@@ -173,10 +173,10 @@ end
 
 # Resolve a contingency identifier to the `NetworkModification` used as the
 # cache key. Accepts a modification, a `ContingencySpec`, a registered
-# `PSY.Outage`, or a registered outage id.
+# `PSY.UnplannedOutage`, or a registered outage id.
 _resolve_modification(::VirtualMODF, mod::NetworkModification) = mod
 _resolve_modification(::VirtualMODF, ctg::ContingencySpec) = ctg.modification
-function _resolve_modification(vmodf::VirtualMODF, outage::PSY.Outage)
+function _resolve_modification(vmodf::VirtualMODF, outage::PSY.UnplannedOutage)
     return _resolve_modification(vmodf, IS.get_id(outage))
 end
 function _resolve_modification(vmodf::VirtualMODF, id::Int)
@@ -256,7 +256,7 @@ Precompute and pin the post-contingency PTDF rows for an iterable of
 batched multi-RHS solves.
 
 `contingencies` may mix `NetworkModification`, `ContingencySpec`, registered
-`PSY.Outage`, and registered outage UUIDs. `monitored` is an iterable of arc
+`PSY.UnplannedOutage`, and registered outage UUIDs. `monitored` is an iterable of arc
 identifiers (integer indices or bus-pair tuples).
 
 The acceleration comes from a single batched solve over the union of all arcs
@@ -284,7 +284,7 @@ function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
 
     @lock core.solver_lock begin
         # Resolve under the lock: `_resolve_modification` reads `contingency_cache`
-        # for UUID/Outage inputs, so resolving here (not before the lock) matches
+        # for UUID/UnplannedOutage inputs, so resolving here (not before the lock) matches
         # `getindex` and avoids racing with `clear_all_caches!`.
         mods = unique(
             NetworkModification[_resolve_modification(vmodf, c) for c in contingencies],
