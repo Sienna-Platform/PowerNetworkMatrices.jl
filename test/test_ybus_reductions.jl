@@ -618,6 +618,74 @@ end
     @test 4 ∉ keys(nrd2.reverse_bus_search_map)
 end
 
+@testset "ZeroImpedanceBranchReduction keeps the stronger bus type" begin
+    # Bus 1 is REF, bus 2 is PV. The power flow types a merged bus from its survivor
+    # alone, so the merge must keep REF over PV over PQ regardless of arc direction.
+
+    # PQ -> PV: a PQ bus inserted between Line1 and bus 2, tied to bus 2 by a
+    # zero-impedance line oriented from the PQ bus.
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    line = get_component(Line, sys, "Line1")
+    from_bus, to_bus = get_from(get_arc(line)), get_to(get_arc(line))
+    @test get_number(to_bus) == 2
+    @test get_bustype(to_bus) == ACBusTypes.PV
+    mid = ACBus(;
+        number = 100,
+        name = "mid",
+        available = true,
+        bustype = ACBusTypes.PQ,
+        angle = 0.0,
+        magnitude = 1.0,
+        voltage_limits = (min = 0.9, max = 1.1),
+        base_voltage = get_base_voltage(from_bus),
+        input_basis = u"CU",
+    )
+    add_component!(sys, mid)
+    line_arc = Arc(; from = from_bus, to = mid)
+    tie_arc = Arc(; from = mid, to = to_bus)
+    add_component!(sys, line_arc)
+    add_component!(sys, tie_arc)
+    set_arc!(line, line_arc)
+    add_component!(
+        sys,
+        Line(;
+            name = "tie",
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            arc = tie_arc,
+            r = 0.0,
+            x = 0.0,
+            b = (from = 0.0, to = 0.0),
+            rating = 10.0,
+            angle_limits = (min = -1.0, max = 1.0),
+            input_basis = u"CU",
+        ),
+    )
+    ybus = Ybus(sys)
+    nrd = get_network_reduction_data(ybus)
+    @test 2 ∈ PNM.get_bus_axis(ybus)
+    @test 100 ∉ PNM.get_bus_axis(ybus)
+    @test get(nrd.reverse_bus_search_map, 100, nothing) == 2
+
+    # PV -> REF: Line1 reversed to run from bus 2 to bus 1 and shorted.
+    sys2 = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    line2 = get_component(Line, sys2, "Line1")
+    bus1 = get_component(ACBus, sys2, get_name(get_from(get_arc(line2))))
+    bus2 = get_component(ACBus, sys2, get_name(get_to(get_arc(line2))))
+    @test get_bustype(bus1) == ACBusTypes.REF
+    reversed_arc = Arc(; from = bus2, to = bus1)
+    add_component!(sys2, reversed_arc)
+    set_arc!(line2, reversed_arc)
+    set_r!(line2, 0.0u"SU")
+    set_x!(line2, 0.0u"SU")
+    ybus2 = Ybus(sys2)
+    nrd2 = get_network_reduction_data(ybus2)
+    @test 1 ∈ PNM.get_bus_axis(ybus2)
+    @test 2 ∉ PNM.get_bus_axis(ybus2)
+    @test get(nrd2.reverse_bus_search_map, 2, nothing) == 1
+end
+
 @testset "ZeroImpedanceBranchReduction: zero-impedance cycle drops its closing arc" begin
     # Line3 (2-3), Line6 (3-4) and Line4 (2-4) form a zero-impedance triangle. Whichever
     # arc the map iteration reaches last has both endpoints already in one merged group:

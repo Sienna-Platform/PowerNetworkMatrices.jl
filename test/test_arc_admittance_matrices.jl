@@ -56,8 +56,8 @@ end
 end
 
 @testset "merge-created anti-parallel member is folded into its group's row" begin
-    # The zero-impedance merge folds bus 101 into 104, so Line 101-102 becomes (104, 102),
-    # anti-parallel to the (102, 104) group the branch maps put it in.
+    # The zero-impedance merge folds PQ buses 104 and 105 into REF bus 101, so Lines 102-104
+    # and 102-105 become (102, 101), anti-parallel to the (101, 102) group they join.
     sys = PSB.build_system(
         PSSEParsingTestSystems,
         "psse_14_zero_impedance_branch_test_system",
@@ -67,15 +67,15 @@ end
     yft = ybus.arc_admittance_from_to
     ytf = ybus.arc_admittance_to_from
     @test sort(PNM.get_arc_axis(yft)) == sort(PNM.get_arc_axis(nrd))
-    @test (104, 102) ∉ PNM.get_arc_axis(yft)
+    @test (102, 101) ∉ PNM.get_arc_axis(yft)
 
-    group = PNM.get_parallel_branch_map(nrd)[(102, 104)]
+    group = PNM.get_parallel_branch_map(nrd)[(101, 102)]
     @test length(group) == 3
     Y11, Y12, Y21, Y22 = PNM.ybus_branch_entries(group, nrd)
-    row = PNM.get_arc_lookup(yft)[(102, 104)]
+    row = PNM.get_arc_lookup(yft)[(101, 102)]
     bus = PNM.get_bus_lookup(yft)
-    @test isapprox(yft.data[row, bus[102]], Y11; rtol = 1e-5)
-    @test isapprox(yft.data[row, bus[104]], Y12; rtol = 1e-5)
-    @test isapprox(ytf.data[row, bus[104]], Y22; rtol = 1e-5)
-    @test isapprox(ytf.data[row, bus[102]], Y21; rtol = 1e-5)
+    @test isapprox(yft.data[row, bus[101]], Y11; rtol = 1e-5)
+    @test isapprox(yft.data[row, bus[102]], Y12; rtol = 1e-5)
+    @test isapprox(ytf.data[row, bus[102]], Y22; rtol = 1e-5)
+    @test isapprox(ytf.data[row, bus[101]], Y21; rtol = 1e-5)
 end
