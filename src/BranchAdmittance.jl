@@ -76,9 +76,7 @@ function get_series_susceptance(b::PSY.ACTransmission, units)
     return v
 end
 
-# Helper methods for a branch's series r and x. Every generic read of a branch's impedance
-# goes through them, so a branch whose electrical impedance differs from its stored one
-# needs only these two methods.
+# Generic helper methods for a branch's series r and x.
 _branch_r(b::PSY.ACTransmission, units) = PSY.get_r(b, units)
 _branch_x(b::PSY.ACTransmission, units) = PSY.get_x(b, units)
 
@@ -87,8 +85,7 @@ _is_bypassed(b::PSY.SeriesCompensator) =
     PSY.get_control_mode(b) == PSY.SeriesCompensatorControlMode.BYPASSED
 
 # Helper methods for a series compensator's series r and x. A bypassed compensator keeps
-# its stored impedance but reads as a zero-impedance tie, so the `min_x_eps` substitute and
-# the zero-impedance bus merge apply to it.
+# its stored impedance but reads as a zero-impedance tie.
 _branch_r(b::PSY.SeriesCompensator, units) = _is_bypassed(b) ? 0.0 : PSY.get_r(b, units)
 _branch_x(b::PSY.SeriesCompensator, units) = _is_bypassed(b) ? 0.0 : PSY.get_x(b, units)
 
