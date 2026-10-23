@@ -4,7 +4,10 @@
 # pivot order but pays for KLU's generality on every call: packed storage interleaving
 # indices and values, per-call row scaling and permutation of A, and the BTF block loop.
 # The lean kernel runs the same algorithm on flat Int32 CSC storage with a precomputed
-# A -> LU scatter. KLU still does everything that needs pivoting: the analysis, the one
+# A -> LU scatter. A polar Jacobian orders each bus's two state columns next to each other
+# with the same L pattern, so the kernel factors such columns two at a time and applies each
+# pair of earlier columns in one pass: each L value and row index is read once for up to
+# four updates. KLU still does everything that needs pivoting: the analysis, the one
 # factor that defines the plan, and every fallback when a lean refactor is rejected.
 # The plan holds no C handles and is never written after it is built, so one plan can be
 # shared by any number of tasks, each owning its own `LeanLUValues`.
@@ -14,7 +17,8 @@ const LEAN_REJECT_RATIO = 1e-3
 """
 Frozen pivot order and L/U pattern of a single-block KLU factorization of `A`, with
 `LU = A[p, q]`. Column `k` occupies slots `cp[k]:cp[k+1]-1`: U rows ascending, the
-diagonal at `dpos[k]`, then the L rows (unit diagonal not stored). All indices 1-based.
+diagonal at `dpos[k]`, then the L rows ascending (unit diagonal not stored). All indices
+1-based.
 """
 struct LeanLUPlan
     n::Int32
@@ -31,18 +35,25 @@ struct LeanLUPlan
     # L(:, j) slot range of every U(j, k) dependency, in the order the kernel visits them.
     dep_lb::Vector{Int32}
     dep_le::Vector{Int32}
+    # True at dependency `d` on column `j` when dependency `d + 1` is on column `j + 1` and
+    # L(:, j) has the rows of L(:, j + 1) plus row `j + 1`.
+    dep_pair::Vector{Bool}
+    # True at column `k` when U(:, k + 1) has the rows of U(:, k) plus row `k`: the kernel
+    # factors columns `k` and `k + 1` together.
+    col_pair::Vector{Bool}
     a_colptr::Vector{Int32}
     a_rowval::Vector{Int32}
 end
 
 LeanLUPlan() = LeanLUPlan(
     Int32(0), 0.0, Int32[], Int32[], Int32[1], Int32[], Int32[],
-    Int32[], Int32[], Int32[], Int32[1], Int32[],
+    Int32[], Int32[], Int32[], Bool[], Bool[], Int32[1], Int32[],
 )
 
 """
-Per-task numeric state for a `LeanLUPlan`: the LU values and two length-`n` scratch
-vectors. The work vector is all-zero between calls.
+Per-task numeric state for a `LeanLUPlan`: the LU values, a length-`2n` work vector that
+interleaves the two columns of a pair, and a length-`n` scratch vector. The work vector is
+all-zero between calls.
 """
 struct LeanLUValues
     lu::Vector{Float64}
@@ -51,7 +62,7 @@ struct LeanLUValues
 end
 
 LeanLUValues(plan::LeanLUPlan) = LeanLUValues(
-    zeros(length(plan.row)), zeros(Int(plan.n)), zeros(Int(plan.n)),
+    zeros(length(plan.row)), zeros(2 * Int(plan.n)), zeros(Int(plan.n)),
 )
 
 _lean_nnz(plan::LeanLUPlan) = length(plan.row)
@@ -158,6 +169,7 @@ function _lean_plan_from_factors(
             end
         end
         s == cp[k + 1] || error("lean LU: diagonal missing from L or U column $k.")
+        sort!(view(row, (dpos[k] + 1):(s - 1)))
     end
 
     pinv = Vector{Int32}(undef, n)
@@ -196,16 +208,58 @@ function _lean_plan_from_factors(
         d += 1
     end
 
+    dep_pair, col_pair = _lean_pairs(n, cp, dpos, row)
     pp = Vector{Int32}(p) .+ Int32(1)
     qq = Vector{Int32}(q) .+ Int32(1)
     draft = LeanLUPlan(
-        n, 0.0, pp, qq, cp, dpos, row, a_row, dep_lb, dep_le, a_colptr, a_rowval,
+        n, 0.0, pp, qq, cp, dpos, row, a_row, dep_lb, dep_le, dep_pair, col_pair,
+        a_colptr, a_rowval,
     )
     rcond0 = lean_refactor!(LeanLUValues(draft), draft, ax)
     iszero(rcond0) && error("lean LU: zero or non-finite pivot in the build matrix.")
     return LeanLUPlan(
-        n, rcond0, pp, qq, cp, dpos, row, a_row, dep_lb, dep_le, a_colptr, a_rowval,
+        n, rcond0, pp, qq, cp, dpos, row, a_row, dep_lb, dep_le, dep_pair, col_pair,
+        a_colptr, a_rowval,
     )
+end
+
+# L rows must be sorted. Pairs are taken greedily from the left.
+function _lean_pairs(n::Int32, cp, dpos, row)
+    l_extends(j) =
+        cp[j + 1] - dpos[j] == cp[j + 2] - dpos[j + 1] + 1 &&
+        row[dpos[j] + 1] == j + 1 &&
+        view(row, (dpos[j] + 2):(cp[j + 1] - 1)) ==
+        view(row, (dpos[j + 1] + 1):(cp[j + 2] - 1))
+    dep_pair = zeros(Bool, sum(k -> dpos[k] - cp[k], 1:n; init = 0))
+    d = 1
+    for k in 1:n
+        s = cp[k]
+        while s < dpos[k]
+            j = row[s]
+            if s + 1 < dpos[k] && row[s + 1] == j + 1 && l_extends(j)
+                dep_pair[d] = true
+                s += 2
+                d += 2
+            else
+                s += 1
+                d += 1
+            end
+        end
+    end
+    col_pair = zeros(Bool, n)
+    k = 1
+    while k < n
+        a = cp[k]:(dpos[k] - 1)
+        b = cp[k + 1]:(dpos[k + 1] - 1)
+        if length(b) == length(a) + 1 && row[last(b)] == k &&
+           view(row, a) == view(row, first(b):(last(b) - 1))
+            col_pair[k] = true
+            k += 2
+        else
+            k += 1
+        end
+    end
+    return dep_pair, col_pair
 end
 
 """
@@ -229,6 +283,7 @@ function lean_refactor!(
     length(vals.lu) == _lean_nnz(plan) ||
         throw(DimensionMismatch("LeanLUValues was not built for this plan."))
     lu = vals.lu
+    # x[2r - 1] holds row r of column k, x[2r] row r of column k + 1.
     x = vals.work
     row = plan.row
     cp = plan.cp
@@ -238,41 +293,80 @@ function lean_refactor!(
     q = plan.q
     dep_lb = plan.dep_lb
     dep_le = plan.dep_le
+    dep_pair = plan.dep_pair
+    col_pair = plan.col_pair
+    n = Int(plan.n)
     pmin = Inf
     pmax = 0.0
     bad = false
     d = 1
-    @inbounds for k in 1:Int(plan.n)
+    k = 1
+    @inbounds while k <= n
+        two = col_pair[k]
         c = Int(q[k])
         for e in Int(a_colptr[c]):(Int(a_colptr[c + 1]) - 1)
-            x[a_row[e]] += nzval[e]
+            x[2 * a_row[e] - 1] += nzval[e]
+        end
+        if two
+            c = Int(q[k + 1])
+            for e in Int(a_colptr[c]):(Int(a_colptr[c + 1]) - 1)
+                x[2 * a_row[e]] += nzval[e]
+            end
         end
         dp = Int(dpos[k])
-        for s in Int(cp[k]):(dp - 1)
-            u = x[row[s]]
-            lo = Int(dep_lb[d])
-            hi = Int(dep_le[d])
-            d += 1
-            iszero(u) || _scatter_update!(x, row, lu, u, lo, hi)
+        s = Int(cp[k])
+        while s < dp
+            j = Int(row[s])
+            if dep_pair[d]
+                lo1 = Int(dep_lb[d + 1])
+                l = lu[dep_lb[d]]
+                off = Int(dep_lb[d]) + 1 - lo1
+                hi1 = Int(dep_le[d + 1])
+                a0 = x[2j - 1]
+                a1 = muladd(-a0, l, x[2j + 1])
+                x[2j + 1] = a1
+                if two
+                    b0 = x[2j]
+                    b1 = muladd(-b0, l, x[2j + 2])
+                    x[2j + 2] = b1
+                    _pair_update!(Val(2), x, row, lu, a0, b0, a1, b1, off, lo1, hi1)
+                else
+                    _pair_update!(Val(1), x, row, lu, a0, 0.0, a1, 0.0, off, lo1, hi1)
+                end
+                s += 2
+                d += 2
+            else
+                lo = Int(dep_lb[d])
+                hi = Int(dep_le[d])
+                if two
+                    _single_update!(Val(2), x, row, lu, x[2j - 1], x[2j], lo, hi)
+                else
+                    _single_update!(Val(1), x, row, lu, x[2j - 1], 0.0, lo, hi)
+                end
+                s += 1
+                d += 1
+            end
         end
-        for s in Int(cp[k]):(dp - 1)
-            r = row[s]
-            lu[s] = x[r]
-            x[r] = 0.0
+        r = _finish_column!(lu, x, row, cp, dp, k, 1)
+        bad |= !(r > 0.0 && r < Inf)
+        pmin = ifelse(r < pmin, r, pmin)
+        pmax = ifelse(r > pmax, r, pmax)
+        if !two
+            k += 1
+            continue
         end
-        piv = x[k]
-        x[k] = 0.0
-        lu[dp] = piv
-        a = abs(piv)
-        bad |= !(a > 0.0 && a < Inf)
-        pmin = ifelse(a < pmin, a, pmin)
-        pmax = ifelse(a > pmax, a, pmax)
-        inv = 1.0 / piv
-        for s in (dp + 1):(Int(cp[k + 1]) - 1)
-            r = row[s]
-            lu[s] = x[r] * inv
-            x[r] = 0.0
+        # Column k + 1 shares the dependencies of column k, then depends on column k itself.
+        d += dp - Int(cp[k]) + 1
+        u = x[2k]
+        for t in (dp + 1):(Int(cp[k + 1]) - 1)
+            i = 2 * Int(row[t])
+            x[i] = muladd(-u, lu[t], x[i])
         end
+        r = _finish_column!(lu, x, row, cp, Int(dpos[k + 1]), k + 1, 0)
+        bad |= !(r > 0.0 && r < Inf)
+        pmin = ifelse(r < pmin, r, pmin)
+        pmax = ifelse(r > pmax, r, pmax)
+        k += 2
     end
     if bad
         return 0.0
@@ -280,29 +374,54 @@ function lean_refactor!(
     return pmin / pmax
 end
 
-# x[row[t]] -= u * lu[t] for t in lo:hi. The rows are distinct, so the unrolled loads
-# can be issued ahead of the stores; unrolling measured ~10% on a 20k-row Jacobian.
-@inline function _scatter_update!(x, row, lu, u, lo::Int, hi::Int)
-    t = lo
-    @inbounds while t + 3 <= hi
-        r0 = row[t]
-        r1 = row[t + 1]
-        r2 = row[t + 2]
-        r3 = row[t + 3]
-        l0 = lu[t]
-        l1 = lu[t + 1]
-        l2 = lu[t + 2]
-        l3 = lu[t + 3]
-        x[r0] = muladd(-u, l0, x[r0])
-        x[r1] = muladd(-u, l1, x[r1])
-        x[r2] = muladd(-u, l2, x[r2])
-        x[r3] = muladd(-u, l3, x[r3])
-        t += 4
+# Moves column `k` from `x[2r - odd]` into `lu`, zeroes it there, and returns |pivot|.
+@inline function _finish_column!(lu, x, row, cp, dp::Int, k::Int, odd::Int)
+    @inbounds for s in Int(cp[k]):(dp - 1)
+        i = 2 * Int(row[s]) - odd
+        lu[s] = x[i]
+        x[i] = 0.0
     end
-    @inbounds while t <= hi
-        r = row[t]
-        x[r] = muladd(-u, lu[t], x[r])
-        t += 1
+    @inbounds begin
+        piv = x[2k - odd]
+        x[2k - odd] = 0.0
+        lu[dp] = piv
+        inv = 1.0 / piv
+        for s in (dp + 1):(Int(cp[k + 1]) - 1)
+            i = 2 * Int(row[s]) - odd
+            lu[s] = x[i] * inv
+            x[i] = 0.0
+        end
+    end
+    return abs(piv)
+end
+
+# The W target columns minus u * L(:, j) over slots lo:hi.
+@inline function _single_update!(::Val{W}, x, row, lu, a0, b0, lo::Int, hi::Int) where {W}
+    (iszero(a0) && iszero(b0)) && return
+    @inbounds for t in lo:hi
+        i = 2 * Int(row[t])
+        l0 = lu[t]
+        x[i - 1] = muladd(-a0, l0, x[i - 1])
+        if W == 2
+            x[i] = muladd(-b0, l0, x[i])
+        end
+    end
+    return
+end
+
+# The W target columns minus u0 * L(:, j) + u1 * L(:, j + 1) over the rows of L(:, j + 1),
+# slots lo1:hi1; the same rows of L(:, j) sit `off` slots away.
+@inline function _pair_update!(
+    ::Val{W}, x, row, lu, a0, b0, a1, b1, off::Int, lo1::Int, hi1::Int,
+) where {W}
+    @inbounds for t in lo1:hi1
+        i = 2 * Int(row[t])
+        l0 = lu[t + off]
+        l1 = lu[t]
+        x[i - 1] = muladd(-a1, l1, muladd(-a0, l0, x[i - 1]))
+        if W == 2
+            x[i] = muladd(-b1, l1, muladd(-b0, l0, x[i]))
+        end
     end
     return
 end
