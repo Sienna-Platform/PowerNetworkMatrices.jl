@@ -153,6 +153,13 @@ const _LEAN_SYS14 = PSB.build_system(PSB.PSITestSystems, "c_sys14")
 const _LEAN_SYS2000 =
     PSB.build_system(PSB.MatpowerTestSystems, "matpower_ACTIVSg2000_sys")
 
+@testset "lean plan pairs the bus columns of a polar Jacobian" begin
+    J0, _ = _lean_jacobians(_LEAN_SYS14; nsteps = 1)
+    plan = KW.build_lean_plan(J0)
+    @test count(plan.col_pair) > 0
+    @test count(plan.dep_pair) > 0
+end
+
 @testset "_factor_stats" begin
     J0, _ = _lean_jacobians(_LEAN_SYS14; nsteps = 1)
     for A in (J0, _lean_convection_diffusion(30))
