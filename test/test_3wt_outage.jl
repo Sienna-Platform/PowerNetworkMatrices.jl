@@ -59,7 +59,7 @@ end
     @test mod.is_islanding == true
 end
 
-@testset "is_islanding via Outage attribute path" begin
+@testset "is_islanding via UnplannedOutage attribute path" begin
     sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
     trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
     outage = PSY.GeometricDistributionForcedOutage(;
