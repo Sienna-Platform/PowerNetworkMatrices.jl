@@ -11,8 +11,9 @@ An arc is treated as zero-impedance when *any individual* non-transformer branch
 on it has resistance within `resistance_tolerance` (`abs(r) <= resistance_tolerance`)
 and series admittance `abs(y) >= susceptance_threshold`, matching PSS(e). Examined
 per branch (not via the summed off-diagonal), so a zero-impedance jumper in
-parallel with a normal line still merges the buses. The from-bus survives unless
-the to-bus is in the user-supplied irreducible set, in which case the sides flip.
+parallel with a normal line still merges the buses. A bus in the user-supplied
+irreducible set survives; otherwise the bus with the stronger type survives (REF over
+PV over PQ), and the from-bus survives a tie.
 
 # Fields
 - `susceptance_threshold::Float64 = ZERO_IMPEDANCE_BRANCH_YBUS_SUSCEPTANCE_THRESHOLD`

@@ -81,10 +81,25 @@ function _is_zero_impedance_arc(
     )
 end
 
+# The power flow types a merged bus from its survivor alone, so a merge keeps the end
+# that controls the most: REF over PV over PQ.
+_bus_type_rank(bustype::Union{Nothing, ACBusTypes.Value}) =
+    if bustype == ACBusTypes.REF || bustype == ACBusTypes.SLACK
+        3
+    elseif bustype == ACBusTypes.PV
+        2
+    else
+        1
+    end
+
 function get_reduction(ybus::Ybus, sys::PSY.System, reduction::ZeroImpedanceBranchReduction)
     nr = NetworkReductionData()
     nrd = get_network_reduction_data(ybus)
     user_irreducible = get_user_irreducible_buses(get_reductions(nrd))
+    bus_type_rank = Dict{Int, Int}(
+        PSY.get_number(b) => _bus_type_rank(PSY.get_bustype(b)) for
+        b in PSY.get_components(PSY.ACBus, sys)
+    )
     susceptance_threshold = get_susceptance_threshold(reduction)
     # Match the substitute reactance used for `r == x == 0` branches during assembly,
     # so a branch's merge eligibility is judged against the admittance it contributed.
@@ -110,8 +125,10 @@ function get_reduction(ybus::Ybus, sys::PSY.System, reduction::ZeroImpedanceBran
             elseif from_irred && to_irred
                 @warn "Zero-impedance branch between two irreducible buses $from_no and $to_no; skipping merge."
                 continue
-            elseif to_irred
-                # Flip so the irreducible bus survives.
+            elseif to_irred ||
+                   (!from_irred && bus_type_rank[to_no] > bus_type_rank[from_no])
+                # Flip so the irreducible bus, else the stronger bus type, survives. Both
+                # ends are merged-group roots, so a chain of merges ends on its strongest bus.
                 from_no, to_no = to_no, from_no
             end
 
