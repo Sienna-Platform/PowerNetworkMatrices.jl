@@ -208,7 +208,7 @@ function _lean_plan_from_factors(
         d += 1
     end
 
-    dep_pair, col_pair = _lean_pairs(n, cp, dpos, row)
+    dep_pair, col_pair = _lean_pairs(n, ndep, cp, dpos, row)
     pp = Vector{Int32}(p) .+ Int32(1)
     qq = Vector{Int32}(q) .+ Int32(1)
     draft = LeanLUPlan(
@@ -224,13 +224,13 @@ function _lean_plan_from_factors(
 end
 
 # L rows must be sorted. Pairs are taken greedily from the left.
-function _lean_pairs(n::Int32, cp, dpos, row)
+function _lean_pairs(n::Int32, ndep::Int, cp, dpos, row)
     l_extends(j) =
         cp[j + 1] - dpos[j] == cp[j + 2] - dpos[j + 1] + 1 &&
         row[dpos[j] + 1] == j + 1 &&
         view(row, (dpos[j] + 2):(cp[j + 1] - 1)) ==
         view(row, (dpos[j + 1] + 1):(cp[j + 2] - 1))
-    dep_pair = zeros(Bool, sum(k -> dpos[k] - cp[k], 1:n; init = 0))
+    dep_pair = zeros(Bool, ndep)
     d = 1
     for k in 1:n
         s = cp[k]
@@ -347,10 +347,8 @@ function lean_refactor!(
                 d += 1
             end
         end
-        r = _finish_column!(lu, x, row, cp, dp, k, 1)
-        bad |= !(r > 0.0 && r < Inf)
-        pmin = ifelse(r < pmin, r, pmin)
-        pmax = ifelse(r > pmax, r, pmax)
+        bad, pmin, pmax =
+            _pivot_stats(_finish_column!(lu, x, row, cp, dp, k, 1), bad, pmin, pmax)
         if !two
             k += 1
             continue
@@ -362,10 +360,8 @@ function lean_refactor!(
             i = 2 * Int(row[t])
             x[i] = muladd(-u, lu[t], x[i])
         end
-        r = _finish_column!(lu, x, row, cp, Int(dpos[k + 1]), k + 1, 0)
-        bad |= !(r > 0.0 && r < Inf)
-        pmin = ifelse(r < pmin, r, pmin)
-        pmax = ifelse(r > pmax, r, pmax)
+        a = _finish_column!(lu, x, row, cp, Int(dpos[k + 1]), k + 1, 0)
+        bad, pmin, pmax = _pivot_stats(a, bad, pmin, pmax)
         k += 2
     end
     if bad
@@ -373,6 +369,10 @@ function lean_refactor!(
     end
     return pmin / pmax
 end
+
+# Folds the pivot size `a` into the non-finite flag and the min/max pivot sizes.
+@inline _pivot_stats(a, bad, pmin, pmax) =
+    (bad | !(a > 0.0 && a < Inf), ifelse(a < pmin, a, pmin), ifelse(a > pmax, a, pmax))
 
 # Moves column `k` from `x[2r - odd]` into `lu`, zeroes it there, and returns |pivot|.
 @inline function _finish_column!(lu, x, row, cp, dp::Int, k::Int, odd::Int)
