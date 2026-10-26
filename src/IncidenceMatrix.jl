@@ -45,19 +45,18 @@ function get_reduction(
     ::PSY.System,
     reduction::RadialReduction,
 )
-    # Radial uses only the user set; no system-derived complement.
-    user_irreducible =
-        get_user_irreducible_buses(get_reductions(get_network_reduction_data(A)))
-    # Fail fast with a clear message if a user irreducible bus is not in the matrix,
-    # rather than throwing a raw KeyError on the lookup below.
-    validate_buses(A, user_irreducible)
-    irreducible_positions = Set([A.lookup[2][x] for x in user_irreducible])
+    # Radial uses only the user and schedule-pinned sets; no system-derived complement.
+    exempt = get_reduction_exempt_buses(get_reductions(get_network_reduction_data(A)))
+    # Fail fast with a clear message if an exempt bus is not in the matrix, rather than
+    # throwing a raw KeyError on the lookup below.
+    validate_buses(A, exempt)
+    irreducible_positions = Set([A.lookup[2][x] for x in exempt])
     exempt_positions = union(get_ref_bus_position(A), irreducible_positions)
     bus_reduction_map, reverse_bus_search_map, radial_arcs, final_arc_map =
         calculate_radial_arcs(A.data, A.lookup[1], A.lookup[2], Set(exempt_positions))
 
     return NetworkReductionData(;
-        irreducible_buses = Set{Int}(user_irreducible),
+        irreducible_buses = Set{Int}(exempt),
         bus_reduction_map = bus_reduction_map,
         reverse_bus_search_map = reverse_bus_search_map,
         removed_arcs = radial_arcs,

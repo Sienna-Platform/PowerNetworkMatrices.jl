@@ -61,22 +61,26 @@ function _outaged_group_member(
     )
 end
 
-# Susceptance the group arc loses when `branch` trips. A physical member leaves with all of
-# it.
-_member_outage_delta_b(
-    member::PSY.ACTransmission,
+# Names are unique only per type.
+_member_sort_key(member::PSY.ACTransmission) = (get_name(member), string(typeof(member)))
+
+# Rejects a trip the group arc cannot represent. The susceptance change itself comes from the
+# group's two-port, never from the member alone. A physical member always leaves whole.
+_validate_outaged_member(
     ::PSY.ACTransmission,
-    nr::NetworkReductionData,
-)::Float64 = -_finite_series_susceptance(member, nr)
+    ::PSY.ACTransmission,
+    ::NetworkReductionData,
+) =
+    nothing
 
 # An aggregate member is representable on the group arc only when it opens entirely, since
 # `_member_outage_ybus_delta` can only negate a member's whole Pi-model. Subtypes that can
 # answer refine this; the rest say so rather than reporting the whole member as lost.
-function _member_outage_delta_b(
+function _validate_outaged_member(
     member::AbstractReductionAggregate,
     branch::PSY.ACTransmission,
     ::NetworkReductionData,
-)::Float64
+)
     return error(
         "Tripping $(typeof(branch)) $(get_name(branch)) leaves $(get_name(member)) partly " *
         "in service, and a partial Pi-model delta is not supported on the composite arc " *
@@ -87,11 +91,11 @@ end
 # A chain opens when any segment loses all of its susceptance, which is what tripping a
 # single-branch segment does. The same limit `_series_arc_ybus_delta` enforces on a chain
 # standing alone in `series_branch_map`.
-function _member_outage_delta_b(
+function _validate_outaged_member(
     member::BranchesSeries,
     branch::PSY.ACTransmission,
     nr::NetworkReductionData,
-)::Float64
+)
     delta_b = _compute_series_outage_delta_b(member, branch, nr)
     if !_is_full_outage(delta_b, _finite_series_susceptance(member, nr))
         error(
@@ -100,7 +104,7 @@ function _member_outage_delta_b(
             "on the composite arc it was grouped onto. Δb=$(delta_b).",
         )
     end
-    return delta_b
+    return
 end
 
 # Direct arc: full outage negates the Pi-model; otherwise scale it by `delta_b / b_arc`.
@@ -239,13 +243,14 @@ function NetworkModification(mat::PowerNetworkMatrix, arc::Tuple{Int, Int})
     arc_idx = arc_lookup[arc]
     b = _get_arc_susceptances(mat)[arc_idx]
     nr = get_network_reduction_data(mat)
-    dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc, -b)
+    delta_b, ybus_delta_b = _arc_outage_delta_bs(nr, arc, b)
+    dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc, ybus_delta_b)
     return NetworkModification(
         "outage_$(arc[1])_$(arc[2])",
         [
             ArcModification(
                 arc_idx,
-                -b,
+                delta_b,
                 -arc_dc_shift_injection(nr, arc),
                 dy11,
                 dy12,
@@ -329,82 +334,190 @@ end
 """
 $(TYPEDSIGNATURES)
 
-Construct a `NetworkModification` from a `PSY.Outage` supplemental attribute.
-Resolves the outage's associated `ACTransmission` components through the system,
-classifies each by the matrix's network reduction maps, and builds the
-modification. Handles multi-component outages with series-chain grouping.
+Construct a `NetworkModification` that removes every component in `components` (any
+iterable of PSY components). Duplicates collapse; unavailable devices are already out of
+the network and are skipped silently, and other components outside the network, such as
+injectors, contribute nothing. All components are resolved through the reduction maps
+together: the tripped members of one parallel group are resolved jointly from the group's
+two-port, and the tripped segments of one series chain from the chain's impedance sum.
 """
-function NetworkModification(mat::PowerNetworkMatrix, sys::PSY.System, outage::PSY.Outage)
+function NetworkModification(mat::PowerNetworkMatrix, sys::PSY.System, components)
     _validate_system_uuid(mat, sys)
+    unique_components = collect(
+        keys(IdDict(c => nothing for c in components if _in_network_candidate(c))),
+    )
+    isempty(unique_components) && return NetworkModification("", ArcModification[])
+    return _network_modification_from_components(mat, unique_components, "")
+end
 
-    # Single query for all associated components (avoids repeated PSY lookups)
+_in_network_candidate(device::PSY.Device) = PSY.get_available(device)
+_in_network_candidate(::PSY.Component) = true
+
+"""
+$(TYPEDSIGNATURES)
+
+Construct a `NetworkModification` from a `PSY.UnplannedOutage` supplemental attribute.
+Resolves the outage's associated components through the system, classifies each by the
+matrix's network reduction maps, and builds the modification.
+"""
+function NetworkModification(
+    mat::PowerNetworkMatrix,
+    sys::PSY.System,
+    outage::PSY.UnplannedOutage,
+)
+    _validate_system_uuid(mat, sys)
     all_components = collect(PSY.get_associated_components(sys, outage))
-
     if isempty(all_components)
         error("No valid arc or shunt modifications found for outage.")
     end
+    return _network_modification_from_components(
+        mat,
+        all_components,
+        string(IS.get_id(outage)),
+    )
+end
 
-    acc, mods = _classify_outage_components(mat, all_components)
-    direct_mods = acc.direct_mods
-    shunt_mods = acc.shunt_mods
-    component_names = acc.component_names
-
-    if isempty(mods) && isempty(shunt_mods)
-        @info "No valid arc or shunt modifications found for outage. " *
-              "The outage may only affect non-network components (e.g., generators)."
+function _network_modification_from_components(
+    mat::PowerNetworkMatrix,
+    components::Vector,
+    fallback_label::String,
+)
+    acc, mods = _classify_outage_components(mat, components)
+    if isempty(mods) && isempty(acc.shunt_mods)
+        @info "No valid arc or shunt modifications found. " *
+              "The components may only affect non-network elements (e.g., generators)."
     end
-
-    outage_id = IS.get_id(outage)
-    if isempty(component_names)
-        ctg_name = string(outage_id)
+    if isempty(acc.component_names)
+        label = fallback_label
     else
-        ctg_name = join(component_names, "+")
+        label = join(acc.component_names, "+")
     end
-
-    # A fully-outaged ThreeWindingTransformer isolates its star bus and may
-    # island a real terminal bus; flag that on `is_islanding`.
+    # A fully-outaged ThreeWindingTransformer isolates its star bus and may island a real
+    # terminal bus; flag that on `is_islanding`.
     is_island = false
     arc_ax = get_arc_axis(mat)
-    for component in all_components
+    for component in components
         _is_three_winding_transformer(component) || continue
-        # Every circuit's arc ends at the star bus, so read it off the first one.
         star_num =
             PSY.get_number(PSY.get_to(PSY.get_arc(first(PSY.get_circuits(component)))))
-        t3w_mods = [m for m in direct_mods if arc_ax[m.arc_index][2] == star_num]
+        t3w_mods = [m for m in acc.direct_mods if arc_ax[m.arc_index][2] == star_num]
         is_island = is_island || _3wt_real_bus_islanding(mat, t3w_mods)
     end
-    return NetworkModification(ctg_name, mods, shunt_mods, is_island)
+    return NetworkModification(label, mods, acc.shunt_mods, is_island)
 end
 
 _is_three_winding_transformer(::Any) = false
 _is_three_winding_transformer(::PSY.ThreeWindingTransformer) = true
 
+# Tripped members of one parallel arc are resolved together: the group's DC susceptance is
+# not the sum of its members', so the change is the group's susceptance (the value BA holds)
+# before and after the trip, never a sum of per-member terms. `b_arc` is the susceptance BA
+# holds for the arc, so opening every member leaves `-b_arc` exactly. The Pi-model delta is
+# each tripped member's own, which is exactly linear.
 function _parallel_arc_modification(
     nr::NetworkReductionData,
     arc_lookup::Dict,
     arc_tuple::Tuple{Int, Int},
-    branch::PSY.ACTransmission,
+    b_arc::Float64,
+    tripped::Vector{PSY.ACTransmission},
 )::ArcModification
     bp = nr.parallel_branch_map[arc_tuple]
-    member = _outaged_group_member(bp, branch)
-    delta_b = _member_outage_delta_b(member, branch, nr)
-    delta_shift = -_member_shift_injection(bp, nr, member)
-    dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b, member)
+    tripped_members = PSY.ACTransmission[]
+    for branch in tripped
+        member = _outaged_group_member(bp, branch)
+        _validate_outaged_member(member, branch, nr)
+        any(m -> m === member, tripped_members) || push!(tripped_members, member)
+    end
+    # Floating-point sums below follow this order, so it must not depend on input order.
+    sort!(tripped_members; by = _member_sort_key)
+    remaining = PSY.ACTransmission[
+        m for m in bp if !any(t -> t === m, tripped_members)
+    ]
+    delta_b = _parallel_remaining_susceptance(nr, bp, remaining, arc_tuple) - b_arc
+    delta_shift = -sum(_member_shift_injection(bp, nr, m) for m in tripped_members)
+    delta_y = zeros(ComplexF64, 4)
+    for member in tripped_members
+        delta_y .+= _member_outage_ybus_delta(bp, nr, member)
+    end
     return ArcModification(
         arc_lookup[arc_tuple],
         delta_b,
         delta_shift,
-        dy11,
-        dy12,
-        dy21,
-        dy22,
-        1,
+        YBUS_ELTYPE(delta_y[1]),
+        YBUS_ELTYPE(delta_y[2]),
+        YBUS_ELTYPE(delta_y[3]),
+        YBUS_ELTYPE(delta_y[4]),
+        length(tripped_members),
     )
+end
+
+# The susceptance BA would hold for `arc_tuple` with only `remaining` group members (and any
+# Ward equivalent filed on the arc) in service, in the magnitude frame `delta_b` lives in:
+# signed relative to the base arc, so positive when it shares the base arc's sign. On a
+# series-compensated group with negative net susceptance the signed remainder is negated, and
+# the kernel's `sign(b_e) · Δ|b|` then lands on the signed remainder.
+function _parallel_remaining_susceptance(
+    nr::NetworkReductionData,
+    bp::AbstractBranchesParallel,
+    remaining::Vector{PSY.ACTransmission},
+    arc_tuple::Tuple{Int, Int},
+)::Float64
+    b_remaining = _parallel_remaining_signed_susceptance(nr, bp, remaining, arc_tuple)
+    return copysign(1.0, _ba_arc_susceptance(nr, arc_tuple)) * b_remaining
+end
+
+function _parallel_remaining_signed_susceptance(
+    nr::NetworkReductionData,
+    bp::AbstractBranchesParallel,
+    remaining::Vector{PSY.ACTransmission},
+    arc_tuple::Tuple{Int, Int},
+)::Float64
+    added = get(get_added_arc_impedance_map(nr), arc_tuple, nothing)
+    # A lone member is what BA would hold for it on its own arc, by BA's own dispatch.
+    if length(remaining) == 1
+        isnothing(added) && return _ba_arc_susceptance(only(remaining), nr)
+        return _ba_arc_susceptance(only(remaining), added, nr)
+    end
+    entries = _subset_two_port(remaining, get_arc_tuple(bp, nr), nr)
+    fallback = sum(_finite_series_susceptance(m, nr) for m in remaining; init = 0.0)
+    if !isnothing(added)
+        entries = entries .+ ybus_branch_entries(added, nr)
+        fallback += _finite_series_susceptance(added, nr)
+    end
+    return _ba_arc_susceptance(entries, fallback)
+end
+
+# Susceptance BA holds for the Ward equivalent filed on `arc_tuple` alone; zero when none.
+function _added_arc_susceptance(nr::NetworkReductionData, arc_tuple::Tuple{Int, Int})
+    added = get(get_added_arc_impedance_map(nr), arc_tuple, nothing)
+    isnothing(added) && return 0.0
+    return _ba_arc_susceptance(
+        ybus_branch_entries(added, nr),
+        _finite_series_susceptance(added, nr),
+    )
+end
+
+# For opening every physical member of `arc_tuple` (BA susceptance `b_arc`): the change in the
+# arc's BA susceptance, and the change the Ybus handlers compare with the members' own
+# two-port. They differ only when a Ward equivalent shares the arc: it keeps conducting, so
+# only the members' own share leaves.
+function _arc_outage_delta_bs(
+    nr::NetworkReductionData,
+    arc_tuple::Tuple{Int, Int},
+    b_arc::Float64,
+)::Tuple{Float64, Float64}
+    added_map = get_added_arc_impedance_map(nr)
+    haskey(added_map, arc_tuple) || return (-b_arc, -b_arc)
+    entry, _ = _resolve_arc_entry(nr, arc_tuple)
+    entry === added_map[arc_tuple] && return (-b_arc, -b_arc)
+    own = _ba_arc_susceptance(entry, nr)
+    return (_added_arc_susceptance(nr, arc_tuple) - b_arc, -own)
 end
 
 struct _OutageAccumulator
     direct_mods::Vector{ArcModification}
-    parallel_mods::Vector{ArcModification}
+    parallel_components_by_arc::Dict{Int, Vector{PSY.ACTransmission}}
+    parallel_arc_tuples::Dict{Int, Tuple{Int, Int}}
     series_components_by_arc::Dict{Int, Vector{PSY.ACTransmission}}
     series_arc_tuples::Dict{Int, Tuple{Int, Int}}
     shunt_mods::Vector{ShuntModification}
@@ -413,7 +526,8 @@ end
 
 _OutageAccumulator() = _OutageAccumulator(
     ArcModification[],
-    ArcModification[],
+    Dict{Int, Vector{PSY.ACTransmission}}(),
+    Dict{Int, Tuple{Int, Int}}(),
     Dict{Int, Vector{PSY.ACTransmission}}(),
     Dict{Int, Tuple{Int, Int}}(),
     ShuntModification[],
@@ -431,6 +545,16 @@ function _classify_outage_components(mat::PowerNetworkMatrix, components)
     for component in components
         _classify_outage_component!(nr, arc_lookup, arc_sus, bus_lookup, component, acc)
     end
+    parallel_mods = ArcModification[
+        _parallel_arc_modification(
+            nr,
+            arc_lookup,
+            acc.parallel_arc_tuples[arc_idx],
+            arc_sus[arc_idx],
+            tripped,
+        )
+        for (arc_idx, tripped) in acc.parallel_components_by_arc
+    ]
     series_mods = ArcModification[]
     for (arc_idx, tripped) in acc.series_components_by_arc
         arc_tuple = acc.series_arc_tuples[arc_idx]
@@ -444,7 +568,7 @@ function _classify_outage_components(mat::PowerNetworkMatrix, components)
             ArcModification(arc_idx, delta_b, delta_shift, dy11, dy12, dy21, dy22, 1),
         )
     end
-    return acc, vcat(acc.direct_mods, acc.parallel_mods, series_mods)
+    return acc, vcat(acc.direct_mods, parallel_mods, series_mods)
 end
 
 """
@@ -468,16 +592,20 @@ function _classify_outage_component!(
         arc_idx = arc_lookup[arc_tuple]
         b_arc = arc_susceptances[arc_idx]
         delta_shift = -arc_dc_shift_injection(nr, arc_tuple)
-        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, -b_arc, component)
+        delta_b, ybus_delta_b = _arc_outage_delta_bs(nr, arc_tuple, b_arc)
+        dy11, dy12, dy21, dy22 =
+            _compute_arc_ybus_delta(nr, arc_tuple, ybus_delta_b, component)
         push!(
             acc.direct_mods,
-            ArcModification(arc_idx, -b_arc, delta_shift, dy11, dy12, dy21, dy22, 1),
+            ArcModification(arc_idx, delta_b, delta_shift, dy11, dy12, dy21, dy22, 1),
         )
     elseif tag === :parallel
-        push!(
-            acc.parallel_mods,
-            _parallel_arc_modification(nr, arc_lookup, arc_tuple, component),
-        )
+        arc_idx = arc_lookup[arc_tuple]
+        if !haskey(acc.parallel_components_by_arc, arc_idx)
+            acc.parallel_components_by_arc[arc_idx] = PSY.ACTransmission[]
+            acc.parallel_arc_tuples[arc_idx] = arc_tuple
+        end
+        push!(acc.parallel_components_by_arc[arc_idx], component)
     elseif tag === :series
         arc_idx = arc_lookup[arc_tuple]
         if !haskey(acc.series_components_by_arc, arc_idx)

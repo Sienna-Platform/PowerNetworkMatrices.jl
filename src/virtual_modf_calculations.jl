@@ -3,7 +3,7 @@ The Virtual Multiple Outage Distribution Factor (VirtualMODF) structure computes
 post-contingency PTDF rows lazily for registered contingencies using the
 Woodbury matrix identity (van Dijk et al. Eq. 29).
 
-Contingencies are resolved from PSY.Outage supplemental attributes at construction
+Contingencies are resolved from PSY.UnplannedOutage supplemental attributes at construction
 time. After registration, the System is not needed for queries.
 
 Internally the factorization and topology live in a private
@@ -132,7 +132,7 @@ Base.setindex!(::VirtualMODF, _, ::CartesianIndex) =
     VirtualMODF(sys::PSY.System; kwargs...) -> VirtualMODF
 
 Build a VirtualMODF from a PowerSystems System. Automatically registers all
-Outage supplemental attributes found in the system.
+Unplanned outage supplemental attributes found in the system.
 
 The buses of every outaged component and the components each outage declares
 monitored (`get_monitored_components`) are automatically added to the irreducible
@@ -157,7 +157,7 @@ auto-applied during `Ybus` construction.
 - `network_reductions::Vector{NetworkReduction}`: Network reductions to apply
 - `irreducible_buses::IS.ComponentSelector`: Components whose buses the network reductions must
         keep (see [`get_irreducible_bus_numbers`](@ref)). Default: `IS.make_selector()`
-- `automatically_register_outages::Bool`: Register all system Outage attributes (default: true)
+- `automatically_register_outages::Bool`: Register all system unplanned outage attributes (default: true)
 """
 function VirtualMODF(
     sys::PSY.System;
@@ -274,7 +274,7 @@ possible on a core that was reduced before outages were known.
 """
 function _validate_transmission_survived(
     sys::PSY.System,
-    outage::PSY.Outage,
+    outage::PSY.UnplannedOutage,
     mod::NetworkModification,
 )
     isempty(mod.arc_modifications) || return
@@ -314,12 +314,12 @@ _warn_or_rethrow_failed_outage(e) = rethrow()
 """
     _register_all_outages!(vmodf, sys)
 
-Bulk-register all Outage supplemental attributes in the system.
+Bulk-register all unplanned outage supplemental attributes in the system.
 Called automatically by the VirtualMODF constructor.
 """
 function _register_all_outages!(vmodf::VirtualMODF, sys::PSY.System)
     count = 0
-    for outage in PSY.get_supplemental_attributes(PSY.Outage, sys)
+    for outage in PSY.get_supplemental_attributes(PSY.UnplannedOutage, sys)
         try
             _register_outage!(vmodf, sys, outage)
             count += 1
@@ -340,14 +340,14 @@ end
 """
     _register_outage!(vmodf, sys, outage) -> ContingencySpec
 
-Resolve an Outage supplemental attribute to a ContingencySpec and cache it.
+Resolve an unplanned outage supplemental attribute to a ContingencySpec and cache it.
 Delegates to `NetworkModification(mat, sys, outage)` for the resolution logic.
 """
-function _register_outage!(vmodf::VirtualMODF, sys::PSY.System, outage::PSY.Outage)
+function _register_outage!(vmodf::VirtualMODF, sys::PSY.System, outage::PSY.UnplannedOutage)
     contingency_cache = get_registered_contingencies(vmodf)
     outage_id = IS.get_id(outage)
     if haskey(contingency_cache, outage_id)
-        @warn "Outage with UUID $(outage_id) is already registered; skipping."
+        @warn "Unplanned outage with UUID $(outage_id) is already registered; skipping."
         return
     end
     mod = NetworkModification(vmodf, sys, outage)
@@ -387,8 +387,15 @@ function _compute_modf_entry(
     monitored_idx::Int,
     mod::NetworkModification,
 )::Vector{Float64}
+    mod == _BASE_NETWORK && return _solve_ptdf_row(monitored_idx, get_core(vmodf))
     wf = _get_woodbury_factors(vmodf, mod)
     return _apply_woodbury_correction(vmodf, monitored_idx, wf)
+end
+
+# The base network needs no correction, so it has no factors.
+function _woodbury_factors_or_base(vmodf::VirtualMODF, mod::NetworkModification)
+    mod == _BASE_NETWORK && return nothing
+    return _get_woodbury_factors(vmodf, mod)
 end
 
 # Per-modification row cache: one n_bus-long row per monitored arc.
@@ -446,6 +453,71 @@ function Base.getindex(
     return vmodf[m_idx, mod]
 end
 
+"""
+    get_post_modification_ptdf_rows(vmodf::VirtualMODF, monitored, mods) -> Vector{Union{Vector{Float64}, SparseVector{Float64, Int}}}
+
+The PTDF rows of one monitored arc (an index or a bus pair) under each modification in
+`mods`, from a single solve of the arc's base column: `rows[i] == vmodf[monitored, mods[i]]`,
+bit for bit. An empty modification gives the base-network row, as in
+[`get_ptdf_row`](@ref); a modification taking the monitored arc out of service gives the
+zero row. Each modification's Woodbury factors are cached as for `getindex`.
+
+Rows are read from and written to the per-modification row caches exactly as
+`vmodf[monitored, mods[i]]` would, so mixing this function with `getindex` sees one cache
+state. A modification whose row is cached needs no correction; when every row is cached no
+solve runs. The core's `solver_lock` is held for the whole call. The caller owns the
+returned copies.
+"""
+function get_post_modification_ptdf_rows(
+    vmodf::VirtualMODF,
+    monitored::Union{Int, Tuple{Int, Int}},
+    mods::AbstractVector{NetworkModification},
+)
+    core = get_core(vmodf)
+    m = _resolve_monitored_index(vmodf, monitored)
+    row_caches = get_row_caches(vmodf)
+    cutoff = get_cutoff(vmodf)
+    return @lock core.solver_lock begin
+        stored = Dict{NetworkModification, RowCacheValue}()
+        pending = NetworkModification[]
+        seen = Set{NetworkModification}()
+        for mod in mods
+            mod in seen && continue
+            push!(seen, mod)
+            rc = get!(() -> _new_modf_row_cache(vmodf), row_caches, mod)
+            if haskey(rc, m)
+                stored[mod] = rc[m]
+            else
+                push!(pending, mod)
+            end
+        end
+        if !isempty(pending)
+            factors = Union{Nothing, WoodburyFactors}[
+                _woodbury_factors_or_base(vmodf, mod) for mod in pending
+            ]
+            for (mod, row) in zip(pending, _woodbury_rows(core, m, factors))
+                value = apply_cutoff(cutoff, row)
+                row_caches[mod][m] = value
+                stored[mod] = value
+            end
+        end
+        RowCacheValue[copy(stored[mod]) for mod in mods]
+    end
+end
+
+"""
+    get_ptdf_row(vmodf::VirtualMODF, arc::Tuple{Int, Int}) -> Union{Vector{Float64}, SparseVector{Float64, Int}}
+
+The base-network PTDF row of `arc`, solved on the factorization `vmodf` shares with its
+[`VirtualPTDF`](@ref) and referenced to the reference buses, with no distributed slack.
+Rows are cached in `vmodf` under the empty [`NetworkModification`](@ref); the caller owns
+the returned copy. The row is dense unless `vmodf`'s cutoff sparsified it, in which case it
+is a `SparseVector`.
+"""
+function get_ptdf_row(vmodf::VirtualMODF, arc::Tuple{Int, Int})
+    return vmodf[_monitored_arc_index(vmodf, arc), _BASE_NETWORK]
+end
+
 # --- getindex: by ContingencySpec (delegates to NetworkModification) ---
 
 """
@@ -465,7 +537,7 @@ function Base.getindex(
     return vmodf[monitored, contingency.modification]
 end
 
-# --- getindex: by PSY.Outage (id lookup → ContingencySpec → NetworkModification) ---
+# --- getindex: by PSY.UnplannedOutage (id lookup → ContingencySpec → NetworkModification) ---
 
 """
 Get the post-contingency PTDF row for monitored arc `monitored` when outage `outage` trips.
@@ -473,7 +545,7 @@ The outage must have been registered at VirtualMODF construction time.
 
 $(TYPEDSIGNATURES)
 """
-function Base.getindex(vmodf::VirtualMODF, monitored::Int, outage::PSY.Outage)
+function Base.getindex(vmodf::VirtualMODF, monitored::Int, outage::PSY.UnplannedOutage)
     # Pair with the locked `empty!` in `clear_all_caches!`; without it, a
     # concurrent clear could rehash the contingency cache mid-lookup.
     mod = @lock get_core(vmodf).solver_lock _resolve_modification(vmodf, outage)
@@ -481,11 +553,15 @@ function Base.getindex(vmodf::VirtualMODF, monitored::Int, outage::PSY.Outage)
 end
 
 """
-Arc-tuple indexed version of getindex by PSY.Outage.
+Arc-tuple indexed version of getindex by PSY.UnplannedOutage.
 
 $(TYPEDSIGNATURES)
 """
-function Base.getindex(vmodf::VirtualMODF, monitored::Tuple{Int, Int}, outage::PSY.Outage)
+function Base.getindex(
+    vmodf::VirtualMODF,
+    monitored::Tuple{Int, Int},
+    outage::PSY.UnplannedOutage,
+)
     m_idx = _monitored_arc_index(vmodf, monitored)
     return vmodf[m_idx, outage]
 end
@@ -501,6 +577,32 @@ function clear_caches!(vmodf::VirtualMODF)
     @lock core.solver_lock begin
         empty!(get_woodbury_cache(vmodf))
         empty!(get_row_caches(vmodf))
+    end
+    return
+end
+
+"""
+    retain_modifications!(vmodf::VirtualMODF, keep)
+
+Evict the cached PTDF rows and Woodbury factors of every modification except the base
+network and the modifications in `keep`. Modifications are matched by value, so a
+modification rebuilt from the same components is retained. The base network is always
+retained because every modification's rows are corrected from its rows.
+
+Each modification's row cache is bounded, but the set of modifications is not: a caller that
+queries new modifications over the life of `vmodf`, such as a schedule of topologies rebuilt
+for each simulation window, calls this to bound the memory held to the modifications it
+still needs. The caches of registered contingencies are evicted unless they are in `keep`;
+the registrations themselves are kept, so an evicted contingency is recomputed on its next
+query.
+"""
+function retain_modifications!(vmodf::VirtualMODF, keep)
+    core = get_core(vmodf)
+    @lock core.solver_lock begin
+        retained = Set{NetworkModification}(keep)
+        push!(retained, _BASE_NETWORK)
+        filter!(entry -> first(entry) in retained, get_woodbury_cache(vmodf))
+        filter!(entry -> first(entry) in retained, get_row_caches(vmodf))
     end
     return
 end

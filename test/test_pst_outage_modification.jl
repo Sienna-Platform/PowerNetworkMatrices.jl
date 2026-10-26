@@ -249,7 +249,7 @@ end
     @test n_shifted >= 1
 end
 
-@testset "pst outage: registers through the Outage attribute path" begin
+@testset "pst outage: registers through the UnplannedOutage attribute path" begin
     sys = _mk_pst_triangle_system()
     pst = get_component(PSY.TwoWindingTransformer, sys, "PST")
     outage = GeometricDistributionForcedOutage(;

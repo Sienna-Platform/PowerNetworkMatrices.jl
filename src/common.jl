@@ -1047,8 +1047,9 @@ function _member_susceptance_after_outage(
     )
 end
 
-# A series chain opens the moment any leaf trips, mirroring `_member_outage_delta_b`'s series
-# rule; a nested aggregate segment only partly tripped is not representable, same as there.
+# A series chain opens the moment any leaf trips, mirroring `_validate_outaged_member`'s
+# series rule; a nested aggregate segment only partly tripped is not representable, same as
+# there.
 function _member_susceptance_after_outage(
     member::BranchesSeries,
     tripped_set::Set{<:PSY.ACTransmission},

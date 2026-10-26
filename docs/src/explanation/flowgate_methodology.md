@@ -60,7 +60,7 @@ without additional derivation.
 ## Describing a contingency
 
 `VirtualMODF` queries are keyed by a `NetworkModification` (or by a
-`ContingencySpec` or a `PSY.Outage` that resolves to one). A
+`ContingencySpec` or a `PSY.UnplannedOutage` that resolves to one). A
 `NetworkModification` can be built in several ways:
 
 ```julia
@@ -74,14 +74,13 @@ mod_arc = NetworkModification(vmodf, (1, 2))
 branch = get_component(Line, sys, "Line-1-2")
 mod_branch = NetworkModification(vmodf, branch)
 
-# Contingency resolved from a PowerSystems Outage supplemental attribute
+# Contingency resolved from a PowerSystems UnplannedOutage supplemental attribute
 mod_outage = NetworkModification(vmodf, sys, outage)
 ```
 
-When a `VirtualMODF` is constructed from a `PSY.System`, all `PSY.Outage`
-supplemental attributes in the system are automatically resolved and
-registered. Registered contingencies can be inspected with
-`get_registered_contingencies(vmodf)` and queried directly by `PSY.Outage`.
+When a `VirtualMODF` is constructed from a `PSY.System`, all `PSY.UnplannedOutage` supplemental attributes in the system are automatically resolved and registered.
+A `PSY.PlannedOutage` is a scheduled topology change, not a contingency, so it is neither registered nor used for bus protection.
+Registered contingencies can be inspected with `get_registered_contingencies(vmodf)` and queried directly by `PSY.UnplannedOutage`.
 
 ## Querying post-contingency rows
 
@@ -89,7 +88,7 @@ The post-contingency PTDF row for a monitored arc is obtained by indexing the
 `VirtualMODF`:
 
 ```julia
-# Build a VirtualMODF (auto-registers outage attributes in the system)
+# Build a VirtualMODF (auto-registers unplanned outage attributes in the system)
 vmodf = VirtualMODF(sys)
 
 # Post-contingency row for monitored arc (1, 4) under a NetworkModification
@@ -99,7 +98,7 @@ row = vmodf[(1, 4), mod_arc]
 ctg = first(values(get_registered_contingencies(vmodf)))
 row = vmodf[(1, 4), ctg]
 
-# Same query keyed by a PSY.Outage attribute
+# Same query keyed by a PSY.UnplannedOutage attribute
 row = vmodf[(1, 4), outage]
 ```
 
@@ -136,6 +135,13 @@ contingency registrations, so subsequent queries will simply recompute. Use
 `clear_all_caches!(vmodf)` to also drop the registrations (after which the
 `VirtualMODF` can no longer be queried).
 
+Each modification's row cache is bounded, but every new modification queried adds one.
+A caller that keeps querying new modifications on one `VirtualMODF`, such as a
+`TopologySchedule` rebuilt for each window of a simulation, calls
+`retain_modifications!(vmodf, keep)` to evict every cache except those of the base network
+and the modifications in `keep`.
+Contingency registrations are not affected, so an evicted contingency is recomputed on its next query.
+
 ## Relationship to other matrix types
 
 | Matrix type           | Role in post-contingency analysis                                               |
@@ -144,7 +150,7 @@ contingency registrations, so subsequent queries will simply recompute. Use
 | `VirtualLODF`         | Single-element line outage distribution factors (N-1)                           |
 | `VirtualMODF`         | Post-contingency PTDF rows via Woodbury; supports N-1 and multi-element outages |
 | `NetworkModification` | Contingency specification; keys the Woodbury and row caches in `VirtualMODF`    |
-| `ContingencySpec`     | Pairs a `PSY.Outage` UUID with its resolved `NetworkModification`               |
+| `ContingencySpec`     | Pairs a `PSY.UnplannedOutage` UUID with its resolved `NetworkModification`      |
 
 ## Limitations
 

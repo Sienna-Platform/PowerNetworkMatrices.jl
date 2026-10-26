@@ -158,6 +158,67 @@ end
     @test PNM.get_equivalent_emergency_rating(pair) ≈ 88.8 / base
 end
 
+@testset "Switch emergency ratings by arc shape" begin
+    # A switch takes the generic path: `rating_b` when set, else `rating`. A zero rating
+    # reaches the consumer as 0.0, which POM rejects; the parser's INFINITE_BOUND
+    # placeholder never binds.
+    function switch_case(rating, rating_b)
+        sys, buses = _mk_bus_system(3)
+        arc12 = Arc(; from = buses[1], to = buses[2])
+        arc23 = Arc(; from = buses[2], to = buses[3])
+        add_component!(sys, arc12)
+        add_component!(sys, arc23)
+        line = Line(;
+            name = "L12", available = true, active_power_flow = 0.0,
+            reactive_power_flow = 0.0, arc = arc12, r = 0.0, x = 0.1,
+            b = (from = 0.0, to = 0.0), rating = 1.0, rating_b = 1.5,
+            angle_limits = (min = -1.5, max = 1.5), input_basis = u"CU",
+        )
+        add_component!(sys, line)
+        switch = PSY.DiscreteControlledACBranch(;
+            name = "S12", available = true, active_power_flow = 0.0,
+            reactive_power_flow = 0.0, arc = arc12, r = 0.0, x = 0.05, rating = rating,
+            rating_b = rating_b, input_basis = u"CU",
+        )
+        add_component!(sys, switch; skip_validation = true)
+        chain_line = Line(;
+            name = "L23", available = true, active_power_flow = 0.0,
+            reactive_power_flow = 0.0, arc = arc23, r = 0.0, x = 0.1,
+            b = (from = 0.0, to = 0.0), rating = 1.0, rating_b = 1.5,
+            angle_limits = (min = -1.5, max = 1.5), input_basis = u"CU",
+        )
+        add_component!(sys, chain_line)
+        chain = PNM.BranchesSeries((1, 3))
+        PNM.add_branch!(chain, switch, :FromTo)
+        PNM.add_branch!(chain, chain_line, :FromTo)
+        pair = PNM.MixedBranchesParallel(PSY.ACTransmission[line, switch])
+        return (; line, switch, chain, pair)
+    end
+    none = Set{PSY.ACTransmission}()
+    line_b = 1.5
+
+    # (rating, rating_b) => expected switch emergency rating, system-base pu.
+    for (rating, rating_b, expected) in (
+        (0.0, nothing, 0.0),
+        (PSY.INFINITE_BOUND, nothing, PSY.INFINITE_BOUND),
+        (2.0, 0.6, 0.6),
+    )
+        c = switch_case(rating, rating_b)
+        line_trips = Set{PSY.ACTransmission}([c.line])
+
+        @test PNM.get_equivalent_emergency_rating(c.switch) ≈ expected
+        @test PNM.get_post_outage_emergency_rating(c.switch, none) ≈ expected
+
+        @test PNM.get_equivalent_emergency_rating(c.chain) ≈ min(expected, line_b)
+        @test PNM.get_post_outage_emergency_rating(c.chain, none) ≈ min(expected, line_b)
+
+        @test PNM.get_equivalent_emergency_rating(c.pair) ≈ line_b + expected
+        @test PNM.get_post_outage_emergency_rating(c.pair, none) ≈ line_b + expected
+
+        @test PNM.get_post_outage_emergency_rating(c.pair, line_trips) ≈ expected
+    end
+end
+
 @testset "Equivalent getters for ThreeWindingTransformerCircuit" begin
     # Create a test system with three-winding transformers
     sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")

@@ -1,15 +1,23 @@
 """
-    _invert_woodbury_W(W_mat, M) -> (W_inv::Matrix{Float64}, is_islanding::Bool)
+    _invert_woodbury_W(W_mat, M, signed_delta_b) -> (W_inv::Matrix{Float64}, is_islanding::Bool)
 
 Invert the M×M Woodbury W; closed form for M ≤ 2, LU otherwise.
+
+Singularity is judged on `S = diag(signed_delta_b)·W`, whose diagonal is `1 + Δb·K`. `S` is
+independent of the arcs' impedance scale and exactly singular for a true island, whereas `W`
+itself shrinks like `x²` for very low-impedance arcs and would be mistaken for singular.
 """
-function _invert_woodbury_W(W_mat::Matrix{Float64}, M::Int)::Tuple{Matrix{Float64}, Bool}
+function _invert_woodbury_W(
+    W_mat::Matrix{Float64},
+    M::Int,
+    signed_delta_b::Vector{Float64},
+)::Tuple{Matrix{Float64}, Bool}
     if iszero(M)
         # M = 0 (hand-built modifications only; registration rejects it): getri! rejects 0×0.
         return Matrix{Float64}(undef, 0, 0), false
     elseif M == 1
         w = W_mat[1, 1]
-        is_island = abs(w) < MODF_ISLANDING_TOLERANCE
+        is_island = abs(w * signed_delta_b[1]) < MODF_ISLANDING_TOLERANCE
         W_inv = Matrix{Float64}(undef, 1, 1)
         if is_island
             W_inv[1, 1] = 0.0
@@ -20,7 +28,8 @@ function _invert_woodbury_W(W_mat::Matrix{Float64}, M::Int)::Tuple{Matrix{Float6
     elseif M == 2
         a, b, c, d = W_mat[1, 1], W_mat[1, 2], W_mat[2, 1], W_mat[2, 2]
         det_W = a * d - b * c
-        is_island = abs(det_W) < MODF_ISLANDING_TOLERANCE
+        is_island =
+            abs(det_W * signed_delta_b[1] * signed_delta_b[2]) < MODF_ISLANDING_TOLERANCE
         if is_island
             return LinearAlgebra.pinv(W_mat; atol = MODF_ISLANDING_TOLERANCE), is_island
         end
@@ -32,12 +41,14 @@ function _invert_woodbury_W(W_mat::Matrix{Float64}, M::Int)::Tuple{Matrix{Float6
         W_inv[2, 2] = a * inv_det
         return W_inv, is_island
     end
-    W_lu = LinearAlgebra.lu(W_mat; check = false)
-    is_island = any(i -> abs(W_lu.U[i, i]) < MODF_ISLANDING_TOLERANCE, 1:M)
+    scale = LinearAlgebra.Diagonal(signed_delta_b)
+    S_lu = LinearAlgebra.lu(scale * W_mat; check = false)
+    is_island = any(i -> abs(S_lu.U[i, i]) < MODF_ISLANDING_TOLERANCE, 1:M)
     if is_island
         return LinearAlgebra.pinv(W_mat; atol = MODF_ISLANDING_TOLERANCE), is_island
     end
-    return LinearAlgebra.inv(W_lu), is_island
+    # W = D⁻¹S, so W⁻¹ = S⁻¹D.
+    return LinearAlgebra.inv(S_lu) * scale, is_island
 end
 
 # --- Islanding zero-forcing (shared by VirtualPTDF and VirtualMODF) -----------
@@ -234,7 +245,7 @@ function _woodbury_factors_from_Z(
     # adds a negative-reactance arc a second time instead of removing it.
     signed_delta_b = [signs[arc_indices[j]] * delta_b_vec[j] for j in 1:M]
     W_mat = LinearAlgebra.diagm(1.0 ./ signed_delta_b) + K_mat
-    W_inv, is_island = _invert_woodbury_W(W_mat, M)
+    W_inv, is_island = _invert_woodbury_W(W_mat, M, signed_delta_b)
 
     # Label post-contingency components only when islanding, so the correction can
     # force entries of disconnected buses to exactly zero (see _zero_islanded_entries!).
@@ -419,38 +430,127 @@ function _compute_woodbury_factors(
 end
 
 _apply_woodbury_correction(
-    mat::Union{VirtualPTDF, VirtualMODF},
+    mat::VirtualMODF,
     monitored_idx::Int,
     wf::WoodburyFactors,
 ) = _apply_woodbury_correction(get_core(mat), monitored_idx, wf)
 
 function _apply_woodbury_correction(
+    vptdf::VirtualPTDF,
+    monitored_idx::Int,
+    wf::WoodburyFactors,
+)
+    row = _apply_woodbury_correction(get_core(vptdf), monitored_idx, wf)
+    return _apply_dist_slack!(row, vptdf, wf)
+end
+
+function _apply_dist_slack!(row::Vector{Float64}, vptdf::VirtualPTDF, wf::WoodburyFactors)
+    _use_dist_slack(vptdf) || return row
+    if wf.is_islanding
+        error(
+            "Distributed slack is not supported for a modification that islands the network.",
+        )
+    end
+    # A distributed slack withdraws each injection in proportion to the slack weights, which
+    # shifts every entry of a sensitivity row by the row's weighted mean.
+    row .-= LinearAlgebra.dot(row, get_dist_slack_normalized(vptdf))
+    return row
+end
+
+_apply_woodbury_correction(
     core::VirtualFactorCore,
     monitored_idx::Int,
     wf::WoodburyFactors,
-)::Vector{Float64}
+)::Vector{Float64} = only(_woodbury_rows(core, monitored_idx, (wf,)))
+
+"""
+    _woodbury_rows(core, monitored_idx, factors) -> Vector{Vector{Float64}}
+
+Rows of the monitored arc on several networks from one solve of its `BA` column:
+`rows[i]` is the post-modification row under `factors[i]`, or the base row (reference-bus
+slack) when `factors[i]` is `nothing`. Each row equals what the single-modification path
+computes, bit for bit: the base row is the plain solve, and every modification corrects its
+own copy of `B⁻¹ν_m / b_mon_pre`. No solve runs when every requested row is the zero row of
+an arc taken out of service.
+"""
+function _woodbury_rows(
+    core::VirtualFactorCore,
+    monitored_idx::Int,
+    factors,
+)::Vector{Vector{Float64}}
     arc_sus = core.arc_susceptances
+    n = length(factors)
+    rows = Vector{Vector{Float64}}(undef, n)
+    max_modified = 0
+    for wf in factors
+        isnothing(wf) && continue
+        max_modified = max(max_modified, length(wf.arc_indices))
+    end
+    zm_Z_buf = Vector{Float64}(undef, max_modified)
+    coeff_buf = Vector{Float64}(undef, max_modified)
     return with_solver(
         core.K,
         core.work_ba_col,
         core.temp_data,
         core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
-        if _monitored_arc_out(arc_sus, monitored_idx, wf)
-            return zeros(length(temp_data))
+        n_bus = length(temp_data)
+        needs_base = false
+        needs_scaled = false
+        for wf in factors
+            if isnothing(wf)
+                needs_base = true
+            elseif !_monitored_arc_out(arc_sus, monitored_idx, wf)
+                needs_scaled = true
+            end
         end
-        b_mon = _post_modification_susceptance(arc_sus, monitored_idx, wf)
-        # z_m = B⁻¹ν_m / b_mon_pre.
         b_mon_pre = arc_sus[monitored_idx]
-        lin_solve = _solve_ba_column!(
-            K_solver,
-            work_ba_col,
-            core.BA,
-            core.bus_to_valid_idx,
-            monitored_idx,
-        )
-        _gather_to_buses!(temp_data, core.valid_ix, lin_solve, b_mon_pre)
-        _woodbury_correction!(temp_data, core.BA, b_mon_pre, b_mon, monitored_idx, wf)
-        return copy(temp_data)
+        base_row = Float64[]
+        if needs_base || needs_scaled
+            lin_solve = _solve_ba_column!(
+                K_solver,
+                work_ba_col,
+                core.BA,
+                core.bus_to_valid_idx,
+                monitored_idx,
+            )
+            if needs_base
+                base_row = _gather_to_buses!(
+                    Vector{Float64}(undef, n_bus),
+                    core.valid_ix,
+                    lin_solve,
+                )
+            end
+            # z_m = B⁻¹ν_m / b_mon_pre, shared by every modification.
+            needs_scaled &&
+                _gather_to_buses!(temp_data, core.valid_ix, lin_solve, b_mon_pre)
+        end
+        base_used = false
+        for (i, wf) in enumerate(factors)
+            if isnothing(wf)
+                # Every base-network slot gets its own row; only the first takes the buffer.
+                if base_used
+                    rows[i] = copy(base_row)
+                else
+                    rows[i] = base_row
+                end
+                base_used = true
+            elseif _monitored_arc_out(arc_sus, monitored_idx, wf)
+                rows[i] = zeros(n_bus)
+            else
+                b_mon = _post_modification_susceptance(arc_sus, monitored_idx, wf)
+                rows[i] = _woodbury_correction!(
+                    copy(temp_data),
+                    zm_Z_buf,
+                    coeff_buf,
+                    core.BA,
+                    b_mon_pre,
+                    b_mon,
+                    monitored_idx,
+                    wf,
+                )
+            end
+        end
+        return rows
     end
 end

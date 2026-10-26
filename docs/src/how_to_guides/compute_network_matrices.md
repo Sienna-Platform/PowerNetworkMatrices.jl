@@ -86,7 +86,7 @@ For post-contingency / post-modification PTDF rows using [`VirtualMODF`](@ref):
 ```julia
 vmodf_matrix = PNM.VirtualMODF(sys)
 
-# Inspect contingencies auto-registered from PSY.Outage supplemental attributes
+# Inspect contingencies auto-registered from PSY.UnplannedOutage supplemental attributes (PSY.PlannedOutage is not registered)
 PNM.get_registered_contingencies(vmodf_matrix)
 
 # Access the post-modification PTDF row for monitored arc (1, 2) under a contingency
