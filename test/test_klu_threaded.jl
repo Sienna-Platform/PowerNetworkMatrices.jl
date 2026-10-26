@@ -43,6 +43,39 @@ end
 
 const _KLU_STRESS_FULL = get(ENV, "PNM_KLU_STRESS", "") == "full"
 
+function _run_subprocess(script::String; threads::Int = 1, timeout::Real = 300)
+    project = "--project=$(Base.active_project())"
+    cmd = `$(Base.julia_cmd()) -t $threads --startup-file=no $project -e $script`
+    out = IOBuffer()
+    proc = run(pipeline(ignorestatus(cmd); stdout = out, stderr = out); wait = false)
+    if timedwait(() -> process_exited(proc), timeout) == :timed_out
+        kill(proc)
+        wait(proc)
+        output = String(take!(out)) * "\n[timed out]"
+        @error "KLU subprocess timed out" output
+        return (ok = false, output = output)
+    end
+    output = String(take!(out))
+    ok = success(proc)
+    if !ok
+        @error "KLU subprocess failed" output
+    end
+    return (ok = ok, output = output)
+end
+
+const _KLU_SUBPROCESS_PRELUDE = """
+using PowerNetworkMatrices, SparseArrays, LinearAlgebra
+import PowerNetworkMatrices as PNM
+function grid(m)
+    T = spdiagm(-1 => fill(-1.2, m - 1), 0 => fill(2.0, m), 1 => fill(-0.8, m - 1))
+    I_m = sparse(I, m, m)
+    return kron(I_m, T) + kron(T, I_m) + 0.1 * sparse(I, m * m, m * m)
+end
+"""
+
+# The stress helpers run in a subprocess: the test workers have one thread each.
+const _KLU_STRESS_CODE = raw"""
+import Random
 function _convection_diffusion(m::Int)
     T = SparseArrays.spdiagm(
         -1 => fill(-1.2, m - 1),
@@ -112,55 +145,32 @@ function _klu_stress_task(
     end
     return digest
 end
+"""
 
 @testset "Distinct caches in parallel" begin
-    if Threads.nthreads() == 1
-        @test_skip false
-    else
-        bases = [_convection_diffusion(50)]
-        niter = 40
-        if _KLU_STRESS_FULL
-            sys = build_system(MatpowerTestSystems, "matpower_ACTIVSg10k_sys")
-            bases = [_convection_diffusion(100), PNM.ABA_Matrix(sys).data]
-            niter = 100
-        end
-        ntasks = 2 * Threads.nthreads()
-        base_of(t) = bases[1 + t % length(bases)]
-        serial = [_klu_stress_task(t, base_of(t), niter) for t in 1:ntasks]
-        tasks = [Threads.@spawn _klu_stress_task(t, base_of(t), niter) for t in 1:ntasks]
-        @test fetch.(tasks) == serial
+    cases = """
+    bases = [_convection_diffusion(50)]
+    niter = 40
+    """
+    if _KLU_STRESS_FULL
+        cases = """
+        using PowerSystemCaseBuilder
+        sys = build_system(MatpowerTestSystems, "matpower_ACTIVSg10k_sys")
+        bases = [_convection_diffusion(100), PNM.ABA_Matrix(sys).data]
+        niter = 100
+        """
     end
+    script = _KLU_SUBPROCESS_PRELUDE * _KLU_STRESS_CODE * cases * """
+    ntasks = 2 * Threads.nthreads()
+    base_of(t) = bases[1 + t % length(bases)]
+    serial = [_klu_stress_task(t, base_of(t), niter) for t in 1:ntasks]
+    tasks = [Threads.@spawn _klu_stress_task(t, base_of(t), niter) for t in 1:ntasks]
+    println("threads=", Threads.nthreads(), " same=", fetch.(tasks) == serial)
+    """
+    r = _run_subprocess(script; threads = 4, timeout = 600)
+    @test r.ok
+    @test occursin("threads=4 same=true", r.output)
 end
-
-function _run_subprocess(script::String; threads::Int = 1, timeout::Real = 300)
-    project = "--project=$(Base.active_project())"
-    cmd = `$(Base.julia_cmd()) -t $threads --startup-file=no $project -e $script`
-    out = IOBuffer()
-    proc = run(pipeline(ignorestatus(cmd); stdout = out, stderr = out); wait = false)
-    if timedwait(() -> process_exited(proc), timeout) == :timed_out
-        kill(proc)
-        wait(proc)
-        output = String(take!(out)) * "\n[timed out]"
-        @error "KLU subprocess timed out" output
-        return (ok = false, output = output)
-    end
-    output = String(take!(out))
-    ok = success(proc)
-    if !ok
-        @error "KLU subprocess failed" output
-    end
-    return (ok = ok, output = output)
-end
-
-const _KLU_SUBPROCESS_PRELUDE = """
-using PowerNetworkMatrices, SparseArrays, LinearAlgebra
-import PowerNetworkMatrices as PNM
-function grid(m)
-    T = spdiagm(-1 => fill(-1.2, m - 1), 0 => fill(2.0, m), 1 => fill(-0.8, m - 1))
-    I_m = sparse(I, m, m)
-    return kron(I_m, T) + kron(T, I_m) + 0.1 * sparse(I, m * m, m * m)
-end
-"""
 
 @testset "Allocator pinned at load" begin
     # Without the pin, freeing these libc-born blocks after the sparse qr switches the

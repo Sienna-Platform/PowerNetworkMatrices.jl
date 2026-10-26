@@ -1079,7 +1079,8 @@ function swap_lean_columns!(cache::KLULinSolveCache{Float64}, plan::LeanLUPlan, 
             cache.lean_plan = LeanLUPlan(
                 plan.n, plan.rcond0, plan.p, q, plan.cp, plan.dpos, plan.row,
                 plan.a_row,
-                plan.dep_lb, plan.dep_le, plan.a_colptr, plan.a_rowval,
+                plan.dep_lb, plan.dep_le, plan.dep_pair, plan.col_pair, plan.a_colptr,
+                plan.a_rowval,
             )
         end
         return cache
