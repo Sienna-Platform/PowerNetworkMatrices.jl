@@ -37,6 +37,19 @@ never carries the diagnostic code.
 const KLU_POOL_DEBUG = false
 
 """
+    _EXITING :: Threads.Atomic{Bool}
+
+Set by an `atexit` hook. At exit Julia runs every pending finalizer, including
+those of caches that tasks on other threads are still solving with, so freeing
+the libklu handles then is a use-after-free (SIGSEGV in `klu_l_solve`; see
+KLU.jl#31). Once this is set, `_finalize_klu_cache!` leaves the handles for the
+OS to reclaim. `atexit` hooks always run before that finalizer sweep.
+"""
+const _EXITING = Threads.Atomic{Bool}(false)
+
+__init__() = atexit(() -> (_EXITING[] = true))
+
+"""
     _LIBKLU_LOCK :: ReentrantLock
 
 Process-wide lock that serializes every libklu ccall. `libklu` corrupts
