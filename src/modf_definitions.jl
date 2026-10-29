@@ -194,6 +194,66 @@ struct ContingencySpec
     modification::NetworkModification
 end
 
+# Construction token: only callers that derive `tier2` as `post_contingency` − `topology`
+# pass it, so a network never pairs a topology with a mismatched tier-2 modification.
+struct _Tier2Derived end
+
+"""
+    PostContingencyNetwork
+
+The network after a contingency on a scheduled topology K, keyed by K and the tier-2
+modification Δ that takes K to K ∪ c. `hash` and `==` compare `topology` and `tier2` only,
+so steps that share a topology share one network, and a network on the base topology equals
+the registered contingency's.
+
+# Fields
+- `topology::NetworkModification`: The modification that takes the base network to K; the
+  empty modification for the base topology.
+- `post_contingency::NetworkModification`: The modification that takes the base network to
+  K ∪ c, with the components out at K and the contingency's remaining components resolved
+  together.
+- `tier2::NetworkModification`: Δ = `post_contingency` − `topology`, arc by arc and bus by
+  bus, with entries that are zero in every field dropped.
+- `contingency_id::Int`: IS id of the contingency's `PSY.UnplannedOutage`.
+- `key_hash::UInt`: `hash((topology, tier2))`, computed at construction.
+
+Networks are built by [`get_post_contingency_network`](@ref) on a scheduled topology, or by
+`PostContingencyNetwork(vmodf, contingency_id)` on the base topology, which derive `tier2`
+from the other two modifications.
+"""
+struct PostContingencyNetwork
+    topology::NetworkModification
+    post_contingency::NetworkModification
+    tier2::NetworkModification
+    contingency_id::Int
+    key_hash::UInt
+    function PostContingencyNetwork(
+        ::_Tier2Derived,
+        topology::NetworkModification,
+        post_contingency::NetworkModification,
+        tier2::NetworkModification,
+        contingency_id::Int,
+    )
+        return new(
+            topology,
+            post_contingency,
+            tier2,
+            contingency_id,
+            hash((topology, tier2)),
+        )
+    end
+end
+
+# Networks are dictionary keys in every row and factor lookup, and hashing a modification
+# walks its arcs, so the key hash is computed once.
+Base.hash(n::PostContingencyNetwork, h::UInt) = hash(n.key_hash, h)
+
+# Steps on one topology share its modification object, so identity settles most comparisons.
+Base.:(==)(a::PostContingencyNetwork, b::PostContingencyNetwork) =
+    a.key_hash == b.key_hash &&
+    (a.topology === b.topology || a.topology == b.topology) &&
+    (a.tier2 === b.tier2 || a.tier2 == b.tier2)
+
 """
     WoodburyFactors
 
@@ -202,10 +262,11 @@ Computed from van Dijk et al. Eq. 29:
     B_m⁻¹ = B_r⁻¹ - B_r⁻¹ U (A⁻¹ + U⊤ B_r⁻¹ U)⁻¹ U⊤ B_r⁻¹
 
 # Fields
-- `Z::Matrix{Float64}`: B⁻¹U matrix (n_bus × M), one column per modified arc
+- `Z::Matrix{Float64}`: B⁻¹U matrix (n_bus × M), one column per arc whose susceptance
+  changes; arcs with `delta_b == 0` leave `B` unchanged and are not included
 - `W_inv::Matrix{Float64}`: Pre-inverted W = (A⁻¹ + U⊤B⁻¹U)⁻¹ (M × M). For M ≤ 2, computed analytically; for M > 2, computed via LU factorization.
-- `arc_indices::Vector{Int}`: Arc indices of modified arcs
-- `delta_b::Vector{Float64}`: Susceptance changes per modified arc
+- `arc_indices::Vector{Int}`: Arc indices of the arcs whose susceptance changes
+- `delta_b::Vector{Float64}`: Susceptance change per arc in `arc_indices`
 - `arc_out::Vector{Bool}`: Per modified arc, whether the modification opens every member of
   the arc. Set from member counts, because the summed `delta_b` of a lossy parallel group
   does not cancel the arc susceptance exactly.

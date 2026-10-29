@@ -77,6 +77,8 @@ struct TopologySchedule{M <: VirtualMODF}
     arcs_out::Vector{Set{Tuple{Int, Int}}}
     islands::Vector{Vector{Vector{Int}}}
     reference_islands::Vector{Set{Int}}
+    contingency_components::Dict{Int, Vector{PSY.Component}}
+    contingency_lock::ReentrantLock
 end
 
 function TopologySchedule(
@@ -119,6 +121,8 @@ function TopologySchedule(
         arcs_out,
         islands,
         reference_islands,
+        Dict{Int, Vector{PSY.Component}}(),
+        ReentrantLock(),
     )
 end
 
@@ -368,15 +372,7 @@ function get_topology_ptdf_rows(
     return get_post_modification_ptdf_rows(ts.vmodf, arc, mods)
 end
 
-"""
-    get_post_contingency_modification(ts::TopologySchedule, t::Int, ctg_components) -> Union{NetworkModification, Nothing}
-
-The network after contingency `ctg_components` at step `t`: the components already out at
-`t` plus the contingency's remaining components, resolved together. Returns `nothing` when
-every contingency component is already out, since the contingency then changes nothing.
-"""
-function get_post_contingency_modification(ts::TopologySchedule, t::Int, ctg_components)
-    k = get_topology_index(ts, t)
+function _post_contingency_modification(ts::TopologySchedule, k::Int, ctg_components)
     already_out = IdDict{PSY.Component, Nothing}()
     if k != 0
         for c in ts.removed[k]
@@ -391,3 +387,128 @@ function get_post_contingency_modification(ts::TopologySchedule, t::Int, ctg_com
         vcat(collect(keys(already_out)), remaining),
     )
 end
+
+"""
+    get_post_contingency_network(ts::TopologySchedule, t::Int, contingency_id::Int) -> Union{PostContingencyNetwork, Nothing}
+
+The [`PostContingencyNetwork`](@ref) of the `PSY.UnplannedOutage` with IS id
+`contingency_id` on the topology in effect at step `t`. The outage's available associated
+components are resolved through the schedule's system on the schedule's first query for
+the outage and reused for every later step, and those already out at `t` are dropped.
+Returns `nothing` when none remain, since the contingency then changes nothing.
+Steps on the same topology return equal networks.
+"""
+function get_post_contingency_network(ts::TopologySchedule, t::Int, contingency_id::Int)
+    k = get_topology_index(ts, t)
+    post =
+        _post_contingency_modification(ts, k, _contingency_components(ts, contingency_id))
+    isnothing(post) && return nothing
+    topology = _topology_modification(ts, k)
+    return PostContingencyNetwork(
+        _Tier2Derived(),
+        topology,
+        post,
+        _tier2_modification(post, topology),
+        contingency_id,
+    )
+end
+
+function _contingency_components(ts::TopologySchedule, contingency_id::Int)
+    return lock(ts.contingency_lock) do
+        get!(ts.contingency_components, contingency_id) do
+            _available_contingency_components(ts.sys, contingency_id)
+        end
+    end
+end
+
+function _available_contingency_components(sys::PSY.System, contingency_id::Int)
+    outage = PSY.get_supplemental_attribute(sys, contingency_id)
+    outage isa PSY.UnplannedOutage || throw(
+        ArgumentError(
+            "Supplemental attribute $contingency_id is a $(typeof(outage)), not a \
+            PSY.UnplannedOutage.",
+        ),
+    )
+    return PSY.Component[
+        c for c in PSY.get_associated_components(sys, outage) if _in_network_candidate(c)
+    ]
+end
+
+"""
+    PostContingencyNetwork(vmodf::VirtualMODF, contingency_id::Int)
+
+The [`PostContingencyNetwork`](@ref) of the contingency registered in `vmodf` under
+`contingency_id`, on the base topology: `topology` is the empty modification, and
+`post_contingency` and `tier2` are the registered modification. Throws when no contingency
+is registered under `contingency_id`.
+"""
+function PostContingencyNetwork(vmodf::VirtualMODF, contingency_id::Int)
+    mod = @lock get_core(vmodf).solver_lock _resolve_modification(vmodf, contingency_id)
+    return _base_topology_network(mod, contingency_id)
+end
+
+# Δ = post − topology, arc by arc and bus by bus. An arc's group susceptance after the
+# contingency comes from `post`, where the components out at K and the contingency's are
+# resolved together, so adding Δ to `topology` lands on `post` with no member-share formula.
+function _tier2_modification(post::NetworkModification, topology::NetworkModification)
+    arc_mods = _modification_difference(
+        ArcModification,
+        post.arc_modifications,
+        topology.arc_modifications,
+        m -> m.arc_index,
+        _arc_difference,
+        i -> ArcModification(i, 0.0),
+    )
+    shunt_mods = _modification_difference(
+        ShuntModification,
+        post.shunt_modifications,
+        topology.shunt_modifications,
+        m -> m.bus_index,
+        _shunt_difference,
+        i -> ShuntModification(i, zero(YBUS_ELTYPE)),
+    )
+    return NetworkModification(post.label, arc_mods, shunt_mods, post.is_islanding)
+end
+
+function _modification_difference(
+    ::Type{T},
+    post::Tuple{Vararg{T}},
+    topology::Tuple{Vararg{T}},
+    index_of,
+    difference,
+    zero_at,
+) where {T}
+    by_index = Dict{Int, T}(index_of(m) => m for m in topology)
+    diffs = T[]
+    for m in post
+        i = index_of(m)
+        push!(diffs, difference(m, something(get(by_index, i, nothing), zero_at(i))))
+        delete!(by_index, i)
+    end
+    for (i, m) in by_index
+        push!(diffs, difference(zero_at(i), m))
+    end
+    filter!(!_is_zero_change, diffs)
+    return sort!(diffs; by = index_of)
+end
+
+_arc_difference(a::ArcModification, b::ArcModification) = ArcModification(
+    a.arc_index,
+    a.delta_b - b.delta_b,
+    a.delta_shift_injection - b.delta_shift_injection,
+    a.delta_y11 - b.delta_y11,
+    a.delta_y12 - b.delta_y12,
+    a.delta_y21 - b.delta_y21,
+    a.delta_y22 - b.delta_y22,
+    a.opened - b.opened,
+)
+
+_shunt_difference(a::ShuntModification, b::ShuntModification) =
+    ShuntModification(a.bus_index, a.delta_y - b.delta_y)
+
+_is_zero_change(m::ArcModification) =
+    iszero(m.delta_b) && iszero(m.delta_shift_injection) && iszero(m.delta_y11) &&
+    iszero(m.delta_y12) && iszero(m.delta_y21) && iszero(m.delta_y22) &&
+    iszero(m.opened)
+
+_is_zero_change(m::ShuntModification) = iszero(m.delta_y)

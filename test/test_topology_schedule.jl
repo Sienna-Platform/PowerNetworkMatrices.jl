@@ -1,43 +1,4 @@
-function _ref_ptdf_without(builder, names::Vector{String})
-    sys_ref = builder()
-    for n in names
-        PSY.set_available!(PSY.get_component(PSY.Line, sys_ref, n), false)
-    end
-    return PTDF(sys_ref), sys_ref
-end
-
 _c_sys14() = PSB.build_system(PSB.PSITestSystems, "c_sys14")
-
-_arc_numbers(b) = (
-    PSY.get_number(PSY.get_from(PSY.get_arc(b))),
-    PSY.get_number(PSY.get_to(PSY.get_arc(b))),
-)
-
-# c_sys14 with a second Line named "dup" in parallel with the first line. `r_scale` makes
-# the pair lossy and unequal in r/x, so the group susceptance is not the sum of 1/x.
-function _c_sys14_with_parallel_pair(; r_scale = 1.0)
-    sys = _c_sys14()
-    lines = sort!(collect(PSY.get_components(PSY.Line, sys)); by = PSY.get_name)
-    return _add_parallel_line!(sys, lines[1], r_scale)
-end
-
-function _add_parallel_line!(sys, base, r_scale)
-    dup = PSY.Line(;
-        input_basis = u"CU",
-        name = "dup",
-        available = true,
-        active_power_flow = 0.0,
-        reactive_power_flow = 0.0,
-        arc = PSY.get_arc(base),
-        r = r_scale * PSY.get_r(base, u"Ω"),
-        x = PSY.get_x(base, u"Ω"),
-        b = (from = 0.0, to = 0.0),
-        rating = 10.0,
-        angle_limits = (min = -1.5, max = 1.5),
-    )
-    PSY.add_component!(sys, dup)
-    return sys, base, dup
-end
 
 function _max_row_error(rows, builder, out_names, vptdf; skip_arc = nothing)
     sys_ref = builder()
@@ -130,18 +91,6 @@ end
     @test get_ptdf_row(vmodf, arc) !== get_ptdf_row(vmodf, arc)
 end
 
-# The first line, by name, whose outage splits `sys` into more islands; `nothing` if none.
-function _find_bridge_line(sys)
-    n_base = length(PNM.find_subnetworks(PNM.Ybus(sys)))
-    for line in sort!(collect(PSY.get_components(PSY.Line, sys)); by = PSY.get_name)
-        PSY.set_available!(line, false)
-        n_out = length(PNM.find_subnetworks(PNM.Ybus(sys)))
-        PSY.set_available!(line, true)
-        n_out > n_base && return line
-    end
-    return nothing
-end
-
 @testset "TopologySchedule islands" begin
     sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
     bridge = _find_bridge_line(sys)
@@ -213,7 +162,7 @@ end
         ) < 1e-9
 
         # a planned set and a contingency still resolve jointly
-        ctg = get_post_contingency_modification(ts, 2, [base])
+        ctg = PNM._post_contingency_modification(ts, get_topology_index(ts, 2), [base])
         @test ctg == full
     end
 end
@@ -297,25 +246,6 @@ end
     @test !isapprox(ts[arc, 1], Vector(get_ptdf_row(vptdf, arc)); atol = 1e-6)
 end
 
-@testset "TopologySchedule post-contingency modification" begin
-    sys = _c_sys14()
-    vptdf = VirtualPTDF(sys)
-    vmodf = VirtualMODF(vptdf, sys; automatically_register_outages = false)
-    lines = sort!(collect(PSY.get_components(PSY.Line, sys)); by = PSY.get_name)
-    a, b, c = lines[1], lines[2], lines[3]
-    ts = TopologySchedule(vmodf, sys, [Set{PSY.Component}([a])])
-
-    @test isnothing(get_post_contingency_modification(ts, 1, [a]))
-    mod_ab = get_post_contingency_modification(ts, 1, [a, b])
-    @test mod_ab == NetworkModification(vmodf, sys, [a, b])
-    mod_c = get_post_contingency_modification(ts, 1, [c])
-    @test mod_c == NetworkModification(vmodf, sys, [a, c])
-
-    ts_base = TopologySchedule(vmodf, sys, [Set{PSY.Component}()])
-    @test get_post_contingency_modification(ts_base, 1, [b]) ==
-          NetworkModification(vmodf, sys, [b])
-end
-
 @testset "TopologySchedule islands on a system with two subnetworks" begin
     sys = build_hvdc_with_single_bus_island()
     vptdf = VirtualPTDF(sys)
@@ -329,24 +259,6 @@ end
         @test Set(Set(island) for island in islands) == expected
         @test refs == Set(1:2)
     end
-end
-
-# A lossless phase-shifting transformer named "shifter" on `arc`, with reactance `x` in
-# system base.
-function _add_shifter!(sys, arc, x; α)
-    shifter = PSY.TwoWindingTransformer(; input_basis = u"CU",
-        name = "shifter",
-        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-            arc = arc, tap = 1.0, α = α, available = true,
-            active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 10.0,
-            base_power = PSY.get_base_power(sys),
-            base_voltage_primary = PSY.get_base_voltage(PSY.get_from(arc)),
-            r = 0.0, x = x,
-        ),
-        magnetizing_shunt = Complex(0.0, 0.0),
-    )
-    PSY.add_component!(sys, shifter)
-    return shifter
 end
 
 # A shifter with `base`'s reactance on `base`'s arc, so it joins `base`'s parallel group.
@@ -581,23 +493,6 @@ end
     @test get_topology_index(ts, 1) != get_topology_index(ts, 2)
 end
 
-# c_sys14 with a "dup" line parallel to Line1 (1-2) and a phase shifter on a new arc 1-3.
-# Trans4 (7-8) is the only branch to bus 8, so opening it islands the bus.
-function _c_sys14_for_row_batches()
-    sys, line1, dup = _c_sys14_with_parallel_pair(; r_scale = 2.0)
-    shifter_arc = PSY.Arc(;
-        from = PSY.get_component(
-            PSY.ACBus,
-            sys,
-            PSY.get_name(PSY.get_from(PSY.get_arc(line1))),
-        ),
-        to = only(b for b in PSY.get_components(PSY.ACBus, sys) if PSY.get_number(b) == 3),
-    )
-    PSY.add_component!(sys, shifter_arc)
-    shifter = _add_shifter!(sys, shifter_arc, 0.2; α = 0.1)
-    return sys
-end
-
 function _row_batch_schedule(sys, vmodf)
     line(name) = PSY.get_component(PSY.Line, sys, name)
     line1, dup, line7 = line("Line1"), line("dup"), line("Line7")
@@ -614,8 +509,6 @@ function _row_batch_schedule(sys, vmodf)
     ]
     return TopologySchedule(vmodf, sys, removed)
 end
-
-_bitwise_equal(a, b) = typeof(a) == typeof(b) && isequal(a, b)
 
 @testset "Rows of one arc on every topology equal per-topology rows bit for bit" begin
     sys = _c_sys14_for_row_batches()
@@ -691,30 +584,6 @@ _row_batch_component(sys, name) = something(
     PSY.get_component(PSY.TwoWindingTransformer, sys, name),
 )
 
-# Largest entry-wise gap between the batched rows of every arc and a dense PTDF of the system
-# rebuilt with the `names` components out. An arc the rebuild drops must give a zero row.
-function _max_error_against_rebuild(rows_of_arc, arcs, bus_axis, names; kwargs...)
-    sys_ref = _c_sys14_for_row_batches()
-    for name in names
-        PSY.set_available!(_row_batch_component(sys_ref, name), false)
-    end
-    ref = PTDF(sys_ref; kwargs...)
-    arc_lookup = PNM.get_arc_lookup(ref)
-    bus_lookup = PNM.get_bus_lookup(ref)
-    err = 0.0
-    for arc in arcs
-        row = rows_of_arc(arc)
-        if !haskey(arc_lookup, arc)
-            err = max(err, maximum(abs, row))
-            continue
-        end
-        for (j, bus) in enumerate(bus_axis)
-            err = max(err, abs(row[j] - ref[arc_lookup[arc], bus_lookup[bus]]))
-        end
-    end
-    return err
-end
-
 const _ORACLE_CASES = [
     String[],
     ["Line7"],
@@ -770,31 +639,6 @@ end
         )
         @test err < 1e-10
     end
-end
-
-# case10 with a phase shift on the 3W transformer's primary winding and a two-winding
-# transformer parallel to that winding, so the two share an arc. Returns the system, the 3W
-# transformer, the parallel transformer and the shared arc.
-function _case10_with_transformer_beside_winding(; with_three_winding = true)
-    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
-    trf = only(PSY.get_components(PSY.ThreeWindingTransformer, sys))
-    primary = PSY.get_primary_circuit(trf)
-    PSY.set_α!(primary, 0.1)
-    winding_arc = PSY.get_arc(primary)
-    beside = PSY.TwoWindingTransformer(; input_basis = u"CU",
-        name = "beside_winding",
-        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-            arc = winding_arc, tap = 1.0, α = 0.0, available = true,
-            active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 10.0,
-            base_power = PSY.get_base_power(sys),
-            base_voltage_primary = PSY.get_base_voltage(PSY.get_from(winding_arc)),
-            r = 0.0, x = PSY.get_x(primary, u"SU"),
-        ),
-        magnetizing_shunt = Complex(0.0, 0.0),
-    )
-    PSY.add_component!(sys, beside)
-    with_three_winding || PSY.set_available!(trf, false)
-    return sys, trf, beside, _arc_numbers(primary)
 end
 
 @testset "A removed 3W transformer takes its winding out of a parallel group" begin
@@ -854,27 +698,24 @@ end
     @test isempty(PNM.get_woodbury_cache(vmodf))
 end
 
-# The networks a window of `removed` resolves rows on: each step's topology and its union
-# with the contingency's components.
-function _window_in_use(vmodf, sys, removed, ctg_components)
+# The topologies and post-contingency networks a window of `removed` resolves rows on.
+function _window_in_use(vmodf, sys, removed, contingency_id)
     ts = TopologySchedule(vmodf, sys, removed)
-    in_use = Set{NetworkModification}()
+    in_use = Set{Union{NetworkModification, PostContingencyNetwork}}()
     for t in eachindex(removed)
-        for mod in (
-            get_network_modification(ts, t),
-            get_post_contingency_modification(ts, t, ctg_components),
-        )
-            isnothing(mod) || push!(in_use, mod)
-        end
+        mod = get_network_modification(ts, t)
+        isnothing(mod) || push!(in_use, mod)
+        net = get_post_contingency_network(ts, t, contingency_id)
+        isnothing(net) || push!(in_use, net)
     end
     return ts, in_use
 end
 
-function _query_window!(vmodf, ts, ctg_components, arcs, n_steps)
+function _query_window!(vmodf, ts, contingency_id, arcs, n_steps)
     for t in 1:n_steps, arc in arcs
         ts[arc, t]
-        mod = get_post_contingency_modification(ts, t, ctg_components)
-        isnothing(mod) || vmodf[arc, mod]
+        net = get_post_contingency_network(ts, t, contingency_id)
+        isnothing(net) || get_post_contingency_ptdf_rows(vmodf, arc, [net])
     end
     return
 end
@@ -883,11 +724,9 @@ end
     sys = _c_sys14_for_row_batches()
     line(name) = PSY.get_component(PSY.Line, sys, name)
     line7 = line("Line7")
-    PSY.add_supplemental_attribute!(
-        sys,
-        line7,
-        PSY.FixedForcedOutage(; outage_status = 1.0),
-    )
+    outage = PSY.FixedForcedOutage(; outage_status = 1.0)
+    PSY.add_supplemental_attribute!(sys, line7, outage)
+    contingency_id = IS.get_id(outage)
     vmodf = VirtualMODF(VirtualPTDF(sys), sys)
     contingency = only(values(get_registered_contingencies(vmodf))).modification
     arcs = [(1, 2), (2, 3), (4, 5)]
@@ -898,11 +737,20 @@ end
     ]
     has_contingency = Bool[]
     for removed in windows
-        ts, in_use = _window_in_use(vmodf, sys, removed, [line7])
+        ts, in_use = _window_in_use(vmodf, sys, removed, contingency_id)
         retain_modifications!(vmodf, in_use)
-        _query_window!(vmodf, ts, [line7], arcs, length(removed))
-        @test Set(keys(PNM.get_row_caches(vmodf))) == union(in_use, [PNM._BASE_NETWORK])
-        @test Set(keys(PNM.get_woodbury_cache(vmodf))) == in_use
+        _query_window!(vmodf, ts, contingency_id, arcs, length(removed))
+        topologies = Set(
+            get_network_modification(ts, t) for t in eachindex(removed) if
+            !isnothing(get_network_modification(ts, t))
+        )
+        networks = Set(n for n in in_use if n isa PostContingencyNetwork)
+        base_tier2 = Set(n.tier2 for n in networks if PNM._on_base_topology(n))
+        others = Set(n for n in networks if !PNM._on_base_topology(n))
+        @test Set(keys(PNM.get_row_caches(vmodf))) ==
+              union(topologies, base_tier2, [PNM._BASE_NETWORK])
+        @test Set(keys(PNM.get_woodbury_cache(vmodf))) == union(topologies, base_tier2)
+        @test Set(keys(PNM.get_tier2_row_caches(vmodf))) == others
         push!(has_contingency, haskey(PNM.get_row_caches(vmodf), contingency))
 
         # Rows resolved after the eviction equal those of a matrix that never evicted.
@@ -910,9 +758,10 @@ end
         fresh_ts = TopologySchedule(fresh, sys, removed)
         for t in eachindex(removed), arc in arcs
             @test ts[arc, t] ≈ fresh_ts[arc, t]
-            mod = get_post_contingency_modification(ts, t, [line7])
-            fresh_mod = get_post_contingency_modification(fresh_ts, t, [line7])
-            @test vmodf[arc, mod] ≈ fresh[arc, fresh_mod]
+            net = get_post_contingency_network(ts, t, contingency_id)
+            fresh_net = get_post_contingency_network(fresh_ts, t, contingency_id)
+            @test only(get_post_contingency_ptdf_rows(vmodf, arc, [net])) ≈
+                  only(get_post_contingency_ptdf_rows(fresh, arc, [fresh_net]))
         end
     end
     @test has_contingency == [true, false, true]

@@ -13,7 +13,7 @@ function _invert_woodbury_W(
     signed_delta_b::Vector{Float64},
 )::Tuple{Matrix{Float64}, Bool}
     if iszero(M)
-        # M = 0 (hand-built modifications only; registration rejects it): getri! rejects 0×0.
+        # M = 0 (no arc changes its susceptance): getri! rejects 0×0.
         return Matrix{Float64}(undef, 0, 0), false
     elseif M == 1
         w = W_mat[1, 1]
@@ -201,6 +201,12 @@ in how they obtain `Z`: one solve per arc in the kernel path, a lookup into the
 batched pre-contingency solves in `populate_cache`. `signs[e]` is the sign of arc `e`'s DC
 susceptance (`VirtualFactorCore.arc_susceptance_signs`). Islanding labels come from
 `labeler(BA, arc_sus, modifications, n_bus)`, e.g. a `BridgeLabels`.
+
+Only arcs whose DC susceptance changes enter the factors. An arc with `delta_b == 0`, such as
+an arc with no susceptance, or a parallel group whose only remaining member has zero
+reactance when that member opens, leaves `B` unchanged, and its `1/Δb` term in `W` would be
+infinite. Its column of `Z` and its entry of `arc_out` are dropped; the labeler still sees
+every modification.
 """
 function _woodbury_factors_from_Z(
     Z::Matrix{Float64},
@@ -211,14 +217,19 @@ function _woodbury_factors_from_Z(
     arc_out::Vector{Bool},
     labeler::F = _post_contingency_bus_labels,
 )::WoodburyFactors where {F}
-    M = length(modifications)
     n_bus = size(Z, 1)
+    kept = [j for (j, mod) in enumerate(modifications) if !iszero(mod.delta_b)]
+    M = length(kept)
+    if M < length(modifications)
+        Z = Z[:, kept]
+        arc_out = arc_out[kept]
+    end
 
     arc_indices = Vector{Int}(undef, M)
     delta_b_vec = Vector{Float64}(undef, M)
-    for (j, mod) in enumerate(modifications)
-        arc_indices[j] = mod.arc_index
-        delta_b_vec[j] = mod.delta_b
+    for (j, k) in enumerate(kept)
+        arc_indices[j] = modifications[k].arc_index
+        delta_b_vec[j] = modifications[k].delta_b
     end
 
     # K_mat[i,j] = ν_i⊤ B⁻¹ ν_j
@@ -279,49 +290,125 @@ function _monitored_Z!(
     return zm_Z
 end
 
-# Per modified arc: true when the modification opens every member. Counts members instead of
-# comparing susceptances, because the group susceptance is not the exact sum of its members'.
+# True when `m` opens every member of its arc. Counts members instead of comparing
+# susceptances, because the group susceptance is not the exact sum of its members'.
+_opens_every_member(nr::NetworkReductionData, arc_ax, m::ArcModification) =
+    m.opened > 0 && m.opened >= _arc_member_count(nr, arc_ax[m.arc_index])
+
+# Per modified arc: true when the modification opens every member.
 function _arcs_fully_opened(
     core::VirtualFactorCore,
     modifications::Tuple{Vararg{ArcModification}},
 )::Vector{Bool}
     nr = get_network_reduction_data(core)
     arc_ax = get_arc_axis(core)
-    return Bool[
-        m.opened > 0 && m.opened >= _arc_member_count(nr, arc_ax[m.arc_index]) for
-        m in modifications
-    ]
+    return Bool[_opens_every_member(nr, arc_ax, m) for m in modifications]
 end
 
-# Susceptance of the monitored arc once the modifications are applied.
+# The entry of `modifications` on arc `arc_index`, or `nothing`. A `NetworkModification` keeps
+# its arc modifications sorted by arc index, so this is a binary search.
+function _arc_modification_at(
+    modifications::Tuple{Vararg{ArcModification}},
+    arc_index::Int,
+)::Union{Nothing, ArcModification}
+    lo, hi = 1, length(modifications)
+    while lo <= hi
+        mid = (lo + hi) >>> 1
+        m = modifications[mid]
+        m.arc_index == arc_index && return m
+        if m.arc_index < arc_index
+            lo = mid + 1
+        else
+            hi = mid - 1
+        end
+    end
+    return nothing
+end
+
+# The modification a row is judged on: the one taking the base network to the row's network
+# (K ∪ c for a post-contingency row), as its arc modifications or as the Woodbury factors
+# assembled for it on the base network.
+const _PostModification = Union{Tuple{Vararg{ArcModification}}, WoodburyFactors}
+
+# Susceptance change of arc `m` under `post`, or `nothing` when `post` leaves it unchanged.
+function _delta_b_at(post::Tuple{Vararg{ArcModification}}, m::Int)::Union{Nothing, Float64}
+    mod = _arc_modification_at(post, m)
+    return isnothing(mod) ? nothing : mod.delta_b
+end
+
+function _delta_b_at(wf::WoodburyFactors, m::Int)::Union{Nothing, Float64}
+    j = findfirst(==(m), wf.arc_indices)
+    return isnothing(j) ? nothing : wf.delta_b[j]
+end
+
+# True when `post` opens every member of arc `m`.
+function _opens_every_member_at(
+    core::VirtualFactorCore,
+    post::Tuple{Vararg{ArcModification}},
+    m::Int,
+)::Bool
+    mod = _arc_modification_at(post, m)
+    isnothing(mod) && return false
+    return _opens_every_member(get_network_reduction_data(core), get_arc_axis(core), mod)
+end
+
+function _opens_every_member_at(::VirtualFactorCore, wf::WoodburyFactors, m::Int)::Bool
+    j = findfirst(==(m), wf.arc_indices)
+    return !isnothing(j) && wf.arc_out[j]
+end
+
+"""
+    _post_modification_susceptance(arc_sus, m, post) -> Float64
+
+Susceptance of arc `m` on the network `post` takes the base network to: its base susceptance
+plus the change `post` makes on it, in the base arc's magnitude frame.
+"""
 function _post_modification_susceptance(
     arc_sus::Vector{Float64},
-    monitored_idx::Int,
-    wf::WoodburyFactors,
+    m::Int,
+    post::_PostModification,
 )::Float64
-    b_mon = arc_sus[monitored_idx]
-    for (j, idx) in enumerate(wf.arc_indices)
-        if idx == monitored_idx
-            b_mon += wf.delta_b[j]
-        end
+    b = arc_sus[m]
+    delta_b = _delta_b_at(post, m)
+    if !isnothing(delta_b)
+        b += delta_b
     end
-    return b_mon
+    return b
 end
 
-# True when the modifications take the monitored arc out of service: all its members are open,
-# or the post-modification susceptance is exactly zero (a DC-only `ArcModification`).
-function _monitored_arc_out(
+"""
+    _post_modification_arc_out(arc_sus, core, m, post) -> Bool
+
+Whether arc `m` is out of service on the network `post` takes the base network to: `post`
+opens every member, or leaves the arc with exactly zero susceptance (a DC-only
+`ArcModification`). Members are counted because the summed `delta_b` of a lossy parallel
+group does not cancel the arc susceptance exactly.
+"""
+function _post_modification_arc_out(
     arc_sus::Vector{Float64},
-    monitored_idx::Int,
-    wf::WoodburyFactors,
+    core::VirtualFactorCore,
+    m::Int,
+    post::_PostModification,
 )::Bool
-    for (j, idx) in enumerate(wf.arc_indices)
-        if idx == monitored_idx && wf.arc_out[j]
-            return true
-        end
-    end
-    return iszero(_post_modification_susceptance(arc_sus, monitored_idx, wf))
+    _opens_every_member_at(core, post, m) && return true
+    return iszero(_post_modification_susceptance(arc_sus, m, post))
 end
+
+# Susceptance of arc `m` on K ∪ c. The tier-2 modification alone would miss the change K
+# already made to a partly out arc.
+_post_contingency_susceptance(
+    arc_sus::Vector{Float64},
+    m::Int,
+    net::PostContingencyNetwork,
+) = _post_modification_susceptance(arc_sus, m, net.post_contingency.arc_modifications)
+
+# Whether arc `m` is out of service on K ∪ c.
+_post_contingency_arc_out(
+    arc_sus::Vector{Float64},
+    core::VirtualFactorCore,
+    m::Int,
+    net::PostContingencyNetwork,
+) = _post_modification_arc_out(arc_sus, core, m, net.post_contingency.arc_modifications)
 
 """
     _woodbury_correction!(z_m, BA, b_mon_pre, b_mon_post, monitored_idx, wf) -> Vector{Float64}
@@ -382,6 +469,25 @@ function _woodbury_correction!(
     return z_m
 end
 
+# Column `j` of the result is `B⁻¹ν_j` for the `j`-th modified arc, in full-bus space, from
+# one base solve per arc. Call inside `with_solver`, which owns `K_solver` and `work_ba_col`.
+function _base_woodbury_columns(
+    core::VirtualFactorCore,
+    K_solver,
+    work_ba_col::Vector{Float64},
+    n_bus::Int,
+    modifications::Tuple{Vararg{ArcModification}},
+)::Matrix{Float64}
+    Z = Matrix{Float64}(undef, n_bus, length(modifications))
+    for (j, mod) in enumerate(modifications)
+        e = mod.arc_index
+        lin_solve =
+            _solve_ba_column!(K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, e)
+        _gather_to_buses!(view(Z, :, j), core.valid_ix, lin_solve, core.arc_susceptances[e])
+    end
+    return Z
+end
+
 # Solves and the scratch slot go through `with_solver`, which holds the core's `solver_lock`.
 """
     _compute_woodbury_factors(mat, modifications[, labeler]) -> WoodburyFactors
@@ -405,20 +511,14 @@ function _compute_woodbury_factors(
         core.temp_data,
         core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
-        Z = Matrix{Float64}(undef, length(temp_data), length(modifications))
-        for (j, mod) in enumerate(modifications)
-            e = mod.arc_index
-            lin_solve =
-                _solve_ba_column!(K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, e)
-            _gather_to_buses!(
-                view(Z, :, j),
-                core.valid_ix,
-                lin_solve,
-                core.arc_susceptances[e],
-            )
-        end
         return _woodbury_factors_from_Z(
-            Z,
+            _base_woodbury_columns(
+                core,
+                K_solver,
+                work_ba_col,
+                length(temp_data),
+                modifications,
+            ),
             core.BA,
             core.arc_susceptance_signs,
             core.arc_susceptances,
@@ -429,11 +529,63 @@ function _compute_woodbury_factors(
     end
 end
 
-_apply_woodbury_correction(
-    mat::VirtualMODF,
-    monitored_idx::Int,
-    wf::WoodburyFactors,
-) = _apply_woodbury_correction(get_core(mat), monitored_idx, wf)
+"""
+    _tier2_factors(core, topology_wf, net) -> WoodburyFactors
+
+Woodbury factors of the tier-2 modification `net.tier2` on a topology K other than the base
+network, with no solve beyond one base solve per arc Δ modifies. Column `j` of `Z` is
+`B_K⁻¹ν_j` for the `j`-th such arc: its base solve corrected by the topology's factors
+`topology_wf` with the final scaling left at 1. `ν_j` keeps the base normalization, so K
+enters only through `Z`. Whether each arc is out and the island labels are taken on K ∪ c,
+from `net.post_contingency`.
+"""
+function _tier2_factors(
+    core::VirtualFactorCore,
+    topology_wf::WoodburyFactors,
+    net::PostContingencyNetwork,
+)::WoodburyFactors
+    modifications = net.tier2.arc_modifications
+    arc_sus = core.arc_susceptances
+    BA = core.BA
+    Z = with_solver(
+        core.K,
+        core.work_ba_col,
+        core.temp_data,
+        core.solver_lock,
+    ) do K_solver, work_ba_col, temp_data
+        return _base_woodbury_columns(
+            core,
+            K_solver,
+            work_ba_col,
+            length(temp_data),
+            modifications,
+        )
+    end
+    column = Vector{Float64}(undef, size(Z, 1))
+    for (j, mod) in enumerate(modifications)
+        e = mod.arc_index
+        copyto!(column, view(Z, :, j))
+        _woodbury_correction!(column, BA, arc_sus[e], 1.0, e, topology_wf)
+        Z[:, j] .= column
+    end
+    post_modifications = net.post_contingency.arc_modifications
+    arc_out = Bool[
+        _opens_every_member_at(core, post_modifications, mod.arc_index) for
+        mod in modifications
+    ]
+    labeler =
+        (BA_, arc_sus_, _, n_bus) ->
+            _post_contingency_bus_labels(BA_, arc_sus_, post_modifications, n_bus)
+    return _woodbury_factors_from_Z(
+        Z,
+        BA,
+        core.arc_susceptance_signs,
+        arc_sus,
+        modifications,
+        arc_out,
+        labeler,
+    )
+end
 
 function _apply_woodbury_correction(
     vptdf::VirtualPTDF,
@@ -457,62 +609,88 @@ function _apply_dist_slack!(row::Vector{Float64}, vptdf::VirtualPTDF, wf::Woodbu
     return row
 end
 
-_apply_woodbury_correction(
+# The row of the monitored arc on the network whose base-network factors are `wf`, judged on
+# the modification `wf` was assembled for.
+function _apply_woodbury_correction(
     core::VirtualFactorCore,
     monitored_idx::Int,
     wf::WoodburyFactors,
-)::Vector{Float64} = only(_woodbury_rows(core, monitored_idx, (wf,)))
+)::Vector{Float64}
+    plan = _base_topology_row_plan(core, monitored_idx, wf, wf)
+    return only(_rows_from_plans(core, monitored_idx, (plan,)))
+end
+
+# --- Row plans: the one path from a monitored arc's base solve to its post-modification rows ---
+
+@enum _RowKind _ZERO_ROW _BASE_ROW _TOPOLOGY_ROW _TIER2_ROW
+
+# How one row is computed from the monitored arc's base solve. `_TOPOLOGY_ROW` is the tier-1
+# row on K with factors `topology` and susceptance `b_post`; `_TIER2_ROW` corrects `B_K⁻¹ν_m`
+# (the base solve itself when `topology` is `nothing`) with the factors `tier2` and scales by
+# `b_post`.
+struct _RowPlan
+    kind::_RowKind
+    topology::Union{Nothing, WoodburyFactors}
+    tier2::Union{Nothing, WoodburyFactors}
+    b_post::Float64
+end
+
+_RowPlan(kind::_RowKind) = _RowPlan(kind, nothing, nothing, 0.0)
 
 """
-    _woodbury_rows(core, monitored_idx, factors) -> Vector{Vector{Float64}}
+    _base_topology_row_plan(core, m, post, wf) -> _RowPlan
 
-Rows of the monitored arc on several networks from one solve of its `BA` column:
-`rows[i]` is the post-modification row under `factors[i]`, or the base row (reference-bus
-slack) when `factors[i]` is `nothing`. Each row equals what the single-modification path
-computes, bit for bit: the base row is the plain solve, and every modification corrects its
-own copy of `B⁻¹ν_m / b_mon_pre`. No solve runs when every requested row is the zero row of
-an arc taken out of service.
+Plan of monitored arc `m`'s row on the network the modification `post` takes the base network
+to, with `wf` its Woodbury factors on the base network, or `nothing` for the base network
+itself. The arc is judged out of service, and its susceptance taken, on `post`. An arc out of
+service has the zero row, including an arc with no susceptance on the base network, whose
+`BA` column is empty. Factors with no columns, such as those of a shunt-only modification,
+still take the correction, which scales the base solve by `b_post / b_pre`.
 """
-function _woodbury_rows(
+function _base_topology_row_plan(
     core::VirtualFactorCore,
-    monitored_idx::Int,
-    factors,
-)::Vector{Vector{Float64}}
+    m::Int,
+    post::_PostModification,
+    wf::Union{Nothing, WoodburyFactors},
+)::_RowPlan
     arc_sus = core.arc_susceptances
-    n = length(factors)
-    rows = Vector{Vector{Float64}}(undef, n)
-    max_modified = 0
-    for wf in factors
-        isnothing(wf) && continue
-        max_modified = max(max_modified, length(wf.arc_indices))
-    end
-    zm_Z_buf = Vector{Float64}(undef, max_modified)
-    coeff_buf = Vector{Float64}(undef, max_modified)
-    return with_solver(
+    _post_modification_arc_out(arc_sus, core, m, post) && return _RowPlan(_ZERO_ROW)
+    isnothing(wf) && return _RowPlan(_BASE_ROW)
+    return _RowPlan(
+        _TIER2_ROW,
+        nothing,
+        wf,
+        _post_modification_susceptance(arc_sus, m, post),
+    )
+end
+
+"""
+    _rows_from_plans(core, m, plans) -> Vector{Vector{Float64}}
+
+Rows of monitored arc `m`, one per plan, from one solve of its base column on `core`, before
+any cutoff. No solve runs when every plan is a zero row. Every factor must be resolved before
+this call, since computing factors runs solves of its own.
+"""
+function _rows_from_plans(core::VirtualFactorCore, m::Int, plans)::Vector{Vector{Float64}}
+    needs_base = any(p -> p.kind == _BASE_ROW, plans)
+    needs_scaled = any(p -> p.kind == _TOPOLOGY_ROW || p.kind == _TIER2_ROW, plans)
+    b_mon_pre = core.arc_susceptances[m]
+    base_row, z_base = with_solver(
         core.K,
         core.work_ba_col,
         core.temp_data,
         core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
         n_bus = length(temp_data)
-        needs_base = false
-        needs_scaled = false
-        for wf in factors
-            if isnothing(wf)
-                needs_base = true
-            elseif !_monitored_arc_out(arc_sus, monitored_idx, wf)
-                needs_scaled = true
-            end
-        end
-        b_mon_pre = arc_sus[monitored_idx]
         base_row = Float64[]
+        z_base = Float64[]
         if needs_base || needs_scaled
             lin_solve = _solve_ba_column!(
                 K_solver,
                 work_ba_col,
                 core.BA,
                 core.bus_to_valid_idx,
-                monitored_idx,
+                m,
             )
             if needs_base
                 base_row = _gather_to_buses!(
@@ -521,36 +699,68 @@ function _woodbury_rows(
                     lin_solve,
                 )
             end
-            # z_m = B⁻¹ν_m / b_mon_pre, shared by every modification.
-            needs_scaled &&
-                _gather_to_buses!(temp_data, core.valid_ix, lin_solve, b_mon_pre)
-        end
-        base_used = false
-        for (i, wf) in enumerate(factors)
-            if isnothing(wf)
-                # Every base-network slot gets its own row; only the first takes the buffer.
-                if base_used
-                    rows[i] = copy(base_row)
-                else
-                    rows[i] = base_row
-                end
-                base_used = true
-            elseif _monitored_arc_out(arc_sus, monitored_idx, wf)
-                rows[i] = zeros(n_bus)
-            else
-                b_mon = _post_modification_susceptance(arc_sus, monitored_idx, wf)
-                rows[i] = _woodbury_correction!(
-                    copy(temp_data),
-                    zm_Z_buf,
-                    coeff_buf,
-                    core.BA,
+            # z_base = B⁻¹ν_m, ν_m normalized by the base susceptance.
+            if needs_scaled
+                z_base = _gather_to_buses!(
+                    Vector{Float64}(undef, n_bus),
+                    core.valid_ix,
+                    lin_solve,
                     b_mon_pre,
-                    b_mon,
-                    monitored_idx,
-                    wf,
                 )
             end
         end
-        return rows
+        return base_row, z_base
     end
+    return _evaluate_row_plans(core, m, plans, base_row, z_base)
+end
+
+"""
+    _evaluate_row_plans(core, m, plans, base_row, z_base) -> Vector{Vector{Float64}}
+
+Rows of monitored arc `m`, one per plan, from its base row `base_row` and `z_base = B⁻¹ν_m`
+(`ν_m` normalized by the base susceptance). This is the only place a row is zeroed for an arc
+out of service or scaled by its post-modification susceptance. The first base-row plan takes
+`base_row` itself; every other row is a fresh vector.
+"""
+function _evaluate_row_plans(
+    core::VirtualFactorCore,
+    m::Int,
+    plans,
+    base_row::Vector{Float64},
+    z_base::Vector{Float64},
+)::Vector{Vector{Float64}}
+    max_modified = 0
+    for p in plans, wf in (p.topology, p.tier2)
+        isnothing(wf) || (max_modified = max(max_modified, length(wf.arc_indices)))
+    end
+    zm_Z_buf = Vector{Float64}(undef, max_modified)
+    coeff_buf = Vector{Float64}(undef, max_modified)
+    b_mon_pre = core.arc_susceptances[m]
+    n_bus = size(core.BA, 1)
+    correct(z, b_post, wf) = _woodbury_correction!(
+        copy(z), zm_Z_buf, coeff_buf, core.BA, b_mon_pre, b_post, m, wf,
+    )
+    # B_K⁻¹ν_m per distinct topology; equal topologies share one cached factors object.
+    z_topology = IdDict{WoodburyFactors, Vector{Float64}}()
+    rows = Vector{Vector{Float64}}(undef, length(plans))
+    base_used = false
+    for (i, plan) in enumerate(plans)
+        if plan.kind == _ZERO_ROW
+            rows[i] = zeros(n_bus)
+        elseif plan.kind == _BASE_ROW
+            rows[i] = base_used ? copy(base_row) : base_row
+            base_used = true
+        elseif plan.kind == _TOPOLOGY_ROW
+            rows[i] = correct(z_base, plan.b_post, plan.topology)
+        else
+            topology_wf = plan.topology
+            z_k = if isnothing(topology_wf)
+                z_base
+            else
+                get!(() -> correct(z_base, 1.0, topology_wf), z_topology, topology_wf)
+            end
+            rows[i] = correct(z_k, plan.b_post, plan.tier2)
+        end
+    end
+    return rows
 end

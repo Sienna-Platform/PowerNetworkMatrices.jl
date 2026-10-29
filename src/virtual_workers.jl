@@ -105,7 +105,7 @@ end
     VirtualMODF(vmodf::VirtualMODF, core::VirtualFactorCore) -> VirtualMODF
 
 `vmodf` (a copy of its registered contingencies, same cache bound) on `core`, a
-[`worker_core`](@ref) of it, with empty Woodbury and row caches.
+[`worker_core`](@ref) of it, with empty Woodbury, tier-2 and row caches.
 """
 function VirtualMODF(vmodf::VirtualMODF, core::VirtualFactorCore)
     parent = get_core(vmodf)
@@ -116,6 +116,8 @@ function VirtualMODF(vmodf::VirtualMODF, core::VirtualFactorCore)
         registered,
         Dict{NetworkModification, WoodburyFactors}(),
         Dict{NetworkModification, RowCache{RowCacheValue}}(),
+        Dict{PostContingencyNetwork, WoodburyFactors}(),
+        Dict{PostContingencyNetwork, RowCache{RowCacheValue}}(),
         get_max_cache_size_bytes(vmodf),
     )
 end
@@ -198,8 +200,10 @@ function get_post_modification_ptdf_row(
         haskey(rc, m) && return copy(rc[m])
         resolved
     end
-    wf = get_woodbury_factors(vmodf, mod, solver)
-    stored = apply_cutoff(get_cutoff(core), _apply_woodbury_correction(solver, m, wf))
+    # The base network needs no correction, so it has no factors.
+    wf = mod == _BASE_NETWORK ? nothing : get_woodbury_factors(vmodf, mod, solver)
+    plan = _base_topology_row_plan(solver, m, mod.arc_modifications, wf)
+    stored = apply_cutoff(get_cutoff(core), only(_rows_from_plans(solver, m, (plan,))))
     @lock core.solver_lock begin
         _, rc = _modf_row_cache!(vmodf, mod)
         haskey(rc, m) && return copy(rc[m])
@@ -408,7 +412,7 @@ function arc_flows!(
     LinearAlgebra.mul!(c, transpose(wf.W_inv), u)
     zm_Z = view(scratch.zm_Z, 1:M)
     for (q, m) in enumerate(arcs)
-        if _monitored_arc_out(arc_sus, m, wf)
+        if _post_modification_arc_out(arc_sus, core, m, wf)
             for t in 1:T
                 flows[q, t] = 0.0
             end

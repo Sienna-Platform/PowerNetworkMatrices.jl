@@ -10,6 +10,7 @@ export BA_Matrix
 export ArcModification
 export ShuntModification
 export ContingencySpec
+export PostContingencyNetwork
 export NetworkModification
 export DegreeTwoReduction
 export IncidenceMatrix
@@ -81,7 +82,8 @@ export is_arc_out
 export get_in_service_members
 export get_in_service_entry
 export get_arc_shift_injection
-export get_post_contingency_modification
+export get_post_contingency_network
+export get_post_contingency_ptdf_rows
 
 using DocStringExtensions
 import InfrastructureSystems as IS

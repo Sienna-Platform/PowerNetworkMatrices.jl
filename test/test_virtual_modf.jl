@@ -160,6 +160,7 @@ end
     show(io2, MIME"text/plain"(), vmodf)
     output_nonempty = String(take!(io2))
     @test occursin("registered contingencies", output_nonempty)
+    @test occursin("with 1 registered contingencies", sprint(show, vmodf))
 
     # Test size (n_arcs × n_buses)
     n_arcs = length(PNM.get_arc_axis(vmodf))

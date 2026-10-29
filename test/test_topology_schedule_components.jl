@@ -22,11 +22,6 @@ function _sys_with_schedules()
     return sys, switch, lines
 end
 
-_arc_numbers(b) = (
-    PSY.get_number(PSY.get_from(PSY.get_arc(b))),
-    PSY.get_number(PSY.get_to(PSY.get_arc(b))),
-)
-
 @testset "Scheduled components, switches and pins" begin
     sys, switch, lines = _sys_with_schedules()
     r = topology_schedule_components(sys)

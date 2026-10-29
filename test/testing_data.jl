@@ -1205,3 +1205,161 @@ function _floating_complex_ring(n::Int)
     end
     return L
 end
+
+# c_sys14 with a second Line named "dup" in parallel with the first line. `r_scale` makes
+# the pair lossy and unequal in r/x, so the group susceptance is not the sum of 1/x;
+# `x_scale` scales the duplicate's reactance, negative for a series-compensated member.
+function _c_sys14_with_parallel_pair(; r_scale = 1.0, x_scale = 1.0)
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    lines = sort!(collect(PSY.get_components(PSY.Line, sys)); by = PSY.get_name)
+    return _add_parallel_line!(sys, lines[1], r_scale; x_scale = x_scale)
+end
+
+function _add_parallel_line!(sys, base, r_scale; x_scale = 1.0)
+    dup = PSY.Line(;
+        input_basis = u"CU",
+        name = "dup",
+        available = true,
+        active_power_flow = 0.0,
+        reactive_power_flow = 0.0,
+        arc = PSY.get_arc(base),
+        r = r_scale * PSY.get_r(base, u"Ω"),
+        x = x_scale * PSY.get_x(base, u"Ω"),
+        b = (from = 0.0, to = 0.0),
+        rating = 10.0,
+        angle_limits = (min = -1.5, max = 1.5),
+    )
+    PSY.add_component!(sys, dup)
+    return sys, base, dup
+end
+
+_arc_numbers(b) = (
+    PSY.get_number(PSY.get_from(PSY.get_arc(b))),
+    PSY.get_number(PSY.get_to(PSY.get_arc(b))),
+)
+
+_bitwise_equal(a, b) = typeof(a) == typeof(b) && isequal(a, b)
+
+# A lossless phase-shifting transformer named "shifter" on `arc`, with reactance `x` in
+# system base.
+function _add_shifter!(sys, arc, x; α)
+    shifter = PSY.TwoWindingTransformer(; input_basis = u"CU",
+        name = "shifter",
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
+            arc = arc, tap = 1.0, α = α, available = true,
+            active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 10.0,
+            base_power = PSY.get_base_power(sys),
+            base_voltage_primary = PSY.get_base_voltage(PSY.get_from(arc)),
+            r = 0.0, x = x,
+        ),
+        magnetizing_shunt = Complex(0.0, 0.0),
+    )
+    PSY.add_component!(sys, shifter)
+    return shifter
+end
+
+# c_sys14 with a "dup" line parallel to Line1 (1-2) and a phase shifter on a new arc 1-3.
+# Trans4 (7-8) is the only branch to bus 8, so opening it islands the bus.
+function _c_sys14_for_row_batches()
+    sys, line1, dup = _c_sys14_with_parallel_pair(; r_scale = 2.0)
+    shifter_arc = PSY.Arc(;
+        from = PSY.get_component(
+            PSY.ACBus,
+            sys,
+            PSY.get_name(PSY.get_from(PSY.get_arc(line1))),
+        ),
+        to = only(b for b in PSY.get_components(PSY.ACBus, sys) if PSY.get_number(b) == 3),
+    )
+    PSY.add_component!(sys, shifter_arc)
+    _add_shifter!(sys, shifter_arc, 0.2; α = 0.1)
+    return sys
+end
+
+# case10 with a phase shift on the 3W transformer's primary winding and a two-winding
+# transformer parallel to that winding, so the two share an arc. Returns the system, the 3W
+# transformer, the parallel transformer and the shared arc.
+function _case10_with_transformer_beside_winding(; with_three_winding = true)
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    trf = only(PSY.get_components(PSY.ThreeWindingTransformer, sys))
+    primary = PSY.get_primary_circuit(trf)
+    PSY.set_α!(primary, 0.1)
+    winding_arc = PSY.get_arc(primary)
+    beside = PSY.TwoWindingTransformer(; input_basis = u"CU",
+        name = "beside_winding",
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
+            arc = winding_arc, tap = 1.0, α = 0.0, available = true,
+            active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 10.0,
+            base_power = PSY.get_base_power(sys),
+            base_voltage_primary = PSY.get_base_voltage(PSY.get_from(winding_arc)),
+            r = 0.0, x = PSY.get_x(primary, u"SU"),
+        ),
+        magnetizing_shunt = Complex(0.0, 0.0),
+    )
+    PSY.add_component!(sys, beside)
+    with_three_winding || PSY.set_available!(trf, false)
+    return sys, trf, beside, _arc_numbers(primary)
+end
+
+# The first line, by name, whose outage splits `sys` into more islands; `nothing` if none.
+function _find_bridge_line(sys)
+    n_base = length(PNM.find_subnetworks(PNM.Ybus(sys)))
+    for line in sort!(collect(PSY.get_components(PSY.Line, sys)); by = PSY.get_name)
+        PSY.set_available!(line, false)
+        n_out = length(PNM.find_subnetworks(PNM.Ybus(sys)))
+        PSY.set_available!(line, true)
+        n_out > n_base && return line
+    end
+    return nothing
+end
+
+# A dense PTDF of `builder()` with the transmission components named in `names` out.
+function _ref_ptdf_without(builder, names::Vector{String}; kwargs...)
+    sys_ref = builder()
+    for n in names
+        PSY.set_available!(PSY.get_component(PSY.ACTransmission, sys_ref, n), false)
+    end
+    return PTDF(sys_ref; kwargs...), sys_ref
+end
+
+# Largest entry-wise gap between `rows_of_arc(arc)` over `arcs` and a dense PTDF of
+# `builder()` rebuilt with the `names` components out; `bus_axis` orders each row's entries.
+# An arc the rebuild drops must give a zero row. With `islands` (bus-number sets), an arc is
+# compared only when both endpoints lie in one island, and only on that island's buses.
+function _max_error_against_rebuild(
+    rows_of_arc,
+    arcs,
+    bus_axis,
+    names;
+    builder = _c_sys14_for_row_batches,
+    islands = nothing,
+    kwargs...,
+)
+    ref, _ = _ref_ptdf_without(builder, names; kwargs...)
+    arc_lookup = PNM.get_arc_lookup(ref)
+    bus_lookup = PNM.get_bus_lookup(ref)
+    err = 0.0
+    for arc in arcs
+        positions = _compared_positions(arc, bus_axis, islands)
+        isempty(positions) && continue
+        row = rows_of_arc(arc)
+        if !haskey(arc_lookup, arc)
+            err = max(err, maximum(j -> abs(row[j]), positions))
+            continue
+        end
+        for j in positions
+            err = max(err, abs(row[j] - ref[arc_lookup[arc], bus_lookup[bus_axis[j]]]))
+        end
+    end
+    return err
+end
+
+# Positions in `bus_axis` that `arc`'s row is compared on: every bus without `islands`, else
+# the buses of the island holding both endpoints, or none when no island holds both.
+function _compared_positions(arc, bus_axis, islands)
+    isnothing(islands) && return collect(eachindex(bus_axis))
+    for island in islands
+        (arc[1] in island && arc[2] in island) || continue
+        return [j for (j, bus) in enumerate(bus_axis) if bus in island]
+    end
+    return Int[]
+end

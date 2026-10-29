@@ -96,3 +96,18 @@ end
     @test !haskey(cache, 1)
     @test r1 == [1.0, 2.0, 3.0]
 end
+
+@testset "A RowCache allocates storage only for the rows it holds" begin
+    row_bytes = 73 * sizeof(Float64)
+    budget = 100 * 2^20
+    @test Base.summarysize(PNM.RowCache(budget, Set{Int}(), row_bytes)) < 10 * row_bytes
+    cache = PNM.RowCache(budget, Set{Int}(), row_bytes)
+    @test cache.max_num_keys == floor(Int, budget / row_bytes)
+    for k in 1:(cache.max_num_keys)
+        cache[k] = fill(Float64(k), 73)
+    end
+    @test length(cache) == cache.max_num_keys
+    cache[cache.max_num_keys + 1] = zeros(73)
+    @test length(cache) == cache.max_num_keys
+    @test !haskey(cache, 1)
+end
