@@ -94,6 +94,8 @@ function get_name(bp::AbstractBranchesParallel)
     return base_string *= "double_circuit"
 end
 
+PSY.get_name(bp::AbstractBranchesParallel) = get_name(bp)
+
 function _longest_starting_substring(branch_names...)
     first_name = first(branch_names)
     n_chars = minimum(length.(branch_names))
