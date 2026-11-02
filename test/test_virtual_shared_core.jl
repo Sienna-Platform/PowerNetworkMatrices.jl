@@ -98,14 +98,13 @@ end
 end
 
 @testset "VirtualFactorCore from arrays" begin
+    reduced = NetworkReduction[RadialReduction(), DegreeTwoReduction()]
     cases = (
-        ("c_sys14", NetworkReduction[]),
-        (
-            "case10_radial_series_reductions",
-            NetworkReduction[RadialReduction(), DegreeTwoReduction()],
-        ),
+        ("c_sys14", NetworkReduction[], true),
+        ("case10_radial_series_reductions", reduced, false),
+        ("test_RTS_GMLC_sys", reduced, true),
     )
-    for (name, reductions) in cases
+    for (name, reductions, outage_branches) in cases
         @testset "$name" begin
             sys = PSB.build_system(PSB.PSITestSystems, name)
             ybus = Ybus(sys; network_reductions = reductions)
@@ -117,7 +116,7 @@ end
                 ref,
                 core_sys.axes,
                 core_sys.subnetwork_axes,
-                PNM.get_arc_live_members(ybus),
+                copy(PNM.get_arc_live_members(ybus)),
                 PNM.get_branch_catalog(ybus),
             )
             core_arr =
@@ -133,18 +132,29 @@ end
             vmodf_sys = VirtualMODF(core_sys, sys; automatically_register_outages = false)
             vmodf_arr = VirtualMODF(core_arr, sys; automatically_register_outages = false)
             nr = PNM.get_network_reduction_data(ybus)
-            direct = [
-                b for b in PSY.get_components(PSY.ACTransmission, sys) if
-                haskey(nr.reverse_direct_branch_map, b)
-            ]
+            live = PNM.get_arc_live_members(ybus)
+            arc_lookup = PNM.get_arc_lookup(core_sys)
+            all_branches = collect(PSY.get_components(PSY.ACTransmission, sys))
+            direct = [b for b in all_branches if haskey(nr.reverse_direct_branch_map, b)]
             parallel = [
-                b for b in PSY.get_components(PSY.ACTransmission, sys) if
-                haskey(nr.reverse_parallel_branch_map, b)
+                b for b in all_branches if haskey(nr.reverse_parallel_branch_map, b) &&
+                live[arc_lookup[nr.reverse_parallel_branch_map[b]]] > 1
             ]
-            branches = vcat(first(direct, 2), first(parallel, 2))
+            series = [b for b in all_branches if haskey(nr.reverse_series_branch_map, b)]
             if !isempty(reductions)
-                @test !isempty(PNM.get_parallel_branch_map(nr)) ||
-                      !isempty(PNM.get_series_branch_map(nr))
+                @test !isempty(nr.reverse_parallel_branch_map) ||
+                      !isempty(nr.reverse_series_branch_map)
+            end
+            branches = if outage_branches && isempty(reductions)
+                first(direct, 2)
+            elseif outage_branches
+                @test !isempty(nr.reverse_parallel_branch_map)
+                @test !isempty(nr.reverse_series_branch_map)
+                @test !isempty(parallel)
+                @test !isempty(series)
+                vcat(first(direct, 1), first(parallel, 1), first(series, 1))
+            else
+                eltype(all_branches)[]
             end
             n_checked = 0
             for branch in branches
@@ -158,7 +168,8 @@ end
                 end
                 n_checked += 1
             end
-            @test n_checked > 1
+            @test n_checked == length(branches)
+            @test outage_branches == !isempty(branches)
         end
     end
 
