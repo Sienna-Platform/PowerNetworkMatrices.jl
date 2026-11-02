@@ -49,6 +49,7 @@ function worker_core(mat)
         core.A,
         core.arc_susceptances,
         core.arc_susceptance_signs,
+        core.arc_live_members,
         core.axes,
         core.lookup,
         core.valid_ix,
