@@ -125,6 +125,263 @@ function to_hdf5(mat::VirtualMODF, filename::AbstractString; force::Bool = false
     return filename
 end
 
+_branch_tag(nr, branch::PSY.ACTransmission) = string(_resolve_branch_arc(nr, branch)[1])
+_branch_tag(nr, ::PSY.ThreeWindingTransformer) = "3wt"
+
+function _write_row_arrays(g, mods::Vector{NetworkModification}, starts, lens)
+    arc_index = Int[]
+    delta_b = Float64[]
+    delta_shift = Float64[]
+    opened = Int[]
+    for mod in mods
+        push!(starts, length(arc_index) + 1)
+        push!(lens, length(mod.arc_modifications))
+        for m in mod.arc_modifications
+            push!(arc_index, m.arc_index)
+            push!(delta_b, m.delta_b)
+            push!(delta_shift, m.delta_shift_injection)
+            push!(opened, m.opened)
+        end
+    end
+    g["start"] = starts
+    g["len"] = lens
+    g["arc_index"] = arc_index
+    g["delta_b"] = delta_b
+    g["delta_shift"] = delta_shift
+    g["opened"] = opened
+    return
+end
+
+function _collect_branch_outages!(rows, skipped, mat, branches)
+    nr = get_network_reduction_data(mat)
+    for branch in branches
+        try
+            mod = NetworkModification(mat, branch)
+            row = (
+                string(nameof(typeof(branch))),
+                PSY.get_name(branch),
+                _branch_tag(nr, branch),
+                mod,
+            )
+            push!(rows, row)
+        catch e
+            push!(skipped, sprint(showerror, e))
+        end
+    end
+    return
+end
+
+function _write_branch_outages(f, mat, sys::PSY.System)
+    rows = Tuple{String, String, String, NetworkModification}[]
+    skipped = String[]
+    _collect_branch_outages!(
+        rows,
+        skipped,
+        mat,
+        PSY.get_components(PSY.ACTransmission, sys),
+    )
+    _collect_branch_outages!(
+        rows,
+        skipped,
+        mat,
+        PSY.get_components(PSY.ThreeWindingTransformer, sys),
+    )
+    if !isempty(skipped)
+        @warn "$(length(skipped)) branches have no outage row because a network reduction absorbed them. First error: $(first(skipped))"
+    end
+    g = HDF5.create_group(f, "branch_outages")
+    g["type"] = [r[1] for r in rows]
+    g["name"] = [r[2] for r in rows]
+    g["tag"] = [r[3] for r in rows]
+    g["is_islanding"] = [r[4].is_islanding for r in rows]
+    _write_row_arrays(g, [r[4] for r in rows], Int[], Int[])
+    return
+end
+
+_write_registered_outages(f, ::VirtualPTDF) = nothing
+
+function _write_registered_outages(f, mat::VirtualMODF)
+    registered = get_registered_contingencies(mat)
+    if isempty(registered)
+        return
+    end
+    ids = sort!(collect(keys(registered)))
+    mods = NetworkModification[registered[id].modification for id in ids]
+    g = HDF5.create_group(f, "outages")
+    g["id"] = ids
+    g["label"] = [m.label for m in mods]
+    g["is_islanding"] = [m.is_islanding for m in mods]
+    _write_row_arrays(g, mods, Int[], Int[])
+    return
+end
+
+"""
+    to_hdf5(mat::Union{VirtualPTDF, VirtualMODF}, filename, sys::PSY.System; force = false)
+
+Write the factor data of `mat` as the method without `sys` does. Also write the group
+`branch_outages` with one row for each branch of `sys` that `NetworkModification(mat, branch)`
+accepts, so `from_hdf5(BranchOutageTable, filename)` can build outages by name. The function
+skips the branches that a network reduction absorbed and logs one warning with their count.
+For a `VirtualMODF`, the function also writes the group `outages` with the registered
+contingencies.
+"""
+function to_hdf5(
+    mat::Union{VirtualPTDF, VirtualMODF},
+    filename::AbstractString,
+    sys::PSY.System;
+    force::Bool = false,
+)
+    to_hdf5(mat, filename; force = force)
+    HDF5.h5open(filename, "r+") do f
+        _write_branch_outages(f, mat, sys)
+        _write_registered_outages(f, mat)
+    end
+    return filename
+end
+
+"""
+    BranchOutageTable
+
+Branch outages that `to_hdf5(mat, filename, sys)` stored. Read it with
+`from_hdf5(BranchOutageTable, filename)`. Build a `NetworkModification` from it with
+`NetworkModification(table, type, name)`.
+
+# Fields
+- `rows`: for the key `(type, name)`, the tag, the islanding flag and the row range.
+- `arc_index`, `delta_b`, `delta_shift`, `opened`: the arrays that the row ranges index.
+"""
+struct BranchOutageTable
+    rows::Dict{Tuple{String, String}, Tuple{String, Bool, UnitRange{Int}}}
+    arc_index::Vector{Int}
+    delta_b::Vector{Float64}
+    delta_shift::Vector{Float64}
+    opened::Vector{Int}
+end
+
+function _row_ranges(g)
+    return [s:(s + l - 1) for (s, l) in zip(read(g["start"]), read(g["len"]))]
+end
+
+function _arc_modifications(arc_index, delta_b, delta_shift, opened, range)
+    z = zero(YBUS_ELTYPE)
+    return ArcModification[
+        ArcModification(arc_index[i], delta_b[i], delta_shift[i], z, z, z, z, opened[i])
+        for
+        i in range
+    ]
+end
+
+"""
+    from_hdf5(::Type{BranchOutageTable}, filename) -> BranchOutageTable
+
+Read the branch outage table from a file that `to_hdf5(mat, filename, sys)` wrote. The
+function throws an error if the file has no such table.
+"""
+function from_hdf5(::Type{BranchOutageTable}, filename::AbstractString)
+    return HDF5.h5open(filename, "r") do f
+        if !haskey(f, "branch_outages")
+            error(
+                "File $filename has no branch outage table. " *
+                "The file was written without a system.",
+            )
+        end
+        g = f["branch_outages"]
+        rows = Dict{Tuple{String, String}, Tuple{String, Bool, UnitRange{Int}}}()
+        for (t, n, tag, islanding, range) in zip(
+            read(g["type"]),
+            read(g["name"]),
+            read(g["tag"]),
+            read(g["is_islanding"]),
+            _row_ranges(g),
+        )
+            rows[(t, n)] = (tag, islanding, range)
+        end
+        return BranchOutageTable(
+            rows,
+            Vector{Int}(read(g["arc_index"])),
+            Vector{Float64}(read(g["delta_b"])),
+            Vector{Float64}(read(g["delta_shift"])),
+            Vector{Int}(read(g["opened"])),
+        )
+    end
+end
+
+_dedupe_series!(::Val, ::Set{Int}, ::Int) = true
+
+function _dedupe_series!(::Val{:series}, seen::Set{Int}, arc_index::Int)
+    if arc_index in seen
+        return false
+    end
+    push!(seen, arc_index)
+    return true
+end
+
+"""
+    NetworkModification(table::BranchOutageTable, type, name)
+    NetworkModification(table::BranchOutageTable, keys::Vector{Tuple{String, String}})
+
+Build the outage of one branch, or of several branches at once, from a
+[`BranchOutageTable`](@ref). `type` is a `String` or a `Type`, for example
+`"Line"` or `PSY.Line`. Two members of one series chain give one row of the whole arc.
+The modification has no Ybus deltas and no shunt modifications. It serves the DC row
+kernels only.
+"""
+function NetworkModification(table::BranchOutageTable, keys::Vector{Tuple{String, String}})
+    mods = ArcModification[]
+    seen_series = Set{Int}()
+    islanding = false
+    for key in keys
+        tag, is_islanding, range = table.rows[key]
+        islanding |= is_islanding
+        for m in _arc_modifications(
+            table.arc_index,
+            table.delta_b,
+            table.delta_shift,
+            table.opened,
+            range,
+        )
+            if _dedupe_series!(Val(Symbol(tag)), seen_series, m.arc_index)
+                push!(mods, m)
+            end
+        end
+    end
+    return NetworkModification(
+        join((key[2] for key in keys), "+"),
+        mods,
+        ShuntModification[],
+        islanding,
+    )
+end
+
+function NetworkModification(table::BranchOutageTable, type::String, name::String)
+    return NetworkModification(table, [(type, name)])
+end
+
+function NetworkModification(table::BranchOutageTable, ::Type{T}, name::String) where {T}
+    return NetworkModification(table, string(nameof(T)), name)
+end
+
+function _read_registered_outages!(f, cache::Dict{Int, ContingencySpec})
+    g = f["outages"]
+    arc_index = read(g["arc_index"])
+    delta_b = read(g["delta_b"])
+    delta_shift = read(g["delta_shift"])
+    opened = read(g["opened"])
+    for (id, label, islanding, range) in zip(
+        read(g["id"]),
+        read(g["label"]),
+        read(g["is_islanding"]),
+        _row_ranges(g),
+    )
+        mods = _arc_modifications(arc_index, delta_b, delta_shift, opened, range)
+        cache[id] = ContingencySpec(
+            id,
+            NetworkModification(label, mods, ShuntModification[], islanding),
+        )
+    end
+    return
+end
+
 function _read_factor_core(f; linear_solver::String)
     a = HDF5.attributes(f)
     version = read(a["format_version"])
@@ -232,8 +489,9 @@ end
 """
     from_hdf5(::Type{VirtualMODF}, filename; linear_solver, max_cache_size) -> VirtualMODF
 
-Read a `VirtualMODF` from a file that [`to_hdf5`](@ref) wrote. The restored matrix has no
-registered outages. The same limits apply as for the restored `VirtualPTDF`.
+Read a `VirtualMODF` from a file that [`to_hdf5`](@ref) wrote. If the file has the group
+`outages`, the restored matrix has those registered contingencies. Their modifications serve
+the DC row kernels only. The same limits apply as for the restored `VirtualPTDF`.
 """
 function from_hdf5(
     ::Type{VirtualMODF},
@@ -241,12 +499,16 @@ function from_hdf5(
     linear_solver::String = _default_linear_solver(),
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
 )
+    contingencies = Dict{Int, ContingencySpec}()
     core = HDF5.h5open(filename, "r") do f
+        if haskey(f, "outages")
+            _read_registered_outages!(f, contingencies)
+        end
         return _read_factor_core(f; linear_solver = linear_solver)
     end
     return VirtualMODF(
         core,
-        Dict{Int, ContingencySpec}(),
+        contingencies,
         Dict{NetworkModification, WoodburyFactors}(),
         Dict{NetworkModification, RowCache{RowCacheValue}}(),
         max_cache_size * MiB,
