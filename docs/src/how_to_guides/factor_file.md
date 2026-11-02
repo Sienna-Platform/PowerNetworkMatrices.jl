@@ -43,10 +43,9 @@ Groups and datasets:
 
 | Name                                 | Type            | Meaning                                                                                                                                                            |
 |:------------------------------------ |:--------------- |:------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `BA`                                 | group           | BA matrix in CSC form: attributes `m`, `n`; datasets `colptr`, `rowval`, `nzval` (Float64).                                                                        |
-| `A`                                  | group           | Incidence matrix in CSC form: same layout, `nzval` is Int8.                                                                                                        |
 | `bus_axis`                           | Vector{Int}     | Bus numbers of the matrix columns.                                                                                                                                 |
 | `arc_from`, `arc_to`                 | Vector{Int}     | Endpoints of each arc.                                                                                                                                             |
+| `arc_susceptances`                   | Vector{Float64} | Signed DC susceptance of each arc, positive from `arc_from` to `arc_to`. The reader builds the BA and incidence matrices from it.                                  |
 | `ref_bus_positions`                  | Vector{Int}     | Sorted positions of the reference buses in `bus_axis`.                                                                                                             |
 | `arc_live_members`                   | Vector{Int}     | Members an outage can open on each arc.                                                                                                                            |
 | `shift_injection`                    | Vector{Float64} | DC phase shift injection of each arc, for readers that compute flow offsets. The Julia reader does not use it.                                                     |

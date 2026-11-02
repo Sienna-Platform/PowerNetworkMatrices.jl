@@ -38,26 +38,6 @@ function _read_tol(a)
     return error("Unknown tolerance kind \"$kind\" in factor file.")
 end
 
-function _write_sparse(g, M::SparseArrays.SparseMatrixCSC)
-    HDF5.attributes(g)["m"] = M.m
-    HDF5.attributes(g)["n"] = M.n
-    g["colptr"] = M.colptr
-    g["rowval"] = M.rowval
-    g["nzval"] = M.nzval
-    return
-end
-
-function _read_sparse(g, ::Type{T}) where {T}
-    a = HDF5.attributes(g)
-    return SparseArrays.SparseMatrixCSC{T, Int}(
-        read(a["m"]),
-        read(a["n"]),
-        read(g["colptr"]),
-        read(g["rowval"]),
-        Vector{T}(read(g["nzval"])),
-    )
-end
-
 _system_uuid_string(::Nothing) = ""
 _system_uuid_string(uuid::Base.UUID) = string(uuid)
 
@@ -76,12 +56,11 @@ function _write_factor_core(f, core::VirtualFactorCore, dist_slack::Vector{Float
     a["format_version"] = FACTOR_FILE_FORMAT_VERSION
     a["system_uuid"] = _system_uuid_string(get_system_uuid(core))
     _write_tol!(a, get_tol_spec(core))
-    _write_sparse(HDF5.create_group(f, "BA"), core.BA)
-    _write_sparse(HDF5.create_group(f, "A"), core.A)
     f["bus_axis"] = bus_ax
     f["arc_from"] = first.(arc_ax)
     f["arc_to"] = last.(arc_ax)
     f["ref_bus_positions"] = sort(get_ref_bus_position(core))
+    f["arc_susceptances"] = core.arc_susceptances .* core.arc_susceptance_signs
     f["arc_live_members"] = core.arc_live_members
     f["shift_injection"] = Float64[arc_dc_shift_injection(nr, arc) for arc in arc_ax]
     f["dist_slack"] = dist_slack
@@ -417,8 +396,6 @@ function _read_factor_core(f; linear_solver::String)
             "this version of PowerNetworkMatrices reads version $FACTOR_FILE_FORMAT_VERSION.",
         )
     end
-    BA = _read_sparse(f["BA"], Float64)
-    A = _read_sparse(f["A"], Int8)
     bus_ax = read(f["bus_axis"])
     arc_ax = collect(zip(read(f["arc_from"]), read(f["arc_to"])))
 
@@ -446,8 +423,7 @@ function _read_factor_core(f; linear_solver::String)
     end
 
     return VirtualFactorCore(
-        BA,
-        A,
+        read(f["arc_susceptances"]),
         Set{Int}(read(f["ref_bus_positions"])),
         (arc_ax, bus_ax),
         subnetwork_axes,
