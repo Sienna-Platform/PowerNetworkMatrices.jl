@@ -19,8 +19,8 @@ Pardiso = "46dd5b70-b6fb-5a00-ae2d-e8fea33afaf2"
 MKLPardisoExt = "Pardiso"
 
 [sources]
-InfrastructureSystems = {url = "https://github.com/Sienna-Platform/InfrastructureSystems.jl.git", rev = "IS4"}
-PowerSystems = {url = "https://github.com/Sienna-Platform/PowerSystems.jl.git", rev = "psy6"}
+InfrastructureSystems = {url = "https://github.com/Sienna-Platform/InfrastructureSystems.jl.git", rev = "jd/sdk-0.3"}
+PowerSystems = {url = "https://github.com/Sienna-Platform/PowerSystems.jl.git", rev = "jd/sdk-0.3"}
 
 [compat]
 DataStructures = "^0.19"
