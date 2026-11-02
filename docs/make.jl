@@ -27,6 +27,7 @@ pages = OrderedDict(
     "How-To Guides" => Any[
         "Compute Network Matrices" => "how_to_guides/compute_network_matrices.md",
         "Choose a Linear Solver" => "how_to_guides/choose_linear_solver.md",
+        "Save and Load Virtual Matrices" => "how_to_guides/factor_file.md",
     ],
     "Explanation" => Any[
         "Computational Considertaions" => "explanation/computational_considerations.md",
