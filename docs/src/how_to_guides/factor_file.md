@@ -26,14 +26,18 @@ Cached rows are not stored.
 
 Root attributes:
 
-| Name             | Type    | Meaning                                               |
-|:---------------- |:------- |:----------------------------------------------------- |
-| `format_version` | Int     | Layout version. The reader accepts 1 only.            |
-| `system_uuid`    | String  | UUID of the source system, empty if unknown.          |
-| `cutoff_kind`    | String  | `"absolute"` or `"relative"` row sparsification rule. |
-| `cutoff_value`   | Float64 | Value of the cutoff.                                  |
-| `n_bus`          | Int     | Number of buses on the bus axis.                      |
-| `n_arc`          | Int     | Number of arcs on the arc axis.                       |
+| Name                  | Type    | Meaning                                                                           |
+|:--------------------- |:------- |:--------------------------------------------------------------------------------- |
+| `format_version`      | Int     | Layout version. The reader accepts 1 only.                                        |
+| `system_uuid`         | String  | UUID of the source system, empty if unknown.                                      |
+| `tol_kind`            | String  | `"absolute"` for a `Float64` `tol`, `"auto"` for an `AutoTolerance`.              |
+| `tol_value`           | Float64 | The absolute cutoff. Present when `tol_kind` is `"absolute"`.                     |
+| `auto_data_precision` | String  | `AutoTolerance` field, `"auto"` or a number. Present when `tol_kind` is `"auto"`. |
+| `auto_safety`         | Float64 | `AutoTolerance` field. Present when `tol_kind` is `"auto"`.                       |
+| `auto_quantile`       | Float64 | `AutoTolerance` field. Present when `tol_kind` is `"auto"`.                       |
+
+The reader passes the stored `tol` to the constructor, which resolves the per-row cutoff
+from the stored arrays exactly as a build from a `System` does.
 
 Groups and datasets:
 
@@ -44,9 +48,8 @@ Groups and datasets:
 | `bus_axis`                           | Vector{Int}     | Bus numbers of the matrix columns.                                                                                                                                 |
 | `arc_from`, `arc_to`                 | Vector{Int}     | Endpoints of each arc.                                                                                                                                             |
 | `ref_bus_positions`                  | Vector{Int}     | Sorted positions of the reference buses in `bus_axis`.                                                                                                             |
-| `arc_susceptances`                   | Vector{Float64} | Effective susceptance of each arc.                                                                                                                                 |
 | `arc_live_members`                   | Vector{Int}     | Members an outage can open on each arc.                                                                                                                            |
-| `shift_injection`                    | Vector{Float64} | DC phase shift injection of each arc.                                                                                                                              |
+| `shift_injection`                    | Vector{Float64} | DC phase shift injection of each arc, for readers that compute flow offsets. The Julia reader does not use it.                                                     |
 | `dist_slack`                         | Vector{Float64} | Distributed slack weights of a `VirtualPTDF`. Empty if unset, and for a `VirtualMODF`.                                                                             |
 | `reduced_bus_from`, `reduced_bus_to` | Vector{Int}     | The reverse bus search map as two columns.                                                                                                                         |
 | `names`                              | group           | One row per branch entry: `type`, `name`, `from`, `to`.                                                                                                            |
@@ -70,8 +73,9 @@ row = restored[(1, 2), mod]
 
 The table has one row for each branch whose `NetworkModification(mat, branch)` succeeds. The
 tag of a row is `direct`, `parallel`, `series` or `3wt`. A branch that a network reduction
-absorbed has no row. The writer logs one warning with the number of such branches. Two members of
-one series chain give one outage of the whole arc.
+absorbed, or that `NetworkModification` rejects, has no row. The writer logs one warning with
+the number of such branches and the first reason. Two members of one series chain give one
+outage of the whole arc.
 
 For a `VirtualMODF`, the file also holds the registered contingencies. `from_hdf5(VirtualMODF, filename)` restores them. Restored modifications have no shunt modifications and no Ybus deltas,
 so they serve the DC row kernels only.

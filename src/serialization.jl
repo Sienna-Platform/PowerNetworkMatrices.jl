@@ -1,13 +1,41 @@
 const FACTOR_FILE_FORMAT_VERSION = 1
 
-_cutoff_kind(::AbsoluteCutoff) = "absolute"
-_cutoff_kind(::RelativeCutoff) = "relative"
+function _write_tol!(a, tol::Float64)
+    a["tol_kind"] = "absolute"
+    a["tol_value"] = tol
+    return
+end
 
-_restore_cutoff(::Val{:absolute}, value::Float64) = AbsoluteCutoff(value)
-_restore_cutoff(::Val{:relative}, value::Float64) = RelativeCutoff(value)
+_data_precision_string(dp::Float64) = string(dp)
+_data_precision_string(::Symbol) = "auto"
 
-function _restore_cutoff(::Val{K}, ::Float64) where {K}
-    return error("Unknown cutoff kind \"$K\" in factor file.")
+function _write_tol!(a, tol::AutoTolerance)
+    a["tol_kind"] = "auto"
+    a["auto_data_precision"] = _data_precision_string(tol.data_precision)
+    a["auto_safety"] = tol.safety
+    a["auto_quantile"] = tol.quantile
+    return
+end
+
+function _read_data_precision(s::AbstractString)
+    if s == "auto"
+        return :auto
+    end
+    return parse(Float64, s)
+end
+
+function _read_tol(a)
+    kind = read(a["tol_kind"])
+    if kind == "absolute"
+        return read(a["tol_value"])
+    elseif kind == "auto"
+        return AutoTolerance(;
+            data_precision = _read_data_precision(read(a["auto_data_precision"])),
+            safety = read(a["auto_safety"]),
+            quantile = read(a["auto_quantile"]),
+        )
+    end
+    return error("Unknown tolerance kind \"$kind\" in factor file.")
 end
 
 function _write_sparse(g, M::SparseArrays.SparseMatrixCSC)
@@ -33,32 +61,32 @@ end
 _system_uuid_string(::Nothing) = ""
 _system_uuid_string(uuid::Base.UUID) = string(uuid)
 
-_restore_system_uuid(s::AbstractString) = _restore_system_uuid(Val(isempty(s)), s)
-_restore_system_uuid(::Val{true}, ::AbstractString) = nothing
-_restore_system_uuid(::Val{false}, s::AbstractString) = Base.UUID(s)
+function _restore_system_uuid(s::AbstractString)
+    if isempty(s)
+        return nothing
+    end
+    return Base.UUID(s)
+end
 
 function _write_factor_core(f, core::VirtualFactorCore, dist_slack::Vector{Float64})
     nr = get_network_reduction_data(core)
     arc_ax, bus_ax = core.axes
+    reduced = get_reverse_bus_search_map(nr)
     a = HDF5.attributes(f)
     a["format_version"] = FACTOR_FILE_FORMAT_VERSION
-    a["system_uuid"] = _system_uuid_string(core.system_uuid)
-    a["cutoff_kind"] = _cutoff_kind(core.tol)
-    a["cutoff_value"] = cutoff_value(core.tol)
-    a["n_bus"] = length(bus_ax)
-    a["n_arc"] = length(arc_ax)
+    a["system_uuid"] = _system_uuid_string(get_system_uuid(core))
+    _write_tol!(a, get_tol_spec(core))
     _write_sparse(HDF5.create_group(f, "BA"), core.BA)
     _write_sparse(HDF5.create_group(f, "A"), core.A)
     f["bus_axis"] = bus_ax
     f["arc_from"] = first.(arc_ax)
     f["arc_to"] = last.(arc_ax)
     f["ref_bus_positions"] = sort(get_ref_bus_position(core))
-    f["arc_susceptances"] = core.arc_susceptances
     f["arc_live_members"] = core.arc_live_members
     f["shift_injection"] = Float64[arc_dc_shift_injection(nr, arc) for arc in arc_ax]
     f["dist_slack"] = dist_slack
-    f["reduced_bus_from"] = collect(keys(nr.reverse_bus_search_map))
-    f["reduced_bus_to"] = collect(values(nr.reverse_bus_search_map))
+    f["reduced_bus_from"] = collect(keys(reduced))
+    f["reduced_bus_to"] = collect(values(reduced))
 
     types = String[]
     names = String[]
@@ -88,47 +116,44 @@ function _write_factor_core(f, core::VirtualFactorCore, dist_slack::Vector{Float
     return
 end
 
-function _check_can_write(filename::AbstractString, force::Bool)
+_dist_slack(mat::VirtualPTDF) = get_dist_slack(mat)
+_dist_slack(::VirtualMODF) = Float64[]
+
+function _write_factor_file(write_outages, mat, filename::AbstractString, force::Bool)
     if isfile(filename) && !force
         error("File $filename exists. Pass `force = true` to overwrite it.")
     end
-    return
+    HDF5.h5open(filename, "w") do f
+        _write_factor_core(f, get_core(mat), _dist_slack(mat))
+        write_outages(f)
+    end
+    return filename
 end
 
 """
-    to_hdf5(mat::VirtualPTDF, filename; force = false)
+    to_hdf5(mat::Union{VirtualPTDF, VirtualMODF}, filename; force = false)
 
 Write the factor data of `mat` to the HDF5 file `filename`. The file holds the arrays that
 [`from_hdf5`](@ref) needs to rebuild the matrix without a `System`. The function does not
-write cached rows. If the file exists and `force` is `false`, the function throws an error.
+write cached rows. A `VirtualMODF` writes an empty `dist_slack` dataset. If the file exists
+and `force` is `false`, the function throws an error.
 """
-function to_hdf5(mat::VirtualPTDF, filename::AbstractString; force::Bool = false)
-    _check_can_write(filename, force)
-    HDF5.h5open(filename, "w") do f
-        _write_factor_core(f, get_core(mat), mat.dist_slack)
-    end
-    return filename
+function to_hdf5(
+    mat::Union{VirtualPTDF, VirtualMODF},
+    filename::AbstractString;
+    force::Bool = false,
+)
+    return _write_factor_file(f -> nothing, mat, filename, force)
 end
 
-"""
-    to_hdf5(mat::VirtualMODF, filename; force = false)
-
-Write the factor data of `mat` to the HDF5 file `filename`. The file has the same layout as
-the file for a `VirtualPTDF`, with an empty `dist_slack` dataset. If the file exists and
-`force` is `false`, the function throws an error.
-"""
-function to_hdf5(mat::VirtualMODF, filename::AbstractString; force::Bool = false)
-    _check_can_write(filename, force)
-    HDF5.h5open(filename, "w") do f
-        _write_factor_core(f, get_core(mat), Float64[])
-    end
-    return filename
-end
+_outage_key(branch) = (string(nameof(typeof(branch))), PSY.get_name(branch))
 
 _branch_tag(nr, branch::PSY.ACTransmission) = string(_resolve_branch_arc(nr, branch)[1])
 _branch_tag(nr, ::PSY.ThreeWindingTransformer) = "3wt"
 
-function _write_row_arrays(g, mods::Vector{NetworkModification}, starts, lens)
+function _write_row_arrays(g, mods::Vector{NetworkModification})
+    starts = Int[]
+    lens = Int[]
     arc_index = Int[]
     delta_b = Float64[]
     delta_shift = Float64[]
@@ -152,49 +177,48 @@ function _write_row_arrays(g, mods::Vector{NetworkModification}, starts, lens)
     return
 end
 
-function _collect_branch_outages!(rows, skipped, mat, branches)
+function _write_branch_outages(f, mat, sys::PSY.System)
     nr = get_network_reduction_data(mat)
+    keys_ = Tuple{String, String}[]
+    tags = String[]
+    mods = NetworkModification[]
+    skipped = 0
+    first_reason = ""
+    branches = Iterators.flatten((
+        PSY.get_components(PSY.ACTransmission, sys),
+        PSY.get_components(PSY.ThreeWindingTransformer, sys),
+    ))
     for branch in branches
-        try
-            mod = NetworkModification(mat, branch)
-            row = (
-                string(nameof(typeof(branch))),
-                PSY.get_name(branch),
-                _branch_tag(nr, branch),
-                mod,
-            )
-            push!(rows, row)
-        catch e
-            push!(skipped, sprint(showerror, e))
+        tag = _branch_tag(nr, branch)
+        reason = ""
+        if tag == "not_found"
+            reason = "a network reduction absorbed it"
+        else
+            try
+                push!(mods, NetworkModification(mat, branch))
+            catch e
+                reason = sprint(showerror, e)
+            end
+        end
+        if isempty(reason)
+            push!(keys_, _outage_key(branch))
+            push!(tags, tag)
+        else
+            skipped += 1
+            if isempty(first_reason)
+                first_reason = "$(PSY.get_name(branch)): $reason"
+            end
         end
     end
-    return
-end
-
-function _write_branch_outages(f, mat, sys::PSY.System)
-    rows = Tuple{String, String, String, NetworkModification}[]
-    skipped = String[]
-    _collect_branch_outages!(
-        rows,
-        skipped,
-        mat,
-        PSY.get_components(PSY.ACTransmission, sys),
-    )
-    _collect_branch_outages!(
-        rows,
-        skipped,
-        mat,
-        PSY.get_components(PSY.ThreeWindingTransformer, sys),
-    )
-    if !isempty(skipped)
-        @warn "$(length(skipped)) branches have no outage row because a network reduction absorbed them. First error: $(first(skipped))"
+    if !iszero(skipped)
+        @warn "$skipped branches have no outage row because NetworkModification failed on them. First: $first_reason"
     end
     g = HDF5.create_group(f, "branch_outages")
-    g["type"] = [r[1] for r in rows]
-    g["name"] = [r[2] for r in rows]
-    g["tag"] = [r[3] for r in rows]
-    g["is_islanding"] = [r[4].is_islanding for r in rows]
-    _write_row_arrays(g, [r[4] for r in rows], Int[], Int[])
+    g["type"] = first.(keys_)
+    g["name"] = last.(keys_)
+    g["tag"] = tags
+    g["is_islanding"] = [m.is_islanding for m in mods]
+    _write_row_arrays(g, mods)
     return
 end
 
@@ -211,7 +235,7 @@ function _write_registered_outages(f, mat::VirtualMODF)
     g["id"] = ids
     g["label"] = [m.label for m in mods]
     g["is_islanding"] = [m.is_islanding for m in mods]
-    _write_row_arrays(g, mods, Int[], Int[])
+    _write_row_arrays(g, mods)
     return
 end
 
@@ -220,10 +244,10 @@ end
 
 Write the factor data of `mat` as the method without `sys` does. Also write the group
 `branch_outages` with one row for each branch of `sys` that `NetworkModification(mat, branch)`
-accepts, so `from_hdf5(BranchOutageTable, filename)` can build outages by name. The function
-skips the branches that a network reduction absorbed and logs one warning with their count.
-For a `VirtualMODF`, the function also writes the group `outages` with the registered
-contingencies.
+accepts, so `from_hdf5(BranchOutageTable, filename)` can build outages by name. A branch that
+a network reduction absorbed, or that `NetworkModification` rejects, has no row; the function
+logs one warning with the count and the first reason. For a `VirtualMODF`, the function also
+writes the group `outages` with the registered contingencies.
 """
 function to_hdf5(
     mat::Union{VirtualPTDF, VirtualMODF},
@@ -231,12 +255,10 @@ function to_hdf5(
     sys::PSY.System;
     force::Bool = false,
 )
-    to_hdf5(mat, filename; force = force)
-    HDF5.h5open(filename, "r+") do f
+    return _write_factor_file(mat, filename, force) do f
         _write_branch_outages(f, mat, sys)
         _write_registered_outages(f, mat)
     end
-    return filename
 end
 
 """
@@ -258,16 +280,31 @@ struct BranchOutageTable
     opened::Vector{Int}
 end
 
-function _row_ranges(g)
-    return [s:(s + l - 1) for (s, l) in zip(read(g["start"]), read(g["len"]))]
+function _read_row_arrays(g)
+    ranges = [s:(s + l - 1) for (s, l) in zip(read(g["start"]), read(g["len"]))]
+    return (
+        ranges = ranges,
+        arc_index = read(g["arc_index"]),
+        delta_b = read(g["delta_b"]),
+        delta_shift = read(g["delta_shift"]),
+        opened = read(g["opened"]),
+    )
 end
 
-function _arc_modifications(arc_index, delta_b, delta_shift, opened, range)
+# `rows` is a `BranchOutageTable` or the named tuple of `_read_row_arrays`.
+function _arc_modifications(rows, range::UnitRange{Int})
     z = zero(YBUS_ELTYPE)
     return ArcModification[
-        ArcModification(arc_index[i], delta_b[i], delta_shift[i], z, z, z, z, opened[i])
-        for
-        i in range
+        ArcModification(
+            rows.arc_index[i],
+            rows.delta_b[i],
+            rows.delta_shift[i],
+            z,
+            z,
+            z,
+            z,
+            rows.opened[i],
+        ) for i in range
     ]
 end
 
@@ -286,34 +323,25 @@ function from_hdf5(::Type{BranchOutageTable}, filename::AbstractString)
             )
         end
         g = f["branch_outages"]
+        arrays = _read_row_arrays(g)
         rows = Dict{Tuple{String, String}, Tuple{String, Bool, UnitRange{Int}}}()
         for (t, n, tag, islanding, range) in zip(
             read(g["type"]),
             read(g["name"]),
             read(g["tag"]),
             read(g["is_islanding"]),
-            _row_ranges(g),
+            arrays.ranges,
         )
             rows[(t, n)] = (tag, islanding, range)
         end
         return BranchOutageTable(
             rows,
-            Vector{Int}(read(g["arc_index"])),
-            Vector{Float64}(read(g["delta_b"])),
-            Vector{Float64}(read(g["delta_shift"])),
-            Vector{Int}(read(g["opened"])),
+            arrays.arc_index,
+            arrays.delta_b,
+            arrays.delta_shift,
+            arrays.opened,
         )
     end
-end
-
-_dedupe_series!(::Val, ::Set{Int}, ::Int) = true
-
-function _dedupe_series!(::Val{:series}, seen::Set{Int}, arc_index::Int)
-    if arc_index in seen
-        return false
-    end
-    push!(seen, arc_index)
-    return true
 end
 
 """
@@ -327,22 +355,27 @@ The modification has no Ybus deltas and no shunt modifications. It serves the DC
 kernels only.
 """
 function NetworkModification(table::BranchOutageTable, keys::Vector{Tuple{String, String}})
+    if isempty(keys)
+        error("An outage needs at least one branch key.")
+    end
     mods = ArcModification[]
     seen_series = Set{Int}()
     islanding = false
     for key in keys
+        if !haskey(table.rows, key)
+            error("Branch $(key[1]) $(key[2]) has no row in the outage table.")
+        end
         tag, is_islanding, range = table.rows[key]
         islanding |= is_islanding
-        for m in _arc_modifications(
-            table.arc_index,
-            table.delta_b,
-            table.delta_shift,
-            table.opened,
-            range,
-        )
-            if _dedupe_series!(Val(Symbol(tag)), seen_series, m.arc_index)
-                push!(mods, m)
+        is_series = tag == "series"
+        for m in _arc_modifications(table, range)
+            if is_series
+                if m.arc_index in seen_series
+                    continue
+                end
+                push!(seen_series, m.arc_index)
             end
+            push!(mods, m)
         end
     end
     return NetworkModification(
@@ -363,17 +396,10 @@ end
 
 function _read_registered_outages!(f, cache::Dict{Int, ContingencySpec})
     g = f["outages"]
-    arc_index = read(g["arc_index"])
-    delta_b = read(g["delta_b"])
-    delta_shift = read(g["delta_shift"])
-    opened = read(g["opened"])
-    for (id, label, islanding, range) in zip(
-        read(g["id"]),
-        read(g["label"]),
-        read(g["is_islanding"]),
-        _row_ranges(g),
-    )
-        mods = _arc_modifications(arc_index, delta_b, delta_shift, opened, range)
+    arrays = _read_row_arrays(g)
+    for (id, label, islanding, range) in
+        zip(read(g["id"]), read(g["label"]), read(g["is_islanding"]), arrays.ranges)
+        mods = _arc_modifications(arrays, range)
         cache[id] = ContingencySpec(
             id,
             NetworkModification(label, mods, ShuntModification[], islanding),
@@ -393,12 +419,8 @@ function _read_factor_core(f; linear_solver::String)
     end
     BA = _read_sparse(f["BA"], Float64)
     A = _read_sparse(f["A"], Int8)
-    bus_ax = Vector{Int}(read(f["bus_axis"]))
-    arc_ax = Tuple{Int, Int}[zip(read(f["arc_from"]), read(f["arc_to"]))...]
-    cutoff = _restore_cutoff(
-        Val(Symbol(read(a["cutoff_kind"]))),
-        Float64(read(a["cutoff_value"])),
-    )
+    bus_ax = read(f["bus_axis"])
+    arc_ax = collect(zip(read(f["arc_from"]), read(f["arc_to"])))
 
     nrd = NetworkReductionData(;
         reverse_bus_search_map = Dict{Int, Int}(
@@ -415,21 +437,12 @@ function _read_factor_core(f; linear_solver::String)
         end
         entries[n] = (from, to)
     end
-    catalog = BranchCatalog(
-        nrd,
-        ARC_TABLE(),
-        name_to_arc,
-        COMPONENT_TO_ENTRY(),
-        COMPONENT_NAME_INDEX(),
-    )
 
     subnetwork_axes = Dict{Int, Tuple{Vector{Tuple{Int, Int}}, Vector{Int}}}()
     for k in keys(f["subnetworks"])
         sg = f["subnetworks"][k]
-        subnetwork_axes[parse(Int, k)] = (
-            Tuple{Int, Int}[zip(read(sg["arc_from"]), read(sg["arc_to"]))...],
-            Vector{Int}(read(sg["bus"])),
-        )
+        subnetwork_axes[parse(Int, k)] =
+            (collect(zip(read(sg["arc_from"]), read(sg["arc_to"]))), read(sg["bus"]))
     end
 
     return VirtualFactorCore(
@@ -438,10 +451,10 @@ function _read_factor_core(f; linear_solver::String)
         Set{Int}(read(f["ref_bus_positions"])),
         (arc_ax, bus_ax),
         subnetwork_axes,
-        Vector{Int}(read(f["arc_live_members"])),
-        catalog;
+        read(f["arc_live_members"]),
+        BranchCatalog(nrd, name_to_arc);
         linear_solver = linear_solver,
-        tol = cutoff,
+        tol = _read_tol(a),
         system_uuid = _restore_system_uuid(read(a["system_uuid"])),
     )
 end
@@ -450,7 +463,8 @@ end
     from_hdf5(::Type{VirtualPTDF}, filename; linear_solver, max_cache_size) -> VirtualPTDF
 
 Read a `VirtualPTDF` from a file that [`to_hdf5`](@ref) wrote. The function does not need a
-`System`. It factorizes the ABA matrix again with `linear_solver`.
+`System`. It factorizes the ABA matrix again with `linear_solver` and resolves the stored
+`tol` as a fresh build does.
 
 The restored matrix has no components and no reduction maps. `NetworkModification(mat, arc)`,
 `NetworkModification(mat, branch)` and `mat[name, bus]` do not work on it. The function
@@ -464,25 +478,13 @@ function from_hdf5(
 )
     return HDF5.h5open(filename, "r") do f
         core = _read_factor_core(f; linear_solver = linear_solver)
-        dist_slack = Vector{Float64}(read(f["dist_slack"]))
-        if isempty(dist_slack)
-            dist_slack_normalized = Float64[]
-        else
-            dist_slack_normalized = dist_slack / sum(dist_slack)
-        end
-        n_bus = length(core.axes[2])
-        return VirtualPTDF(
-            core,
-            dist_slack,
-            dist_slack_normalized,
-            _persistent_row_cache(
-                max_cache_size,
-                core.lookup,
-                Vector{Tuple{Int, Int}}(),
-                n_bus,
-            ),
-            ReentrantLock(),
-        )
+        bus_ax = core.axes[2]
+        weights = read(f["dist_slack"])
+        dist_slack =
+            Dict{Int, Float64}(
+                bus_ax[i] => w for (i, w) in enumerate(weights) if !iszero(w)
+            )
+        return VirtualPTDF(core; dist_slack = dist_slack, max_cache_size = max_cache_size)
     end
 end
 
@@ -499,18 +501,12 @@ function from_hdf5(
     linear_solver::String = _default_linear_solver(),
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
 )
-    contingencies = Dict{Int, ContingencySpec}()
-    core = HDF5.h5open(filename, "r") do f
+    return HDF5.h5open(filename, "r") do f
+        core = _read_factor_core(f; linear_solver = linear_solver)
+        vmodf = VirtualMODF(core; max_cache_size = max_cache_size)
         if haskey(f, "outages")
-            _read_registered_outages!(f, contingencies)
+            _read_registered_outages!(f, get_registered_contingencies(vmodf))
         end
-        return _read_factor_core(f; linear_solver = linear_solver)
+        return vmodf
     end
-    return VirtualMODF(
-        core,
-        contingencies,
-        Dict{NetworkModification, WoodburyFactors}(),
-        Dict{NetworkModification, RowCache{RowCacheValue}}(),
-        max_cache_size * MiB,
-    )
 end

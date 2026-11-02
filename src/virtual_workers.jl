@@ -56,6 +56,7 @@ function worker_core(mat)
         core.bus_to_valid_idx,
         core.subnetwork_axes,
         core.tol,
+        core.tol_spec,
         core.branch_catalog,
         [zeros(n_bus)],
         [zeros(length(core.valid_ix))],

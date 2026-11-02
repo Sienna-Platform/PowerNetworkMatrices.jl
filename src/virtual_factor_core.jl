@@ -38,6 +38,8 @@ single-scratch model.
 - `subnetwork_axes::Dict{Int, Ax}`: per-reference-bus subnetwork axes (bus form).
 - `tol::SparsificationCutoff`: resolved per-row sparsification rule (absolute
   cutoff for a `Float64` `tol`, relative cutoff for an [`AutoTolerance`](@ref)).
+- `tol_spec::Union{Float64, AutoTolerance}`: the `tol` keyword as given; a factor
+  file stores it and a reader resolves it again.
 - `branch_catalog::BranchCatalog`: reduction maps.
 - `temp_data::Vector{Vector{Float64}}`: single-slot scratch (size n_buses).
 - `work_ba_col::Vector{Vector{Float64}}`: single-slot scratch (size n_valid).
@@ -69,6 +71,7 @@ struct VirtualFactorCore{Ax, L <: NTuple{2, Dict}, K}
     bus_to_valid_idx::Vector{Int}
     subnetwork_axes::Dict{Int, Ax}
     tol::SparsificationCutoff
+    tol_spec::Union{Float64, AutoTolerance}
     branch_catalog::BranchCatalog
     temp_data::Vector{Vector{Float64}}
     work_ba_col::Vector{Vector{Float64}}
@@ -107,6 +110,7 @@ get_system_uuid(c::VirtualFactorCore) = c.system_uuid
 # Float64 representative for display/serialization.
 get_cutoff(c::VirtualFactorCore) = c.tol
 get_tol(c::VirtualFactorCore) = cutoff_value(c.tol)
+get_tol_spec(c::VirtualFactorCore) = c.tol_spec
 
 # Woodbury / NetworkModification kernel accessors.
 _get_BA(c::VirtualFactorCore) = c.BA
@@ -194,8 +198,8 @@ entries in `{-1, 0, 1}`. Each entry of `ref_bus_positions` is an index into the 
 `axes` is `(arc_axis, bus_axis)`. `arc_live_members[i]` is the number of members that an
 outage can open on arc `i`. The constructor holds `branch_catalog` and does not read it.
 
-The `tol` keyword accepts a `Float64`, an `AutoTolerance`, or a resolved cutoff. A
-resolved cutoff is stored as given, so a saved cutoff restores unchanged.
+The `tol` keyword is the sparsification spec, a `Float64` or an `AutoTolerance`. The
+constructor keeps it in `tol_spec` and resolves the per-row cutoff from it.
 """
 function VirtualFactorCore(
     BA::SparseArrays.SparseMatrixCSC{Float64, Int},
@@ -206,7 +210,7 @@ function VirtualFactorCore(
     arc_live_members::Vector{Int},
     branch_catalog::BranchCatalog;
     linear_solver::String = _default_linear_solver(),
-    tol::Union{Float64, AutoTolerance, SparsificationCutoff} = DEFAULT_AUTO_TOLERANCE,
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     system_uuid::Union{Base.UUID, Nothing} = nothing,
 )
     n_arc = length(axes[1])
@@ -220,10 +224,8 @@ function VirtualFactorCore(
     length(arc_live_members) == n_arc || error(
         "arc_live_members has length $(length(arc_live_members)); expected n_arc = $n_arc.",
     )
-    for pos in ref_bus_positions
-        1 <= pos <= n_bus ||
-            error("Reference bus position $pos is outside 1:$n_bus.")
-    end
+    all(pos -> 1 <= pos <= n_bus, ref_bus_positions) ||
+        error("Reference bus positions $ref_bus_positions must lie in 1:$n_bus.")
     solver = resolve_linear_solver(linear_solver)
     _check_virtual_solver(solver)
     ABA = calculate_ABA_matrix(A, BA, ref_bus_positions)
@@ -264,6 +266,7 @@ function VirtualFactorCore(
         bus_to_valid_idx,
         subnetwork_axes,
         cutoff,
+        tol,
         branch_catalog,
         temp_data,
         work_ba_col,

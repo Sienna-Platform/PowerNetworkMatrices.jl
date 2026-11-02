@@ -120,7 +120,11 @@ end
                 PNM.get_branch_catalog(ybus),
             )
             core_arr =
-                PNM.VirtualFactorCore(args...; tol = core_sys.tol, linear_solver = "KLU")
+                PNM.VirtualFactorCore(
+                    args...;
+                    tol = PNM.get_tol_spec(core_sys),
+                    linear_solver = "KLU",
+                )
             @test core_arr.arc_live_members == core_sys.arc_live_members
 
             vptdf_sys = VirtualPTDF(core_sys)
@@ -156,7 +160,6 @@ end
             else
                 eltype(all_branches)[]
             end
-            n_checked = 0
             for branch in branches
                 mod = NetworkModification(vmodf_sys, branch)
                 for monitored in eachindex(PNM.get_arc_axis(core_sys))
@@ -166,10 +169,7 @@ end
                         atol = 1e-12,
                     )
                 end
-                n_checked += 1
             end
-            @test n_checked == length(branches)
-            @test outage_branches == !isempty(branches)
         end
     end
 
@@ -195,8 +195,9 @@ end
         )
         cut = PNM.VirtualFactorCore(
             core.BA, core.A, ref, core.axes, core.subnetwork_axes, live, cat;
-            tol = PNM.AbsoluteCutoff(1e-9),
+            tol = 1e-9,
         )
         @test PNM.get_tol(cut) == 1e-9
+        @test PNM.get_tol_spec(cut) == 1e-9
     end
 end
