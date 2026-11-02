@@ -162,6 +162,30 @@ end
         _test_modf_rows_equal(vmodf, restored, mod)
     end
 
+    @testset "VirtualPTDF with relative cutoff" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+        ybus = Ybus(sys)
+        A = IncidenceMatrix(ybus)
+        core = PNM.VirtualFactorCore(
+            BA_Matrix(ybus).data,
+            A.data,
+            Set(PNM.get_ref_bus_position(ybus)),
+            A.axes,
+            A.subnetwork_axes,
+            copy(PNM.get_arc_live_members(ybus)),
+            PNM.get_branch_catalog(ybus);
+            tol = PNM.RelativeCutoff(0.01),
+        )
+        vptdf = VirtualPTDF(core)
+        path = joinpath(mktempdir(), "relative.h5")
+        to_hdf5(vptdf, path)
+        restored = from_hdf5(VirtualPTDF, path)
+        @test PNM.get_cutoff(PNM.get_core(restored)) == PNM.RelativeCutoff(0.01)
+        @test PNM.get_tol(restored) == 0.01
+        _test_same_core(vptdf, restored)
+        _test_ptdf_rows_equal(vptdf, restored, PNM.get_arc_axis(vptdf))
+    end
+
     @testset "cutoff kinds" begin
         @test PNM._cutoff_kind(PNM.RelativeCutoff(0.01)) == "relative"
         @test PNM._restore_cutoff(Val(:relative), 0.01) == PNM.RelativeCutoff(0.01)
