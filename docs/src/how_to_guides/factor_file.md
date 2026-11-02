@@ -1,0 +1,65 @@
+# Save and load the virtual matrices
+
+Building a `VirtualPTDF` or `VirtualMODF` needs a `PowerSystems.System`, a `Ybus`, and a
+factorization. Use a factor file to skip the `System`: write the factor data once, then
+rebuild the matrix in another process, for example a service that only computes rows.
+
+## Write and read
+
+```julia
+using PowerNetworkMatrices
+
+vptdf = VirtualPTDF(sys; network_reductions = [RadialReduction(), DegreeTwoReduction()])
+to_hdf5(vptdf, "factors.h5")
+
+restored = from_hdf5(VirtualPTDF, "factors.h5")
+row = restored[(1, 2), 3]
+```
+
+`to_hdf5(mat, filename; force = false)` accepts a `VirtualPTDF` or a `VirtualMODF` and throws if
+the file exists and `force` is `false`. `from_hdf5(VirtualPTDF, filename)` and
+`from_hdf5(VirtualMODF, filename)` accept `linear_solver` and `max_cache_size`. The reader
+factorizes the ABA matrix again, so the solver can differ from the one that wrote the file.
+Cached rows are not stored.
+
+## File layout (format version 1)
+
+Root attributes:
+
+| Name             | Type    | Meaning                                               |
+|:---------------- |:------- |:----------------------------------------------------- |
+| `format_version` | Int     | Layout version. The reader accepts 1 only.            |
+| `system_uuid`    | String  | UUID of the source system, empty if unknown.          |
+| `cutoff_kind`    | String  | `"absolute"` or `"relative"` row sparsification rule. |
+| `cutoff_value`   | Float64 | Value of the cutoff.                                  |
+| `n_bus`          | Int     | Number of buses on the bus axis.                      |
+| `n_arc`          | Int     | Number of arcs on the arc axis.                       |
+
+Groups and datasets:
+
+| Name                                 | Type            | Meaning                                                                                     |
+|:------------------------------------ |:--------------- |:------------------------------------------------------------------------------------------- |
+| `BA`                                 | group           | BA matrix in CSC form: attributes `m`, `n`; datasets `colptr`, `rowval`, `nzval` (Float64). |
+| `A`                                  | group           | Incidence matrix in CSC form: same layout, `nzval` is Int8.                                 |
+| `bus_axis`                           | Vector{Int}     | Bus numbers of the matrix columns.                                                          |
+| `arc_from`, `arc_to`                 | Vector{Int}     | Endpoints of each arc.                                                                      |
+| `ref_bus_positions`                  | Vector{Int}     | Sorted positions of the reference buses in `bus_axis`.                                      |
+| `arc_susceptances`                   | Vector{Float64} | Effective susceptance of each arc.                                                          |
+| `arc_live_members`                   | Vector{Int}     | Members an outage can open on each arc.                                                     |
+| `shift_injection`                    | Vector{Float64} | DC phase shift injection of each arc.                                                       |
+| `dist_slack`                         | Vector{Float64} | Distributed slack weights of a `VirtualPTDF`. Empty if unset, and for a `VirtualMODF`.      |
+| `reduced_bus_from`, `reduced_bus_to` | Vector{Int}     | The reverse bus search map as two columns.                                                  |
+| `names`                              | group           | One row per branch entry: `type`, `name`, `from`, `to`.                                     |
+| `subnetworks`                        | group           | One subgroup per reference bus, with `arc_from`, `arc_to` and `bus`.                        |
+
+## Limits of a restored matrix
+
+A restored matrix has no components and no reduction maps. Rows by arc and bus number work.
+These calls fail with their usual error messages:
+
+  - `NetworkModification(mat, arc)`
+  - `NetworkModification(mat, branch)`
+  - `mat[name, bus]`, which looks up a branch by name
+
+Build a `NetworkModification` on the matrix that wrote the file, then apply it to the restored
+`VirtualMODF`. The modification refers to arcs by index, and the index is the same in both.
