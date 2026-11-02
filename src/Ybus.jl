@@ -120,6 +120,7 @@ _arc_member_count(nr::NetworkReductionData, arc::Tuple{Int, Int}) =
 
 get_bus_axis(M::Ybus) = M.axes[1]
 get_arc_axis(M::Ybus) = M.arc_axis
+get_arc_live_members(M::Ybus) = M.arc_live_members
 get_arc_lookup(M::Ybus) = M.arc_lookup
 get_bus_lookup(M::Ybus) = M.lookup[1]
 

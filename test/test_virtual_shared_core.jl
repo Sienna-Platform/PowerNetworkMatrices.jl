@@ -96,3 +96,96 @@ end
     @test length(core.PTDF_A_diag) == length(PNM.get_arc_axis(core))
     @test length(core.branch_susceptances_by_arc) == length(PNM.get_arc_axis(core))
 end
+
+@testset "VirtualFactorCore from arrays" begin
+    cases = (
+        ("c_sys14", NetworkReduction[]),
+        (
+            "case10_radial_series_reductions",
+            NetworkReduction[RadialReduction(), DegreeTwoReduction()],
+        ),
+    )
+    for (name, reductions) in cases
+        @testset "$name" begin
+            sys = PSB.build_system(PSB.PSITestSystems, name)
+            ybus = Ybus(sys; network_reductions = reductions)
+            core_sys = PNM.VirtualFactorCore(ybus)
+            ref = Set(PNM.get_ref_bus_position(ybus))
+            args = (
+                core_sys.BA,
+                core_sys.A,
+                ref,
+                core_sys.axes,
+                core_sys.subnetwork_axes,
+                PNM.get_arc_live_members(ybus),
+                PNM.get_branch_catalog(ybus),
+            )
+            core_arr =
+                PNM.VirtualFactorCore(args...; tol = core_sys.tol, linear_solver = "KLU")
+            @test core_arr.arc_live_members == core_sys.arc_live_members
+
+            vptdf_sys = VirtualPTDF(core_sys)
+            vptdf_arr = VirtualPTDF(core_arr)
+            for arc in PNM.get_arc_axis(core_sys)
+                @test isapprox(vptdf_arr[arc, :], vptdf_sys[arc, :]; atol = 1e-12)
+            end
+
+            vmodf_sys = VirtualMODF(core_sys, sys; automatically_register_outages = false)
+            vmodf_arr = VirtualMODF(core_arr, sys; automatically_register_outages = false)
+            nr = PNM.get_network_reduction_data(ybus)
+            direct = [
+                b for b in PSY.get_components(PSY.ACTransmission, sys) if
+                haskey(nr.reverse_direct_branch_map, b)
+            ]
+            parallel = [
+                b for b in PSY.get_components(PSY.ACTransmission, sys) if
+                haskey(nr.reverse_parallel_branch_map, b)
+            ]
+            branches = vcat(first(direct, 2), first(parallel, 2))
+            if !isempty(reductions)
+                @test !isempty(PNM.get_parallel_branch_map(nr)) ||
+                      !isempty(PNM.get_series_branch_map(nr))
+            end
+            n_checked = 0
+            for branch in branches
+                mod = NetworkModification(vmodf_sys, branch)
+                for monitored in eachindex(PNM.get_arc_axis(core_sys))
+                    @test isapprox(
+                        vmodf_arr[monitored, mod],
+                        vmodf_sys[monitored, mod];
+                        atol = 1e-12,
+                    )
+                end
+                n_checked += 1
+            end
+            @test n_checked > 1
+        end
+    end
+
+    @testset "size checks and cutoff" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+        ybus = Ybus(sys)
+        core = PNM.VirtualFactorCore(ybus)
+        ref = Set(PNM.get_ref_bus_position(ybus))
+        live = PNM.get_arc_live_members(ybus)
+        cat = PNM.get_branch_catalog(ybus)
+        build(BA, A, ref, live) = PNM.VirtualFactorCore(
+            BA, A, ref, core.axes, core.subnetwork_axes, live, cat,
+        )
+        @test_throws ErrorException build(core.BA[:, 1:(end - 1)], core.A, ref, live)
+        @test_throws ErrorException build(core.BA, core.A[1:(end - 1), :], ref, live)
+        @test_throws ErrorException build(core.BA, core.A, ref, live[1:(end - 1)])
+        @test_throws ErrorException build(core.BA, core.A, Set([0]), live)
+        @test_throws ErrorException build(
+            core.BA,
+            core.A,
+            Set([size(core.BA, 1) + 1]),
+            live,
+        )
+        cut = PNM.VirtualFactorCore(
+            core.BA, core.A, ref, core.axes, core.subnetwork_axes, live, cat;
+            tol = PNM.AbsoluteCutoff(1e-9),
+        )
+        @test PNM.get_tol(cut) == 1e-9
+    end
+end

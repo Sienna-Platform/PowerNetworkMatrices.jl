@@ -254,6 +254,8 @@ _resolve_virtual_cutoff(
     ::AbstractVector{Float64},
 ) = AbsoluteCutoff(tol)
 
+_resolve_virtual_cutoff(cutoff::SparsificationCutoff, _, _, _) = cutoff
+
 function _resolve_virtual_cutoff(
     spec::AutoTolerance,
     cache,

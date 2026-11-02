@@ -274,10 +274,8 @@ function _arcs_fully_opened(
     core::VirtualFactorCore,
     modifications::Tuple{Vararg{ArcModification}},
 )::Vector{Bool}
-    nr = get_network_reduction_data(core)
-    arc_ax = get_arc_axis(core)
     return Bool[
-        m.opened > 0 && m.opened >= _arc_member_count(nr, arc_ax[m.arc_index]) for
+        m.opened > 0 && m.opened >= core.arc_live_members[m.arc_index] for
         m in modifications
     ]
 end
