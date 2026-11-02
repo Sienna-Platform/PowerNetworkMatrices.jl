@@ -54,6 +54,7 @@ export clear_caches!
 export compute_woodbury_factors
 export factorize
 export get_post_modification_ptdf_row
+export BranchOutageTable
 export from_hdf5
 export get_system_uuid
 export is_factorized

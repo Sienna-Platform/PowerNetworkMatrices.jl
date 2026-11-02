@@ -206,3 +206,164 @@ end
         @test_throws ErrorException from_hdf5(VirtualMODF, path)
     end
 end
+
+_outage_key(branch) = (string(nameof(typeof(branch))), PSY.get_name(branch))
+
+function _test_outage_rows_equal(vmodf, restored, expected, actual)
+    @test actual.is_islanding == expected.is_islanding
+    for monitored in 1:length(PNM.get_arc_axis(vmodf))
+        @test isapprox(
+            collect(vmodf[monitored, expected]),
+            collect(restored[monitored, actual]);
+            atol = 1e-9,
+        )
+    end
+    return
+end
+
+function _outage_roundtrip(vmodf, sys)
+    path = joinpath(mktempdir(), "outages.h5")
+    to_hdf5(vmodf, path, sys)
+    return from_hdf5(VirtualMODF, path), from_hdf5(BranchOutageTable, path)
+end
+
+function _add_outage!(sys, components...)
+    outage = PSY.FixedForcedOutage(; outage_status = 1.0)
+    for component in components
+        PSY.add_supplemental_attribute!(sys, component, outage)
+    end
+    return outage
+end
+
+@testset "factor file outages" begin
+    @testset "RTS-GMLC outage by name" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "test_RTS_GMLC_sys")
+        reds = NetworkReduction[RadialReduction(), DegreeTwoReduction()]
+        vmodf = VirtualMODF(sys; network_reductions = reds)
+        restored, table = _outage_roundtrip(vmodf, sys)
+        nr = PNM.get_network_reduction_data(vmodf)
+        for (map, tag) in (
+            (nr.reverse_direct_branch_map, "direct"),
+            (nr.reverse_series_branch_map, "series"),
+            (nr.reverse_parallel_branch_map, "parallel"),
+        )
+            branch = first(keys(map))
+            key = _outage_key(branch)
+            @test table.rows[key][1] == tag
+            @test NetworkModification(table, typeof(branch), key[2]) ==
+                  NetworkModification(table, key...)
+            _test_outage_rows_equal(
+                vmodf,
+                restored,
+                NetworkModification(vmodf, branch),
+                NetworkModification(table, key...),
+            )
+        end
+    end
+
+    @testset "case10 3WT outage and skipped series chain" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+        reds = NetworkReduction[RadialReduction(), DegreeTwoReduction()]
+        vmodf = VirtualMODF(sys; network_reductions = reds)
+        path = joinpath(mktempdir(), "case10.h5")
+        @test_logs (:warn,) match_mode = :any to_hdf5(vmodf, path, sys)
+        restored = from_hdf5(VirtualMODF, path)
+        table = from_hdf5(BranchOutageTable, path)
+        trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
+        @test table.rows[_outage_key(trf)][1] == "3wt"
+        _test_outage_rows_equal(
+            vmodf,
+            restored,
+            NetworkModification(vmodf, trf),
+            NetworkModification(table, _outage_key(trf)...),
+        )
+        nr = PNM.get_network_reduction_data(vmodf)
+        chain = [
+            line for line in PSY.get_components(PSY.Line, sys) if
+            haskey(nr.reverse_series_branch_map, line)
+        ]
+        @test length(chain) == 2
+        for branch in chain
+            @test !haskey(table.rows, _outage_key(branch))
+        end
+    end
+
+    @testset "multi-branch outage" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "test_RTS_GMLC_sys")
+        reds = NetworkReduction[RadialReduction(), DegreeTwoReduction()]
+        vmodf = VirtualMODF(sys; network_reductions = reds)
+        restored, table = _outage_roundtrip(vmodf, sys)
+        nr = PNM.get_network_reduction_data(vmodf)
+        by_arc = Dict{Tuple{Int, Int}, Vector{PSY.ACTransmission}}()
+        for (branch, arc) in nr.reverse_series_branch_map
+            push!(get!(by_arc, arc, PSY.ACTransmission[]), branch)
+        end
+        chain = first(v for v in values(by_arc) if length(v) >= 2)
+        direct = first(keys(nr.reverse_direct_branch_map))
+        for pair in (chain[1:2], [chain[1], direct])
+            sys_outage = _add_outage!(sys, pair...)
+            oracle = NetworkModification(vmodf, sys, sys_outage)
+            keys_ = [_outage_key(b) for b in pair]
+            actual = NetworkModification(table, keys_)
+            @test length(actual.arc_modifications) == length(oracle.arc_modifications)
+            _test_outage_rows_equal(vmodf, restored, oracle, actual)
+        end
+        @test length(
+            NetworkModification(
+                table,
+                [_outage_key(b) for b in chain[1:2]],
+            ).arc_modifications,
+        ) ==
+              1
+    end
+
+    @testset "registered outages round trip" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+        lines = collect(PSY.get_components(PSY.Line, sys))
+        _add_outage!(sys, lines[1])
+        _add_outage!(sys, lines[2])
+        vmodf = VirtualMODF(sys)
+        path = joinpath(mktempdir(), "registered.h5")
+        to_hdf5(vmodf, path, sys)
+        restored = from_hdf5(VirtualMODF, path)
+        original = PNM.get_registered_contingencies(vmodf)
+        copies = PNM.get_registered_contingencies(restored)
+        @test length(original) == 2
+        @test sort(collect(keys(copies))) == sort(collect(keys(original)))
+        for (id, spec) in original
+            @test copies[id].modification.label == spec.modification.label
+            @test copies[id].modification.is_islanding == spec.modification.is_islanding
+            for monitored in 1:length(PNM.get_arc_axis(vmodf))
+                @test isapprox(
+                    collect(vmodf[monitored, spec]),
+                    collect(restored[monitored, copies[id]]);
+                    atol = 1e-9,
+                )
+            end
+        end
+        no_sys = joinpath(mktempdir(), "plain.h5")
+        to_hdf5(vmodf, no_sys)
+        @test isempty(PNM.get_registered_contingencies(from_hdf5(VirtualMODF, no_sys)))
+    end
+
+    @testset "phase shifter outage" begin
+        sys = _mk_line_pst_parallel_system()
+        vmodf = VirtualMODF(sys)
+        restored, table = _outage_roundtrip(vmodf, sys)
+        pst = PSY.get_component(PSY.TwoWindingTransformer, sys, "PST")
+        key = _outage_key(pst)
+        @test any(!iszero, table.delta_shift[table.rows[key][3]])
+        _test_outage_rows_equal(
+            vmodf,
+            restored,
+            NetworkModification(vmodf, pst),
+            NetworkModification(table, key...),
+        )
+    end
+
+    @testset "file without system" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+        _, _, path = _roundtrip_ptdf(sys)
+        @test_throws ErrorException from_hdf5(BranchOutageTable, path)
+    end
+end

@@ -37,20 +37,44 @@ Root attributes:
 
 Groups and datasets:
 
-| Name                                 | Type            | Meaning                                                                                     |
-|:------------------------------------ |:--------------- |:------------------------------------------------------------------------------------------- |
-| `BA`                                 | group           | BA matrix in CSC form: attributes `m`, `n`; datasets `colptr`, `rowval`, `nzval` (Float64). |
-| `A`                                  | group           | Incidence matrix in CSC form: same layout, `nzval` is Int8.                                 |
-| `bus_axis`                           | Vector{Int}     | Bus numbers of the matrix columns.                                                          |
-| `arc_from`, `arc_to`                 | Vector{Int}     | Endpoints of each arc.                                                                      |
-| `ref_bus_positions`                  | Vector{Int}     | Sorted positions of the reference buses in `bus_axis`.                                      |
-| `arc_susceptances`                   | Vector{Float64} | Effective susceptance of each arc.                                                          |
-| `arc_live_members`                   | Vector{Int}     | Members an outage can open on each arc.                                                     |
-| `shift_injection`                    | Vector{Float64} | DC phase shift injection of each arc.                                                       |
-| `dist_slack`                         | Vector{Float64} | Distributed slack weights of a `VirtualPTDF`. Empty if unset, and for a `VirtualMODF`.      |
-| `reduced_bus_from`, `reduced_bus_to` | Vector{Int}     | The reverse bus search map as two columns.                                                  |
-| `names`                              | group           | One row per branch entry: `type`, `name`, `from`, `to`.                                     |
-| `subnetworks`                        | group           | One subgroup per reference bus, with `arc_from`, `arc_to` and `bus`.                        |
+| Name                                 | Type            | Meaning                                                                                                                                                            |
+|:------------------------------------ |:--------------- |:------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `BA`                                 | group           | BA matrix in CSC form: attributes `m`, `n`; datasets `colptr`, `rowval`, `nzval` (Float64).                                                                        |
+| `A`                                  | group           | Incidence matrix in CSC form: same layout, `nzval` is Int8.                                                                                                        |
+| `bus_axis`                           | Vector{Int}     | Bus numbers of the matrix columns.                                                                                                                                 |
+| `arc_from`, `arc_to`                 | Vector{Int}     | Endpoints of each arc.                                                                                                                                             |
+| `ref_bus_positions`                  | Vector{Int}     | Sorted positions of the reference buses in `bus_axis`.                                                                                                             |
+| `arc_susceptances`                   | Vector{Float64} | Effective susceptance of each arc.                                                                                                                                 |
+| `arc_live_members`                   | Vector{Int}     | Members an outage can open on each arc.                                                                                                                            |
+| `shift_injection`                    | Vector{Float64} | DC phase shift injection of each arc.                                                                                                                              |
+| `dist_slack`                         | Vector{Float64} | Distributed slack weights of a `VirtualPTDF`. Empty if unset, and for a `VirtualMODF`.                                                                             |
+| `reduced_bus_from`, `reduced_bus_to` | Vector{Int}     | The reverse bus search map as two columns.                                                                                                                         |
+| `names`                              | group           | One row per branch entry: `type`, `name`, `from`, `to`.                                                                                                            |
+| `subnetworks`                        | group           | One subgroup per reference bus, with `arc_from`, `arc_to` and `bus`.                                                                                               |
+| `branch_outages`                     | group           | Optional. One row per branch: `type`, `name`, `tag`, `is_islanding`, `start`, `len`. The arrays `arc_index`, `delta_b`, `delta_shift`, `opened` hold the arc rows. |
+| `outages`                            | group           | Optional, `VirtualMODF` only. One row per registered contingency: `id`, `label`, `is_islanding`, `start`, `len`, and the same four arrays.                         |
+
+## Outages by name
+
+Pass the `System` to write a table of branch outages:
+
+```julia
+to_hdf5(vmodf, "factors.h5", sys)
+
+restored = from_hdf5(VirtualMODF, "factors.h5")
+table = from_hdf5(BranchOutageTable, "factors.h5")
+mod = NetworkModification(table, "Line", "line-1")
+two = NetworkModification(table, [("Line", "line-1"), ("Line", "line-2")])
+row = restored[(1, 2), mod]
+```
+
+The table has one row for each branch whose `NetworkModification(mat, branch)` succeeds. The
+tag of a row is `direct`, `parallel`, `series` or `3wt`. A branch that a network reduction
+absorbed has no row. The writer logs one warning with the number of such branches. Two members of
+one series chain give one outage of the whole arc.
+
+For a `VirtualMODF`, the file also holds the registered contingencies. `from_hdf5(VirtualMODF, filename)` restores them. Restored modifications have no shunt modifications and no Ybus deltas,
+so they serve the DC row kernels only.
 
 ## Limits of a restored matrix
 
