@@ -39,6 +39,8 @@ function _test_same_core(a, b)
     @test PNM.get_name_to_arc_maps(PNM.get_branch_catalog(PNM.get_core(a))) ==
           PNM.get_name_to_arc_maps(PNM.get_branch_catalog(PNM.get_core(b)))
     @test PNM.get_core(a).arc_live_members == PNM.get_core(b).arc_live_members
+    @test PNM.get_core(a).BA == PNM.get_core(b).BA
+    @test PNM.get_core(a).A == PNM.get_core(b).A
     return
 end
 

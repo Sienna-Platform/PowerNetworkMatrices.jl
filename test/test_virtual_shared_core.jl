@@ -193,6 +193,13 @@ end
             Set([size(core.BA, 1) + 1]),
             live,
         )
+        b = core.arc_susceptances .* core.arc_susceptance_signs
+        from_b = PNM.VirtualFactorCore(b, ref, core.axes, core.subnetwork_axes, live, cat)
+        @test from_b.BA == core.BA
+        @test from_b.A == core.A
+        @test_throws ErrorException PNM.VirtualFactorCore(
+            b[1:(end - 1)], ref, core.axes, core.subnetwork_axes, live, cat,
+        )
         cut = PNM.VirtualFactorCore(
             core.BA, core.A, ref, core.axes, core.subnetwork_axes, live, cat;
             tol = 1e-9,
