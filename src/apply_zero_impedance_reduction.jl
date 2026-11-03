@@ -108,6 +108,10 @@ function _zero_impedance_merges(
 )
     nr = NetworkReductionData()
     user_irreducible = get_user_irreducible_buses(get_reductions(nrd))
+    hvdc_terminals = [
+        (PSY.get_number(PSY.get_from(arc)), PSY.get_number(PSY.get_to(arc))) for
+        arc in PSY.get_arc.(PSY.get_components(PSY.TwoTerminalHVDC, sys))
+    ]
     bus_type_rank = Dict{Int, Int}(
         PSY.get_number(b) => _bus_type_rank(PSY.get_bustype(b)) for
         b in PSY.get_components(PSY.ACBus, sys)
@@ -137,6 +141,9 @@ function _zero_impedance_merges(
             elseif from_irred && to_irred
                 @warn "Zero-impedance branch between two irreducible buses $from_no and $to_no; skipping merge."
                 continue
+            elseif _joins_hvdc_terminals(nr, hvdc_terminals, from_no, to_no)
+                @warn "Zero-impedance branch $arc_key joins both terminals of a two-terminal HVDC line; skipping merge."
+                continue
             elseif to_irred ||
                    (!from_irred && bus_type_rank[to_no] > bus_type_rank[from_no])
                 # Flip so the irreducible bus, else the stronger bus type, survives. Both
@@ -155,6 +162,24 @@ function _zero_impedance_merges(
     end
     nr.merged_bus_pairs = copy(nr.reverse_bus_search_map)
     return nr
+end
+
+# A merge must not collapse both terminals of a two-terminal HVDC line onto one bus:
+# the HVDC line becomes a self-loop and the power flow Jacobian assumes distinct ends.
+function _joins_hvdc_terminals(
+    nr::NetworkReductionData,
+    hvdc_terminals::Vector{Tuple{Int, Int}},
+    a::Int,
+    b::Int,
+)
+    for (from_no, to_no) in hvdc_terminals
+        from_root = get(nr.reverse_bus_search_map, from_no, from_no)
+        to_root = get(nr.reverse_bus_search_map, to_no, to_no)
+        if (from_root == a && to_root == b) || (from_root == b && to_root == a)
+            return true
+        end
+    end
+    return false
 end
 
 # Merged endpoints get only the shunt part, summed in Float64: a large series admittance
