@@ -131,8 +131,6 @@ Base.getindex(A::PowerNetworkMatrix, idx::CartesianIndex) = A.data[idx]
 Base.setindex!(A::PowerNetworkMatrix, v, idx...) = A.data[to_index(A, idx...)...] = v
 Base.setindex!(A::PowerNetworkMatrix, v, idx::CartesianIndex) = A.data[idx] = v
 
-Base.IndexStyle(::Type{PowerNetworkMatrix}) = IndexAnyCartesian()
-
 # Keys #######################################################################
 
 """
