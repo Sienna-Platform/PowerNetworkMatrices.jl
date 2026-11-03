@@ -1278,9 +1278,7 @@ end
     # must equal a system where bus 3's non-ZI branch is rewired onto bus 2 and the ZI line
     # removed. The ZI branch's huge self/mutual entries cancel exactly in the row/column sum,
     # so the survivor's admittances are those of the rewired network.
-    # At |y| = 1e6 a Float32 stamp of the series admittance would round the survivor's diagonal
-    # by ~0.06, far outside rtol = 1e-6.
-    function _mk_sys(; with_zi::Bool, x_zi::Float64)
+    function _mk_sys(; with_zi::Bool, x_zi::Float64 = 5e-5)
         if with_zi
             n = 3
         else
@@ -1303,13 +1301,13 @@ end
         return sys
     end
 
+    oracle = Ybus(_mk_sys(; with_zi = false))
     for (x_zi, rtol) in ((5e-5, sqrt(eps(real(YBUS_ELTYPE)))), (1e-6, 1e-6))
         yb = Ybus(_mk_sys(; with_zi = true, x_zi = x_zi))
         @test get(get_network_reduction_data(yb).reverse_bus_search_map, 3, nothing) == 2
         @test 3 ∉ PNM.get_bus_axis(yb)
         @test length(yb.subnetwork_axes) == 1
 
-        oracle = Ybus(_mk_sys(; with_zi = false, x_zi = x_zi))
         @test Set(PNM.get_bus_axis(yb)) == Set(PNM.get_bus_axis(oracle))
         lk_y, lk_o = yb.lookup[1], oracle.lookup[1]
         for a in (1, 2), b in (1, 2)

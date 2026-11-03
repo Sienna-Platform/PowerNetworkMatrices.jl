@@ -171,7 +171,6 @@ function _stamp_merged_branches_as_shunts!(
     nr::NetworkReductionData,
     merges::NetworkReductionData,
 )
-    isempty(merges) && return
     _foreach_ybus_branch(branches) do br, ix
         from_root = get_mapped_bus_number(merges, bus_ax[fb[ix]])
         if from_root == get_mapped_bus_number(merges, bus_ax[tb[ix]])
