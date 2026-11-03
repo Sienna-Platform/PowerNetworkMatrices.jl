@@ -30,7 +30,11 @@ struct AutoTolerance{D <: Union{Float64, Symbol}}
 end
 
 # Validate via dispatch (no `isa`): a Symbol must be exactly :auto.
-_validate_data_precision(dp::Float64) = dp
+function _validate_data_precision(dp::Float64)
+    (isfinite(dp) && dp > 0) ||
+        throw(ArgumentError("data_precision must be finite and positive, got $dp"))
+    return dp
+end
 function _validate_data_precision(dp::Symbol)
     dp === :auto || throw(ArgumentError("data_precision Symbol must be :auto"))
     return dp
@@ -42,6 +46,10 @@ function AutoTolerance(;
     quantile::Float64 = 0.5,
 )
     _validate_data_precision(data_precision)
+    (isfinite(safety) && safety > 0) ||
+        throw(ArgumentError("safety must be finite and positive, got $safety"))
+    (0 <= quantile <= 1) ||
+        throw(ArgumentError("quantile must lie in [0, 1], got $quantile"))
     return AutoTolerance(data_precision, safety, quantile)
 end
 

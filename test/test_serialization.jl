@@ -214,6 +214,28 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         end
         @test_throws ErrorException from_hdf5(VirtualPTDF, path)
         @test_throws ErrorException from_hdf5(VirtualMODF, path)
+
+        # Each case rewrites the file, corrupts one entry and expects an error naming it.
+        function _replace!(g, name, value)
+            PNM.HDF5.delete_object(g, name)
+            g[name] = value
+            return
+        end
+        corrupt = (
+            f -> _replace!(f, "bus_axis", [1.0]),
+            f -> _replace!(f, "arc_to", Int[]),
+            f -> _replace!(
+                f["names"],
+                "type",
+                fill("eval", length(read(f["names"]["name"]))),
+            ),
+            f -> _replace!(f["subnetworks"][first(keys(f["subnetworks"]))], "ref", "1"),
+        )
+        for mutate in corrupt
+            to_hdf5(vptdf, path; force = true)
+            PNM.HDF5.h5open(mutate, path, "r+")
+            @test_throws ErrorException from_hdf5(VirtualPTDF, path)
+        end
     end
 end
 

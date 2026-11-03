@@ -14,6 +14,10 @@ const NO_OP_BUILD_ATOL = 1e-10
     @test AutoTolerance(; data_precision = :auto).data_precision === :auto
     @test AutoTolerance(; safety = 5.0).safety == 5.0
     @test_throws ArgumentError AutoTolerance(; data_precision = :nonsense)
+    @test_throws ArgumentError AutoTolerance(; data_precision = NaN)
+    @test_throws ArgumentError AutoTolerance(; data_precision = -1e-3)
+    @test_throws ArgumentError AutoTolerance(; safety = 0.0)
+    @test_throws ArgumentError AutoTolerance(; quantile = 1.5)
     # The module-wide default is an auto-discovering AutoTolerance.
     @test PNM.DEFAULT_AUTO_TOLERANCE isa AutoTolerance
     @test PNM.DEFAULT_AUTO_TOLERANCE.data_precision === :auto
