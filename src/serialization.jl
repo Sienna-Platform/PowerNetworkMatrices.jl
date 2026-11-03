@@ -32,29 +32,21 @@ function _typed(x, ::Type{T}, name::String) where {T}
     return error("Factor file entry $name holds a $(typeof(x)); expected $T.")
 end
 
-function _read(g::Union{HDF5.File, HDF5.Group}, name::String, ::Type{T}) where {T}
+function _read(
+    g::Union{HDF5.File, HDF5.Group, HDF5.Attributes},
+    name::String,
+    ::Type{T},
+) where {T}
     haskey(g, name) || error("Factor file has no entry $name.")
     return _typed(read(g[name]), T, name)
 end
 
-function _read_attr(a::HDF5.Attributes, name::String, ::Type{T}) where {T}
-    haskey(a, name) || error("Factor file has no attribute $name.")
-    return _typed(read(a[name]), T, name)
-end
-
-function _check_column_length(table::String, n::Int, column::Pair{String, <:AbstractVector})
-    length(last(column)) == n || error(
-        "Factor file table $table: column $(first(column)) has length " *
-        "$(length(last(column))); expected $n.",
-    )
-    return
-end
-
 # Columns of one table must agree in length, or `zip` would drop rows in silence.
 function _check_same_length(table::String, columns::Pair{String, <:AbstractVector}...)
-    n = length(last(first(columns)))
-    map(column -> _check_column_length(table, n, column), columns)
-    return n
+    lengths = map(column -> first(column) => length(last(column)), columns)
+    allequal(map(last, lengths)) ||
+        error("Factor file table $table has columns of unequal length: $lengths.")
+    return
 end
 
 function _write_tol!(a::HDF5.Attributes, tol::Float64)
@@ -80,20 +72,20 @@ end
 
 function _read_data_precision(a::HDF5.Attributes)
     if haskey(a, "auto_data_precision")
-        return _read_attr(a, "auto_data_precision", Float64)
+        return _read(a, "auto_data_precision", Float64)
     end
     return :auto
 end
 
 function _read_tol(a::HDF5.Attributes)
-    kind = _read_attr(a, "tol_kind", String)
+    kind = _read(a, "tol_kind", String)
     if kind == "absolute"
-        return _read_attr(a, "tol_value", Float64)
+        return _read(a, "tol_value", Float64)
     elseif kind == "auto"
         return AutoTolerance(;
             data_precision = _read_data_precision(a),
-            safety = _read_attr(a, "auto_safety", Float64),
-            quantile = _read_attr(a, "auto_quantile", Float64),
+            safety = _read(a, "auto_safety", Float64),
+            quantile = _read(a, "auto_quantile", Float64),
         )
     end
     return error("Unknown tolerance kind \"$kind\" in factor file.")
@@ -358,26 +350,29 @@ function _read_row_arrays(g::HDF5.Group)
                 "Factor file row range $range is outside the $(length(arc_index)) arc rows.",
             )
     end
-    return (
-        ranges = ranges,
-        arc_index = arc_index,
-        delta_b = delta_b,
-        delta_shift = delta_shift,
-        opened = opened,
+    table = BranchOutageTable(
+        Dict{Tuple{String, String}, Tuple{String, Bool, UnitRange{Int}}}(),
+        arc_index,
+        delta_b,
+        delta_shift,
+        opened,
     )
+    return ranges, table
 end
 
-function _arc_modifications(
-    arc_index::Vector{Int},
-    delta_b::Vector{Float64},
-    delta_shift::Vector{Float64},
-    opened::Vector{Int},
-    range::UnitRange{Int},
-)
+function _arc_modifications(table::BranchOutageTable, range::UnitRange{Int})
     z = zero(YBUS_ELTYPE)
     return ArcModification[
-        ArcModification(arc_index[i], delta_b[i], delta_shift[i], z, z, z, z, opened[i])
-        for i in range
+        ArcModification(
+            table.arc_index[i],
+            table.delta_b[i],
+            table.delta_shift[i],
+            z,
+            z,
+            z,
+            z,
+            table.opened[i],
+        ) for i in range
     ]
 end
 
@@ -396,31 +391,23 @@ function from_hdf5(::Type{BranchOutageTable}, filename::AbstractString)
             )
         end
         g = f["branch_outages"]
-        arrays = _read_row_arrays(g)
+        ranges, table = _read_row_arrays(g)
         types = _read(g, "type", Vector{String})
         names = _read(g, "name", Vector{String})
         tags = _read(g, "tag", Vector{String})
         is_islanding = _read(g, "is_islanding", Vector{Bool})
         _check_same_length(
             "branch_outages",
-            "start" => arrays.ranges,
+            "start" => ranges,
             "type" => types,
             "name" => names,
             "tag" => tags,
             "is_islanding" => is_islanding,
         )
-        rows = Dict{Tuple{String, String}, Tuple{String, Bool, UnitRange{Int}}}()
-        for (t, n, tag, islanding, range) in
-            zip(types, names, tags, is_islanding, arrays.ranges)
-            rows[(t, n)] = (tag, islanding, range)
+        for (t, n, tag, islanding, range) in zip(types, names, tags, is_islanding, ranges)
+            table.rows[(t, n)] = (tag, islanding, range)
         end
-        return BranchOutageTable(
-            rows,
-            arrays.arc_index,
-            arrays.delta_b,
-            arrays.delta_shift,
-            arrays.opened,
-        )
+        return table
     end
 end
 
@@ -448,9 +435,7 @@ function NetworkModification(table::BranchOutageTable, keys::Vector{Tuple{String
         tag, is_islanding, range = table.rows[key]
         islanding |= is_islanding
         is_series = tag == "series"
-        for m in _arc_modifications(
-            table.arc_index, table.delta_b, table.delta_shift, table.opened, range,
-        )
+        for m in _arc_modifications(table, range)
             if is_series
                 if m.arc_index in seen_series
                     continue
@@ -478,21 +463,19 @@ end
 
 function _read_registered_outages!(f::HDF5.File, cache::Dict{Int, ContingencySpec})
     g = f["outages"]
-    arrays = _read_row_arrays(g)
+    ranges, table = _read_row_arrays(g)
     ids = _read(g, "id", Vector{Int})
     labels = _read(g, "label", Vector{String})
     is_islanding = _read(g, "is_islanding", Vector{Bool})
     _check_same_length(
         "outages",
-        "start" => arrays.ranges,
+        "start" => ranges,
         "id" => ids,
         "label" => labels,
         "is_islanding" => is_islanding,
     )
-    for (id, label, islanding, range) in zip(ids, labels, is_islanding, arrays.ranges)
-        mods = _arc_modifications(
-            arrays.arc_index, arrays.delta_b, arrays.delta_shift, arrays.opened, range,
-        )
+    for (id, label, islanding, range) in zip(ids, labels, is_islanding, ranges)
+        mods = _arc_modifications(table, range)
         cache[id] = ContingencySpec(
             id,
             NetworkModification(label, mods, ShuntModification[], islanding),
@@ -503,7 +486,7 @@ end
 
 function _read_factor_core(f::HDF5.File; linear_solver::String)
     a = HDF5.attributes(f)
-    version = _read_attr(a, "format_version", Int)
+    version = _read(a, "format_version", Int)
     if version != FACTOR_FILE_FORMAT_VERSION
         error(
             "Unsupported factor file format version $version; " *
@@ -566,7 +549,7 @@ function _read_factor_core(f::HDF5.File; linear_solver::String)
         BranchCatalog(nrd, name_to_arc);
         linear_solver = linear_solver,
         tol = _read_tol(a),
-        system_uuid = _restore_system_uuid(_read_attr(a, "system_uuid", String)),
+        system_uuid = _restore_system_uuid(_read(a, "system_uuid", String)),
     )
 end
 
