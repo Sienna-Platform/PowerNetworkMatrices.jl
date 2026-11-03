@@ -26,18 +26,22 @@ Cached rows are not stored.
 
 Root attributes:
 
-| Name                  | Type    | Meaning                                                                           |
-|:--------------------- |:------- |:--------------------------------------------------------------------------------- |
-| `format_version`      | Int     | Layout version. The reader accepts 1 only.                                        |
-| `system_uuid`         | String  | UUID of the source system, empty if unknown.                                      |
-| `tol_kind`            | String  | `"absolute"` for a `Float64` `tol`, `"auto"` for an `AutoTolerance`.              |
-| `tol_value`           | Float64 | The absolute cutoff. Present when `tol_kind` is `"absolute"`.                     |
-| `auto_data_precision` | String  | `AutoTolerance` field, `"auto"` or a number. Present when `tol_kind` is `"auto"`. |
-| `auto_safety`         | Float64 | `AutoTolerance` field. Present when `tol_kind` is `"auto"`.                       |
-| `auto_quantile`       | Float64 | `AutoTolerance` field. Present when `tol_kind` is `"auto"`.                       |
+| Name                  | Type    | Meaning                                                                                                     |
+|:--------------------- |:------- |:----------------------------------------------------------------------------------------------------------- |
+| `format_version`      | Int     | Layout version. The reader accepts 1 only.                                                                  |
+| `system_uuid`         | String  | UUID of the source system, empty if unknown.                                                                |
+| `tol_kind`            | String  | `"absolute"` for a `Float64` `tol`, `"auto"` for an `AutoTolerance`.                                        |
+| `tol_value`           | Float64 | The absolute cutoff. Present when `tol_kind` is `"absolute"`.                                               |
+| `auto_data_precision` | Float64 | `AutoTolerance` field. Present when `tol_kind` is `"auto"` and the field is a number. Absent means `:auto`. |
+| `auto_safety`         | Float64 | `AutoTolerance` field. Present when `tol_kind` is `"auto"`.                                                 |
+| `auto_quantile`       | Float64 | `AutoTolerance` field. Present when `tol_kind` is `"auto"`.                                                 |
 
 The reader passes the stored `tol` to the constructor, which resolves the per-row cutoff
 from the stored arrays exactly as a build from a `System` does.
+
+The reader treats every entry as untrusted input. It checks the type of each entry and the
+length of each table column, and it throws an error that names the entry on a mismatch.
+Branch type names resolve through a fixed table of `PowerSystems` branch types.
 
 Groups and datasets:
 
@@ -52,7 +56,7 @@ Groups and datasets:
 | `dist_slack`                         | Vector{Float64} | Distributed slack weights of a `VirtualPTDF`. Empty if unset, and for a `VirtualMODF`.                                                                             |
 | `reduced_bus_from`, `reduced_bus_to` | Vector{Int}     | The reverse bus search map as two columns.                                                                                                                         |
 | `names`                              | group           | One row per branch entry: `type`, `name`, `from`, `to`.                                                                                                            |
-| `subnetworks`                        | group           | One subgroup per reference bus, with `arc_from`, `arc_to` and `bus`.                                                                                               |
+| `subnetworks`                        | group           | One subgroup per reference bus, with `ref`, `arc_from`, `arc_to` and `bus`.                                                                                        |
 | `branch_outages`                     | group           | Optional. One row per branch: `type`, `name`, `tag`, `is_islanding`, `start`, `len`. The arrays `arc_index`, `delta_b`, `delta_shift`, `opened` hold the arc rows. |
 | `outages`                            | group           | Optional, `VirtualMODF` only. One row per registered contingency: `id`, `label`, `is_islanding`, `start`, `len`, and the same four arrays.                         |
 

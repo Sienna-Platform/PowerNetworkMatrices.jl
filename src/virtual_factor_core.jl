@@ -309,6 +309,10 @@ function VirtualFactorCore(
     vals = Vector{Float64}(undef, 2 * n_arc)
     signs = Vector{Int8}(undef, 2 * n_arc)
     for (ix, arc) in enumerate(arc_ax)
+        (haskey(bus_position, arc[1]) && haskey(bus_position, arc[2])) ||
+            error("Arc $arc has an endpoint outside the bus axis.")
+        isfinite(arc_susceptances[ix]) ||
+            error("Non-finite DC susceptance $(arc_susceptances[ix]) on arc $arc.")
         rows[2 * ix - 1] = bus_position[arc[1]]
         rows[2 * ix] = bus_position[arc[2]]
         cols[2 * ix - 1] = ix
