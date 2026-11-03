@@ -102,3 +102,27 @@ end
 # assembly reads every value with an explicit unit argument (`PSY.get_r(br, u"SU")`), so the
 # guarantee it protected — Ybus entries are in system base — is enforced at each call site
 # instead, and `set_units_base_system!` no longer exists in PSY.
+
+@testset "InterruptibleStandardLoad constant-Z enters the Ybus diagonal" begin
+    sys, bs = _mk_bus_system(2)
+    arc = Arc(; from = bs[1], to = bs[2])
+    add_component!(sys, arc)
+    _add_test_line!(sys, "L12", arc, 0.01, 0.1)
+    add_component!(
+        sys,
+        PSY.InterruptibleStandardLoad(;
+            name = "load",
+            available = true,
+            bus = bs[2],
+            base_power = 100.0,
+            operation_cost = PSY.LoadCost(nothing),
+            impedance_active_power = 0.5,
+            impedance_reactive_power = 0.2,
+            input_basis = u"CU",
+        ),
+    )
+    y_z = Ybus(sys)
+    y_no_z = Ybus(sys; include_constant_impedance_loads = false)
+    lk = y_z.lookup[1]
+    @test y_z.data[lk[2], lk[2]] - y_no_z.data[lk[2], lk[2]] ≈ complex(0.5f0, -0.2f0)
+end

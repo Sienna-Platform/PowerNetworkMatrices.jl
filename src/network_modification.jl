@@ -514,13 +514,11 @@ function _classify_outage_component!(
     ::Dict,
     ::Vector{Float64},
     bus_lookup::Dict{Int, Int},
-    component::PSY.StandardLoad,
+    component::Union{PSY.StandardLoad, PSY.InterruptibleStandardLoad},
     acc::_OutageAccumulator,
 )
     bus_ix = get_bus_index(component, bus_lookup, nr)
-    Y =
-        PSY.get_impedance_active_power(component, u"SU") -
-        im * PSY.get_impedance_reactive_power(component, u"SU")
+    Y = _constant_impedance_admittance(component)
     push!(acc.shunt_mods, ShuntModification(bus_ix, YBUS_ELTYPE(-Y)))
     push!(acc.component_names, PSY.get_name(component))
     return
