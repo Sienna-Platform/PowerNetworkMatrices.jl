@@ -76,10 +76,23 @@ function get_series_susceptance(b::PSY.ACTransmission, units)
     return v
 end
 
+# Generic helper methods for a branch's series r and x.
+_branch_r(b::PSY.ACTransmission, units) = PSY.get_r(b, units)
+_branch_x(b::PSY.ACTransmission, units) = PSY.get_x(b, units)
+
+# Helper method for whether a series compensator is bypassed.
+_is_bypassed(b::PSY.SeriesCompensator) =
+    PSY.get_control_mode(b) == PSY.SeriesCompensatorControlMode.BYPASSED
+
+# Helper methods for a series compensator's series r and x. A bypassed compensator keeps
+# its stored impedance but reads as a zero-impedance tie.
+_branch_r(b::PSY.SeriesCompensator, units) = _is_bypassed(b) ? 0.0 : PSY.get_r(b, units)
+_branch_x(b::PSY.SeriesCompensator, units) = _is_bypassed(b) ? 0.0 : PSY.get_x(b, units)
+
 # The single home for the `1/x` arithmetic. Returns `Inf` when `r == x == 0`:
 # `get_series_susceptance` rejects that, `_finite_series_susceptance` substitutes.
 _series_susceptance_raw(b::PSY.ACTransmission, units) =
-    1 / PSY.get_x(b, units)
+    1 / _branch_x(b, units)
 # Detached Ward equivalents can't resolve system base; their r/x are already system-base,
 # which `u"CU"` returns unchanged.
 _series_susceptance_raw(b::PSY.GenericArcImpedance, _units) =
@@ -119,6 +132,7 @@ function _get_shunts(br::PSY.ACTransmission)
 end
 
 _get_shunts(::PSY.DiscreteControlledACBranch) = (zero(ComplexF64), zero(ComplexF64))
+_get_shunts(::PSY.SeriesCompensator) = (zero(ComplexF64), zero(ComplexF64))
 
 # Kept out of line so the `@warn` body does not count against the caller's inlining budget.
 # ZIR merges a zero-impedance line's endpoints but excludes transformer arcs, so the
@@ -181,8 +195,8 @@ The from/to shunts carry the real `PSY.get_g` conductance. A caller wanting Powe
     b::PSY.ACTransmission;
     min_x_eps::Float64 = ZERO_IMPEDANCE_X_EPSILON,
 )
-    r = PSY.get_r(b, u"SU")
-    x = PSY.get_x(b, u"SU")
+    r = _branch_r(b, u"SU")
+    x = _branch_x(b, u"SU")
     x = _retained_x(b, r, x, min_x_eps)
     y_fr, y_to = _get_shunts(b)
     return EquivalentBranch(

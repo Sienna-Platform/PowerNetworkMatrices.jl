@@ -106,7 +106,7 @@ get_name(bs::BranchesSeries) = "series_$(bs.arc_key[1])_$(bs.arc_key[2])"
 # Series segments add impedance. Reading a leaf's `tap * x` directly lets a zero-impedance
 # segment contribute exactly 0.0, with no transient `Inf` for the sum to absorb.
 _series_reactance(b::PSY.ACTransmission, units) =
-    PSY.get_x(b, units)
+    _branch_x(b, units)
 _series_reactance(t::PSY.TwoWindingTransformer, units) =
     _series_reactance(PSY.get_circuit(t), units)
 _series_reactance(w::ThreeWindingTransformerCircuit, units) =

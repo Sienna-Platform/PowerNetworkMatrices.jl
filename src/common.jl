@@ -642,7 +642,7 @@ end
 # tap, no α) -- the loss-estimate equivalent that exists even when a lossy shifted group has
 # no single-π representation. Orientation-symmetric.
 function _dc_series_impedance(br::PSY.ACTransmission)
-    return complex(PSY.get_r(br, u"SU"), PSY.get_x(br, u"SU"))
+    return complex(_branch_r(br, u"SU"), _branch_x(br, u"SU"))
 end
 
 function _dc_series_impedance(t::PSY.TwoWindingTransformer)

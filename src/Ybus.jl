@@ -501,7 +501,7 @@ function _minimum_retained_impedance(nr::NetworkReductionData)
 end
 
 """Handles ybus entries for most 2-node AC branches. The types handled here are:
-`Line`, `DiscreteControlledACBranch`, and `TwoWindingTransformer`.
+`Line`, `DiscreteControlledACBranch`, `SeriesCompensator`, and `TwoWindingTransformer`.
 """
 function _ybus!(
     y11::Vector{YBUS_ELTYPE},
