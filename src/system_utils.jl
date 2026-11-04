@@ -14,19 +14,28 @@ function validate_connectivity(sys::PSY.System)
     return length(sbn) == 1
 end
 
-function _find_subnetworks(sys::PSY.System)
+function _find_subnetworks(sys::PSY.System; include_reduced_buses::Bool = false)
     Ymatrix = Ybus(sys)
     @info "Validating connectivity with depth first search (network traversal)"
-    subnetworks = find_subnetworks(Ymatrix)
+    subnetworks = find_subnetworks(Ymatrix; include_reduced_buses = include_reduced_buses)
     return subnetworks, get_ref_bus(Ymatrix)
 end
 
 """
+    find_subnetworks(sys::PSY.System; include_reduced_buses::Bool = false) -> Dict{Int, Set{Int}}
+
 Finds the subnetworks in a system using Depth First Search (DFS). Returns a dictionary keyed
-by the reference bus of the subnetworks if they exist
+by the reference bus of the subnetworks if they exist.
+
+The default `Ybus` applies the zero-impedance branch reduction, so by default each subnetwork
+contains only the buses that remain after that reduction.
+
+# Keyword Arguments
+- `include_reduced_buses::Bool = false`: If `true`, each subnetwork also contains the buses that
+  the zero-impedance branch reduction merged into its retained buses.
 """
-function find_subnetworks(sys::PSY.System)
-    sbn, ref_buses = _find_subnetworks(sys)
+function find_subnetworks(sys::PSY.System; include_reduced_buses::Bool = false)
+    sbn, ref_buses = _find_subnetworks(sys; include_reduced_buses = include_reduced_buses)
     ref_angles = Dict{Int, Float64}(
         PSY.get_number(b) => PSY.get_angle(b) for
         b in PSY.get_components(PSY.ACBus, sys) if

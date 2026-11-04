@@ -38,3 +38,23 @@ function assign_reference_buses!(
     end
     return bus_groups
 end
+
+"""
+Adds to each subnetwork the buses that the network reductions in `nr` merged into its retained
+buses. Changes `subnetworks` in place and returns it.
+"""
+function _expand_reduced_buses!(
+    subnetworks::Dict{Int, Set{Int}},
+    nr::NetworkReductionData,
+)
+    bus_reduction_map = get_bus_reduction_map(nr)
+    reduced = Int[]
+    for buses in values(subnetworks)
+        empty!(reduced)
+        for bus in buses
+            append!(reduced, bus_reduction_map[bus])
+        end
+        union!(buses, reduced)
+    end
+    return subnetworks
+end

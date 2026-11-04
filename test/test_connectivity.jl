@@ -36,6 +36,26 @@ end
     @test issubset([4, 9], keys(subnetworks_sys))
 end
 
+@testset "find_subnetworks include_reduced_buses" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    line = PSY.get_component(Line, sys, "Line10")
+    PSY.set_r!(line, 0.0u"SU")
+    PSY.set_x!(line, 0.0u"SU")
+    all_buses = Set(PSY.get_bus_numbers(sys))
+    ybus = Ybus(sys)
+    reduced_buses = Set(PNM.get_bus_axis(ybus))
+    @test length(reduced_buses) == length(all_buses) - 1
+
+    for M in (ybus, AdjacencyMatrix(ybus))
+        @test only(values(find_subnetworks(M))) == reduced_buses
+        @test only(values(find_subnetworks(M; include_reduced_buses = true))) == all_buses
+    end
+    @test only(values(find_subnetworks(sys))) == reduced_buses
+    full = find_subnetworks(sys; include_reduced_buses = true)
+    @test only(values(full)) == all_buses
+    @test keys(full) == keys(find_subnetworks(sys))
+end
+
 @testset "Test find subnetworks" begin
     n = 11
     buses = 100 .+ collect(1:n)

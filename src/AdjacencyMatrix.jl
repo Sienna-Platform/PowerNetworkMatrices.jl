@@ -153,10 +153,20 @@ function validate_connectivity(M::AdjacencyMatrix)
 end
 
 """
+    find_subnetworks(M::AdjacencyMatrix; include_reduced_buses::Bool = false) -> Dict{Int, Set{Int}}
+
 Evaluates subnetworks by looking for the subsets of buses connected each other,
 but not connected with buses of other subsets.
+
+# Keyword Arguments
+- `include_reduced_buses::Bool = false`: If `true`, each subnetwork also contains the buses that
+  the network reductions merged into its retained buses. If `false`, each subnetwork contains
+  only the buses on the reduced bus axis.
 """
-function find_subnetworks(M::AdjacencyMatrix)
-    bus_numbers = get_bus_axis(M)
-    return find_subnetworks(M.data, bus_numbers)
+function find_subnetworks(M::AdjacencyMatrix; include_reduced_buses::Bool = false)
+    subnetworks = find_subnetworks(M.data, get_bus_axis(M))
+    if include_reduced_buses
+        _expand_reduced_buses!(subnetworks, get_network_reduction_data(M))
+    end
+    return subnetworks
 end
