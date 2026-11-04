@@ -304,6 +304,27 @@ end
     @test length(PNM.get_bus_axis(ybus)) == 14 - 2
 end
 
+@testset "ZeroImpedanceBranchReduction: zero-impedance path parallel to HVDC errors" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    _set_zero_impedance!(get_component(Line, sys, "Line3"))  # bus 2 → 3
+    _set_zero_impedance!(get_component(Line, sys, "Line6"))  # bus 3 → 4
+    hvdc = TwoTerminalGenericHVDCLine(; input_basis = u"CU",
+        name = "HVDC_4_2",
+        available = true,
+        active_power_flow = 0.0,
+        arc = Arc(;
+            from = get_component(ACBus, sys, "Bus 4"),
+            to = get_component(ACBus, sys, "Bus 2"),
+        ),
+        rating = 100.0,
+        reactive_power_limits_from = (min = -100.0, max = 100.0),
+        reactive_power_limits_to = (min = -100.0, max = 100.0),
+    )
+    add_component!(sys, hvdc)
+
+    @test_throws IS.DataFormatError Ybus(sys)
+end
+
 @testset "ZeroImpedanceBranchReduction: transformer arcs are excluded" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     t = get_component(TwoWindingTransformer, sys, "Trans4")  # from=7, to=8
