@@ -43,7 +43,7 @@ end
     ShuntModification
 
 A diagonal admittance change on a single bus (shunt outage or modification).
-Used to track shunt component outages (FixedAdmittance, SwitchedAdmittance, StandardLoad)
+Used to track shunt component outages (FixedAdmittance, SwitchedAdmittance, StandardLoad, InterruptibleStandardLoad)
 that affect the Ybus but not DC sensitivity factors.
 
 # Fields

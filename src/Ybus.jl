@@ -584,18 +584,23 @@ function _ybus!(
     return
 end
 
+function _constant_impedance_admittance(
+    load::Union{PSY.StandardLoad, PSY.InterruptibleStandardLoad},
+)
+    return PSY.get_impedance_active_power(load, u"SU") -
+           im * PSY.get_impedance_reactive_power(load, u"SU")
+end
+
 function _ybus!(
     ysh::Vector{YBUS_ELTYPE},
-    fa::PSY.StandardLoad,
+    fa::Union{PSY.StandardLoad, PSY.InterruptibleStandardLoad},
     num_bus::Dict{Int, Int},
     fa_ix::Int,
     sb::Vector{Int},
     nr::NetworkReductionData,
 )
     bus_no = get_bus_index(fa, num_bus, nr)
-    Y =
-        PSY.get_impedance_active_power(fa, u"SU") -
-        im * PSY.get_impedance_reactive_power(fa, u"SU")
+    Y = _constant_impedance_admittance(fa)
     if !isfinite(Y)
         error("Data in $(PSY.get_name(fa)) is incorrect. Y = $(Y)")
     end
@@ -611,7 +616,7 @@ function _buildybus!(
     num_bus::Dict{Int, Int},
     fixed_admittances::Vector{PSY.FixedAdmittance},
     switched_admittances::Vector{PSY.SwitchedAdmittance},
-    standard_loads::Vector{PSY.StandardLoad},
+    standard_loads::Vector{Union{PSY.StandardLoad, PSY.InterruptibleStandardLoad}},
 )
     branch_entries_transformer_3w = 0
     for br in transformer_3w
@@ -829,9 +834,13 @@ function _build_ybus(
     switched_admittances =
         _get_filtered_components(PSY.SwitchedAdmittance, sys, _is_available_shunt)
     standard_loads = if include_constant_impedance_loads
-        _get_filtered_components(PSY.StandardLoad, sys, _is_available_shunt)
+        _get_filtered_components(
+            Union{PSY.StandardLoad, PSY.InterruptibleStandardLoad},
+            sys,
+            _is_available_shunt,
+        )
     else
-        PSY.StandardLoad[]
+        Union{PSY.StandardLoad, PSY.InterruptibleStandardLoad}[]
     end
     y11, y12, y21, y22, ysh, fb, tb, sb = _buildybus!(
         nr,
@@ -841,6 +850,19 @@ function _build_ybus(
         fixed_admittances,
         switched_admittances,
         standard_loads,
+    )
+    zero_impedance_merges = _zero_impedance_merges(nr, sys, zero_impedance_reduction)
+    _stamp_merged_branches_as_shunts!(
+        y11,
+        y12,
+        y21,
+        y22,
+        branches,
+        fb,
+        tb,
+        bus_ax,
+        nr,
+        zero_impedance_merges,
     )
     # The branch maps are final here; the arc-admittance matrices below share this index.
     catalog = BranchCatalog(nr)
@@ -914,7 +936,8 @@ function _build_ybus(
     end
     if length(bus_lookup) > 1
         subnetworks = assign_reference_buses!(
-            find_subnetworks(ybus, bus_ax),
+            # From `adj`: merged zero-impedance branches have no off-diagonal in `ybus`.
+            find_subnetworks(adj, bus_ax),
             ref_bus_numbers,
             ref_bus_angles,
         )
@@ -937,7 +960,9 @@ function _build_ybus(
         arc_admittance_from_to,
         arc_admittance_to_from,
     )
-    ybus = build_reduced_ybus(ybus, sys, zero_impedance_reduction)
+    if !isempty(zero_impedance_merges)
+        ybus = _apply_reduction(ybus, zero_impedance_merges)
+    end
     for reduction in network_reductions
         ybus = build_reduced_ybus(ybus, sys, reduction)
     end

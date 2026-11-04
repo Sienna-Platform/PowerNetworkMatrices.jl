@@ -92,9 +92,21 @@ _bus_type_rank(bustype::Union{Nothing, ACBusTypes.Value}) =
         1
     end
 
-function get_reduction(ybus::Ybus, sys::PSY.System, reduction::ZeroImpedanceBranchReduction)
+function get_reduction(
+    ybus::Ybus,
+    sys::PSY.System,
+    reduction::ZeroImpedanceBranchReduction,
+)
+    return _zero_impedance_merges(get_network_reduction_data(ybus), sys, reduction)
+end
+
+# Reads no Ybus values, so assembly can call it before stamping.
+function _zero_impedance_merges(
+    nrd::NetworkReductionData,
+    sys::PSY.System,
+    reduction::ZeroImpedanceBranchReduction,
+)
     nr = NetworkReductionData()
-    nrd = get_network_reduction_data(ybus)
     user_irreducible = get_user_irreducible_buses(get_reductions(nrd))
     bus_type_rank = Dict{Int, Int}(
         PSY.get_number(b) => _bus_type_rank(PSY.get_bustype(b)) for
@@ -143,4 +155,31 @@ function get_reduction(ybus::Ybus, sys::PSY.System, reduction::ZeroImpedanceBran
     end
     nr.merged_bus_pairs = copy(nr.reverse_bus_search_map)
     return nr
+end
+
+# Merged endpoints get only the shunt part, summed in Float64: a large series admittance
+# stamped in Float32 would round the merged diagonal. 3W windings are never merged.
+function _stamp_merged_branches_as_shunts!(
+    y11::Vector{YBUS_ELTYPE},
+    y12::Vector{YBUS_ELTYPE},
+    y21::Vector{YBUS_ELTYPE},
+    y22::Vector{YBUS_ELTYPE},
+    branches::YbusACBranches,
+    fb::Vector{Int},
+    tb::Vector{Int},
+    bus_ax::Vector{Int},
+    nr::NetworkReductionData,
+    merges::NetworkReductionData,
+)
+    _foreach_ybus_branch(branches) do br, ix
+        from_root = get_mapped_bus_number(merges, bus_ax[fb[ix]])
+        if from_root == get_mapped_bus_number(merges, bus_ax[tb[ix]])
+            Y11, Y12, Y21, Y22 = ybus_branch_entries(br, nr)
+            y11[ix] = Y11 + Y12
+            y12[ix] = zero(YBUS_ELTYPE)
+            y21[ix] = zero(YBUS_ELTYPE)
+            y22[ix] = Y22 + Y21
+        end
+    end
+    return
 end
