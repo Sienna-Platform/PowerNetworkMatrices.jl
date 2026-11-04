@@ -91,7 +91,7 @@ set_linalg_backend_preference(linalglib::Symbol) =
 
 get_linalg_backend_preference() = Preferences.@load_preference("linalg_backend")
 
-"Set a preference whether to run check_linalg_backend at the package loading time."
+"Set a preference whether to run `check_linalg_backend` at the package loading time."
 set_linalg_backend_check(check::Bool) =
     Preferences.@set_preferences!("linalg_backend_check" => check)
 
@@ -99,7 +99,7 @@ get_linalg_backend_check() = Preferences.@load_preference("linalg_backend_check"
 
 function check_lbt_library()
     lb_msg(lib) = """The $(lib) library is being used for Julia's BLAS and LAPACK routines,
-                 including dense linear algebra operations such as `BLAS.gemm``."""
+                 including dense linear algebra operations such as `BLAS.gemm`."""
 
     blas_config = lowercase(string(LinearAlgebra.BLAS.get_config()))
     if contains(blas_config, "mkl")

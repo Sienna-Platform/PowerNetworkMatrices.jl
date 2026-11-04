@@ -7,11 +7,14 @@ CurrentModule = PowerNetworkMatrices
 ## Overview
 
 `PowerNetworkMatrices.jl` is a [`Julia`](http://www.julialang.org) package for
-the evaluation of network matrices given the system's data. The package allows to compute
-the matrices according to different methods, providing a flexible and powerful tool.
+building the network matrices used in DC/AC power flow, sensitivity, and
+contingency analysis. Given a `PowerSystems.jl` [`System`](@extref PowerSystems.System), it produces the
+linear-algebra layer of the [Sienna](https://sienna-platform.github.io/Sienna/))
+power-systems platform: it reads the network data and returns matrix objects, it
+does not own the data model.
 
-`PowerNetworkMatrices.jl` is an active project under development, and we welcome your feedback,
-suggestions, and bug reports.
+`PowerNetworkMatrices.jl` is an active project under development, and we welcome
+your feedback, suggestions, and bug reports.
 
 ## About Sienna
 
@@ -35,53 +38,15 @@ it computes network matrices (for example Ybus, PTDF, and LODF) from `PowerSyste
 
 ## How to use this documentation
 
-PowerNetworkMatrices.jl strives to follow the [Diátaxis documentation framework](https://diataxis.fr/),
-which organizes documentation according to the different needs of users. The documentation is
-structured into four main sections:
+The documentation follows the [Diátaxis](https://diataxis.fr/) framework, split
+into four kinds of material:
 
-### Tutorials
-
-**Learning-oriented guides to help you get started**
-
-Tutorials are hands-on lessons that take you through practical examples step-by-step.
-They are designed to help you learn by doing, building understanding through practical experience.
-
-  - Start here if you're new to PowerNetworkMatrices.jl
-  - Follow along with executable examples
-  - Build foundational knowledge
-
-### How-To Guides
-
-**Task-oriented guides for accomplishing specific goals**
-
-How-to guides provide direct instructions for solving specific problems or completing
-particular tasks. They assume you have basic knowledge and want to accomplish something specific.
-
-  - Use when you know what you want to do
-  - Get straight to the solution
-  - Focus on practical application
-
-### Explanation
-
-**Understanding-oriented discussion of key topics**
-
-Explanations provide background, context, and deeper understanding of concepts, design
-decisions, and the theory behind the implementation.
-
-  - Understand the "why" behind the features
-  - Learn about the mathematical foundations
-  - Explore conceptual relationships
-
-### Reference
-
-**Information-oriented technical descriptions**
-
-Reference documentation provides detailed, technical information about the API, functions,
-and data structures. It's organized for quick lookup of specific details.
-
-  - Look up function signatures and parameters
-  - Find available methods and options
-  - Access complete API documentation
+  - **Tutorials** - Detailed walk-throughs to help you *learn* how to use
+    `PowerNetworkMatrices.jl`
+  - **How to...** - Directions to help *guide* your work for a particular task
+  - **Explanation** - Additional details and background information to help you *understand*
+    `PowerNetworkMatrices.jl`, its structure, and how it works behind the scenes
+  - **Reference** - Technical references and API for a quick *look-up* during your work
 
 ## Installation and Quick Links
 
@@ -90,6 +55,6 @@ and data structures. It's organized for quick lookup of specific details.
   - [Central Sienna documentation](https://sienna-platform.github.io/Sienna/SiennaDocs/docs/build/index.html):
     Cross-linked documentation website for the core user-facing Sienna packages
 
-* * *
-
-PowerNetworkMatrices has been developed as part of the Scalable Integrated Infrastructure Planning (SIIP) initiative at the U.S. Department of Energy's National Laboratory of the Rockies (formerly known as NREL) ([NLR](https://www.nlr.gov/)).
+`PowerNetworkMatrices.jl` has been developed as part of the Scalable Integrated
+Infrastructure Planning (SIIP) initiative at the U.S. Department of Energy's
+National Laboratory of the Rockies (formerly known as NREL) ([NLR](https://www.nlr.gov/)).

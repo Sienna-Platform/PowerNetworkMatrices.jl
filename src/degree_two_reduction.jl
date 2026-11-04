@@ -252,7 +252,7 @@ end
                       reduced_indices::Set{Int},
                       irreducible_indices::Set{Int})
 
-Recursively build a chain in one direction from current_node, avoiding prev_node.
+Recursively build a chain in one direction from `current_node`, avoiding `prev_node`.
 """
 function _get_partial_chain_recursive!(
     current_chain::Vector{Int},

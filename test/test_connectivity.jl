@@ -30,10 +30,10 @@ end
     M = Ybus(sys10)
     subnetworks_m = find_subnetworks(M)
     @test length(subnetworks_m) == 2
-    @test all([6, 1] .∈ keys(subnetworks_m))
+    @test issubset([6, 1], keys(subnetworks_m))
 
     subnetworks_sys = find_subnetworks(sys10)
-    @test all([4, 9] .∈ keys(subnetworks_sys))
+    @test issubset([4, 9], keys(subnetworks_sys))
 end
 
 @testset "Test find subnetworks" begin

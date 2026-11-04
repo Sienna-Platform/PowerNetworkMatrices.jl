@@ -14,7 +14,7 @@ abstract type PowerNetworkMatrix{T} <: AbstractArray{T, 2} end
 Evaluates the map linking the system's buses and branches.
 
 # Arguments
-- `buses::AbstractVector{PSY.ACBus}`:
+- `buses::AbstractVector{PowerSystems.ACBus}`:
         system's buses
 """
 function make_ax_ref(buses::AbstractVector{PSY.ACBus})
@@ -61,10 +61,10 @@ function lookup_index(i, lookup::Dict)
 end
 
 """
-Gets the matrix index for a `PSY.Arc`, converting it to an arc tuple first.
+Gets the matrix index for a `PowerSystems.Arc`, converting it to an arc tuple first.
 
 # Arguments
-- `i::PSY.Arc`:
+- `i::PowerSystems.Arc`:
         Power System Arc object
 - `lookup::Dict`:
         Dictionary mapping arc tuples or bus numbers to matrix indices
@@ -74,10 +74,10 @@ function lookup_index(i::PSY.Arc, lookup::Dict)
 end
 
 """
-Gets the matrix index for a `PSY.ACBus`, converting it to a bus number first.
+Gets the matrix index for a `PowerSystems.ACBus`, converting it to a bus number first.
 
 # Arguments
-- `i::PSY.ACBus`:
+- `i::PowerSystems.ACBus`:
         Power System AC bus
 - `lookup::Dict`:
         Dictionary mapping arc tuples or bus numbers to matrix indices
@@ -309,7 +309,16 @@ end
 Base.to_index(b::PSY.ACBus) = PSY.get_number(b)
 Base.to_index(b::T) where {T <: PSY.ACBranch} = get_arc_tuple(b)
 Base.to_index(b::PSY.Arc) = get_arc_tuple(b)
-"""returns the raw array data of the `PowerNetworkMatrix`"""
+"""
+Returns the raw backing array of the `PowerNetworkMatrix`, exactly as stored: a
+`SparseArrays.SparseMatrixCSC` for [`Ybus`](@ref) and the structural matrices, and the
+internally **transposed** dense matrix for [`PTDF`](@ref) and [`LODF`](@ref). Use
+[`get_ptdf_data`](@ref) or [`get_lodf_data`](@ref) for the standard `(row, column)`
+orientation.
+
+This accessor is deliberately not exported: `PowerSystems.get_data` claims the same
+name, so reach it as `PowerNetworkMatrices.get_data`.
+"""
 get_data(mat::PowerNetworkMatrix) = mat.data
 
 """
@@ -321,7 +330,7 @@ if the matrix type does not track system origin.
 get_system_uuid(::PowerNetworkMatrix) = nothing
 
 """
-    _validate_system_uuid(mat::PowerNetworkMatrix, sys::PSY.System)
+    _validate_system_uuid(mat::PowerNetworkMatrix, sys::PowerSystems.System)
 
 Validate that the matrix was constructed from the same system. Throws an
 `ErrorException` if the matrix stores a system UUID that does not match
@@ -340,16 +349,67 @@ function _validate_system_uuid(mat::PowerNetworkMatrix, sys::PSY.System)
 end
 
 """
-    returns the lookup tuple of the `PowerNetworkMatrix`. The entries correspond
-    to the dimensions of the underlying `axes` tuple, and each lookup dictionary maps
-    arc tuples `(from_bus, to_bus)` or bus numbers to integer indices into the stored
-    data.
+Returns the `lookup` 2-tuple of the `PowerNetworkMatrix`, ordered
+`(dimension 1, dimension 2)` to match [`get_axes`](@ref). Each dictionary maps an
+identifier — an arc tuple `(from_bus, to_bus)` or a bus number — to its integer position
+in the stored data.
 """
 get_lookup(mat::PowerNetworkMatrix) = mat.lookup
 
-# A subnetwork's representative can itself be merged away by a later reduction (e.g.
-# ZeroImpedanceBranchReduction folding a swing into another bus); resolve it through the
-# reduction's reverse map to the surviving bus it now shares a position with.
+"""
+Returns the `axes` 2-tuple of the `PowerNetworkMatrix`, ordered
+`(dimension 1, dimension 2)`. Each vector lists that dimension's identifiers — bus
+numbers as `Int`, arcs as `(from_bus, to_bus)` tuples — in position order.
+
+Together with [`get_lookup`](@ref) this is the authoritative way to enumerate a matrix's
+valid indices, which matters after a network reduction has eliminated buses or arcs.
+"""
+function get_axes end
+
+"""
+Returns the bus-number axis of the matrix, selecting whichever dimension holds buses so
+the caller need not know whether that is dimension 1 or 2 for the given type. Defined
+only for matrices that have a bus dimension.
+"""
+function get_bus_axis end
+
+"""
+Returns the arc-tuple axis of the matrix, selecting whichever dimension holds arcs so the
+caller need not know whether that is dimension 1 or 2 for the given type. Defined only
+for matrices that have an arc dimension.
+"""
+function get_arc_axis end
+
+"""
+Returns the lookup `Dict` mapping each bus number to its integer position along the
+matrix's bus dimension — the [`get_lookup`](@ref) entry matching [`get_bus_axis`](@ref).
+Use it to index a plain `Vector` returned by a whole-row query, such as a
+[`VirtualPTDF`](@ref) row, by bus number.
+"""
+function get_bus_lookup end
+
+"""
+Returns the lookup `Dict` mapping each arc tuple `(from_bus, to_bus)` to its integer
+position along the matrix's arc dimension — the [`get_lookup`](@ref) entry matching
+[`get_arc_axis`](@ref).
+"""
+function get_arc_lookup end
+
+"""
+Returns the sorted reference (slack) bus numbers of the matrix, one per electrical
+island. These are the buses held fixed when the matrix was built, which is what makes a
+[`PTDF`](@ref) column at a reference bus zero.
+"""
+function get_ref_bus end
+
+"""
+Returns the integer positions of the reference (slack) buses along the matrix's bus
+dimension — the [`get_bus_lookup`](@ref) positions of [`get_ref_bus`](@ref).
+
+A subnetwork's representative can itself be merged away by a later reduction (e.g.
+ZeroImpedanceBranchReduction folding a swing into another bus); resolve it through the
+reduction's reverse map to the surviving bus it now shares a position with.
+"""
 function get_ref_bus_position(M::PowerNetworkMatrix)
     bus_lookup = get_bus_lookup(M)
     nr = get_network_reduction_data(M)

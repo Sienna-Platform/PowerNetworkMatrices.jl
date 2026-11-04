@@ -1,6 +1,13 @@
 """
 Serialize the PTDF to an HDF5 file.
 
+Only the dense [`PTDF`](@ref) type can be serialized; there is no HDF5 path for
+[`LODF`](@ref), [`Ybus`](@ref), the DC susceptance matrices, or any virtual matrix. The file
+stores the matrix data, `tol`, axes, lookups, and per-subnetwork axes, but **not**
+the [`NetworkReductionData`](@ref): a PTDF built with `network_reductions` loses
+that context on a round-trip and is rehydrated with an empty reduction. Keep the
+construction code if you need the reduction metadata.
+
 # Arguments
 - `ptdf::PTDF`: matrix
 - `filename::AbstractString`: File to create
@@ -45,7 +52,12 @@ function to_hdf5(
 end
 
 """
-Deserialize a PTDF from an HDF5 file.
+Deserialize a PTDF from an HDF5 file. The convenience constructor `PTDF(filename)`
+calls this.
+
+The returned [`PTDF`](@ref) reproduces the data, axes, lookups, and `tol` of the
+serialized matrix, but its [`NetworkReductionData`](@ref) is always empty — the
+reduction context is not persisted (see [`to_hdf5`](@ref)).
 
 # Arguments
 - `::Type{PTDF}`:

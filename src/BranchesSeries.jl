@@ -1,3 +1,25 @@
+"""
+    BranchesSeries <: PowerSystems.ACTransmission
+
+A chain of branches connected in series through eliminated degree-2 buses, as
+produced by [`DegreeTwoReduction`](@ref). Members are bucketed by concrete type; a
+member may itself be a parallel group, so a series chain can nest parallel blocks.
+Subtypes `PowerSystems.ACTransmission` so the chain can stand in for a real branch. Not
+exported. `BranchesSeries()` builds an empty chain; `add_branch!(bs, branch, orientation)`
+appends a segment with its `:FromTo` / `:ToFrom` orientation.
+
+The equivalent series susceptance is the reciprocal of the sum of member reciprocal
+susceptances. The chain rating is set by its weakest link — the minimum member
+rating, where a nested parallel member contributes its N-1
+[`get_single_element_contingency_rating`](@ref).
+
+# Fields
+- `branches::Dict{DataType, Vector{<:PowerSystems.ACTransmission}}`: members bucketed by concrete type.
+- `needs_insertion_order::Bool`: `true` when the chain mixes types and needs `insertion_order`.
+- `insertion_order::Vector{Tuple{DataType, Int}}`: physical ordering along the chain.
+- `segment_orientations::Vector{Symbol}`: per-segment `:FromTo` / `:ToFrom` orientation.
+- `equivalent_ybus`: cached 2×2 equivalent admittance block; `nothing` until populated.
+"""
 mutable struct BranchesSeries <: PSY.ACTransmission
     branches::Dict{DataType, Vector{<:PSY.ACTransmission}}
     needs_insertion_order::Bool
@@ -114,7 +136,7 @@ end
     get_equivalent_rating(bs::BranchesSeries)
 
 Calculate the rating for branches in series.
-Series chains can be composed of PSY.ACTransmission branches and parallel groups.
+Series chains can be composed of PowerSystems.ACTransmission branches and parallel groups.
 For series circuits, the rating is limited by the weakest link: Rating_total = min(Rating1, Rating2, ..., Ratingn).
 Parallel members contribute their N-1 single-element-contingency rating.
 """
@@ -125,16 +147,16 @@ end
 _series_member_rating(branch::PSY.ACTransmission) = get_equivalent_rating(branch)
 
 """
-    get_equivalent_rating(bs<:PSY.ACTransmission)
+    get_equivalent_rating(bs<:PowerSystems.ACTransmission)
 
-Return the rating for PSY.ACTransmission branches.
+Return the rating for PowerSystems.ACTransmission branches.
 """
 function get_equivalent_rating(bs::PSY.ACTransmission)
     return PSY.get_rating(bs)
 end
 
 """
-    get_equivalent_rating(bs::PSY.GenericArcImpedance)
+    get_equivalent_rating(bs::PowerSystems.GenericArcImpedance)
 
 Rating is assumed to be max_flow for GenericArcImpedance.
 """
@@ -154,9 +176,9 @@ function get_equivalent_emergency_rating(bs::BranchesSeries)
 end
 
 """
-    get_equivalent_emergency_rating(bs<:PSY.ACTransmission)
+    get_equivalent_emergency_rating(bs<:PowerSystems.ACTransmission)
 
-Return the emergency rating for PSY.ACTransmission branches.
+Return the emergency rating for PowerSystems.ACTransmission branches.
 """
 function get_equivalent_emergency_rating(branch::PSY.ACTransmission)
     if isnothing(PSY.get_rating_b(branch))
@@ -168,9 +190,9 @@ function get_equivalent_emergency_rating(branch::PSY.ACTransmission)
 end
 
 """
-    get_equivalent_emergency_rating(bs<:PSY.ACTransmission)
+    get_equivalent_emergency_rating(bs<:PowerSystems.ACTransmission)
 
-Return the emergency rating for PSY.GenericArcImpedance.
+Return the emergency rating for PowerSystems.GenericArcImpedance.
 """
 function get_equivalent_emergency_rating(branch::PSY.GenericArcImpedance)
     @debug "GenericArcImpedance $(get_name(branch)) has no emergency rating. Using max_flow as a proxy instead."

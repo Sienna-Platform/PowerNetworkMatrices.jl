@@ -3,7 +3,7 @@ The Virtual Multiple Outage Distribution Factor (VirtualMODF) structure computes
 post-contingency PTDF rows lazily for registered contingencies using the
 Woodbury matrix identity (van Dijk et al. Eq. 29).
 
-Contingencies are resolved from PSY.Outage supplemental attributes at construction
+Contingencies are resolved from PowerSystems.Outage supplemental attributes at construction
 time. After registration, the System is not needed for queries.
 
 Caching is two-tiered:
@@ -30,7 +30,7 @@ cache and skips the recomputation.
 - `A::SparseArrays.SparseMatrixCSC{Int8, Int}`:
         Incidence matrix.
 - `PTDF_A_diag::Vector{Float64}`:
-        Diagonal of `PTDF·A` (H[e,e] values). Lazily populated on the first
+        Diagonal of ``\\mathrm{PTDF} \\, A`` (``H[e,e]`` values). Lazily populated on the first
         read of `vmodf.PTDF_A_diag`; empty until then.
 - `arc_susceptances::Vector{Float64}`:
         Effective susceptance for each arc.
@@ -41,7 +41,7 @@ cache and skips the recomputation.
 - `dist_slack::Vector{Float64}`:
         Distributed slack bus weights.
 - `axes::Ax`:
-        Tuple of (arc_axis, bus_axis).
+        Tuple of `(arc_axis, bus_axis)`.
 - `lookup::L`:
         Tuple of lookup dictionaries for indexing.
 - `valid_ix::Vector{Int}`:
@@ -55,7 +55,8 @@ cache and skips the recomputation.
 - `woodbury_cache::Dict{NetworkModification, WoodburyFactors}`:
         Precomputed Woodbury factors keyed by modification.
 - `row_caches::Dict{NetworkModification, RowCache}`:
-        One `RowCache` per modification. Mutations are serialized by
+        One `RowCache` per modification, each bounded by `max_cache_size_bytes` and
+        evicting least-recently-used rows. Mutations are serialized by
         `solver_lock`, the same mutex that wraps the libklu solve, so no
         separate cache lock is needed.
 - `subnetwork_axes::Dict{Int, Ax}`:
@@ -251,7 +252,7 @@ Base.setindex!(::VirtualMODF, _, ::CartesianIndex) =
 # --- Constructor ---
 
 """
-    VirtualMODF(sys::PSY.System; kwargs...) -> VirtualMODF
+    VirtualMODF(sys::PowerSystems.System; kwargs...) -> VirtualMODF
 
 Build a VirtualMODF from a PowerSystems System. Automatically registers all
 Outage supplemental attributes found in the system.
@@ -265,10 +266,13 @@ survive every reduction step, including the zero-impedance reduction that is
 auto-applied during `Ybus` construction.
 
 # Arguments
-- `sys::PSY.System`: Power system to build from
+- `sys::PowerSystems.System`: Power system to build from
 
 # Keyword Arguments
-- `dist_slack::Vector{Float64}`: Distributed slack weights (default: empty)
+- `dist_slack::Vector{Float64}`: Distributed slack weights, one per bus and ordered
+        like the bus axis (default: empty, i.e. a single reference bus). They need not
+        sum to one; they are normalized internally. Note the input type differs from
+        [`PTDF`](@ref)/[`VirtualPTDF`](@ref), which take a `Dict{Int, Float64}`.
 - `linear_solver::String = _default_linear_solver()`: Linear solver for the
         ABA factorization. Options: "KLU", "AppleAccelerate". Defaults to
         "AppleAccelerate" on macOS and "KLU" elsewhere.
@@ -276,7 +280,10 @@ auto-applied during `Ybus` construction.
         A `Float64` applies a fixed absolute cutoff; an [`AutoTolerance`](@ref)
         (the default) applies a relative per-row cutoff so requested columns stay
         sparse on large systems.
-- `max_cache_size::Int`: Max cache size in MiB per contingency (default: MAX_CACHE_SIZE_MiB)
+- `max_cache_size::Int`: Maximum row-cache size in MiB per contingency (default
+        `MAX_CACHE_SIZE_MiB`, 100 MiB). Each contingency gets its own `RowCache`, bounded
+        both as a byte budget and as a row count; when either is reached the
+        least-recently-used row is evicted.
 - `network_reductions::Vector{NetworkReduction}`: Network reductions to apply
 - `automatically_register_outages::Bool`: Register all system Outage attributes (default: true)
 """
@@ -419,7 +426,7 @@ end
 Bulk-register all Outage supplemental attributes in the system.
 Called automatically by the VirtualMODF constructor.
 
-Uses `PSY.get_supplemental_attributes(PSY.Outage, sys)` which accepts
+Uses `PowerSystems.get_supplemental_attributes(PowerSystems.Outage, sys)` which accepts
 the abstract type and iterates over all concrete subtypes
 (PlannedOutage, UnplannedOutage).
 """
@@ -487,8 +494,12 @@ end
 Compute the post-modification PTDF row for a monitored arc under the given modification.
 Gets or computes Woodbury factors, then applies the Woodbury correction.
 
-For N-1 contingencies, the result satisfies:
-    post_ptdf[mon, :] = pre_ptdf[mon, :] + LODF[mon, e] * pre_ptdf[e, :]
+For N-1 contingencies, the result satisfies
+```math
+\\mathrm{post}[\\mathrm{mon}, :] = \\mathrm{pre}[\\mathrm{mon}, :] + \\mathrm{LODF}[\\mathrm{mon}, e] \\, \\mathrm{pre}[e, :]
+```
+where ``\\mathrm{pre}`` and ``\\mathrm{post}`` are the base and post-contingency PTDF and
+``e`` is the outaged arc.
 """
 function _compute_modf_entry(
     vmodf::VirtualMODF,
@@ -597,7 +608,7 @@ function Base.getindex(vmodf::VirtualMODF, monitored::Int, outage::PSY.Outage)
 end
 
 """
-Arc-tuple indexed version of getindex by PSY.Outage.
+Arc-tuple indexed version of getindex by PowerSystems.Outage.
 
 $(TYPEDSIGNATURES)
 """
@@ -624,11 +635,11 @@ end
     clear_all_caches!(vmodf::VirtualMODF)
 
 Clear all caches including contingency registrations. After calling this function,
-the `VirtualMODF` object is effectively empty and cannot be queried — it has
-no registered contingencies. To restore functionality, a new `VirtualMODF` must
-be constructed from a `PSY.System`.
+the [`VirtualMODF`](@ref) object is effectively empty and cannot be queried — it has
+no registered contingencies. To restore functionality, a new [`VirtualMODF`](@ref) must
+be constructed from a `PowerSystems.System`.
 
-Use `clear_caches!` instead to preserve contingency registrations while
+Use [`clear_caches!`](@ref) instead to preserve contingency registrations while
 freeing computation cache memory.
 """
 function clear_all_caches!(vmodf::VirtualMODF)

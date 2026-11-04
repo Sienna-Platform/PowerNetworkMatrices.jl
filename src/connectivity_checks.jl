@@ -32,7 +32,7 @@ specified connectivity algorithm.
 
 # Arguments
 - `M`: Matrix representation of the network (e.g., admittance or adjacency matrix)
-- `nodes::Vector{PSY.ACBus}`: AC buses in the network
+- `nodes::Vector{PowerSystems.ACBus}`: AC buses in the network
 - `bus_lookup::Dict{Int64, Int64}`: Mapping from bus numbers to matrix indices
 - `connectivity_method::Function`: Algorithm to use (default: `goderya_connectivity`)
 
@@ -245,7 +245,8 @@ a the ABA or Adjacency Matrix.
 - `bus_numbers::Vector{Int}`:
         vector containing the indices of the system's buses.
 - `subnetwork_algorithm::Function`:
-        algorithm for computing subnetworks. Valid options are iterative_union_find (default) and depth_first_search
+        algorithm for computing subnetworks. Valid options are [`iterative_union_find`](@ref)
+        (default) and [`depth_first_search`](@ref)
 """
 function find_subnetworks(
     M::SparseArrays.SparseMatrixCSC,

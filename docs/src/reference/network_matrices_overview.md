@@ -1,143 +1,202 @@
-## Core Matrix Types
+# Matrix overview & indexing
 
-### Incidence Matrix ([`IncidenceMatrix`](@ref))
+This page is the reference hub for the matrix types: what each one stores and costs
+to build, how element indexing (`A[row, column]`) resolves, and which accessors read
+a matrix's data, axes, lookups, reference buses, reduction data, and provenance.
 
-The incidence matrix $A$ represents the bus-arc connectivity of the network, showing which arcs connect to which buses. It's a fundamental building block for other matrices.
+All matrix types are concrete subtypes of the abstract supertype
+`PowerNetworkMatrix{T} <: AbstractArray{T, 2}` (`src/PowerNetworkMatrix.jl`). Because
+they are `AbstractArray{T,2}` subtypes, they support the standard array interface
+(`size`, `axes`, `getindex`, iteration), but indexing is overloaded so that rows and
+columns are addressed by domain identifiers (bus numbers and arc tuples) rather than
+by raw integer positions.
 
-**Properties:**
+## Matrix taxonomy
 
-  - Rectangular matrix (arcs × buses)
-  - Values indicate connection direction (+1 for "from" bus, -1 for "to" bus, or 0)
-  - Rows are indexed by arc tuples `(from_bus_number, to_bus_number)`
-  - Columns are indexed by bus numbers
+Every matrix stores two structural fields:
 
-**Purpose:**
-The incidence matrix captures pure network topology without electrical parameters, making it useful for graph-theoretic analysis.
+  - **`axes`**: a 2-tuple of vectors listing the identifiers (arc tuples and/or
+    bus numbers) for each dimension.
+  - **`lookup`**: a 2-tuple of dictionaries mapping those identifiers to integer
+    positions into the stored `data`.
 
-### Adjacency Matrix ([`AdjacencyMatrix`](@ref))
+The storage form is one of three kinds:
 
-The adjacency matrix represents the directed connectivity between buses, showing which buses are connected to each other. It's a fundamental building block for other matrices.
+  - **Dense** — the full matrix is materialized as a `Matrix{Float64}` (or, for
+    `Ybus`, a `SparseMatrixCSC`).
+  - **Sparse** — stored as a `SparseMatrixCSC`.
+  - **Virtual / lazy** — no full matrix is stored; rows are computed on demand
+    and cached in an LRU row cache. Use these past large-system limits instead of
+    the dense forms. Virtual matrices are not serializable.
 
-**Properties:**
+Build cost is for a network of ``N_b`` buses and ``N_a`` arcs.
 
-  - Square matrix (buses × buses)
-  - Values indicate connection direction (+1 for "from" bus, -1 for "to" bus, or 0)
-  - Sparsity pattern matches the bus admittance matrix.
+| Matrix                        | Rows        | Columns     | Storage          | Build cost                     | Represents                                                  |
+|:----------------------------- |:----------- |:----------- |:---------------- |:------------------------------ |:----------------------------------------------------------- |
+| [`IncidenceMatrix`](@ref)     | arc tuples  | bus numbers | sparse           | ``O(N_a)``                     | signed bus–arc topology (`+1` from-bus, `-1` to-bus)        |
+| [`AdjacencyMatrix`](@ref)     | bus numbers | bus numbers | sparse           | ``O(N_a)``                     | signed bus–bus connectivity (Ybus sparsity pattern)         |
+| [`Ybus`](@ref)                | bus numbers | bus numbers | sparse (complex) | ``O(N_a)``                     | nodal admittance (topology + electrical parameters)         |
+| [`ArcAdmittanceMatrix`](@ref) | arc tuples  | bus numbers | sparse (complex) | ``O(N_a)``, with `Ybus`        | off-diagonal Ybus entries; built as part of `Ybus`          |
+| [`BA_Matrix`](@ref)           | bus numbers | arc tuples  | sparse           | ``O(N_a)``                     | ``B A``: incidence weighted by branch susceptance           |
+| [`ABA_Matrix`](@ref)          | bus numbers | bus numbers | sparse           | ``O(N_a)``, plus factorization | ``A^\top B A`` DC susceptance matrix; optionally factorized |
+| [`PTDF`](@ref)                | arc tuples  | bus numbers | dense            | ``O(N_b^3)``                   | power transfer distribution factors                         |
+| [`LODF`](@ref)                | arc tuples  | arc tuples  | dense            | ``O(N_a \cdot N_b^2)``         | line outage distribution factors                            |
+| [`VirtualPTDF`](@ref)         | arc tuples  | bus numbers | virtual          | one solve per row, on demand   | lazy per-row PTDF                                           |
+| [`VirtualLODF`](@ref)         | arc tuples  | arc tuples  | virtual          | one solve per row, on demand   | lazy per-row LODF                                           |
+| [`VirtualMODF`](@ref)         | arc tuples  | bus numbers | virtual          | one solve per row, on demand   | post-modification / post-contingency PTDF rows              |
 
-**Purpose:**
-The adjacency matrix captures pure network topology without electrical parameters, making it useful for graph-theoretic analysis.
+Notes on the taxonomy:
 
-### Bus Admittance Matrix ([`Ybus`](@ref))
+  - `Ybus` is complex-valued (`YBUS_ELTYPE`, i.e. `ComplexF32`); all other numeric
+    matrices are real (`Float64`). `IncidenceMatrix` / `AdjacencyMatrix` store signed
+    `Int8` topology.
+  - `PTDF` and `LODF` store their data **transposed** internally; `getindex`
+    and [`get_ptdf_data`](@ref) / [`get_lodf_data`](@ref) hide
+    this so callers always see the standard `(row, column)` orientation.
+  - There is **no dense `MODF` type** — only [`VirtualMODF`](@ref). Contrast
+    with PTDF/LODF, which have both dense and virtual forms.
+  - `ArcAdmittanceMatrix` is produced as a byproduct of building `Ybus` (via a
+    construction keyword) rather than being independently constructed by typical
+    users.
+  - The dense build costs are why [`PTDF`](@ref)/[`LODF`](@ref) are the matrices to
+    avoid at scale; see [Computational Considerations](@ref) for the sparsity and
+    sparsification trade-offs behind that.
 
-The bus admittance matrix combines network topology with electrical parameters (impedance/admittance).
+Every type is constructed by calling it on a [`System`](@extref PowerSystems.System)
+— `PTDF(sys)`, `Ybus(sys)`, and so on — and the lazy forms build and index exactly
+like their materialized counterparts. Full constructor signatures and keyword
+arguments are in the [public API reference](public.md); worked examples are in the
+[Introduction](@ref) tutorial, and
+[How to Build Multiple Matrices Without Repeating Work](@ref) covers passing
+already-built matrices (`Ybus`, incidence, BA) to the constructors that accept them
+so shared intermediates are computed once.
 
-**Properties:**
+## Arc-tuple indexing
 
-  - Square matrix (buses × buses)
-  - Diagonal elements are self-admittances
-  - Off-diagonal elements are mutual admittances
-  - Symmetric for passive networks
-  - Both dimensions are indexed by bus numbers
+Matrices that involve branches identify each branch by an **arc tuple** — a
+`Tuple{Int, Int}` of the form `(from_bus_number, to_bus_number)` giving the
+directed connection between two buses. Arc tuples, rather than branch-name strings,
+are the canonical branch identifier: they are compact and unambiguous, they match
+the mathematical formulation in which a branch is defined by its two endpoint buses,
+and they survive network reductions, where named branches may be merged or
+eliminated but the surviving equivalent arc keeps a well-defined endpoint pair.
 
-**Purpose:**
-Forms the basis for power flow calculations and relates bus voltages to injected currents.
+## How `A[row, column]` resolves
 
-**Note:**
-The [`ArcAdmittanceMatrix`](@ref) is a rectangular matrix (arcs x buses) consisting of the off diagonal entries of the [`Ybus`](@ref). These matrices are useful when computing line flows from bus voltages and can be optionally created when building the [`Ybus`](@ref).
+Indexing is fully overloaded on `PowerNetworkMatrix` (`src/PowerNetworkMatrix.jl`).
+`A[row, column]` calls `to_index(A, row, column)`, which maps each supplied
+identifier to an integer position through the per-dimension `lookup` dictionary
+(via the internal `lookup_index` helper), then reads the underlying `data`.
 
-### BA Matrix ([`BA_Matrix`](@ref))
+The accepted element types for `row` and `column`, and how each resolves:
 
-The BA matrix represents the arc-bus incidence matrix weighted by arc susceptances.
+| Index value                                              | Resolves via                                                                                                                          | Supported                      |
+|:-------------------------------------------------------- |:------------------------------------------------------------------------------------------------------------------------------------- |:------------------------------ |
+| `Int` (bus number)                                       | direct `lookup[i]`                                                                                                                    | ✅                              |
+| arc tuple `(from, to)::Tuple{Int,Int}`                   | direct `lookup[i]`                                                                                                                    | ✅                              |
+| [`PowerSystems.ACBus`](@extref PowerSystems.ACBus)       | `lookup_index` specialization → `Base.to_index(bus) = get_number(bus)`                                                                | ✅                              |
+| [`PowerSystems.Arc`](@extref PowerSystems.Arc)           | `lookup_index` specialization → `Base.to_index(arc) = get_arc_tuple(arc)`                                                             | ✅                              |
+| branch-name `String`                                     | dedicated `getindex` on `PTDF` / `LODF` / `VirtualPTDF` (maps name → arc via reduction data, applies parallel/aggregation multiplier) | ✅ (PTDF/LODF/VirtualPTDF only) |
+| `Colon` (`:`)                                            | returns the whole row/column                                                                                                          | ✅                              |
+| `PowerNetworkMatrixKey`                                  | `A[k]` splats `k.I` back into `A[k.I...]`                                                                                             | ✅                              |
+| raw `Int` position pair                                  | dense positional fast path (`A.data[…]`)                                                                                              | ✅                              |
+| [`PowerSystems.ACBranch`](@extref PowerSystems.ACBranch) | —                                                                                                                                     | ❌ raises `KeyError`            |
 
-**Purpose:**
-Serves as an intermediate calculation in deriving ABA, PTDF and LODF matrices.
+Only [`PTDF`](@ref), [`LODF`](@ref), and [`VirtualPTDF`](@ref) accept branch-name
+`String` indices, and [`LODF`](@ref) requires one on both dimensions. Name indexing
+is retained for backward compatibility but is slower and less direct than arc-tuple
+indexing.
 
-### ABA Matrix ([`ABA_Matrix`](@ref))
-
-The ABA matrix is derived from $A \cdot B \cdot A^T$ where $A$ is the incidence matrix and $B$ contains branch admittances.
-
-**Purpose:**
-Serves as an intermediate calculation in deriving PTDF and LODF matrices.
-
-## Sensitivity Matrices
-
-### Power Transfer Distribution Factors ([`PTDF`](@ref))
-
-PTDF matrices answer the question: "If I inject 1 MW at bus $i$ and withdraw 1 MW at bus $j$, how much does the flow on branch $k$ change?"
-
-**Key Characteristics:**
-
-  - Linearized approximation of power flow
-  - Valid for small perturbations around operating point
-  - Fast to compute and evaluate
-  - Widely used in market operations and security analysis
-  - Rows are indexed by arc tuples `(from_bus, to_bus)`, columns by bus numbers
-
-**Note:**
-See [`VirtualPTDF`](@ref) for cases where it is not possible to compute or store the full PTDF matrix.
-
-### Line Outage Distribution Factors ([`LODF`](@ref))
-
-LODF matrices answer: "If branch $m$ fails, how much does the flow redistribute to branch $k$?"
-
-**Key Characteristics:**
-
-  - Predicts post-contingency flows
-  - Essential for N-1 security analysis
-  - Computed from PTDF matrix
-  - Helps identify critical lines
-  - Both dimensions are indexed by arc tuples `(from_bus, to_bus)`
-
-**Mathematical Relationship:**
-LODF is derived from PTDF using matrix operations that model the effect of removing a branch from the network.
-
-See [`VirtualLODF`](@ref) for cases where it is not possible to compute or store the full LODF matrix.
-
-### Modification Distribution Factors ([`VirtualMODF`](@ref))
-
-The MODF answers: "Under a registered contingency or network modification (one or more branch outages, partial-susceptance changes, or shunt changes), what is the resulting PTDF row for a given monitored arc?"
-
-**Key Characteristics:**
-
-  - On-demand computation of post-modification PTDF rows via the Woodbury matrix identity over a base PTDF.
-  - Caches Woodbury factors per modification and post-modification PTDF rows per `(monitored_arc, modification)` pair.
-  - Auto-registers `PSY.Outage` supplemental attributes attached to the source system.
-  - Rows are indexed by monitored arc tuples or arc indices; the second index is a [`ContingencySpec`](@ref), a [`NetworkModification`](@ref), or a `PSY.Outage`.
-
-**Use it when:** you need post-contingency or post-modification flow sensitivities for one or a few contingencies on a large system, and constructing the full LODF or recomputing PTDF per contingency is too expensive.
-
-## Arc-Based Indexing
-
-All matrices that involve branches use **arc tuples** as identifiers instead of branch name strings. An arc tuple is a `Tuple{Int, Int}` of the form `(from_bus_number, to_bus_number)`, representing the directed connection between two buses.
-
-This indexing approach:
-
-  - Provides compact, unambiguous identification of network elements
-  - Naturally handles network reductions where branches may be merged or eliminated
-  - Aligns with the mathematical formulation where branches are defined by their endpoint buses
-
-Each matrix stores `axes` and `lookup` fields:
-
-  - **`axes`**: A tuple of vectors listing the arc tuples and/or bus numbers for each dimension
-  - **`lookup`**: A tuple of dictionaries that map arc tuples or bus numbers to integer matrix indices
-
-**Indexing summary by matrix type:**
-
-| Matrix            | Dimension 1 (rows) | Dimension 2 (columns) |
-|:----------------- |:------------------ |:--------------------- |
-| `IncidenceMatrix` | Arc tuples         | Bus numbers           |
-| `BA_Matrix`       | Arc tuples         | Bus numbers           |
-| `PTDF`            | Arc tuples         | Bus numbers           |
-| `LODF`            | Arc tuples         | Arc tuples            |
-| `Ybus`            | Bus numbers        | Bus numbers           |
-| `VirtualPTDF`     | Arc tuples         | Bus numbers           |
-| `VirtualLODF`     | Arc tuples         | Arc tuples            |
-| `VirtualMODF`     | Arc tuples         | Bus numbers           |
-
-!!! note
+!!! warning "Branch objects are not directly indexable"
     
-    For backward compatibility, branch name strings can also be used to index PTDF and LODF matrices. This internally maps the branch name to its corresponding arc tuple via the network reduction data. Using arc tuples directly is recommended for new code.
+    Passing an [`ACBranch`](@extref PowerSystems.ACBranch) component as an index
+    raises a `KeyError`. Although `Base.to_index(::PowerSystems.ACBranch)` is defined
+    (returning the branch's arc tuple), `getindex` routes only
+    [`ACBus`](@extref PowerSystems.ACBus) and [`Arc`](@extref PowerSystems.Arc)
+    through `Base.to_index`. Index a branch by its **arc tuple**, or by its **name
+    string** on the three types above.
 
-!!! note
+!!! note "Reduced arcs are not indexable"
     
-    When network reductions are applied (e.g. `RadialReduction`, `DegreeTwoReduction`), some branches are eliminated from the network. Attempting to index a matrix with an arc tuple that was reduced will result in an error. Use `get_axes` to inspect the available arc tuples after reduction.
+    When network reductions (e.g. `RadialReduction`, `DegreeTwoReduction`) are
+    applied, eliminated branches are absent from the matrix, and indexing with an arc
+    tuple that was reduced away raises an error. Enumerate the surviving identifiers
+    with [`get_axes`](@ref).
+
+### Examples
+
+````@example overview
+using PowerNetworkMatrices
+import PowerSystems
+import PowerSystemCaseBuilder
+
+sys = PowerSystemCaseBuilder.build_system(
+    PowerSystemCaseBuilder.PSITestSystems,
+    "c_sys5",
+)
+
+ptdf = PTDF(sys)
+ybus = Ybus(sys)
+nothing # hide
+````
+
+````@example overview
+# By bus number and arc tuple (canonical):
+ptdf[(2, 3), 1]
+````
+
+````@example overview
+# By PowerSystems component objects: an Arc row and an ACBus column
+bus1 = first(
+    b for b in PowerSystems.get_components(PowerSystems.ACBus, sys) if
+    PowerSystems.get_number(b) == 1
+)
+branch = first(PowerSystems.get_components(PowerSystems.ACBranch, sys))
+ptdf[PowerSystems.get_arc(branch), bus1]
+````
+
+````@example overview
+# By branch name (PTDF/LODF/VirtualPTDF only):
+ptdf[PowerSystems.get_name(branch), 1]
+
+# NOT allowed — raises KeyError:
+# ptdf[branch, 1]                      # a PowerSystems.ACBranch object
+````
+
+````@example overview
+# Whole row / column with a Colon:
+ptdf[:, 1]                             # column for bus 1
+````
+
+## Axes and lookups
+
+[`get_axes`](@ref) returns `mat.axes` and [`get_lookup`](@ref) returns `mat.lookup`,
+each a 2-tuple ordered `(dimension 1, dimension 2)`. The axis vector lists
+identifiers (bus numbers as `Int`, arcs as `Tuple{Int,Int}`) in position order; the
+matching lookup maps each identifier back to its integer position in `data`. These
+are the authoritative way to enumerate valid indices — especially after a reduction,
+where some arcs/buses are no longer present — and are defined for every matrix type.
+
+````@example overview
+get_axes(ptdf)                        # (bus-number vector, arc-tuple vector)
+````
+
+The dimension-specific accessors [`get_bus_axis`](@ref) / [`get_arc_axis`](@ref) /
+[`get_bus_lookup`](@ref) / [`get_arc_lookup`](@ref) select the correct dimension
+without the caller knowing which index (1 or 2) is the bus or arc dimension for a
+given matrix type. They are defined only for the dimensions a matrix actually has.
+
+## See also
+
+  - [How to Diagnose a Disconnected Network](@ref) — testing whether the network is
+    connected and enumerating electrical islands.
+  - [How to Define and Apply Contingencies](@ref) — `ArcModification`,
+    `ShuntModification`, `NetworkModification`, `ContingencySpec`, and the Woodbury
+    tooling.
+  - [`AutoTolerance`](@ref) and [How to Choose a Linear Solver](@ref) — the
+    sparsification `tol` and the linear-solver backends.
+  - [`to_hdf5`](@ref) / [`from_hdf5`](@ref) — HDF5 persistence (PTDF only).
+  - [Full public API](public.md) — the curated autodocs for every exported
+    symbol, including the reduction specs, `NetworkReductionData`, and the
+    aggregated-branch rating functions.
+  - [Internals](internals.md) — the KLU and Accelerate solver submodules.

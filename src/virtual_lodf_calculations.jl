@@ -11,7 +11,7 @@ The VirtualLODF struct is indexed using branch names.
 
 # Thread-safety
 
-Concurrent `getindex` (and `get_partial_lodf_row`) is safe but serialized:
+Concurrent `getindex` (and [`get_partial_lodf_row`](@ref)) is safe but serialized:
 every libklu solve runs under `_LIBKLU_LOCK` (process-wide) and the per-cache
 `solver_lock`, and the row cache is guarded by `cache_lock`. Multi-threaded
 callers can issue requests concurrently; the libklu work runs one at a time.
@@ -28,7 +28,7 @@ callers can issue requests concurrently; the libklu work runs one at a time.
         Vector contiaining the element-wise reciprocal of the diagonal elements
         coming from multuiplying the PTDF matrix with th Incidence matrix
 - `PTDF_A_diag::Vector{Float64}`:
-        Raw diagonal elements of the PTDF·A product (H[e,e] values), before
+        Raw diagonal elements of the ``\\mathrm{PTDF} \\, A`` product (``H[e,e]`` values), before
         tolerance clamping. Used for partial susceptance change computations.
 - `arc_susceptances::Vector{Float64}`:
         Effective susceptance for each arc, extracted from the BA matrix.
@@ -61,7 +61,9 @@ callers can issue requests concurrently; the libklu work runs one at a time.
         Single-element scratch vector kept as a `Vector{Vector{Float64}}` for
         uniform `with_solver` callback signatures.
 - `cache::RowCache`:
-        Cache where LODF rows are stored.
+        Cache where LODF rows are stored. Rows are evicted least-recently-used
+        once either bound set by `max_cache_size` is reached: the total byte budget,
+        or the implied maximum row count (`max_cache_size / row_size`).
 - `cache_lock::ReentrantLock`:
         Guards `cache` reads/writes for parallel `getindex` callers.
 - `subnetworks::Dict{Int, Set{Int}}`:
@@ -121,9 +123,9 @@ end
 """
     _get_PTDF_A_diag(K, BA, A, ref_bus_positions) -> Vector{Float64}
 
-Compute `diag(PTDF · A)`. Each row of `A` has exactly two nonzeros (+1 at the
-from-bus, -1 at the to-bus), so the per-arc dot product reduces to two indexed
-reads into the solved PTDF row after a one-time transpose of `A`.
+Compute ``\\mathrm{diag}(\\mathrm{PTDF} \\, A)``. Each row of ``A`` has exactly two nonzeros
+(``+1`` at the from-bus, ``-1`` at the to-bus), so the per-arc dot product reduces to two
+indexed reads into the solved PTDF row after a one-time transpose of ``A``.
 """
 function _get_PTDF_A_diag(
     K,
@@ -263,17 +265,32 @@ Builds the Virtual LODF matrix from a system. The return is a VirtualLODF
 struct with an empty cache.
 
 # Arguments
-- `sys::PSY.System`:
-        PSY system for which the matrix is constructed
+- `sys::PowerSystems.System`:
+        The power system for which the matrix is constructed
 
 # Keyword Arguments
+- `dist_slack::Vector{Float64} = Float64[]`:
+        Weights to be used as a distributed slack bus, one per bus and ordered like the
+        bus axis. They need not sum to one; they are normalized internally. The empty
+        default uses a single reference bus. Note the input type differs from
+        [`PTDF`](@ref)/[`VirtualPTDF`](@ref), which take a `Dict{Int, Float64}`.
 - `linear_solver::String = _default_linear_solver()`: Linear solver for the
-        ABA factorization. Options: "KLU", "AppleAccelerate". Defaults to
-        "AppleAccelerate" on macOS and "KLU" elsewhere.
-- `network_reduction::NetworkReduction`:
-        Structure containing the details of the network reduction applied when computing the matrix
+        ABA factorization. Options: "KLU", "AppleAccelerateLU". Defaults to
+        "AppleAccelerateLU" on macOS 15.5+ and "KLU" elsewhere.
+- `tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE`:
+        Tolerance related to sparsification and values to drop. A `Float64` applies a
+        fixed absolute cutoff; an [`AutoTolerance`](@ref) (the default) applies a
+        relative per-row cutoff so requested rows stay sparse on large systems.
+- `max_cache_size::Int`:
+        Maximum row-cache size in MiB (default `MAX_CACHE_SIZE_MiB`, 100 MiB). It bounds
+        the cache both as a byte budget and as a row count (`max_cache_size / row_size`);
+        when either is reached the least-recently-used row is evicted.
+- `persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}()`:
+        arcs to be evaluated as soon as the VirtualLODF is created (initialized as empty vector of tuples).
+- `network_reductions::Vector{NetworkReduction}`:
+        Network reductions applied when computing the matrix
 - `kwargs...`:
-        other keyword arguments used by VirtualPTDF
+        other keyword arguments forwarded to the underlying [`Ybus`](@ref) constructor
 """
 function VirtualLODF(
     sys::PSY.System;
@@ -503,21 +520,23 @@ Compute the partial LODF column for a susceptance change `delta_b` on arc `arc_i
 Concurrent callers serialize on `vlodf.solver_lock` and `_LIBKLU_LOCK`.
 
 Uses the Sherman-Morrison (matrix inversion lemma) formula derived from DC power flow
-sensitivity analysis. For a change Δb in the susceptance of arc e, the change in flow
-on monitoring arc ℓ per unit pre-change flow on arc e is:
-
-    partial_LODF[ℓ, e] = α · (b_ℓ / b_e) · H[ℓ,e] / (1 - α · H[e,e])
-
+sensitivity analysis. For a change ``\\Delta b`` in the susceptance of arc ``e``, the change in flow
+on monitoring arc ``\\ell`` per unit pre-change flow on arc ``e`` is
+```math
+\\mathrm{partialLODF}[\\ell, e] = \\alpha \\, \\frac{b_\\ell}{b_e} \\, \\frac{H[\\ell, e]}{1 - \\alpha \\, H[e, e]}
+```
 where:
-- α = -Δb / b_e   (positive for outage/decrease, negative for increase)
-- H[ℓ, e] = (A · (ABA)⁻¹ · BA)[ℓ, e] = b_e · C[e, ℓ]  (computed via KLU solve)
-- b_ℓ = susceptance of monitoring arc ℓ
-- H[e,e] = PTDF_A_diag[e]
+- ``\\alpha = -\\Delta b / b_e`` (positive for outage/decrease, negative for increase)
+- ``H[\\ell, e] = (A \\, (\\mathrm{ABA})^{-1} \\, \\mathrm{BA})[\\ell, e] = b_e \\, C[e, \\ell]`` (computed via KLU solve)
+- ``b_\\ell`` is the susceptance of monitoring arc ``\\ell``
+- ``H[e, e]`` is `PTDF_A_diag[e]`
 
-When `delta_b = -b_e` (full outage), α = 1 and this reduces to the standard LODF column:
-    LODF[ℓ, e] = b_ℓ · C[e, ℓ] / (1 - H[e,e])
+When `delta_b = -b_e` (full outage), ``\\alpha = 1`` and this reduces to the standard LODF column
+```math
+\\mathrm{LODF}[\\ell, e] = \\frac{b_\\ell \\, C[e, \\ell]}{1 - H[e, e]}.
+```
 When `delta_b = 0`, returns zeros (no change).
-The self-element (ℓ = e) is overridden to -1.0 for full outage per standard LODF convention.
+The self-element (``\\ell = e``) is overridden to -1.0 for full outage per standard LODF convention.
 """
 function _getindex_partial(
     vlodf::VirtualLODF,

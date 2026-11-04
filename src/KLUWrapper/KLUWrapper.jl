@@ -12,7 +12,7 @@ designed for the access patterns of `PowerNetworkMatrices`:
 
 This module is intentionally lighter than `KLU.jl`: it owns no Julia-side
 copies of the matrix values, exposes the symbolic/numeric split directly, and
-binds only the SuiteSparse_long (`klu_l_*`, `klu_zl_*`) entry points used by
+binds only the `SuiteSparse_long` (`klu_l_*`, `klu_zl_*`) entry points used by
 the package.
 """
 module KLUWrapper
@@ -35,6 +35,19 @@ that toggling it forces a precompile rebuild and the production binary
 never carries the diagnostic code.
 """
 const KLU_POOL_DEBUG = false
+
+"""
+    _EXITING :: Threads.Atomic{Bool}
+
+Set by an `atexit` hook. At exit Julia runs every pending finalizer, including
+those of caches that tasks on other threads are still solving with, so freeing
+the libklu handles then is a use-after-free (SIGSEGV in `klu_l_solve`; see
+KLU.jl#31). Once this is set, `_finalize_klu_cache!` leaves the handles for the
+OS to reclaim. `atexit` hooks always run before that finalizer sweep.
+"""
+const _EXITING = Threads.Atomic{Bool}(false)
+
+__init__() = atexit(() -> (_EXITING[] = true))
 
 """
     _LIBKLU_LOCK :: ReentrantLock
