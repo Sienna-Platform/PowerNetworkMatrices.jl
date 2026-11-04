@@ -142,8 +142,11 @@ function _zero_impedance_merges(
                 @warn "Zero-impedance branch between two irreducible buses $from_no and $to_no; skipping merge."
                 continue
             elseif _joins_hvdc_terminals(nr, hvdc_terminals, from_no, to_no)
-                @warn "Zero-impedance branch $arc_key joins both terminals of a two-terminal HVDC line; skipping merge."
-                continue
+                throw(
+                    IS.DataFormatError(
+                        "Zero-impedance branch $arc_key is parallel to a two-terminal HVDC line between buses $from_no and $to_no. Fix the system data.",
+                    ),
+                )
             elseif to_irred ||
                    (!from_irred && bus_type_rank[to_no] > bus_type_rank[from_no])
                 # Flip so the irreducible bus, else the stronger bus type, survives. Both
@@ -164,8 +167,8 @@ function _zero_impedance_merges(
     return nr
 end
 
-# A merge must not collapse both terminals of a two-terminal HVDC line onto one bus:
-# the HVDC line becomes a self-loop and the power flow Jacobian assumes distinct ends.
+# A zero-impedance path between both terminals of a two-terminal HVDC line is invalid
+# data: the merge makes the HVDC line a self-loop.
 function _joins_hvdc_terminals(
     nr::NetworkReductionData,
     hvdc_terminals::Vector{Tuple{Int, Int}},

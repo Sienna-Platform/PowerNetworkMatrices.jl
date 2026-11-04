@@ -304,7 +304,7 @@ end
     @test length(PNM.get_bus_axis(ybus)) == 14 - 2
 end
 
-@testset "ZeroImpedanceBranchReduction: HVDC terminals stay distinct" begin
+@testset "ZeroImpedanceBranchReduction: zero-impedance path parallel to HVDC errors" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     _set_zero_impedance!(get_component(Line, sys, "Line3"))  # bus 2 → 3
     _set_zero_impedance!(get_component(Line, sys, "Line6"))  # bus 3 → 4
@@ -322,13 +322,7 @@ end
     )
     add_component!(sys, hvdc)
 
-    ybus =
-        @test_logs (:warn, r"both terminals of a two-terminal HVDC") match_mode = :any Ybus(
-            sys,
-        )
-    rbsm = get_network_reduction_data(ybus).reverse_bus_search_map
-    @test get(rbsm, 4, 4) != get(rbsm, 2, 2)
-    @test length(PNM.get_bus_axis(ybus)) == 14 - 1
+    @test_throws IS.DataFormatError Ybus(sys)
 end
 
 @testset "ZeroImpedanceBranchReduction: transformer arcs are excluded" begin
