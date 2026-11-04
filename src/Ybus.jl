@@ -2290,7 +2290,7 @@ function validate_connectivity(M::Ybus)
 end
 
 """
-    find_subnetworks(M::Ybus) -> Dict{Int, Set{Int}}
+    find_subnetworks(M::Ybus; include_reduced_buses::Bool = false) -> Dict{Int, Set{Int}}
 
 Identify electrical islands (subnetworks) in the Y-bus matrix.
 
@@ -2300,6 +2300,11 @@ island that requires its own reference bus and can be solved independently.
 
 # Arguments
 - `M::Ybus`: Y-bus matrix to analyze
+
+# Keyword Arguments
+- `include_reduced_buses::Bool = false`: If `true`, each subnetwork also contains the buses that
+  the network reductions merged into its retained buses. If `false`, each subnetwork contains
+  only the buses on the reduced bus axis.
 
 # Returns
 - `Dict{Int, Set{Int}}`: Dictionary mapping reference bus numbers to sets of bus numbers in each subnetwork
@@ -2327,9 +2332,12 @@ end
 - [`validate_connectivity`](@ref): Check for full connectivity
 - [`iterative_union_find`](@ref): Underlying connectivity algorithm
 """
-function find_subnetworks(M::Ybus)
-    bus_numbers = M.axes[2]
-    return find_subnetworks(M.adjacency_data, bus_numbers)
+function find_subnetworks(M::Ybus; include_reduced_buses::Bool = false)
+    subnetworks = find_subnetworks(M.adjacency_data, M.axes[2])
+    if include_reduced_buses
+        _expand_reduced_buses!(subnetworks, get_network_reduction_data(M))
+    end
+    return subnetworks
 end
 
 function get_reduction(ybus::Ybus, sys::PSY.System, reduction::DegreeTwoReduction)
