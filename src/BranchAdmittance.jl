@@ -80,14 +80,21 @@ end
 _branch_r(b::PSY.ACTransmission, units) = PSY.get_r(b, units)
 _branch_x(b::PSY.ACTransmission, units) = PSY.get_x(b, units)
 
-# Helper method for whether a series compensator is bypassed.
-_is_bypassed(b::PSY.SeriesCompensator) =
-    PSY.get_control_mode(b) == PSY.SeriesCompensatorControlMode.BYPASSED
+# A series admittance's series r and x. A bypassed one keeps its stored impedance but reads
+# as a zero-impedance tie.
+function _branch_r(b::PSY.SeriesAdmittance, units)
+    if PSY.get_bypassed(b)
+        return 0.0
+    end
+    return PSY.get_r(b, units)
+end
 
-# Helper methods for a series compensator's series r and x. A bypassed compensator keeps
-# its stored impedance but reads as a zero-impedance tie.
-_branch_r(b::PSY.SeriesCompensator, units) = _is_bypassed(b) ? 0.0 : PSY.get_r(b, units)
-_branch_x(b::PSY.SeriesCompensator, units) = _is_bypassed(b) ? 0.0 : PSY.get_x(b, units)
+function _branch_x(b::PSY.SeriesAdmittance, units)
+    if PSY.get_bypassed(b)
+        return 0.0
+    end
+    return PSY.get_x(b, units)
+end
 
 # The single home for the `1/x` arithmetic. Returns `Inf` when `r == x == 0`:
 # `get_series_susceptance` rejects that, `_finite_series_susceptance` substitutes.
@@ -132,7 +139,7 @@ function _get_shunts(br::PSY.ACTransmission)
 end
 
 _get_shunts(::PSY.DiscreteControlledACBranch) = (zero(ComplexF64), zero(ComplexF64))
-_get_shunts(::PSY.SeriesCompensator) = (zero(ComplexF64), zero(ComplexF64))
+_get_shunts(::PSY.SeriesAdmittance) = (zero(ComplexF64), zero(ComplexF64))
 
 # Kept out of line so the `@warn` body does not count against the caller's inlining budget.
 # ZIR merges a zero-impedance line's endpoints but excludes transformer arcs, so the
