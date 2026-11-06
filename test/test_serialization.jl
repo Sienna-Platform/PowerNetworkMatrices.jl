@@ -57,6 +57,28 @@ function _test_modf_rows_equal(vmodf, restored, expected, actual = expected)
     return
 end
 
+function _test_arc_rows_equal(expected, actual)
+    @test length(actual.arc_modifications) == length(expected.arc_modifications)
+    for (a, e) in zip(actual.arc_modifications, expected.arc_modifications)
+        @test a.arc_index == e.arc_index
+        @test a.delta_b ≈ e.delta_b
+        @test isapprox(a.delta_shift_injection, e.delta_shift_injection; atol = 1e-12)
+    end
+    return
+end
+
+function _test_post_outage_rows_equal(vmodf, restored, expected, actual)
+    @test actual.is_islanding == expected.is_islanding
+    for monitored in 1:length(PNM.get_arc_axis(vmodf))
+        @test isapprox(
+            collect(vmodf[monitored, expected]),
+            collect(restored[monitored, actual]);
+            atol = 1e-10,
+        )
+    end
+    return
+end
+
 function _add_outage!(sys, components...)
     outage = PSY.FixedForcedOutage(; outage_status = 1.0)
     for component in components
@@ -215,6 +237,12 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         @test_throws ErrorException from_hdf5(VirtualPTDF, path)
         @test_throws ErrorException from_hdf5(VirtualMODF, path)
 
+        to_hdf5(vptdf, path; force = true)
+        PNM.HDF5.h5open(path, "r+") do f
+            PNM.HDF5.delete_object(f, "names")
+        end
+        @test_throws "Factor file has no entry names" from_hdf5(VirtualPTDF, path)
+
         # Each case rewrites the file, corrupts one entry and expects an error naming it.
         function _replace!(g, name, value)
             PNM.HDF5.delete_object(g, name)
@@ -241,16 +269,16 @@ end
 
 @testset "factor file outages" begin
     @testset "RTS-GMLC outage by name" begin
-        for (map, tag) in (
-            (RTS_NR.reverse_direct_branch_map, "direct"),
-            (RTS_NR.reverse_series_branch_map, "series"),
-            (RTS_NR.reverse_parallel_branch_map, "parallel"),
+        for (map, is_series) in (
+            (RTS_NR.reverse_direct_branch_map, false),
+            (RTS_NR.reverse_series_branch_map, true),
+            (RTS_NR.reverse_parallel_branch_map, false),
         )
             branch = first(keys(map))
             key = PNM._outage_key(branch)
-            @test RTS_TABLE.rows[key][1] == tag
-            @test NetworkModification(RTS_TABLE, typeof(branch), key[2]) ==
-                  NetworkModification(RTS_TABLE, key...)
+            @test RTS_TABLE.rows[key][1] == is_series
+            @test NetworkModification(RTS_TABLE, key[1], key[2]) ==
+                  NetworkModification(RTS_TABLE, [key])
             _test_modf_rows_equal(
                 RTS_VMODF,
                 RTS_RESTORED,
@@ -260,18 +288,26 @@ end
         end
         @test_throws ErrorException NetworkModification(RTS_TABLE, "Line", "no such line")
         @test_throws ErrorException NetworkModification(RTS_TABLE, Tuple{String, String}[])
+        dup = first(keys(RTS_TABLE.rows))
+        @test_throws "Duplicate branch key" NetworkModification(RTS_TABLE, [dup, dup])
     end
 
     @testset "case10 3WT outage and skipped series chain" begin
         sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
         vmodf = VirtualMODF(sys; network_reductions = RTS_REDUCTIONS)
         path = joinpath(mktempdir(), "case10.h5")
-        @test_logs (:warn,) match_mode = :any to_hdf5(vmodf, path, sys)
+        @test_logs (
+            :warn,
+            r"3 branches are in no reduction map of the matrix",
+        ) (
+            :warn,
+            r"2 branches have no outage row because NetworkModification rejected them",
+        ) match_mode = :any to_hdf5(vmodf, path, sys)
         restored = from_hdf5(VirtualMODF, path)
         table = from_hdf5(BranchOutageTable, path)
         trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
         key = PNM._outage_key(trf)
-        @test table.rows[key][1] == "3wt"
+        @test table.rows[key][1]
         _test_modf_rows_equal(
             vmodf,
             restored,
@@ -287,6 +323,56 @@ end
         for branch in chain
             @test !haskey(table.rows, PNM._outage_key(branch))
         end
+    end
+
+    @testset "SeriesCompensator system round trip" begin
+        sys, _ = compensated_sys5(-0.01, SeriesCompensatorControlMode.FIXED)
+        vptdf, restored, _ = _roundtrip_ptdf(sys)
+        _test_same_core(vptdf, restored)
+        _test_ptdf_rows_equal(vptdf, restored, PNM.get_arc_axis(vptdf))
+        vmodf = VirtualMODF(sys)
+        restored_modf, table = _outage_roundtrip(vmodf, sys)
+        _test_same_core(vmodf, restored_modf)
+        line = get_component(Line, sys, COMPENSATED_LINE)
+        compensator = first(PSY.get_components(PSY.SeriesCompensator, sys))
+        for branch in (line, compensator)
+            key = PNM._outage_key(branch)
+            @test haskey(table.rows, key)
+            _test_modf_rows_equal(
+                vmodf,
+                restored_modf,
+                NetworkModification(vmodf, branch),
+                NetworkModification(table, key...),
+            )
+        end
+    end
+
+    @testset "case10 branch outage keys are unique" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+        vmodf = VirtualMODF(sys; network_reductions = RTS_REDUCTIONS)
+        path = joinpath(mktempdir(), "case10_keys.h5")
+        to_hdf5(vmodf, path, sys)
+        types, names = PNM.HDF5.h5open(path, "r") do f
+            read(f["branch_outages/type"]), read(f["branch_outages/name"])
+        end
+        keys_ = collect(zip(types, names))
+        trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
+        @test allunique(keys_)
+        @test count(==(PNM._outage_key(trf)), keys_) == 1
+    end
+
+    @testset "writer skips only ErrorException" begin
+        @test PNM._skippable(ErrorException("x"))
+        @test !PNM._skippable(MethodError(sin, ()))
+        @test !PNM._skippable(InterruptException())
+    end
+
+    @testset "wrong system" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+        other = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+        vptdf = VirtualPTDF(sys)
+        @test_throws ErrorException to_hdf5(
+            vptdf, joinpath(mktempdir(), "wrong.h5"), other)
     end
 
     @testset "multi-branch outage" begin
@@ -305,6 +391,91 @@ end
         end
         chain_mod = NetworkModification(RTS_TABLE, [PNM._outage_key(b) for b in chain[1:2]])
         @test length(chain_mod.arc_modifications) == 1
+    end
+
+    @testset "series chain with a parallel segment" begin
+        sys = build_antiparallel_chain_segment_system()
+        vmodf =
+            VirtualMODF(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+        nr = PNM.get_network_reduction_data(vmodf)
+        p1 = PSY.get_component(PSY.Line, sys, "L_10_3")
+        p2 = PSY.get_component(PSY.Line, sys, "L_3_10")
+        l1 = PSY.get_component(PSY.Line, sys, "L_1_10")
+        for branch in (p1, p2, l1)
+            @test PNM._resolve_branch_arc(nr, branch) == (:series, (1, 3))
+        end
+        segments = collect(nr.series_branch_map[(1, 3)])
+        @test length(segments) == 2
+        @test l1 in segments
+        @test !(p1 in segments)
+        @test !(p2 in segments)
+        # A partial series outage has no Ybus delta, so the writer stores no row for P1 or P2.
+        @test_throws ErrorException NetworkModification(vmodf, p1)
+        @test_throws ErrorException NetworkModification(vmodf, p2)
+
+        restored, table = _outage_roundtrip(vmodf, sys)
+        key = PNM._outage_key
+        @test !haskey(table.rows, key(p1))
+        @test !haskey(table.rows, key(p2))
+        @test table.rows[key(l1)][1]
+        @test table.opens_arc[only(table.rows[key(l1)][3])]
+        oracle = NetworkModification(vmodf, sys, _add_outage!(sys, l1))
+        actual = NetworkModification(table, [key(l1)])
+        _test_arc_rows_equal(oracle, actual)
+        _test_post_outage_rows_equal(vmodf, restored, oracle, actual)
+    end
+
+    @testset "combine rule" begin
+        # Arc 1: two partial rows of one chain. Arc 2: a partial row and a row that opens it.
+        # Arc 3: two partial rows of parallel members.
+        rows = Dict(
+            ("Line", "s1") => (true, false, 1:1),
+            ("Line", "s2") => (true, false, 2:2),
+            ("Line", "s3") => (true, false, 3:3),
+            ("Line", "s4") => (true, false, 4:4),
+            ("Line", "p1") => (false, false, 5:5),
+            ("Line", "p2") => (false, false, 6:6),
+        )
+        table = BranchOutageTable(
+            rows,
+            [1, 1, 2, 2, 3, 3],
+            [-1.0, -2.0, -0.5, -4.0, -1.0, -2.0],
+            zeros(6),
+            ones(Int, 6),
+            [false, false, false, true, false, false],
+            3,
+        )
+        err = try
+            NetworkModification(table, [("Line", "s1"), ("Line", "s2")])
+            ""
+        catch e
+            sprint(showerror, e)
+        end
+        @test occursin("NetworkModification(mat, sys, outage)", err)
+        @test occursin("Line s1", err)
+        opened = NetworkModification(table, [("Line", "s3"), ("Line", "s4")])
+        @test only(opened.arc_modifications).delta_b == -4.0
+        parallel = NetworkModification(table, [("Line", "p1"), ("Line", "p2")])
+        @test only(parallel.arc_modifications).delta_b == -3.0
+    end
+
+    @testset "case10 3WT circuit and a line on one chain" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+        vmodf =
+            VirtualMODF(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
+        nr = PNM.get_network_reduction_data(vmodf)
+        trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
+        line = PSY.get_component(PSY.Line, sys, "RADIAL1-RADIAL2-i_1")
+        winding = PNM.ThreeWindingTransformerCircuit(trf, PSY.get_circuits(trf)[2], 2)
+        @test PNM._resolve_branch_arc(nr, winding) == (:series, (110, 1001))
+        @test PNM._resolve_branch_arc(nr, line) == (:series, (110, 1001))
+        @test line in collect(nr.series_branch_map[(110, 1001)])
+        restored, table = _outage_roundtrip(vmodf, sys)
+        @test table.rows[PNM._outage_key(trf)][1]
+        oracle = NetworkModification(vmodf, sys, _add_outage!(sys, trf, line))
+        actual = NetworkModification(table, PNM._outage_key.([trf, line]))
+        _test_arc_rows_equal(oracle, actual)
+        _test_post_outage_rows_equal(vmodf, restored, oracle, actual)
     end
 
     @testset "registered outages round trip" begin
@@ -327,7 +498,38 @@ end
                 copies[id].modification,
             )
         end
-        @test isempty(PNM.get_registered_contingencies(_modf_roundtrip(vmodf)))
+        bare = _modf_roundtrip(vmodf)
+        bare_copies = PNM.get_registered_contingencies(bare)
+        @test sort(collect(keys(bare_copies))) == sort(collect(keys(original)))
+        for (id, spec) in original
+            @test bare_copies[id].modification.label == spec.modification.label
+            _test_modf_rows_equal(
+                vmodf,
+                bare,
+                spec.modification,
+                bare_copies[id].modification,
+            )
+        end
+    end
+
+    @testset "failed write keeps the old file" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+        other = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+        vptdf = VirtualPTDF(sys)
+        dir = mktempdir()
+        path = joinpath(dir, "keep.h5")
+        to_hdf5(vptdf, path)
+        listing = readdir(dir)
+        @test_throws ErrorException to_hdf5(vptdf, path, other; force = true)
+        _test_same_core(vptdf, from_hdf5(VirtualPTDF, path))
+        @test readdir(dir) == listing
+        @test_throws ErrorException PNM._write_factor_file_atomically(path, true) do f
+            f["partial"] = [1, 2, 3]
+            error("write failed")
+        end
+        _test_same_core(vptdf, from_hdf5(VirtualPTDF, path))
+        @test readdir(dir) == listing
+        @test_throws ErrorException to_hdf5(vptdf, path)
     end
 
     @testset "phase shifter outage" begin
@@ -349,5 +551,67 @@ end
         sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
         _, _, path = _roundtrip_ptdf(sys)
         @test_throws ErrorException from_hdf5(BranchOutageTable, path)
+    end
+end
+
+function _write_bad_dataset(path, group, name, value)
+    PNM.HDF5.h5open(path, "r+") do f
+        g = isempty(group) ? f : f[group]
+        PNM.HDF5.delete_object(g, name)
+        g[name] = value
+    end
+    return
+end
+
+@testset "factor file rejects bad values" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    _add_outage!(sys, first(PSY.get_components(PSY.Line, sys)))
+    vmodf = VirtualMODF(sys)
+    n_arc = length(PNM.get_arc_axis(vmodf))
+
+    function fresh_path()
+        path = joinpath(mktempdir(), "bad.h5")
+        to_hdf5(vmodf, path, sys)
+        return path
+    end
+
+    for (group, type) in (("branch_outages", BranchOutageTable), ("outages", VirtualMODF))
+        for bad_index in (0, n_arc + 1)
+            path = fresh_path()
+            good = PNM.HDF5.h5open(f -> read(f[group]["arc_index"]), path, "r")
+            bad = copy(good)
+            bad[1] = bad_index
+            _write_bad_dataset(path, group, "arc_index", bad)
+            @test_throws ErrorException from_hdf5(type, path)
+        end
+        for bad_b in (0.0, NaN)
+            path = fresh_path()
+            good = PNM.HDF5.h5open(f -> read(f[group]["delta_b"]), path, "r")
+            bad = copy(good)
+            bad[1] = bad_b
+            _write_bad_dataset(path, group, "delta_b", bad)
+            @test_throws ErrorException from_hdf5(type, path)
+        end
+    end
+
+    path = fresh_path()
+    _write_bad_dataset(path, "branch_outages", "opens_arc", Bool[])
+    @test_throws ErrorException from_hdf5(BranchOutageTable, path)
+
+    vptdf = VirtualPTDF(sys)
+    n_bus = length(PNM.get_bus_axis(vptdf))
+    for len in (n_bus - 1, n_bus + 1)
+        path = joinpath(mktempdir(), "slack.h5")
+        to_hdf5(vptdf, path)
+        _write_bad_dataset(path, "", "dist_slack", fill(1.0, len))
+        @test_throws ErrorException from_hdf5(VirtualPTDF, path)
+    end
+
+    @testset "kernel rejects out-of-range arc index" begin
+        mod = NetworkModification(
+            "bad",
+            [ArcModification(n_arc + 1, 1.0, 0.0, 0, 0, 0, 0, 1)],
+        )
+        @test_throws ArgumentError get_post_modification_ptdf_row(VirtualPTDF(sys), 1, mod)
     end
 end

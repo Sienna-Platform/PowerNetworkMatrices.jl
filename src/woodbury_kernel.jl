@@ -381,11 +381,28 @@ _compute_woodbury_factors(
     modifications::Tuple{Vararg{ArcModification}},
 ) = _compute_woodbury_factors(get_core(mat), modifications)
 
+function _check_arc_indices(
+    core::VirtualFactorCore,
+    modifications::Tuple{Vararg{ArcModification}},
+)
+    n_arc = length(core.arc_susceptances)
+    for mod in modifications
+        1 <= mod.arc_index <= n_arc ||
+            throw(
+                ArgumentError(
+                    "Arc index $(mod.arc_index) is outside the $n_arc arcs of the matrix.",
+                ),
+            )
+    end
+    return
+end
+
 function _compute_woodbury_factors(
     core::VirtualFactorCore,
     modifications::Tuple{Vararg{ArcModification}},
     labeler::F = _post_contingency_bus_labels,
 )::WoodburyFactors where {F}
+    _check_arc_indices(core, modifications)
     return with_solver(
         core.K,
         core.work_ba_col,

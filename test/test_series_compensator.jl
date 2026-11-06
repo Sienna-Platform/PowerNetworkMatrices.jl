@@ -1,36 +1,6 @@
 # A series capacitor inserted into one line of the 5-bus case: line `from -> mid`, then the
 # compensator `mid -> to`. DC flows must match the line with the capacitor folded into it.
 
-const COMPENSATED_LINE = "1"
-const MID_BUS = 100
-
-"""The 5-bus case with `COMPENSATED_LINE` split by a `SeriesCompensator` of reactance `x`."""
-function compensated_sys5(x, mode)
-    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
-    line = get_component(Line, sys, COMPENSATED_LINE)
-    from, to = get_from(get_arc(line)), get_to(get_arc(line))
-    mid = ACBus(;
-        number = MID_BUS, name = "mid", available = true, bustype = ACBusTypes.PQ,
-        angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
-        base_voltage = get_base_voltage(from), input_basis = u"CU",
-    )
-    add_component!(sys, mid)
-    line_arc = Arc(; from = from, to = mid)
-    compensator_arc = Arc(; from = mid, to = to)
-    add_component!(sys, line_arc)
-    add_component!(sys, compensator_arc)
-    set_arc!(line, line_arc)
-    add_component!(
-        sys,
-        SeriesCompensator(;
-            name = "compensator", available = true, active_power_flow = 0.0,
-            reactive_power_flow = 0.0, arc = compensator_arc, r = 0.0, x = x,
-            rating = get_rating(line, u"SU"), control_mode = mode, input_basis = u"CU",
-        ),
-    )
-    return sys, line
-end
-
 """The 5-bus case with `COMPENSATED_LINE`'s reactance changed by `dx`."""
 function folded_sys5(dx)
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")

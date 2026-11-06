@@ -45,20 +45,20 @@ Branch type names resolve through a fixed table of `PowerSystems` branch types.
 
 Groups and datasets:
 
-| Name                                 | Type            | Meaning                                                                                                                                                            |
-|:------------------------------------ |:--------------- |:------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `bus_axis`                           | Vector{Int}     | Bus numbers of the matrix columns.                                                                                                                                 |
-| `arc_from`, `arc_to`                 | Vector{Int}     | Endpoints of each arc.                                                                                                                                             |
-| `arc_susceptances`                   | Vector{Float64} | Signed DC susceptance of each arc, positive from `arc_from` to `arc_to`. The reader builds the BA and incidence matrices from it.                                  |
-| `ref_bus_positions`                  | Vector{Int}     | Sorted positions of the reference buses in `bus_axis`.                                                                                                             |
-| `arc_live_members`                   | Vector{Int}     | Members an outage can open on each arc.                                                                                                                            |
-| `shift_injection`                    | Vector{Float64} | DC phase shift injection of each arc, for readers that compute flow offsets. The Julia reader does not use it.                                                     |
-| `dist_slack`                         | Vector{Float64} | Distributed slack weights of a `VirtualPTDF`. Empty if unset, and for a `VirtualMODF`.                                                                             |
-| `reduced_bus_from`, `reduced_bus_to` | Vector{Int}     | The reverse bus search map as two columns.                                                                                                                         |
-| `names`                              | group           | One row per branch entry: `type`, `name`, `from`, `to`.                                                                                                            |
-| `subnetworks`                        | group           | One subgroup per reference bus, with `ref`, `arc_from`, `arc_to` and `bus`.                                                                                        |
-| `branch_outages`                     | group           | Optional. One row per branch: `type`, `name`, `tag`, `is_islanding`, `start`, `len`. The arrays `arc_index`, `delta_b`, `delta_shift`, `opened` hold the arc rows. |
-| `outages`                            | group           | Optional, `VirtualMODF` only. One row per registered contingency: `id`, `label`, `is_islanding`, `start`, `len`, and the same four arrays.                         |
+| Name                                 | Type            | Meaning                                                                                                                                                                               |
+|:------------------------------------ |:--------------- |:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bus_axis`                           | Vector{Int}     | Bus numbers of the matrix columns.                                                                                                                                                    |
+| `arc_from`, `arc_to`                 | Vector{Int}     | Endpoints of each arc.                                                                                                                                                                |
+| `arc_susceptances`                   | Vector{Float64} | Signed DC susceptance of each arc, positive from `arc_from` to `arc_to`. The reader builds the BA and incidence matrices from it.                                                     |
+| `ref_bus_positions`                  | Vector{Int}     | Sorted positions of the reference buses in `bus_axis`.                                                                                                                                |
+| `arc_live_members`                   | Vector{Int}     | Members an outage can open on each arc.                                                                                                                                               |
+| `shift_injection`                    | Vector{Float64} | DC phase shift injection of each arc, for readers that compute flow offsets. The Julia reader does not use it.                                                                        |
+| `dist_slack`                         | Vector{Float64} | Distributed slack weights of a `VirtualPTDF`. Empty if unset, and for a `VirtualMODF`.                                                                                                |
+| `reduced_bus_from`, `reduced_bus_to` | Vector{Int}     | The reverse bus search map as two columns.                                                                                                                                            |
+| `names`                              | group           | One row per branch entry: `type`, `name`, `from`, `to`.                                                                                                                               |
+| `subnetworks`                        | group           | One subgroup per reference bus, with `ref`, `arc_from`, `arc_to` and `bus`.                                                                                                           |
+| `branch_outages`                     | group           | Optional. One row per branch: `type`, `name`, `is_series`, `is_islanding`, `start`, `len`. The arrays `arc_index`, `delta_b`, `delta_shift`, `opened`, `opens_arc` hold the arc rows. |
+| `outages`                            | group           | Optional, `VirtualMODF` only. One row per registered contingency: `id`, `label`, `is_islanding`, `start`, `len`, and the same four arrays.                                            |
 
 ## Outages by name
 
@@ -74,14 +74,29 @@ two = NetworkModification(table, [("Line", "line-1"), ("Line", "line-2")])
 row = restored[(1, 2), mod]
 ```
 
-The table has one row for each branch whose `NetworkModification(mat, branch)` succeeds. The
-tag of a row is `direct`, `parallel`, `series` or `3wt`. A branch that a network reduction
-absorbed, or that `NetworkModification` rejects, has no row. The writer logs one warning with
-the number of such branches and the first reason. Two members of one series chain give one
-outage of the whole arc.
+The table has one row for each branch whose `NetworkModification(mat, branch)` succeeds.
+`is_series` is `true` when the branch, or one circuit of a three-winding transformer, is a
+member of a series chain. Each arc row has `opens_arc`, which is `true` when the outage of that
+one branch removes all admittance of the arc. A branch that a network reduction absorbed, or
+that is not in service, or that `NetworkModification` rejects, has no row. The writer logs one
+warning for each reason, with the number of such branches and the first one.
 
-For a `VirtualMODF`, the file also holds the registered contingencies. `from_hdf5(VirtualMODF, filename)` restores them. Restored modifications have no shunt modifications and no Ybus deltas,
-so they serve the DC row kernels only.
+`NetworkModification(table, keys)` groups the arc rows of all keys by arc:
+
+  - If a row opens the arc, the arc gets the first such row only. Two members of one series
+    chain, or a three-winding transformer circuit and a line on one chain, give one outage of
+    the whole arc.
+  - If no row opens the arc and two or more rows come from series members, the call throws.
+    The table cannot combine partial outages of one chain; build that outage from the system
+    with `NetworkModification(mat, sys, outage)`.
+  - Otherwise the arc keeps every row, so partial outages of parallel members add.
+
+For a `VirtualMODF`, the file also holds the registered contingencies, with or without `sys`.
+`from_hdf5(VirtualMODF, filename)` restores them. Restored modifications have no shunt
+modifications and no Ybus deltas, so they serve the DC row kernels only.
+
+`to_hdf5` writes a temporary file in the target directory and moves it into place when the
+write succeeds. A failed write with `force = true` leaves the old file unchanged.
 
 ## Limits of a restored matrix
 
