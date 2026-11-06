@@ -1,10 +1,15 @@
 # PowerNetworkMatrices.jl
 
-[![Main - CI](https://github.com/Sienna-Platform/PowerNetworkMatrices.jl/actions/workflows/main-tests.yml/badge.svg)](https://github.com/Sienna-Platform/PowerNetworkMatrices.jl/actions/workflows/main-tests.yml)
-[![codecov](https://codecov.io/gh/Sienna-Platform/PowerNetworkMatrices.jl/branch/main/graph/badge.svg?token=2VvekKsf11)](https://codecov.io/gh/Sienna-Platform/PowerNetworkMatrices.jl)
-[![Documentation Build](https://github.com/Sienna-Platform/PowerNetworkMatrices.jl/workflows/Documentation/badge.svg?)](https://sienna-platform.github.io/PowerNetworkMatrices.jl/stable)
-[<img src="https://img.shields.io/badge/slack-@Sienna/PNM-sienna.svg?logo=slack">](https://join.slack.com/t/core-sienna/shared_invite/zt-glam9vdu-o8A9TwZTZqqNTKHa7q3BpQ)
-[![PowerNetworkMatrices.jl Downloads](https://img.shields.io/badge/dynamic/json?url=http%3A%2F%2Fjuliapkgstats.com%2Fapi%2Fv1%2Ftotal_downloads%2FPowerNetworkMatrices&query=total_requests&label=Downloads)](http://juliapkgstats.com/pkg/PowerNetworkMatrices)
+| **Documentation** | **Build Status** |
+|:---:|:---:|
+| [![][docs-sienna-img]][docs-sienna-url] [![][docs-stable-img]][docs-stable-url] [![][docs-dev-img]][docs-dev-url] | [![Main - CI](https://github.com/Sienna-Platform/PowerNetworkMatrices.jl/actions/workflows/main-tests.yml/badge.svg)](https://github.com/Sienna-Platform/PowerNetworkMatrices.jl/actions/workflows/main-tests.yml) [![codecov](https://codecov.io/gh/Sienna-Platform/PowerNetworkMatrices.jl/branch/main/graph/badge.svg?token=2VvekKsf11)](https://codecov.io/gh/Sienna-Platform/PowerNetworkMatrices.jl) [<img src="https://img.shields.io/badge/slack-@Sienna/PNM-sienna.svg?logo=slack">](https://join.slack.com/t/core-sienna/shared_invite/zt-glam9vdu-o8A9TwZTZqqNTKHa7q3BpQ) [![PowerNetworkMatrices.jl Downloads](https://img.shields.io/badge/dynamic/json?url=http%3A%2F%2Fjuliapkgstats.com%2Fapi%2Fv1%2Ftotal_downloads%2FPowerNetworkMatrices&query=total_requests&label=Downloads)](http://juliapkgstats.com/pkg/PowerNetworkMatrices) |
+
+[docs-sienna-img]: https://img.shields.io/badge/Central_Sienna_docs-blue.svg
+[docs-sienna-url]: https://sienna-platform.github.io/Sienna/SiennaDocs/docs/build/index/
+[docs-stable-img]: https://img.shields.io/badge/docs-stable-blue.svg
+[docs-stable-url]: https://sienna-platform.github.io/PowerNetworkMatrices.jl/stable/
+[docs-dev-img]: https://img.shields.io/badge/docs-dev-blue.svg
+[docs-dev-url]: https://sienna-platform.github.io/PowerNetworkMatrices.jl/dev/
 
 `PowerNetworkMatrices.jl` is able to build classic power systems modeling network matrices such as
 [Ybus](https://en.wikipedia.org/wiki/Nodal_admittance_matrix), [PTDF](https://www.powerworld.com/WebHelp/Content/MainDocumentation_HTML/Power_Transfer_Distribution_Factors.htm), [LODF](https://www.powerworld.com/WebHelp/Content/MainDocumentation_HTML/Line_Outage_Distribution_Factors_LODFs.htm#:%7E:text=Line%20Outage%20Distribution%20Factors%20(LODFs)%20are%20a%20sensitivity%20measure%20of,other%20lines%20in%20the%20system.) and [MODF](https://arxiv.org/pdf/2501.17529v1)
