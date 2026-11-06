@@ -1,11 +1,11 @@
 # A series capacitor inserted into one line of the 5-bus case: line `from -> mid`, then the
-# compensator `mid -> to`. DC flows must match the line with the capacitor folded into it.
+# series compensator `mid -> to`. DC flows must match the line with the capacitor folded into it.
 
 const COMPENSATED_LINE = "1"
 const MID_BUS = 100
 
 """The 5-bus case with `COMPENSATED_LINE` split by a `SeriesCompensator` of reactance `x`."""
-function compensated_sys5(x, mode)
+function compensated_sys5(x; bypassed = false)
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     line = get_component(Line, sys, COMPENSATED_LINE)
     from, to = get_from(get_arc(line)), get_to(get_arc(line))
@@ -25,7 +25,7 @@ function compensated_sys5(x, mode)
         SeriesCompensator(;
             name = "compensator", available = true, active_power_flow = 0.0,
             reactive_power_flow = 0.0, arc = compensator_arc, r = 0.0, x = x,
-            rating = get_rating(line, u"SU"), control_mode = mode, input_basis = u"CU",
+            rating = get_rating(line, u"SU"), bypassed = bypassed, input_basis = u"CU",
         ),
     )
     return sys, line
@@ -56,10 +56,10 @@ function same_other_flows(a, b, reference, compensated)
     )
 end
 
-@testset "A FIXED series compensator acts as its reactance in series with the line" begin
+@testset "A series compensator acts as its reactance in series with the line" begin
     reference = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     x_c = -0.4 * get_x(get_component(Line, reference, COMPENSATED_LINE), u"SU")
-    compensated, line = compensated_sys5(x_c, SeriesCompensatorControlMode.FIXED)
+    compensated, line = compensated_sys5(x_c)
     folded, folded_line = folded_sys5(x_c)
 
     compensator = get_component(SeriesCompensator, compensated, "compensator")
@@ -77,11 +77,11 @@ end
     @test LODF(compensated) isa LODF
 end
 
-@testset "A BYPASSED series compensator is a zero-impedance tie" begin
+@testset "A bypassed series compensator is a zero-impedance tie" begin
     reference = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     ref_line = get_component(Line, reference, COMPENSATED_LINE)
     line_x = get_x(ref_line, u"SU")
-    compensated, _ = compensated_sys5(-0.4 * line_x, SeriesCompensatorControlMode.BYPASSED)
+    compensated, _ = compensated_sys5(-0.4 * line_x; bypassed = true)
 
     compensator = get_component(SeriesCompensator, compensated, "compensator")
     @test PNM.equivalent_branch(compensator).equivalent_x == PNM.ZERO_IMPEDANCE_X_EPSILON
