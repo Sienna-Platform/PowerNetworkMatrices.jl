@@ -92,3 +92,37 @@ end
         PTDF(compensated), PTDF(reference), reference, PNM.get_arc_tuple(ref_line),
     )
 end
+
+@testset "A series compensator out on a step matches a rebuilt PTDF" begin
+    x_c =
+        -0.4 * get_x(
+            get_component(
+                Line,
+                PSB.build_system(PSB.PSITestSystems, "c_sys5"),
+                COMPENSATED_LINE,
+            ),
+            u"SU",
+        )
+    sys, _ = compensated_sys5(x_c, SeriesCompensatorControlMode.FIXED)
+    compensator = get_component(SeriesCompensator, sys, "compensator")
+    vptdf = VirtualPTDF(sys)
+    vmodf = VirtualMODF(vptdf, sys; automatically_register_outages = false)
+    ts = TopologySchedule(
+        vmodf,
+        sys,
+        [Set{PSY.Component}(), Set{PSY.Component}([compensator])],
+    )
+    @test is_arc_out(ts, PNM.get_arc_tuple(compensator), 2)
+    @test !is_arc_out(ts, PNM.get_arc_tuple(compensator), 1)
+
+    reference, _ = compensated_sys5(x_c, SeriesCompensatorControlMode.FIXED)
+    set_available!(get_component(SeriesCompensator, reference, "compensator"), false)
+    ref = PTDF(reference)
+    arc_lookup, bus_lookup = PNM.get_arc_lookup(ref), PNM.get_bus_lookup(ref)
+    for arc in PNM.get_arc_axis(vptdf)
+        haskey(arc_lookup, arc) || continue
+        expected =
+            [ref[arc_lookup[arc], bus_lookup[bus]] for bus in PNM.get_bus_axis(vptdf)]
+        @test isapprox(ts[arc, 2], expected; atol = 1e-9)
+    end
+end

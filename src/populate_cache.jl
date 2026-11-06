@@ -226,29 +226,6 @@ function _woodbury_factors_from_base(
 end
 
 """
-    _woodbury_correction_from_base(base_full, BA, arc_sus, monitored_idx, wf, n_bus) -> Vector{Float64}
-
-Post-modification PTDF row for `monitored_idx`, reusing the contingency-independent
-`base_full[monitored_idx]` instead of solving. The correction itself — including
-the islanding zero-out — is the shared kernel's.
-"""
-function _woodbury_correction_from_base(
-    base_full::Dict{Int, Vector{Float64}},
-    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
-    arc_sus::Vector{Float64},
-    monitored_idx::Int,
-    wf::WoodburyFactors,
-    n_bus::Int,
-)::Vector{Float64}
-    _monitored_arc_out(arc_sus, monitored_idx, wf) && return zeros(n_bus)
-    b_mon = _post_modification_susceptance(arc_sus, monitored_idx, wf)
-
-    b_mon_pre = arc_sus[monitored_idx]
-    z_m = base_full[monitored_idx] ./ b_mon_pre   # fresh vector; base_full untouched
-    return _woodbury_correction!(z_m, BA, b_mon_pre, b_mon, monitored_idx, wf)
-end
-
-"""
     populate_cache(vmodf::VirtualMODF, contingencies; monitored) -> Nothing
 
 Precompute and pin the post-contingency PTDF rows for an iterable of
@@ -311,8 +288,11 @@ function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
             base_full[arc] = _gather_to_buses!(zeros(n_bus), valid_ix, view(sol, :, j))
         end
 
-        for mod in mods
-            wf = get!(woodbury_cache, mod) do
+        # The base network needs no correction, so it has no factors.
+        factors = Vector{Union{Nothing, WoodburyFactors}}(nothing, length(mods))
+        for (k, mod) in enumerate(mods)
+            mod == _BASE_NETWORK && continue
+            factors[k] = get!(woodbury_cache, mod) do
                 _woodbury_factors_from_base(
                     base_full,
                     BA,
@@ -323,15 +303,27 @@ function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
                     n_bus,
                 )
             end
-            rc = get!(() -> _new_modf_row_cache(vmodf), row_caches, mod)
-            for m in mon_idx
+        end
+        caches = [get!(() -> _new_modf_row_cache(vmodf), row_caches, mod) for mod in mods]
+        for m in mon_idx
+            pending = Int[]
+            for (k, rc) in enumerate(caches)
                 if haskey(rc, m)
                     pin_row!(rc, m)
-                    continue
+                else
+                    push!(pending, k)
                 end
-                row = _woodbury_correction_from_base(base_full, BA, arc_sus, m, wf, n_bus)
-                stored = apply_cutoff(cutoff, row)
-                set_persistent_row!(rc, m, stored)
+            end
+            isempty(pending) && continue
+            plans = [
+                _base_topology_row_plan(core, m, mods[k].arc_modifications, factors[k])
+                for k in pending
+            ]
+            # base_full[m] is read for no other monitored arc, so its rows may take it.
+            z_base = base_full[m] ./ arc_sus[m]
+            rows = _evaluate_row_plans(core, m, plans, base_full[m], z_base)
+            for (k, row) in zip(pending, rows)
+                set_persistent_row!(caches[k], m, apply_cutoff(cutoff, row))
             end
         end
     end

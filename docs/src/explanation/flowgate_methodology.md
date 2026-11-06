@@ -78,10 +78,8 @@ mod_branch = NetworkModification(vmodf, branch)
 mod_outage = NetworkModification(vmodf, sys, outage)
 ```
 
-When a `VirtualMODF` is constructed from a `PSY.System`, all `PSY.Outage`
-supplemental attributes in the system are automatically resolved and
-registered. Registered contingencies can be inspected with
-`get_registered_contingencies(vmodf)` and queried directly by `PSY.Outage`.
+When a `VirtualMODF` is constructed from a `PSY.System`, all `PSY.Outage` supplemental attributes in the system are automatically resolved and registered.
+Registered contingencies can be inspected with `get_registered_contingencies(vmodf)` and queried directly by `PSY.Outage`.
 
 ## Querying post-contingency rows
 
@@ -135,6 +133,13 @@ contributions. The default `tol = eps()` keeps all entries.
 contingency registrations, so subsequent queries will simply recompute. Use
 `clear_all_caches!(vmodf)` to also drop the registrations (after which the
 `VirtualMODF` can no longer be queried).
+
+Each modification's row cache is bounded, but every new modification queried adds one.
+A caller that keeps querying new modifications on one `VirtualMODF`, such as a
+`TopologySchedule` rebuilt for each window of a simulation, calls
+`retain_modifications!(vmodf, keep)` to evict every cache except those of the base network
+and the modifications in `keep`.
+Contingency registrations are not affected, so an evicted contingency is recomputed on its next query.
 
 ## Relationship to other matrix types
 

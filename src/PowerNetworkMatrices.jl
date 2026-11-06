@@ -10,6 +10,7 @@ export BA_Matrix
 export ArcModification
 export ShuntModification
 export ContingencySpec
+export PostContingencyNetwork
 export NetworkModification
 export DegreeTwoReduction
 export IncidenceMatrix
@@ -51,9 +52,11 @@ export branch_flow_limits
 export apply_woodbury_correction
 export clear_all_caches!
 export clear_caches!
+export retain_modifications!
 export compute_woodbury_factors
 export factorize
 export get_post_modification_ptdf_row
+export get_post_modification_ptdf_rows
 export get_system_uuid
 export is_factorized
 export populate_cache
@@ -69,6 +72,20 @@ export get_registered_contingencies
 export get_reductions
 export iterative_union_find
 export validate_connectivity
+export topology_schedule_components
+export AVAILABLE_SCHEDULE
+export BRANCH_STATUS_SCHEDULE
+export TopologySchedule
+export get_topology_index
+export get_topology_ptdf_rows
+export get_network_modification
+export get_islands
+export is_arc_out
+export get_in_service_members
+export get_in_service_entry
+export get_arc_shift_injection
+export get_post_contingency_network
+export get_post_contingency_ptdf_rows
 
 using DocStringExtensions
 import InfrastructureSystems as IS
@@ -167,6 +184,7 @@ include("virtual_modf_calculations.jl")
 include("woodbury_kernel.jl")
 include("populate_cache.jl")
 include("virtual_workers.jl")
+include("topology_schedule.jl")
 include("system_utils.jl")
 
 # Forward declarations for symbols still defined inside package extensions.
