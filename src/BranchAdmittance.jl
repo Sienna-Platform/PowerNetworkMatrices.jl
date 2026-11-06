@@ -80,16 +80,16 @@ end
 _branch_r(b::PSY.ACTransmission, units) = PSY.get_r(b, units)
 _branch_x(b::PSY.ACTransmission, units) = PSY.get_x(b, units)
 
-# A series admittance's series r and x. A bypassed one keeps its stored impedance but reads
+# A series compensator's series r and x. A bypassed one keeps its stored impedance but reads
 # as a zero-impedance tie.
-function _branch_r(b::PSY.SeriesAdmittance, units)
+function _branch_r(b::PSY.SeriesCompensator, units)
     if PSY.get_bypassed(b)
         return 0.0
     end
     return PSY.get_r(b, units)
 end
 
-function _branch_x(b::PSY.SeriesAdmittance, units)
+function _branch_x(b::PSY.SeriesCompensator, units)
     if PSY.get_bypassed(b)
         return 0.0
     end
@@ -139,7 +139,7 @@ function _get_shunts(br::PSY.ACTransmission)
 end
 
 _get_shunts(::PSY.DiscreteControlledACBranch) = (zero(ComplexF64), zero(ComplexF64))
-_get_shunts(::PSY.SeriesAdmittance) = (zero(ComplexF64), zero(ComplexF64))
+_get_shunts(::PSY.SeriesCompensator) = (zero(ComplexF64), zero(ComplexF64))
 
 # Kept out of line so the `@warn` body does not count against the caller's inlining budget.
 # ZIR merges a zero-impedance line's endpoints but excludes transformer arcs, so the
