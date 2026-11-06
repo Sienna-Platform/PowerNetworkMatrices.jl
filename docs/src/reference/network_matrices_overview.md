@@ -103,8 +103,25 @@ The MODF answers: "Under a registered contingency or network modification (one o
   - Caches Woodbury factors per modification and post-modification PTDF rows per `(monitored_arc, modification)` pair.
   - Auto-registers `PSY.Outage` supplemental attributes attached to the source system.
   - Rows are indexed by monitored arc tuples or arc indices; the second index is a [`ContingencySpec`](@ref), a [`NetworkModification`](@ref), or a `PSY.Outage`.
+  - [`get_post_modification_ptdf_rows`](@ref) returns one monitored arc's rows under several modifications from a single solve of its base column.
 
 **Use it when:** you need post-contingency or post-modification flow sensitivities for one or a few contingencies on a large system, and constructing the full LODF or recomputing PTDF per contingency is too expensive.
+
+#### Post-contingency networks on scheduled topologies
+
+A [`TopologySchedule`](@ref) assigns each time step a topology K, the base network with the components out at that step removed.
+[`get_post_contingency_network`](@ref) returns the [`PostContingencyNetwork`](@ref) of a registered contingency c on the topology of a step, the network K ∪ c.
+Steps on the same topology return equal networks, so they share every cached factor and row.
+`PostContingencyNetwork(vmodf, contingency_id)` returns the network of a registered contingency on the base topology.
+
+[`get_post_contingency_ptdf_rows`](@ref) returns one monitored arc's rows on several post-contingency networks from a single solve of its base column.
+On a topology other than the base network, the row is a second Woodbury update from K to K ∪ c of the arc's row on K, so K's factors are computed once and reused by every contingency on it.
+On the base topology, the row equals the registered contingency's row bit for bit.
+Indexing a [`VirtualMODF`](@ref) with a hand-built [`NetworkModification`](@ref) for K ∪ c gives the same row, but computes the full combined update from the base network instead of reusing K's factors.
+
+Each post-contingency network on a topology other than the base network has its own tier-2 Woodbury factors and its own row cache in the [`VirtualMODF`](@ref).
+[`clear_caches!`](@ref) empties these caches together with the Woodbury and row caches of every modification.
+[`retain_modifications!`](@ref) accepts post-contingency networks: a retained network keeps its tier-2 factors and rows, and its topology's factors and rows, and every other network's caches are evicted.
 
 ## Arc-Based Indexing
 

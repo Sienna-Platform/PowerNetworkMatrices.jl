@@ -43,16 +43,16 @@ function RowCache(max_cache_size::Int, persistent_rows::Set{Int}, row_size)
         @debug "required cache for persisted values = $((length(persistent_rows) + 1)*row_size). Max cache specification = $(max_cache_size)"
     end
     max_num_keys = max(length(persistent_rows) + 1, floor(Int, max_cache_size / row_size))
+    # Storage grows as rows are inserted, up to `max_num_keys`: a byte budget over short
+    # rows allows far more keys than most caches hold, and a VirtualMODF keeps one cache per
+    # network.
     return RowCache(
-        sizehint!(
-            Dict{Int, Union{Vector{Float64}, SparseArrays.SparseVector{Float64}}}(),
-            max_num_keys,
-        ),
+        Dict{Int, Union{Vector{Float64}, SparseArrays.SparseVector{Float64}}}(),
         # Copy: the cache mutates this set (pinning, and `empty!`), and the caller's own
         # set must not move under it.
         copy(persistent_rows),
         max_num_keys,
-        sizehint!(Vector{Int}(), max_num_keys),
+        Int[],
     )
 end
 

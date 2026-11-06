@@ -29,18 +29,24 @@ end
 function _populate_ybus_branch_vector!(
     vec::Vector{T},
     sys::PSY.System,
+    closed_switches::Set{String},
 ) where {T <: PSY.DiscreteControlledACBranch}
     iter = PSY.get_components(T, sys)
     sizehint!(vec, length(iter))
     for br in iter
-        PSY.get_available(br) &&
-            PSY.get_branch_status(br) == PSY.DiscreteControlledBranchStatus.CLOSED &&
+        PSY.get_available(br) || continue
+        if PSY.get_branch_status(br) == PSY.DiscreteControlledBranchStatus.CLOSED ||
+           PSY.get_name(br) in closed_switches
             push!(vec, br)
+        end
     end
     return
 end
 
-function _get_ybus_two_terminal_ac_branches(sys::PSY.System)::YbusACBranches
+function _get_ybus_two_terminal_ac_branches(
+    sys::PSY.System,
+    closed_switches::Set{String},
+)::YbusACBranches
     branches = YbusACBranches(
         Vector{PSY.Line}(),
         Vector{PSY.GenericArcImpedance}(),
@@ -51,7 +57,7 @@ function _get_ybus_two_terminal_ac_branches(sys::PSY.System)::YbusACBranches
     _populate_ybus_branch_vector!(branches.lines, sys)
     _populate_ybus_branch_vector!(branches.generic_arc_impedances, sys)
     _populate_ybus_branch_vector!(branches.two_winding_transformers, sys)
-    _populate_ybus_branch_vector!(branches.breaker_switches, sys)
+    _populate_ybus_branch_vector!(branches.breaker_switches, sys, closed_switches)
     _populate_ybus_branch_vector!(branches.series_compensators, sys)
     return branches
 end

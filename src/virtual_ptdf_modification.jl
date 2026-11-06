@@ -42,8 +42,8 @@ end
     get_post_modification_ptdf_row(vptdf, monitored_arc, mod) -> Vector{Float64}
 
 One-shot convenience function: compute the post-modification PTDF row
-for a monitored arc under a network modification. Internally calls
-`compute_woodbury_factors` then `apply_woodbury_correction`.
+for a monitored arc under a network modification: the row
+`compute_woodbury_factors` followed by `apply_woodbury_correction` gives.
 
 No caching — each call recomputes. Use the two-step API
 (`compute_woodbury_factors` + `apply_woodbury_correction`) when querying
@@ -56,8 +56,43 @@ function get_post_modification_ptdf_row(
     monitored_arc::Union{Int, Tuple{Int, Int}},
     mod::NetworkModification,
 )::Vector{Float64}
-    wf = compute_woodbury_factors(vptdf, mod)
-    return apply_woodbury_correction(vptdf, monitored_arc, wf)
+    return only(get_post_modification_ptdf_rows(vptdf, monitored_arc, [mod]))
+end
+
+"""
+    get_post_modification_ptdf_rows(vptdf::VirtualPTDF, monitored_arc, mods) -> Vector{Vector{Float64}}
+
+The post-modification PTDF rows of one monitored arc (an index or a bus pair) under each
+modification in `mods`, from a single solve of the arc's base column:
+`rows[i] == get_post_modification_ptdf_row(vptdf, monitored_arc, mods[i])`, bit for bit,
+including `vptdf`'s distributed slack. No caching: each call recomputes every modification's
+Woodbury factors.
+
+!!! note
+    Concurrent callers serialize on the per-cache `solver_lock`.
+"""
+function get_post_modification_ptdf_rows(
+    vptdf::VirtualPTDF,
+    monitored_arc::Union{Int, Tuple{Int, Int}},
+    mods::AbstractVector{NetworkModification},
+)::Vector{Vector{Float64}}
+    core = get_core(vptdf)
+    factors = [compute_woodbury_factors(vptdf, mod) for mod in mods]
+    m = _resolve_arc_index(vptdf, monitored_arc)
+    # The base network needs no correction, so it plans no factors.
+    plans = [
+        _base_topology_row_plan(
+            core,
+            m,
+            mod.arc_modifications,
+            mod == _BASE_NETWORK ? nothing : wf,
+        ) for (mod, wf) in zip(mods, factors)
+    ]
+    rows = _rows_from_plans(core, m, plans)
+    for (row, wf) in zip(rows, factors)
+        _apply_dist_slack!(row, vptdf, wf)
+    end
+    return rows
 end
 
 """

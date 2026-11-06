@@ -92,6 +92,21 @@ _bus_type_rank(bustype::Union{Nothing, ACBusTypes.Value}) =
         1
     end
 
+# A skip caused by schedule pins is expected: the scheduled branch must stay an arc so it can
+# be switched. Anything else means user-supplied pins blocked a merge, which deserves a warning.
+function _log_skipped_zero_impedance_merge(
+    from_no::Int,
+    to_no::Int,
+    schedule_pinned::Set{Int},
+)
+    if from_no in schedule_pinned && to_no in schedule_pinned
+        @debug "Zero-impedance branch between schedule-pinned buses $from_no and $to_no kept as an arc."
+    else
+        @warn "Zero-impedance branch between two irreducible buses $from_no and $to_no; skipping merge."
+    end
+    return
+end
+
 function get_reduction(
     ybus::Ybus,
     sys::PSY.System,
@@ -107,7 +122,8 @@ function _zero_impedance_merges(
     reduction::ZeroImpedanceBranchReduction,
 )
     nr = NetworkReductionData()
-    user_irreducible = get_user_irreducible_buses(get_reductions(nrd))
+    exempt = get_reduction_exempt_buses(get_reductions(nrd))
+    schedule_pinned = get_schedule_pinned_buses(get_reductions(nrd))
     hvdc_terminals = [
         (PSY.get_number(PSY.get_from(arc)), PSY.get_number(PSY.get_to(arc))) for
         arc in PSY.get_arc.(PSY.get_components(PSY.TwoTerminalHVDC, sys))
@@ -131,15 +147,15 @@ function _zero_impedance_merges(
                 br, susceptance_threshold, min_x_eps, resistance_tolerance) || continue
             from_no = get(nr.reverse_bus_search_map, arc_key[1], arc_key[1])
             to_no = get(nr.reverse_bus_search_map, arc_key[2], arc_key[2])
-            from_irred = from_no ∈ user_irreducible
-            to_irred = to_no ∈ user_irreducible
+            from_irred = from_no ∈ exempt
+            to_irred = to_no ∈ exempt
             if from_no == to_no
                 # Both endpoints already resolve into the same merged group: the arc is a
                 # self-loop, not a skipped merge, so it still has to be dropped.
                 push!(nr.removed_arcs, arc_key)
                 continue
             elseif from_irred && to_irred
-                @warn "Zero-impedance branch between two irreducible buses $from_no and $to_no; skipping merge."
+                _log_skipped_zero_impedance_merge(from_no, to_no, schedule_pinned)
                 continue
             elseif _joins_hvdc_terminals(nr, hvdc_terminals, from_no, to_no)
                 throw(

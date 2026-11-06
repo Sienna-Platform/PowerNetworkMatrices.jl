@@ -169,10 +169,22 @@ end
     get_equivalent_rating(bs::PSY.GenericArcImpedance)
 
 The largest directional maximum of its `operational_flow_limit`, per unit on the system base.
-A generic arc without an `operational_flow_limit` is unbounded and returns `Inf`.
+A generic arc without an `operational_flow_limit` is unbounded and returns `Inf`. A Ward
+equivalent built by [`WardReduction`](@ref) is not attached to a system; its limit is
+already stored on the system base.
 """
 function get_equivalent_rating(bs::PSY.GenericArcImpedance)
-    return _largest_flow_limit(PSY.get_operational_flow_limit(bs, u"SU"))
+    return _largest_flow_limit(PSY.get_operational_flow_limit(bs, _system_base_units(bs)))
+end
+
+# A detached component cannot resolve the system base power. The only detached generic arcs
+# are Ward equivalents, whose values are already system-base, which `u"CU"` returns
+# unchanged.
+function _system_base_units(bs::PSY.GenericArcImpedance)
+    if isnothing(IS.get_base_value(bs))
+        return u"CU"
+    end
+    return u"SU"
 end
 
 _largest_flow_limit(::Nothing) = Inf

@@ -264,6 +264,19 @@ function _use_dist_slack(vptdf::VirtualPTDF)::Bool
     return true
 end
 
+# Base PTDF row `row` solved on `core` (the matrix's own core or a `worker_core` of it), with
+# the reference buses as slack.
+function _solve_ptdf_row(row::Int, core::VirtualFactorCore)::Vector{Float64}
+    return with_solver(
+        core.K, core.work_ba_col, core.temp_data, core.solver_lock,
+    ) do K_solver, work_ba_col, temp_data
+        lin_solve =
+            _solve_ba_column!(K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, row)
+        _gather_to_buses!(temp_data, core.valid_ix, lin_solve)
+        return copy(temp_data)
+    end
+end
+
 # `core` is the matrix's own core or a `worker_core` of it, whose factorization the row is solved on.
 function _compute_ptdf_row(
     vptdf::VirtualPTDF,
@@ -272,19 +285,9 @@ function _compute_ptdf_row(
 )::Vector{Float64}
     dist_slack_normalized = get_dist_slack_normalized(vptdf)
     use_dist_slack = _use_dist_slack(vptdf)
-
-    return with_solver(
-        core.K, core.work_ba_col, core.temp_data, core.solver_lock,
-    ) do K_solver, work_ba_col, temp_data
-        lin_solve =
-            _solve_ba_column!(K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, row)
-        _gather_to_buses!(temp_data, core.valid_ix, lin_solve)
-        if use_dist_slack
-            adjustment = dot(temp_data, dist_slack_normalized)
-            return temp_data .- adjustment
-        end
-        return copy(temp_data)
-    end
+    base = _solve_ptdf_row(row, core)
+    use_dist_slack || return base
+    return base .- dot(base, dist_slack_normalized)
 end
 
 function _getindex(
