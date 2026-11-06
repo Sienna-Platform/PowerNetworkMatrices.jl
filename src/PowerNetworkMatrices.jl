@@ -54,9 +54,12 @@ export clear_caches!
 export compute_woodbury_factors
 export factorize
 export get_post_modification_ptdf_row
+export BranchOutageTable
+export from_hdf5
 export get_system_uuid
 export is_factorized
 export populate_cache
+export to_hdf5
 
 export find_subnetworks
 export get_bus_reduction_map
@@ -77,6 +80,7 @@ using PowerSystems: @u_str, PerUnit
 import PowerSystems: ACBusTypes
 
 import DataStructures
+import HDF5
 import DataStructures: SortedDict
 import SparseArrays
 import SparseArrays: rowvals, nzrange
@@ -168,6 +172,7 @@ include("woodbury_kernel.jl")
 include("populate_cache.jl")
 include("virtual_workers.jl")
 include("system_utils.jl")
+include("serialization.jl")
 
 # Forward declarations for symbols still defined inside package extensions.
 # AppleAccelerate-related functions live in `src/` now (no extension needed)

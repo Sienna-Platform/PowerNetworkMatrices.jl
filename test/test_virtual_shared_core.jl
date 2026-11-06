@@ -96,3 +96,40 @@ end
     @test length(core.PTDF_A_diag) == length(PNM.get_arc_axis(core))
     @test length(core.branch_susceptances_by_arc) == length(PNM.get_arc_axis(core))
 end
+
+@testset "VirtualFactorCore from arrays" begin
+    @testset "size checks and cutoff" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+        ybus = Ybus(sys)
+        core = PNM.VirtualFactorCore(ybus)
+        ref = Set(PNM.get_ref_bus_position(ybus))
+        live = PNM.get_arc_live_members(ybus)
+        cat = PNM.get_branch_catalog(ybus)
+        build(BA, A, ref, live) = PNM.VirtualFactorCore(
+            BA, A, ref, core.axes, core.subnetwork_axes, live, cat,
+        )
+        @test_throws ErrorException build(core.BA[:, 1:(end - 1)], core.A, ref, live)
+        @test_throws ErrorException build(core.BA, core.A[1:(end - 1), :], ref, live)
+        @test_throws ErrorException build(core.BA, core.A, ref, live[1:(end - 1)])
+        @test_throws ErrorException build(core.BA, core.A, Set([0]), live)
+        @test_throws ErrorException build(
+            core.BA,
+            core.A,
+            Set([size(core.BA, 1) + 1]),
+            live,
+        )
+        b = core.arc_susceptances .* core.arc_susceptance_signs
+        from_b = PNM.VirtualFactorCore(b, ref, core.axes, core.subnetwork_axes, live, cat)
+        @test from_b.BA == core.BA
+        @test from_b.A == core.A
+        @test_throws ErrorException PNM.VirtualFactorCore(
+            b[1:(end - 1)], ref, core.axes, core.subnetwork_axes, live, cat,
+        )
+        cut = PNM.VirtualFactorCore(
+            core.BA, core.A, ref, core.axes, core.subnetwork_axes, live, cat;
+            tol = 1e-9,
+        )
+        @test PNM.get_tol(cut) == 1e-9
+        @test PNM.get_tol_spec(cut) == 1e-9
+    end
+end

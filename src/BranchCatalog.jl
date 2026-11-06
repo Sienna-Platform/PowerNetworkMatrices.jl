@@ -514,6 +514,22 @@ The complete index over `nrd`.
 BranchCatalog(nrd::NetworkReductionData) = BranchCatalog(nrd, _keep_all)
 
 """
+    BranchCatalog(nrd::NetworkReductionData, name_to_arc::NAME_TO_ARC)
+
+A catalog that holds a name table only, for a matrix restored without components. The arc
+table and the component indexes are empty, so lookups by component name fail.
+"""
+function BranchCatalog(nrd::NetworkReductionData, name_to_arc::NAME_TO_ARC)
+    return BranchCatalog(
+        nrd,
+        ARC_TABLE(),
+        name_to_arc,
+        COMPONENT_TO_ENTRY(),
+        COMPONENT_NAME_INDEX(),
+    )
+end
+
+"""
     BranchCatalog(nrd::NetworkReductionData, predicate)
 
 Index over `nrd` holding only entries `predicate` accepts, where `predicate(T, component)`

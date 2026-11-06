@@ -29,6 +29,8 @@ single-scratch model.
 - `arc_susceptances::Vector{Float64}`: effective susceptance per arc.
 - `arc_susceptance_signs::Vector{Float64}`: sign of each arc's DC susceptance
   (`_arc_susceptance_sign`).
+- `arc_live_members::Vector{Int}`: members an outage can open on each arc, as
+  `Ybus.arc_live_members`.
 - `axes::Ax`: `(arc_axis, bus_axis)`.
 - `lookup::L`: `(arc_lookup, bus_lookup)`.
 - `valid_ix::Vector{Int}`: non-reference bus indices.
@@ -36,6 +38,8 @@ single-scratch model.
 - `subnetwork_axes::Dict{Int, Ax}`: per-reference-bus subnetwork axes (bus form).
 - `tol::SparsificationCutoff`: resolved per-row sparsification rule (absolute
   cutoff for a `Float64` `tol`, relative cutoff for an [`AutoTolerance`](@ref)).
+- `tol_spec::Union{Float64, AutoTolerance}`: the `tol` keyword as given; a factor
+  file stores it and a reader resolves it again.
 - `branch_catalog::BranchCatalog`: reduction maps.
 - `temp_data::Vector{Vector{Float64}}`: single-slot scratch (size n_buses).
 - `work_ba_col::Vector{Vector{Float64}}`: single-slot scratch (size n_valid).
@@ -60,12 +64,14 @@ struct VirtualFactorCore{Ax, L <: NTuple{2, Dict}, K}
     A::SparseArrays.SparseMatrixCSC{Int8, Int}
     arc_susceptances::Vector{Float64}
     arc_susceptance_signs::Vector{Float64}
+    arc_live_members::Vector{Int}
     axes::Ax
     lookup::L
     valid_ix::Vector{Int}
     bus_to_valid_idx::Vector{Int}
     subnetwork_axes::Dict{Int, Ax}
     tol::SparsificationCutoff
+    tol_spec::Union{Float64, AutoTolerance}
     branch_catalog::BranchCatalog
     temp_data::Vector{Vector{Float64}}
     work_ba_col::Vector{Vector{Float64}}
@@ -104,6 +110,7 @@ get_system_uuid(c::VirtualFactorCore) = c.system_uuid
 # Float64 representative for display/serialization.
 get_cutoff(c::VirtualFactorCore) = c.tol
 get_tol(c::VirtualFactorCore) = cutoff_value(c.tol)
+get_tol_spec(c::VirtualFactorCore) = c.tol_spec
 
 # Woodbury / NetworkModification kernel accessors.
 _get_BA(c::VirtualFactorCore) = c.BA
@@ -181,6 +188,156 @@ function _check_virtual_solver(::MKLPardisoSolver)
 end
 
 """
+    VirtualFactorCore(BA, A, ref_bus_positions, axes, subnetwork_axes, arc_live_members,
+        branch_catalog; linear_solver, tol, system_uuid) -> VirtualFactorCore
+
+Build the shared factorization core from the DC arrays. No `System` is needed.
+
+`BA` is the `n_bus × n_arc` BA matrix. `A` is the `n_arc × n_bus` incidence matrix with
+entries in `{-1, 0, 1}`. Each entry of `ref_bus_positions` is an index into the bus axis.
+`axes` is `(arc_axis, bus_axis)`. `arc_live_members[i]` is the number of members that an
+outage can open on arc `i`. The constructor holds `branch_catalog` and does not read it.
+
+The `tol` keyword is the sparsification spec, a `Float64` or an `AutoTolerance`. The
+constructor keeps it in `tol_spec` and resolves the per-row cutoff from it.
+"""
+function VirtualFactorCore(
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    A::SparseArrays.SparseMatrixCSC{Int8, Int},
+    ref_bus_positions::Set{Int},
+    axes::Tuple{Vector{Tuple{Int, Int}}, Vector{Int}},
+    subnetwork_axes::Dict{Int, Tuple{Vector{Tuple{Int, Int}}, Vector{Int}}},
+    arc_live_members::Vector{Int},
+    branch_catalog::BranchCatalog;
+    linear_solver::String = _default_linear_solver(),
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
+    system_uuid::Union{Base.UUID, Nothing} = nothing,
+)
+    n_arc = length(axes[1])
+    n_bus = length(axes[2])
+    size(BA) == (n_bus, n_arc) || error(
+        "BA has size $(size(BA)); expected (n_bus, n_arc) = ($n_bus, $n_arc).",
+    )
+    size(A) == (n_arc, n_bus) || error(
+        "A has size $(size(A)); expected (n_arc, n_bus) = ($n_arc, $n_bus).",
+    )
+    length(arc_live_members) == n_arc || error(
+        "arc_live_members has length $(length(arc_live_members)); expected n_arc = $n_arc.",
+    )
+    all(pos -> 1 <= pos <= n_bus, ref_bus_positions) ||
+        error("Reference bus positions $ref_bus_positions must lie in 1:$n_bus.")
+    solver = resolve_linear_solver(linear_solver)
+    _check_virtual_solver(solver)
+    ABA = calculate_ABA_matrix(A, BA, ref_bus_positions)
+    lookup = (make_ax_ref(axes[1]), make_ax_ref(axes[2]))
+    if length(subnetwork_axes) > 1
+        @info "Network is not connected, using subnetworks"
+    end
+
+    K = _create_factorization(solver, ABA)
+
+    # Resolve the per-row sparsification rule once: a Float64 becomes an absolute
+    # cutoff, an AutoTolerance a relative cutoff (κ logged via the reused K).
+    cutoff = _resolve_virtual_cutoff(tol, K, ABA, SparseArrays.nonzeros(BA))
+
+    valid_ix = setdiff(1:n_bus, ref_bus_positions)
+    bus_to_valid_idx = _build_bus_to_valid_idx(n_bus, valid_ix)
+
+    # Single scratch slot: solves serialize through `solver_lock`. Kept as a
+    # `Vector{Vector{Float64}}` so the `with_solver` callback signature
+    # stays uniform across solver backends.
+    temp_data = [zeros(n_bus)]
+    work_ba_col = [zeros(length(valid_ix))]
+
+    arc_susceptances = _extract_arc_susceptances(BA)
+    arc_susceptance_signs =
+        Float64[_arc_susceptance_sign(BA, A, l) for l in 1:size(BA, 2)]
+
+    return VirtualFactorCore(
+        K,
+        BA,
+        A,
+        arc_susceptances,
+        arc_susceptance_signs,
+        arc_live_members,
+        axes,
+        lookup,
+        valid_ix,
+        bus_to_valid_idx,
+        subnetwork_axes,
+        cutoff,
+        tol,
+        branch_catalog,
+        temp_data,
+        work_ba_col,
+        ReentrantLock(),
+        system_uuid,
+        Float64[],
+        Threads.Atomic{Bool}(false),
+        Vector{Vector{Float64}}(),
+        Threads.Atomic{Bool}(false),
+    )
+end
+
+"""
+    VirtualFactorCore(arc_susceptances, ref_bus_positions, axes, subnetwork_axes,
+        arc_live_members, branch_catalog; linear_solver, tol, system_uuid) -> VirtualFactorCore
+
+Build the shared factorization core from one signed DC susceptance per arc. The method builds
+the `BA` and `A` matrices from `axes` and `arc_susceptances`, then calls the matrix method.
+Entry `i` of `arc_susceptances` is the susceptance of arc `i`, positive from the first bus of
+the arc to the second.
+"""
+function VirtualFactorCore(
+    arc_susceptances::Vector{Float64},
+    ref_bus_positions::Set{Int},
+    axes::Tuple{Vector{Tuple{Int, Int}}, Vector{Int}},
+    subnetwork_axes::Dict{Int, Tuple{Vector{Tuple{Int, Int}}, Vector{Int}}},
+    arc_live_members::Vector{Int},
+    branch_catalog::BranchCatalog;
+    kwargs...,
+)
+    arc_ax, bus_ax = axes
+    n_arc = length(arc_ax)
+    n_bus = length(bus_ax)
+    length(arc_susceptances) == n_arc || error(
+        "arc_susceptances has length $(length(arc_susceptances)); expected n_arc = $n_arc.",
+    )
+    bus_position = make_ax_ref(bus_ax)
+    rows = Vector{Int}(undef, 2 * n_arc)
+    cols = Vector{Int}(undef, 2 * n_arc)
+    vals = Vector{Float64}(undef, 2 * n_arc)
+    signs = Vector{Int8}(undef, 2 * n_arc)
+    for (ix, arc) in enumerate(arc_ax)
+        (haskey(bus_position, arc[1]) && haskey(bus_position, arc[2])) ||
+            error("Arc $arc has an endpoint outside the bus axis.")
+        isfinite(arc_susceptances[ix]) ||
+            error("Non-finite DC susceptance $(arc_susceptances[ix]) on arc $arc.")
+        rows[2 * ix - 1] = bus_position[arc[1]]
+        rows[2 * ix] = bus_position[arc[2]]
+        cols[2 * ix - 1] = ix
+        cols[2 * ix] = ix
+        vals[2 * ix - 1] = arc_susceptances[ix]
+        vals[2 * ix] = -arc_susceptances[ix]
+        signs[2 * ix - 1] = 1
+        signs[2 * ix] = -1
+    end
+    BA = SparseArrays.sparse(rows, cols, vals, n_bus, n_arc)
+    SparseArrays.dropzeros!(BA)
+    A = SparseArrays.sparse(cols, rows, signs, n_arc, n_bus)
+    return VirtualFactorCore(
+        BA,
+        A,
+        ref_bus_positions,
+        axes,
+        subnetwork_axes,
+        arc_live_members,
+        branch_catalog;
+        kwargs...,
+    )
+end
+
+"""
     VirtualFactorCore(ybus::Ybus; linear_solver, tol, system_uuid) -> VirtualFactorCore
 
 Build the shared factorization core from a `Ybus`: the incidence matrix, BA matrix, ABA matrix,
@@ -192,60 +349,18 @@ function VirtualFactorCore(
     tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     system_uuid::Union{Base.UUID, Nothing} = nothing,
 )
-    solver = resolve_linear_solver(linear_solver)
-    _check_virtual_solver(solver)
-    ref_bus_positions = get_ref_bus_position(ybus)
     A = IncidenceMatrix(ybus)
     BA = BA_Matrix(ybus)
-    ABA = calculate_ABA_matrix(A.data, BA.data, Set(ref_bus_positions))
-    bus_ax = get_bus_axis(A)
-    axes = A.axes
-    look_up = A.lookup
-    subnetwork_axes = A.subnetwork_axes
-    if length(subnetwork_axes) > 1
-        @info "Network is not connected, using subnetworks"
-    end
-
-    K = _create_factorization(solver, ABA)
-
-    # Resolve the per-row sparsification rule once: a Float64 becomes an absolute
-    # cutoff, an AutoTolerance a relative cutoff (κ logged via the reused K).
-    cutoff = _resolve_virtual_cutoff(tol, K, ABA, SparseArrays.nonzeros(BA.data))
-
-    valid_ix = setdiff(1:length(bus_ax), ref_bus_positions)
-    bus_to_valid_idx = _build_bus_to_valid_idx(length(bus_ax), valid_ix)
-
-    # Single scratch slot — solves serialize through `solver_lock`, so
-    # per-worker scratch is unnecessary. Kept as a
-    # `Vector{Vector{Float64}}` so the `with_solver` callback signature
-    # stays uniform across solver backends.
-    temp_data = [zeros(length(bus_ax))]
-    work_ba_col = [zeros(length(valid_ix))]
-
-    arc_susceptances = _extract_arc_susceptances(BA.data)
-    arc_susceptance_signs =
-        Float64[_arc_susceptance_sign(BA.data, A.data, l) for l in 1:size(BA.data, 2)]
-
     return VirtualFactorCore(
-        K,
         BA.data,
         A.data,
-        arc_susceptances,
-        arc_susceptance_signs,
-        axes,
-        look_up,
-        valid_ix,
-        bus_to_valid_idx,
-        subnetwork_axes,
-        cutoff,
-        get_branch_catalog(ybus),
-        temp_data,
-        work_ba_col,
-        ReentrantLock(),
-        system_uuid,
-        Float64[],
-        Threads.Atomic{Bool}(false),
-        Vector{Vector{Float64}}(),
-        Threads.Atomic{Bool}(false),
+        Set(get_ref_bus_position(ybus)),
+        A.axes,
+        A.subnetwork_axes,
+        copy(get_arc_live_members(ybus)),
+        get_branch_catalog(ybus);
+        linear_solver = linear_solver,
+        tol = tol,
+        system_uuid = system_uuid,
     )
 end
