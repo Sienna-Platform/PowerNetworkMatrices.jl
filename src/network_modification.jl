@@ -334,51 +334,95 @@ end
 """
 $(TYPEDSIGNATURES)
 
-Construct a `NetworkModification` from a `PSY.Outage` supplemental attribute.
-Resolves the outage's associated `ACTransmission` components through the system,
-classifies each by the matrix's network reduction maps, and builds the
-modification. Handles multi-component outages with series-chain grouping.
+Construct a `NetworkModification` that removes every component in `components` (any
+iterable of PSY components). Duplicates collapse; unavailable devices are already out of
+the network and are skipped silently, and other components outside the network, such as
+injectors, contribute nothing. All components are resolved through the reduction maps
+together: the tripped members of one parallel group are resolved jointly from the group's
+two-port, and the tripped segments of one series chain from the chain's impedance sum.
 """
-function NetworkModification(mat::PowerNetworkMatrix, sys::PSY.System, outage::PSY.Outage)
+function NetworkModification(mat::PowerNetworkMatrix, sys::PSY.System, components)
     _validate_system_uuid(mat, sys)
+    unique_components = collect(
+        keys(IdDict(c => nothing for c in components if _in_network_candidate(c))),
+    )
+    isempty(unique_components) && return NetworkModification("", ArcModification[])
+    return _network_modification_from_components(mat, unique_components, "")
+end
 
-    # Single query for all associated components (avoids repeated PSY lookups)
+_in_network_candidate(device::PSY.Device) = PSY.get_available(device)
+_in_network_candidate(::PSY.Component) = true
+
+"""
+$(TYPEDSIGNATURES)
+
+Construct a `NetworkModification` from a `PSY.Outage` supplemental attribute.
+Resolves the outage's associated components through the system, classifies each by the
+matrix's network reduction maps, and builds the modification.
+"""
+function NetworkModification(
+    mat::PowerNetworkMatrix,
+    sys::PSY.System,
+    outage::PSY.Outage,
+)
+    _validate_system_uuid(mat, sys)
     all_components = collect(PSY.get_associated_components(sys, outage))
-
     if isempty(all_components)
         error("No valid arc or shunt modifications found for outage.")
     end
-
+    label = string(IS.get_id(outage))
     acc, mods = _classify_outage_components(mat, all_components)
-    direct_mods = acc.direct_mods
-    shunt_mods = acc.shunt_mods
-    component_names = acc.component_names
-
-    if isempty(mods) && isempty(shunt_mods)
-        @info "No valid arc or shunt modifications found for outage. " *
-              "The outage may only affect non-network components (e.g., generators)."
+    if !isempty(acc.unresolved)
+        throw(
+            IS.ConflictingInputsError(
+                "Outage (label=$label) references in-service transmission component(s) \
+                $(join(sort(acc.unresolved), ", ")) that no network reduction map holds, \
+                so the contingency would silently omit them. Build with \
+                VirtualMODF(sys; network_reductions = ...) or select them with \
+                irreducible_buses.",
+            ),
+        )
     end
+    return _network_modification_from_classified(mat, all_components, label, acc, mods)
+end
 
-    outage_id = IS.get_id(outage)
-    if isempty(component_names)
-        ctg_name = string(outage_id)
+function _network_modification_from_components(
+    mat::PowerNetworkMatrix,
+    components::Vector,
+    fallback_label::String,
+)
+    acc, mods = _classify_outage_components(mat, components)
+    return _network_modification_from_classified(mat, components, fallback_label, acc, mods)
+end
+
+function _network_modification_from_classified(
+    mat::PowerNetworkMatrix,
+    components::Vector,
+    fallback_label::String,
+    acc,
+    mods::Vector{ArcModification},
+)
+    if isempty(mods) && isempty(acc.shunt_mods)
+        @info "No valid arc or shunt modifications found. " *
+              "The components may only affect non-network elements (e.g., generators)."
+    end
+    if isempty(acc.component_names)
+        label = fallback_label
     else
-        ctg_name = join(component_names, "+")
+        label = join(acc.component_names, "+")
     end
-
-    # A fully-outaged ThreeWindingTransformer isolates its star bus and may
-    # island a real terminal bus; flag that on `is_islanding`.
+    # A fully-outaged ThreeWindingTransformer isolates its star bus and may island a real
+    # terminal bus; flag that on `is_islanding`.
     is_island = false
     arc_ax = get_arc_axis(mat)
-    for component in all_components
+    for component in components
         _is_three_winding_transformer(component) || continue
-        # Every circuit's arc ends at the star bus, so read it off the first one.
         star_num =
             PSY.get_number(PSY.get_to(PSY.get_arc(first(PSY.get_circuits(component)))))
-        t3w_mods = [m for m in direct_mods if arc_ax[m.arc_index][2] == star_num]
+        t3w_mods = [m for m in acc.direct_mods if arc_ax[m.arc_index][2] == star_num]
         is_island = is_island || _3wt_real_bus_islanding(mat, t3w_mods)
     end
-    return NetworkModification(ctg_name, mods, shunt_mods, is_island)
+    return NetworkModification(label, mods, acc.shunt_mods, is_island)
 end
 
 _is_three_winding_transformer(::Any) = false
@@ -497,6 +541,7 @@ struct _OutageAccumulator
     series_arc_tuples::Dict{Int, Tuple{Int, Int}}
     shunt_mods::Vector{ShuntModification}
     component_names::Vector{String}
+    unresolved::Vector{String}
 end
 
 _OutageAccumulator() = _OutageAccumulator(
@@ -506,6 +551,7 @@ _OutageAccumulator() = _OutageAccumulator(
     Dict{Int, Vector{PSY.ACTransmission}}(),
     Dict{Int, Tuple{Int, Int}}(),
     ShuntModification[],
+    String[],
     String[],
 )
 
@@ -545,6 +591,13 @@ function _classify_outage_components(mat::PowerNetworkMatrix, components)
     end
     return acc, vcat(acc.direct_mods, parallel_mods, series_mods)
 end
+
+# Whether `component` is in the network the reductions act on: available, and for a switch
+# also closed.
+_in_service(component) = PSY.get_available(component)
+_in_service(switch::PSY.DiscreteControlledACBranch) =
+    PSY.get_available(switch) &&
+    PSY.get_branch_status(switch) == PSY.DiscreteControlledBranchStatus.CLOSED
 
 """
     _classify_outage_component!(nr, arc_lookup, arc_sus, bus_lookup, component, acc) -> nothing
@@ -591,6 +644,7 @@ function _classify_outage_component!(
     else
         @info "Branch $(get_name(component)) not found in any reduction map. " *
               "The component may have been eliminated by a radial reduction."
+        _in_service(component) && push!(acc.unresolved, get_name(component))
         return
     end
     push!(acc.component_names, get_name(component))

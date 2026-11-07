@@ -451,6 +451,70 @@ end
     @test tested_target
 end
 
+@testset "VirtualMODF over a shared core rejects a partly eliminated outage" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    vptdf = VirtualPTDF(sys; network_reductions = NetworkReduction[RadialReduction()])
+    nrd = get_network_reduction_data(vptdf)
+    eliminated = _branch_off_every_map(sys, nrd)
+    surviving = first(
+        br for br in PSY.get_components(PSY.ACTransmission, sys) if
+        PNM._resolve_branch_arc(nrd, br)[1] === :direct
+    )
+    @test PSY.get_available(eliminated)
+
+    outage = _fixed_outage()
+    PSY.add_supplemental_attribute!(sys, surviving, outage)
+    PSY.add_supplemental_attribute!(sys, eliminated, outage)
+
+    err = try
+        VirtualMODF(vptdf, sys)
+        nothing
+    catch e
+        e
+    end
+    @test err isa IS.ConflictingInputsError
+    @test occursin(PSY.get_name(eliminated), sprint(showerror, err))
+    @test !occursin(PSY.get_name(surviving), sprint(showerror, err))
+
+    # An out-of-service eliminated component stays a no-op.
+    PSY.set_available!(eliminated, false)
+    vmodf = VirtualMODF(vptdf, sys)
+    @test length(PNM.get_registered_contingencies(vmodf)) == 1
+end
+
+@testset "an outage holding an open switch registers" begin
+    sys = _node_breaker_corridor()
+    open_switch = PSY.DiscreteControlledACBranch(nothing)
+    open_switch.name = "s24"
+    open_switch.arc = PSY.get_arc(_transmission(sys, "L24"))
+    open_switch.r = 0.0
+    open_switch.x = 0.01
+    open_switch.available = true
+    open_switch.branch_status = PSY.DiscreteControlledBranchStatus.OPEN
+    PSY.add_component!(sys, open_switch)
+
+    line_outage = _fixed_outage()
+    PSY.add_supplemental_attribute!(sys, _transmission(sys, "L12"), line_outage)
+    PSY.add_supplemental_attribute!(sys, open_switch, line_outage)
+    switch_outage = _fixed_outage()
+    PSY.add_supplemental_attribute!(sys, open_switch, switch_outage)
+
+    collector = _CollectLogs(Tuple{Any, String}[])
+    vmodf = Logging.with_logger(collector) do
+        VirtualMODF(sys)
+    end
+    contingencies = PNM.get_registered_contingencies(vmodf)
+    @test length(contingencies) == 2
+    @test any(
+        r -> r[1] == Logging.Warn && occursin("out-of-service transmission", r[2]),
+        collector.records,
+    )
+    ctg = contingencies[IS.get_id(line_outage)]
+    arcs = PNM.get_arc_axis(vmodf)
+    @test _max_error_against_rebuild(a -> vmodf[a, ctg], arcs, PNM.get_bus_axis(vmodf),
+        ["L12"]; builder = _node_breaker_corridor) < 1e-10
+end
+
 @testset "a system with only planned outages registers no contingencies" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     line = PSY.get_component(PSY.ACTransmission, sys, "1")
