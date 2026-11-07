@@ -435,8 +435,32 @@ end
     bp = PNM.get_parallel_branch_map(nr)[(1, 3)]
     chain = PNM._outaged_group_member(bp, leaf)
     @test any(l === leaf for l in PNM.leaf_components(chain))
-    @test am.delta_b ≈ -PNM._finite_series_susceptance(chain, nr)
+    sibling = only(m for m in bp if m !== chain)
+    b_arc = PNM._get_arc_susceptances(vptdf)[am.arc_index]
+    @test am.delta_b ≈ PNM._ba_arc_susceptance(sibling, nr) - b_arc atol = 1e-12
     @test iszero(am.delta_shift_injection)
+
+    sys_ref = build_two_parallel_degree_two_chains()
+    PSY.set_available!(PSY.get_component(Line, sys_ref, "L_1_10"), false)
+    ptdf_ref = PTDF(sys_ref; network_reductions = reductions)
+    err = 0.0
+    for arc in PNM.get_arc_axis(vptdf)
+        haskey(PNM.get_arc_lookup(ptdf_ref), arc) || continue
+        row = vptdf[arc, mod]
+        for (j, bus) in enumerate(PNM.get_bus_axis(vptdf))
+            err = max(
+                err,
+                abs(
+                    row[j] -
+                    ptdf_ref[
+                        PNM.get_arc_lookup(ptdf_ref)[arc],
+                        PNM.get_bus_lookup(ptdf_ref)[bus],
+                    ],
+                ),
+            )
+        end
+    end
+    @test err < 1e-12
 
     # The arc loses exactly the tripped chain's two-port, not one segment's.
     Y11, Y12, Y21, Y22 = PNM.ybus_branch_entries(chain, nr)
