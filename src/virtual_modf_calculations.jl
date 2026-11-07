@@ -391,7 +391,7 @@ function _compute_modf_entry(
     mod::NetworkModification,
 )::Vector{Float64}
     wf = _get_woodbury_factors(vmodf, mod)
-    return _apply_woodbury_correction(vmodf, monitored_idx, wf)
+    return _apply_woodbury_correction(get_core(vmodf), monitored_idx, wf)
 end
 
 # Per-modification row cache: one n_bus-long row per monitored arc.

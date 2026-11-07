@@ -1,15 +1,23 @@
 """
-    _invert_woodbury_W(W_mat, M) -> (W_inv::Matrix{Float64}, is_islanding::Bool)
+    _invert_woodbury_W(W_mat, M, signed_delta_b) -> (W_inv::Matrix{Float64}, is_islanding::Bool)
 
 Invert the M×M Woodbury W; closed form for M ≤ 2, LU otherwise.
+
+Singularity is judged on `S = diag(signed_delta_b)·W`, whose diagonal is `1 + Δb·K`. `S` is
+independent of the arcs' impedance scale and exactly singular for a true island, whereas `W`
+itself shrinks like `x²` for very low-impedance arcs and would be mistaken for singular.
 """
-function _invert_woodbury_W(W_mat::Matrix{Float64}, M::Int)::Tuple{Matrix{Float64}, Bool}
+function _invert_woodbury_W(
+    W_mat::Matrix{Float64},
+    M::Int,
+    signed_delta_b::Vector{Float64},
+)::Tuple{Matrix{Float64}, Bool}
     if iszero(M)
-        # M = 0 (hand-built modifications only; registration rejects it): getri! rejects 0×0.
+        # M = 0 (no arc changes its susceptance): getri! rejects 0×0.
         return Matrix{Float64}(undef, 0, 0), false
     elseif M == 1
         w = W_mat[1, 1]
-        is_island = abs(w) < MODF_ISLANDING_TOLERANCE
+        is_island = abs(w * signed_delta_b[1]) < MODF_ISLANDING_TOLERANCE
         W_inv = Matrix{Float64}(undef, 1, 1)
         if is_island
             W_inv[1, 1] = 0.0
@@ -20,7 +28,8 @@ function _invert_woodbury_W(W_mat::Matrix{Float64}, M::Int)::Tuple{Matrix{Float6
     elseif M == 2
         a, b, c, d = W_mat[1, 1], W_mat[1, 2], W_mat[2, 1], W_mat[2, 2]
         det_W = a * d - b * c
-        is_island = abs(det_W) < MODF_ISLANDING_TOLERANCE
+        is_island =
+            abs(det_W * signed_delta_b[1] * signed_delta_b[2]) < MODF_ISLANDING_TOLERANCE
         if is_island
             return LinearAlgebra.pinv(W_mat; atol = MODF_ISLANDING_TOLERANCE), is_island
         end
@@ -32,12 +41,14 @@ function _invert_woodbury_W(W_mat::Matrix{Float64}, M::Int)::Tuple{Matrix{Float6
         W_inv[2, 2] = a * inv_det
         return W_inv, is_island
     end
-    W_lu = LinearAlgebra.lu(W_mat; check = false)
-    is_island = any(i -> abs(W_lu.U[i, i]) < MODF_ISLANDING_TOLERANCE, 1:M)
+    scale = LinearAlgebra.Diagonal(signed_delta_b)
+    S_lu = LinearAlgebra.lu(scale * W_mat; check = false)
+    is_island = any(i -> abs(S_lu.factors[i, i]) < MODF_ISLANDING_TOLERANCE, 1:M)
     if is_island
         return LinearAlgebra.pinv(W_mat; atol = MODF_ISLANDING_TOLERANCE), is_island
     end
-    return LinearAlgebra.inv(W_lu), is_island
+    # W = D⁻¹S, so W⁻¹ = S⁻¹D.
+    return LinearAlgebra.inv(S_lu) * scale, is_island
 end
 
 # --- Islanding zero-forcing (shared by VirtualPTDF and VirtualMODF) -----------
@@ -190,6 +201,12 @@ in how they obtain `Z`: one solve per arc in the kernel path, a lookup into the
 batched pre-contingency solves in `populate_cache`. `signs[e]` is the sign of arc `e`'s DC
 susceptance (`VirtualFactorCore.arc_susceptance_signs`). Islanding labels come from
 `labeler(BA, arc_sus, modifications, n_bus)`, e.g. a `BridgeLabels`.
+
+Only arcs whose DC susceptance changes enter the factors. An arc with `delta_b == 0`, such as
+an arc with no susceptance, or a parallel group whose only remaining member has zero
+reactance when that member opens, leaves `B` unchanged, and its `1/Δb` term in `W` would be
+infinite. Its column of `Z` and its entry of `arc_out` are dropped; the labeler still sees
+every modification.
 """
 function _woodbury_factors_from_Z(
     Z::Matrix{Float64},
@@ -200,14 +217,19 @@ function _woodbury_factors_from_Z(
     arc_out::Vector{Bool},
     labeler::F = _post_contingency_bus_labels,
 )::WoodburyFactors where {F}
-    M = length(modifications)
     n_bus = size(Z, 1)
+    kept = [j for (j, mod) in enumerate(modifications) if !iszero(mod.delta_b)]
+    M = length(kept)
+    if M < length(modifications)
+        Z = Z[:, kept]
+        arc_out = arc_out[kept]
+    end
 
     arc_indices = Vector{Int}(undef, M)
     delta_b_vec = Vector{Float64}(undef, M)
-    for (j, mod) in enumerate(modifications)
-        arc_indices[j] = mod.arc_index
-        delta_b_vec[j] = mod.delta_b
+    for (j, k) in enumerate(kept)
+        arc_indices[j] = modifications[k].arc_index
+        delta_b_vec[j] = modifications[k].delta_b
     end
 
     # K_mat[i,j] = ν_i⊤ B⁻¹ ν_j
@@ -234,7 +256,7 @@ function _woodbury_factors_from_Z(
     # adds a negative-reactance arc a second time instead of removing it.
     signed_delta_b = [signs[arc_indices[j]] * delta_b_vec[j] for j in 1:M]
     W_mat = LinearAlgebra.diagm(1.0 ./ signed_delta_b) + K_mat
-    W_inv, is_island = _invert_woodbury_W(W_mat, M)
+    W_inv, is_island = _invert_woodbury_W(W_mat, M, signed_delta_b)
 
     # Label post-contingency components only when islanding, so the correction can
     # force entries of disconnected buses to exactly zero (see _zero_islanded_entries!).
@@ -246,6 +268,13 @@ function _woodbury_factors_from_Z(
 
     return WoodburyFactors(Z, W_inv, arc_indices, delta_b_vec, arc_out, is_island, labels)
 end
+
+"""
+    _woodbury_rank(wf::WoodburyFactors) -> Int
+
+Number of columns of the Woodbury update `wf`, the size of every per-column buffer.
+"""
+_woodbury_rank(wf::WoodburyFactors) = size(wf.W_inv, 1)
 
 # zm_Z = ν_mᵀ Z[:, eachindex(zm_Z)], ν_m = BA[:, m] / b_pre (BA's sign convention, not A's).
 function _monitored_Z!(
@@ -326,7 +355,7 @@ function _woodbury_correction!(
     monitored_idx::Int,
     wf::WoodburyFactors,
 )::Vector{Float64}
-    M = length(wf.arc_indices)
+    M = _woodbury_rank(wf)
     return _woodbury_correction!(
         z_m,
         zeros(M),
@@ -342,8 +371,8 @@ end
 """
     _woodbury_correction!(z_m, zm_Z, coeff, BA, b_mon_pre, b_mon_post, monitored_idx, wf) -> Vector{Float64}
 
-Non-allocating form: `zm_Z` and `coeff` are caller-owned buffers of length at least the
-number of modified arcs; only their first `M` entries are written.
+Non-allocating form: `zm_Z` and `coeff` are caller-owned buffers of length at least
+`_woodbury_rank(wf)`; only their first `M` entries are written.
 """
 function _woodbury_correction!(
     z_m::Vector{Float64},
@@ -355,7 +384,7 @@ function _woodbury_correction!(
     monitored_idx::Int,
     wf::WoodburyFactors,
 )::Vector{Float64}
-    M = length(wf.arc_indices)
+    M = _woodbury_rank(wf)
     zm_Z = view(zm_Z_buf, 1:M)
     correction_coeff = view(coeff_buf, 1:M)
 
@@ -418,11 +447,27 @@ function _compute_woodbury_factors(
     end
 end
 
-_apply_woodbury_correction(
-    mat::Union{VirtualPTDF, VirtualMODF},
+function _apply_woodbury_correction(
+    vptdf::VirtualPTDF,
     monitored_idx::Int,
     wf::WoodburyFactors,
-) = _apply_woodbury_correction(get_core(mat), monitored_idx, wf)
+)
+    row = _apply_woodbury_correction(get_core(vptdf), monitored_idx, wf)
+    return _apply_dist_slack!(row, vptdf, wf)
+end
+
+function _apply_dist_slack!(row::Vector{Float64}, vptdf::VirtualPTDF, wf::WoodburyFactors)
+    _use_dist_slack(vptdf) || return row
+    if wf.is_islanding
+        error(
+            "Distributed slack is not supported for a modification that islands the network.",
+        )
+    end
+    # A distributed slack withdraws each injection in proportion to the slack weights, which
+    # shifts every entry of a sensitivity row by the row's weighted mean.
+    row .-= LinearAlgebra.dot(row, get_dist_slack_normalized(vptdf))
+    return row
+end
 
 function _apply_woodbury_correction(
     core::VirtualFactorCore,
