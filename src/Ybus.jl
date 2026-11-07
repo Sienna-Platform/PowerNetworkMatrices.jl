@@ -398,6 +398,7 @@ function add_branch_entries_to_ybus!(
     br::PSY.ACTransmission,
     nr::NetworkReductionData,
 )
+    _warn_if_zero_impedance(br, _minimum_retained_impedance(nr))
     Y11, Y12, Y21, Y22 = ybus_branch_entries(br, nr)
     y11[branch_ix] = Y11
     y12[branch_ix] = Y12
@@ -540,8 +541,9 @@ function _ybus!(
         term_ix, star_ix = get_bus_indices(PSY.get_arc(circuit), num_bus, nr)
         fb[offset_ix + ix + n_entries] = term_ix
         tb[offset_ix + ix + n_entries] = star_ix
-        (Y11, Y12, Y21, Y22) =
-            ybus_branch_entries(ThreeWindingTransformerCircuit(br, circuit, i), nr)
+        winding = ThreeWindingTransformerCircuit(br, circuit, i)
+        _warn_if_zero_impedance(winding, _minimum_retained_impedance(nr))
+        (Y11, Y12, Y21, Y22) = ybus_branch_entries(winding, nr)
         y11[offset_ix + ix + n_entries] = Y11
         y12[offset_ix + ix + n_entries] = Y12
         y21[offset_ix + ix + n_entries] = Y21

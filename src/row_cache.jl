@@ -1,12 +1,12 @@
 # Value type stored per cached row: a dense row, or a sparsified row when a
 # tolerance is applied.
-const RowCacheValue = Union{Vector{Float64}, SparseArrays.SparseVector{Float64}}
+const RowCacheValue = Union{Vector{Float64}, SparseArrays.SparseVector{Float64, Int}}
 
 """
 Structure used for saving the rows of the Virtual PTDF and LODF matrix.
 
 # Arguments
-- `temp_cache::Dict{Int, Union{Vector{Float64}, SparseArrays.SparseVector{Float64}}}`:
+- `temp_cache::Dict{Int, Union{Vector{Float64}, SparseArrays.SparseVector{Float64, Int}}}`:
         Dictionary saving the row of the PTDF/LODF matrix
 - `persistent_cache_keys::Set{Int}`:
         Set listing the rows to keep in `temp_cache`
@@ -15,7 +15,7 @@ Structure used for saving the rows of the Virtual PTDF and LODF matrix.
 - `access_order::Vector{Int}`:
         Vector tracking access order for LRU eviction (most recent at end)
 """
-struct RowCache{T <: Union{Vector{Float64}, SparseArrays.SparseVector{Float64}}}
+struct RowCache{T <: Union{Vector{Float64}, SparseArrays.SparseVector{Float64, Int}}}
     temp_cache::Dict{Int, T}
     persistent_cache_keys::Set{Int}
     max_num_keys::Int
@@ -43,16 +43,16 @@ function RowCache(max_cache_size::Int, persistent_rows::Set{Int}, row_size)
         @debug "required cache for persisted values = $((length(persistent_rows) + 1)*row_size). Max cache specification = $(max_cache_size)"
     end
     max_num_keys = max(length(persistent_rows) + 1, floor(Int, max_cache_size / row_size))
+    # Storage grows as rows are inserted, up to `max_num_keys`: a byte budget over short
+    # rows allows far more keys than most caches hold, and a VirtualMODF keeps one cache per
+    # network.
     return RowCache(
-        sizehint!(
-            Dict{Int, Union{Vector{Float64}, SparseArrays.SparseVector{Float64}}}(),
-            max_num_keys,
-        ),
+        Dict{Int, Union{Vector{Float64}, SparseArrays.SparseVector{Float64, Int}}}(),
         # Copy: the cache mutates this set (pinning, and `empty!`), and the caller's own
         # set must not move under it.
         copy(persistent_rows),
         max_num_keys,
-        sizehint!(Vector{Int}(), max_num_keys),
+        Int[],
     )
 end
 
@@ -92,7 +92,7 @@ Allocates vector as row of the matrix saved in cache.
 # Arguments
 - `cache::RowCache`:
         cache where the row vector is going to be saved
-- `val::Union{Vector{Float64}, SparseArrays.SparseVector{Float64}}`:
+- `val::Union{Vector{Float64}, SparseArrays.SparseVector{Float64, Int}}`:
         vector to be saved
 - `key::Int`:
         row number (corresponding to the enumerated branch index) related to the input row vector
@@ -101,7 +101,7 @@ function Base.setindex!(
     cache::RowCache{T},
     val::T,
     key::Int,
-) where {T <: Union{Vector{Float64}, SparseArrays.SparseVector{Float64}}}
+) where {T <: Union{Vector{Float64}, SparseArrays.SparseVector{Float64, Int}}}
     # check size of the stored elements. If exceeding the limit, then one
     # element not belonging to the `persistent_cache_keys` is removed.
     check_cache_size!(cache; new_add = true)
@@ -161,7 +161,7 @@ function set_persistent_row!(
     cache::RowCache{T},
     key::Int,
     val::T,
-) where {T <: Union{Vector{Float64}, SparseArrays.SparseVector{Float64}}}
+) where {T <: Union{Vector{Float64}, SparseArrays.SparseVector{Float64, Int}}}
     # Make room before pinning: a `_pin!` that throws must not leave a key in
     # `persistent_cache_keys` with no row behind it.
     is_new = !haskey(cache.temp_cache, key)

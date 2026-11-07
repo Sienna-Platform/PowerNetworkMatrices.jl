@@ -114,6 +114,17 @@ function Base.show(io::IO, ::MIME{Symbol("text/plain")}, array::VirtualMODF)
     return
 end
 
+# A VirtualMODF holds no dense data, so the generic `PowerNetworkMatrix` method, which prints
+# `data`, does not apply.
+function Base.show(io::IO, array::VirtualMODF)
+    summary(io, array)
+    print(
+        io,
+        " with $(length(get_registered_contingencies(array))) registered contingencies",
+    )
+    return
+end
+
 function Base.isempty(vmodf::VirtualMODF)
     return isempty(get_registered_contingencies(vmodf))
 end

@@ -13,9 +13,7 @@ _is_transformer(seg::AbstractReductionAggregate) = any(_is_transformer, seg)
 # Series admittance `Y_l = 1 / (r + x im)` from a branch's `(r, x)`, with the
 # `r == x == 0` -> `min_x_eps` substitution applied during Ybus assembly so the
 # branch is judged against the admittance it contributed. Computed directly from
-# `(r, x)` rather than via `ybus_branch_entries`, which would re-emit that
-# function's `r == x == 0` warning (assembly already emitted it once) and rebuild
-# the full 2x2.
+# `(r, x)` rather than via `ybus_branch_entries`, which would rebuild the full 2x2.
 function _series_admittance(r::Float64, x::Float64, min_x_eps::Float64)
     return inv(complex(r, _retained_x(r, x, min_x_eps)))
 end
