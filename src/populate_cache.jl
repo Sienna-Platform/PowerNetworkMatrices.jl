@@ -184,7 +184,7 @@ function _resolve_modification(vmodf::VirtualMODF, id::Int)
     haskey(contingency_cache, id) || error(
         "Contingency (id=$id) is not registered. Construct the VirtualMODF " *
         "with the system containing this outage, or pass the NetworkModification " *
-        "/ ContingencySpec directly.",
+        "/ ContingencySpec directly. Only `PSY.UnplannedOutage`s are registered automatically.",
     )
     return contingency_cache[id].modification
 end
