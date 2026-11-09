@@ -135,7 +135,20 @@ end
     )
 
     # Homogeneous group dispatches to BranchesParallel{Line}.
-    bp_homog = PNM.BranchesParallel([line])
+    line2 = PSY.Line(;
+        name = "mixed_line2",
+        available = true,
+        active_power_flow = 0.0,
+        reactive_power_flow = 0.0,
+        arc = PSY.Arc(; from = bus1, to = bus2),
+        r = 0.05,
+        x = 0.10,
+        b = (from = 0.01, to = 0.01),
+        g = (from = 0.0, to = 0.0),
+        rating = 100.0,
+        angle_limits = (min = -π / 2, max = π / 2),
+    )
+    bp_homog = PNM.BranchesParallel([line, line2])
     @test bp_homog isa PNM.BranchesParallel{PSY.Line}
     @test bp_homog isa PNM.AbstractBranchesParallel
 
@@ -152,6 +165,14 @@ end
     @test mbp isa PNM.AbstractBranchesParallel
     @test length(mbp) == 2
     @test eltype(mbp.branches) === PSY.ACTransmission
+
+    # PSY.get_name must use the synthetic double_circuit name (not IS value.name).
+    expected_bp_name = "mixed_linedouble_circuit"
+    expected_mbp_name = "mixed_double_circuit"
+    @test PNM.get_name(bp_homog) == expected_bp_name
+    @test PSY.get_name(bp_homog) == expected_bp_name
+    @test PNM.get_name(mbp) == expected_mbp_name
+    @test PSY.get_name(mbp) == expected_mbp_name
 
     # ybus_branch_entries on the mixed group should equal the sum of the parts.
     Y11_l, Y12_l, Y21_l, Y22_l = PNM.ybus_branch_entries(line)
