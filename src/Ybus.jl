@@ -120,6 +120,7 @@ _arc_member_count(nr::NetworkReductionData, arc::Tuple{Int, Int}) =
 
 get_bus_axis(M::Ybus) = M.axes[1]
 get_arc_axis(M::Ybus) = M.arc_axis
+get_arc_live_members(M::Ybus) = M.arc_live_members
 get_arc_lookup(M::Ybus) = M.arc_lookup
 get_bus_lookup(M::Ybus) = M.lookup[1]
 
@@ -1567,6 +1568,13 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
         nr_new.removed_arc_to_surviving_bus,
         nr_new.reductions,
     )
+    code = _reduction_code(nr_new)
+    push!(nr.reduction_codes, code)
+    for arc in nr_new.removed_arcs
+        nr.removed_arc_reduction[arc] = code
+    end
+    merge!(nr.removed_arc_to_surviving_bus, nr_new.removed_arc_to_surviving_bus)
+    merge!(nr.removed_arc_composite, nr_new.removed_arc_composite)
     _remove_arcs_from_branch_maps!(nr, nr_new)
     if !isempty(nr_new.merged_bus_pairs)
         _remap_merged_bus_in_branch_maps!(nr, nr_new.merged_bus_pairs)

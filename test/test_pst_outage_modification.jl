@@ -221,8 +221,11 @@ end
     @test !iszero(delta_shift)
 
     # A partial trip on a series-reduced arc has no Pi-model delta, for any branch type.
-    @test_throws ErrorException NetworkModification(vptdf, t3)
-    @test_throws ErrorException NetworkModification(vptdf, get_component(Line, sys, "L23"))
+    @test_throws PNM.UnsupportedOutageError NetworkModification(vptdf, t3)
+    @test_throws PNM.UnsupportedOutageError NetworkModification(
+        vptdf,
+        get_component(Line, sys, "L23"),
+    )
 end
 
 @testset "pst outage: shifted three-winding winding classifies through the same path" begin

@@ -240,19 +240,27 @@ function VirtualMODF(
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     automatically_register_outages::Bool = true,
 )
-    max_cache_bytes = max_cache_size * MiB
-    vmodf = VirtualMODF(
-        core,
-        Dict{Int, ContingencySpec}(),
-        Dict{NetworkModification, WoodburyFactors}(),
-        Dict{NetworkModification, RowCache{RowCacheValue}}(),
-        max_cache_bytes,
-    )
+    vmodf = VirtualMODF(core; max_cache_size = max_cache_size)
 
     # Auto-register all outage attributes from the system
     automatically_register_outages && _register_all_outages!(vmodf, sys)
 
     return vmodf
+end
+
+"""
+    VirtualMODF(core::VirtualFactorCore; max_cache_size) -> VirtualMODF
+
+Wrap `core` in a VirtualMODF with no registered contingencies and empty caches.
+"""
+function VirtualMODF(core::VirtualFactorCore; max_cache_size::Int = MAX_CACHE_SIZE_MiB)
+    return VirtualMODF(
+        core,
+        Dict{Int, ContingencySpec}(),
+        Dict{NetworkModification, WoodburyFactors}(),
+        Dict{NetworkModification, RowCache{RowCacheValue}}(),
+        max_cache_size * MiB,
+    )
 end
 
 """
@@ -271,8 +279,9 @@ end
 
 For an outage whose ACTransmission components resolved to no arc modifications: throw when
 any is in service (a reduction eliminated it, so every query would return the base-case row);
-warn when all are out of service (a legitimate no-op). This is the only survive-check
-possible on a core that was reduced before outages were known.
+warn when all are out of service (a legitimate no-op). A component is in service when it is
+available and, for a switch, closed. This is the only survive-check possible on a core that
+was reduced before outages were known.
 """
 function _validate_transmission_survived(
     sys::PSY.System,
@@ -285,9 +294,7 @@ function _validate_transmission_survived(
             PSY.get_associated_components(sys, outage; component_type = PSY.ACTransmission),
         )
     isempty(transmission) && return
-    # `get_available` is derived for a ThreeWindingTransformer, so this one predicate covers
-    # every transmission type without a type check.
-    in_service = filter(PSY.get_available, transmission)
+    in_service = filter(_in_service, transmission)
     if isempty(in_service)
         @warn "Outage (label=$(mod.label)) references only out-of-service transmission " *
               "component(s) $(join(sort!([PSY.get_name(c) for c in transmission]), ", ")); " *
@@ -309,7 +316,7 @@ end
 
 # --- Outage registration ---
 
-_warn_or_rethrow_failed_outage(e::ErrorException) =
+_warn_or_rethrow_failed_outage(e::Union{ErrorException, UnsupportedOutageError}) =
     @warn "Could not register outage: $(e.msg)"
 _warn_or_rethrow_failed_outage(e) = rethrow()
 

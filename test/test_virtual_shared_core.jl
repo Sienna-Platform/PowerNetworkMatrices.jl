@@ -96,3 +96,212 @@ end
     @test length(core.PTDF_A_diag) == length(PNM.get_arc_axis(core))
     @test length(core.branch_susceptances_by_arc) == length(PNM.get_arc_axis(core))
 end
+
+@testset "VirtualFactorCore from arrays" begin
+    @testset "size checks and cutoff" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+        ybus = Ybus(sys)
+        core = PNM.VirtualFactorCore(ybus)
+        ref = Set(PNM.get_ref_bus_position(ybus))
+        live = PNM.get_arc_live_members(ybus)
+        cat = PNM.get_branch_catalog(ybus)
+        build(BA, A, ref, live) = PNM.VirtualFactorCore(
+            BA, A, ref, core.axes, core.subnetwork_axes, live, cat,
+        )
+        @test_throws ErrorException build(core.BA[:, 1:(end - 1)], core.A, ref, live)
+        @test_throws ErrorException build(core.BA, core.A[1:(end - 1), :], ref, live)
+        @test_throws ErrorException build(core.BA, core.A, ref, live[1:(end - 1)])
+        @test_throws ErrorException build(core.BA, core.A, Set([0]), live)
+        @test_throws ErrorException build(
+            core.BA,
+            core.A,
+            Set([size(core.BA, 1) + 1]),
+            live,
+        )
+        b = core.arc_susceptances .* core.arc_susceptance_signs
+        from_b = PNM.VirtualFactorCore(b, ref, core.axes, core.subnetwork_axes, live, cat)
+        @test from_b.BA == core.BA
+        @test from_b.A == core.A
+        @test_throws ErrorException PNM.VirtualFactorCore(
+            b[1:(end - 1)], ref, core.axes, core.subnetwork_axes, live, cat,
+        )
+        cut = PNM.VirtualFactorCore(
+            core.BA, core.A, ref, core.axes, core.subnetwork_axes, live, cat;
+            tol = 1e-9,
+        )
+        @test PNM.get_tol(cut) == 1e-9
+        @test PNM.get_tol_spec(cut) == 1e-9
+    end
+
+    @testset "the vector constructor checks the network before it factorizes" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+        ybus = Ybus(sys)
+        core = PNM.VirtualFactorCore(ybus)
+        ref = Set(PNM.get_ref_bus_position(ybus))
+        live = PNM.get_arc_live_members(ybus)
+        cat = PNM.get_branch_catalog(ybus)
+        arc_ax, bus_ax = core.axes
+        subs = core.subnetwork_axes
+        b = core.arc_susceptances .* core.arc_susceptance_signs
+        build(b, ref, axes, subs, live) =
+            PNM.VirtualFactorCore(b, ref, axes, subs, live, cat; linear_solver = "KLU")
+        rebuilt = build(b, ref, core.axes, subs, live)
+        @test rebuilt.arc_susceptances .* rebuilt.arc_susceptance_signs == b
+
+        @test_throws "reference bus positions for" build(
+            b,
+            Set{Int}(),
+            core.axes,
+            subs,
+            live,
+        )
+        @test_throws "reference bus positions for" build(
+            b, Set([1, 4]), core.axes, subs, live,
+        )
+        @test_throws "not the reference bus of its subnetwork" build(
+            b, Set([2]), core.axes, subs, live,
+        )
+
+        key = only(keys(subs))
+        arcs, buses = subs[key]
+        @test_throws "is in no subnetwork" build(
+            b, ref, core.axes,
+            Dict(key => (arcs, buses[1:(end - 1)])), live,
+        )
+        @test_throws "outside the bus axis" build(
+            b, ref, core.axes,
+            Dict(key => (arcs, vcat(buses, [999]))), live,
+        )
+        @test_throws "in more than one subnetwork" build(
+            b, ref, core.axes,
+            Dict(key => (arcs, vcat(buses, [buses[end]]))), live,
+        )
+        @test_throws "is in no subnetwork" build(
+            b, ref, core.axes, Dict(key => (arcs[1:(end - 1)], buses)), live,
+        )
+        @test_throws "The arc $(first(arcs)) is in more than one subnetwork" build(
+            b, ref, core.axes, Dict(key => (vcat(arcs, [first(arcs)]), buses)), live,
+        )
+
+        isolated = bus_ax[findfirst(!=(key), bus_ax)]
+        cut_b = copy(b)
+        for (ix, arc) in enumerate(arc_ax)
+            isolated in arc && (cut_b[ix] = 0.0)
+        end
+        @test_throws "not one connected component" build(cut_b, ref, core.axes, subs, live)
+
+        loop_ax = copy(arc_ax)
+        loop_ax[1] = (arc_ax[1][1], arc_ax[1][1])
+        @test_throws "is a self-loop" build(b, ref, (loop_ax, bus_ax), subs, live)
+        dup_ax = copy(arc_ax)
+        dup_ax[2] = dup_ax[1]
+        @test_throws "arc axis has the entry" build(b, ref, (dup_ax, bus_ax), subs, live)
+        dup_bus = copy(bus_ax)
+        dup_bus[2] = dup_bus[1]
+        @test_throws "bus axis has the entry" build(b, ref, (arc_ax, dup_bus), subs, live)
+
+        huge = copy(b)
+        huge[1] = 1e308
+        @test_throws "magnitude above" build(huge, ref, core.axes, subs, live)
+        negative_live = copy(live)
+        negative_live[1] = -1
+        @test_throws "has arc_live_members -1, below 1" build(
+            b, ref, core.axes, subs, negative_live,
+        )
+    end
+
+    @testset "second reference bus, shared bus, shared arc, endpoint outside" begin
+        sys = build_multi_island_composite_arc_system()
+        ybus = Ybus(sys)
+        core = PNM.VirtualFactorCore(ybus)
+        ref = Set(PNM.get_ref_bus_position(ybus))
+        live = PNM.get_arc_live_members(ybus)
+        cat = PNM.get_branch_catalog(ybus)
+        arc_ax, bus_ax = core.axes
+        subs = core.subnetwork_axes
+        @test length(subs) == 2
+        b = core.arc_susceptances .* core.arc_susceptance_signs
+        build(ref, subs) = PNM.VirtualFactorCore(
+            b, ref, core.axes, subs, live, cat; linear_solver = "KLU",
+        )
+        @test build(ref, subs) isa PNM.VirtualFactorCore
+        key1, key2 = collect(keys(subs))
+        arcs1, buses1 = subs[key1]
+        arcs2, buses2 = subs[key2]
+        pos(bus) = findfirst(==(bus), bus_ax)
+        other_bus = first(setdiff(buses1, [key1]))
+        @test_throws "has a second reference bus" build(
+            Set([pos(key1), pos(other_bus)]), subs,
+        )
+        @test_throws "is in more than one subnetwork" build(
+            ref, Dict(key1 => (arcs1, buses1), key2 => (arcs2, vcat(buses2, [other_bus]))),
+        )
+        @test_throws r"The arc .* (is in more than one subnetwork|has an endpoint outside it)" build(
+            ref,
+            Dict(key1 => (arcs1, buses1), key2 => (vcat(arcs2, [first(arcs1)]), buses2)),
+        )
+        @test_throws "has an endpoint outside it" build(
+            ref,
+            Dict(
+                key1 => (vcat(arcs1, [first(arcs2)]), buses1),
+                key2 => (arcs2[2:end], buses2),
+            ),
+        )
+    end
+
+    @testset "factorization check on the file path" begin
+        solvers = ["KLU"]
+        PNM._has_apple_accelerate_backend() && push!(solvers, "AppleAccelerateLU")
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+        ybus = Ybus(sys)
+        core = PNM.VirtualFactorCore(ybus)
+        ref = Set(PNM.get_ref_bus_position(ybus))
+        live = PNM.get_arc_live_members(ybus)
+        cat = PNM.get_branch_catalog(ybus)
+        good = core.arc_susceptances .* core.arc_susceptance_signs
+        chain_axes = (
+            [(1, 2), (2, 3), (3, 4)],
+            [1, 2, 3, 4],
+        )
+        chain_subs = Dict(1 => (chain_axes[1], chain_axes[2]))
+        chain(b; solver) = PNM.VirtualFactorCore(
+            b, Set([1]), chain_axes, chain_subs, [1, 1, 1], cat; linear_solver = solver,
+        )
+        @test PNM._singular_column_text(0) == ""
+        @test PNM._singular_column_text(3) == " (column 3)"
+        for solver in solvers
+            @test chain([1.0, 1.0, 1.0]; solver) isa PNM.VirtualFactorCore
+            # Zero-impedance substitute (b = 1e6) beside normal arcs: the limit scales with |ABA||x|.
+            @test chain([1.0, 1e6, 1.0]; solver) isa PNM.VirtualFactorCore
+            # 1 + 1e-17 rounds to 1: the two buses behind the weak arc form a singular block.
+            @test_throws "ABA matrix of the factor file" chain([1.0, 1e-17, 1.0]; solver)
+            # Non-integer values and a meshed island: a rounding-level pivot, no exact zero.
+            mesh_axes = (
+                [(1, 2), (2, 3), (3, 4), (4, 5), (3, 5)],
+                [1, 2, 3, 4, 5],
+            )
+            mesh_subs = Dict(1 => (mesh_axes[1], mesh_axes[2]))
+            mesh(b) = PNM.VirtualFactorCore(
+                b, Set([1]), mesh_axes, mesh_subs, ones(Int, 5), cat;
+                linear_solver = solver,
+            )
+            @test mesh([10.3, 37.7, 21.9, 14.1, 55.3]) isa PNM.VirtualFactorCore
+            @test_throws "ABA matrix of the factor file" mesh([
+                10.3,
+                1e-17,
+                37.7,
+                21.9,
+                14.1,
+            ])
+            @test_throws "The ABA matrix is empty: every bus is a reference bus." PNM.VirtualFactorCore(
+                Float64[], Set([1]), (Tuple{Int, Int}[], [1]),
+                Dict(1 => (Tuple{Int, Int}[], [1])), Int[], cat;
+                linear_solver = solver,
+            )
+            @test PNM.VirtualFactorCore(
+                good, ref, core.axes, core.subnetwork_axes, live, cat;
+                linear_solver = solver,
+            ) isa PNM.VirtualFactorCore
+        end
+    end
+end

@@ -1206,6 +1206,212 @@ function _floating_complex_ring(n::Int)
     return L
 end
 
+const COMPENSATED_LINE = "1"
+const MID_BUS = 100
+
+"""The 5-bus case with `COMPENSATED_LINE` split by a `SeriesCompensator` of reactance `x`."""
+function compensated_sys5(x; bypassed = false)
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    line = get_component(Line, sys, COMPENSATED_LINE)
+    from, to = get_from(get_arc(line)), get_to(get_arc(line))
+    mid = ACBus(;
+        number = MID_BUS, name = "mid", available = true, bustype = ACBusTypes.PQ,
+        angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
+        base_voltage = get_base_voltage(from), input_basis = u"CU",
+    )
+    add_component!(sys, mid)
+    line_arc = Arc(; from = from, to = mid)
+    compensator_arc = Arc(; from = mid, to = to)
+    add_component!(sys, line_arc)
+    add_component!(sys, compensator_arc)
+    set_arc!(line, line_arc)
+    add_component!(
+        sys,
+        SeriesCompensator(;
+            name = "compensator", available = true, active_power_flow = 0.0,
+            reactive_power_flow = 0.0, arc = compensator_arc, r = 0.0, x = x,
+            rating = get_rating(line, u"SU"), bypassed = bypassed, input_basis = u"CU",
+        ),
+    )
+    return sys, line
+end
+
+function _bm_add_bus!(sys, n)
+    b = ACBus(; number = n, name = "Bus $n", available = true, bustype = ACBusTypes.PQ,
+        angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1),
+        base_voltage = 230.0, input_basis = u"CU")
+    PSY.add_component!(sys, b)
+    return b
+end
+
+_bm_bus(sys, n) = PSY.get_component(ACBus, sys, "Bus $n")
+
+function _bm_add_pst!(sys, name, arc, x, α)
+    PSY.add_component!(sys,
+        PSY.TwoWindingTransformer(; input_basis = u"CU", name = name,
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU", arc = arc, tap = 1.0,
+                α = α, available = true, active_power_flow = 0.0,
+                reactive_power_flow = 0.0, rating = 1.0, base_power = 100.0,
+                base_voltage_primary = 230.0, r = 0.0, x = x),
+            magnetizing_shunt = Complex(0.0, 0.0)))
+    return nothing
+end
+
+function _bm_line_arc(sys, f, t)
+    return PSY.get_arc(PSY.get_component(Line, sys, "L_$(f)_$(t)"))
+end
+
+function _bm_add_arc!(sys, f, t)
+    a = Arc(_bm_bus(sys, f), _bm_bus(sys, t))
+    PSY.add_component!(sys, a)
+    return a
+end
+
+"""
+15-bus system that holds every branch-to-arc relation: a parallel group (Line + Line + PST),
+a direct PST on an anti-parallel key, two sibling chains on bus pair (3, 1) (one reversed with a
+PST segment, one with a nested anti-parallel group that holds a PST), a standalone chain with a
+parallel and a reversed segment, a radial stub, one three-winding transformer on direct arcs, and
+one three-winding transformer whose tertiary the radial reduction absorbs. Under
+`[RadialReduction(), DegreeTwoReduction()]` it reduces to 6 buses and 14 arcs.
+"""
+function build_branch_map_system()
+    raw = [
+        (1, 2, 0.05), (2, 3, 0.06), (3, 4, 0.07), (4, 1, 0.08), (2, 4, 0.09),
+        (3, 5, 0.13), (4, 5, 0.14),
+        (1, 10, 0.10), (10, 3, 0.11), (3, 10, 0.17),
+        (3, 20, 0.20), (21, 1, 0.22),
+        (2, 30, 0.15), (31, 30, 0.16), (31, 5, 0.18),
+        (4, 40, 0.30), (40, 41, 0.31),
+    ]
+    edges = [(f, t, 0.0, x, 0.0, 0.0) for (f, t, x) in raw]
+    sys = _build_degree_two_chain_system(edges)
+    _bm_add_pst!(sys, "PST_par", _bm_line_arc(sys, 1, 2), 0.2, 0.15)
+    PSY.add_component!(sys,
+        Line("L_1_2_b", true, 0.0, 0.0, _bm_line_arc(sys, 1, 2), 0.0, 0.07,
+            (from = 0.0, to = 0.0), 2.0, (-1.6, 1.6)))
+    _bm_add_pst!(sys, "PST_twin", _bm_line_arc(sys, 3, 10), 0.3, 0.10)
+    _bm_add_pst!(sys, "PST_chain", _bm_add_arc!(sys, 21, 20), 0.21, 0.07)
+    PSY.add_component!(sys,
+        Line("L_2_30_b", true, 0.0, 0.0, _bm_line_arc(sys, 2, 30), 0.0, 0.25,
+            (from = 0.0, to = 0.0), 2.0, (-1.6, 1.6)))
+    _bm_add_pst!(sys, "PST_direct", _bm_add_arc!(sys, 4, 3), 0.4, -0.05)
+    for n in (60, 61, 62)
+        _bm_add_bus!(sys, n)
+    end
+    _add_three_winding_transformer!(sys, _bm_bus(sys, 1), _bm_bus(sys, 5), _bm_bus(sys, 60),
+        _bm_bus(sys, 61); name = "T3W_chain", r12 = 0.0, x12 = 0.1, r23 = 0.0, x23 = 0.12,
+        r31 = 0.0, x31 = 0.14)
+    _add_three_winding_transformer!(sys, _bm_bus(sys, 2), _bm_bus(sys, 4), _bm_bus(sys, 3),
+        _bm_bus(sys, 62); name = "T3W_direct", r12 = 0.0, x12 = 0.1, r23 = 0.0, x23 = 0.12,
+        r31 = 0.0, x31 = 0.14)
+    return sys
+end
+
+"""
+Leaf-level DC flows of `sys` for bus injections `p` (bus number => value), keyed by leaf
+component. Uses only each leaf's susceptance, phase shift and raw from/to on the unreduced bus
+set after the zero-impedance merge (a branch inside a merged bus carries no flow); the
+reference is the first bus of the axis. The function throws an error if that bus is not a
+reference bus and the injections are not balanced.
+"""
+function leaf_dc_flows(sys, p::Dict{Int, Float64})
+    ybus = Ybus(sys)
+    nr = PNM.get_network_reduction_data(ybus)
+    leaves = PSY.ACTransmission[]
+    for (_, e) in PNM.get_direct_branch_map(nr)
+        append!(leaves, PNM.leaf_components(e))
+    end
+    for (_, e) in PNM.get_parallel_branch_map(nr)
+        append!(leaves, PNM.leaf_components(e))
+    end
+    buses = PNM.get_bus_axis(ybus)
+    ref_numbers = [
+        PSY.get_number(b) for b in PSY.get_components(PSY.ACBus, sys) if
+        PSY.get_bustype(b) == PSY.ACBusTypes.REF
+    ]
+    # With balanced injections the flows do not depend on the choice of the reference bus.
+    (first(buses) in ref_numbers || isapprox(sum(values(p)), 0.0; atol = 1e-9)) || error(
+        "leaf_dc_flows: the first bus of the axis, $(first(buses)), is not a reference bus " *
+        "($ref_numbers) and the injections sum to $(sum(values(p))).",
+    )
+    ix = Dict(b => i for (i, b) in enumerate(buses))
+    n = length(buses)
+    B = zeros(n, n)
+    rhs = [get(p, b, 0.0) for b in buses]
+    data = Tuple{PSY.ACTransmission, Float64, Float64, Int, Int}[]
+    for l in leaves
+        b = PNM._finite_series_susceptance(l, nr)
+        α = PNM.get_series_phase_shift(l)
+        f, t = PNM.get_arc_tuple(l, nr)
+        f == t && continue
+        i, j = ix[f], ix[t]
+        B[i, i] += b
+        B[j, j] += b
+        B[i, j] -= b
+        B[j, i] -= b
+        rhs[i] += b * α
+        rhs[j] -= b * α
+        push!(data, (l, b, α, i, j))
+    end
+    keep = 2:n
+    θ = zeros(n)
+    θ[keep] = B[keep, keep] \ rhs[keep]
+    return Dict{PSY.ACTransmission, Float64}(
+        l => b * (θ[i] - θ[j] - α) for (l, b, α, i, j) in data)
+end
+
+const _LeafBusPairs = Dict{Tuple{Int, Int}, Tuple{Int, Int}}
+
+_add_leaf_bus_pair!(pairs::_LeafBusPairs, br::PSY.ACTransmission) =
+    (pairs[(IS.get_id(br), 0)] = _arc_bus_pair(PSY.get_arc(br)))
+
+function _add_leaf_bus_pair!(pairs::_LeafBusPairs, t::PSY.ThreeWindingTransformer)
+    for (w, circuit) in enumerate(PSY.get_circuits(t))
+        pairs[(IS.get_id(t), w)] = _arc_bus_pair(PSY.get_arc(circuit))
+    end
+    return
+end
+
+_arc_bus_pair(arc::PSY.Arc) =
+    (PSY.get_number(PSY.get_from(arc)), PSY.get_number(PSY.get_to(arc)))
+
+"""
+Bus numbers (from, to) of every branch of `sys` as the system document has them, keyed like a
+leaf row of the `branch_map` group: (id, winding), with winding 0 for a branch and 1 to 3 for
+a three-winding transformer.
+"""
+function leaf_bus_pairs(sys::PSY.System)
+    pairs = _LeafBusPairs()
+    for br in PSY.get_components(PSY.ACTransmission, sys)
+        _add_leaf_bus_pair!(pairs, br)
+    end
+    return pairs
+end
+
+# A zero-impedance line merges two terminal buses of a 3W transformer, so two winding arcs
+# share one key and form a parallel group.
+function build_degenerate_3wt_system()
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
+    busD = PSY.get_component(PSY.ACBus, sys, "nodeD")
+    sec_bus, ter_bus, star_bus = _add_star_buses!(sys, busD)
+    _add_three_winding_transformer!(
+        sys, busD, sec_bus, ter_bus, star_bus; name = "T3W_degenerate",
+    )
+    zi_arc = PSY.Arc(; from = busD, to = sec_bus)
+    PSY.add_component!(sys, zi_arc)
+    PSY.add_component!(
+        sys,
+        PSY.Line(; input_basis = u"CU",
+            name = "zi_line", available = true, active_power_flow = 0.0,
+            reactive_power_flow = 0.0, arc = zi_arc, r = 0.0, x = 1.0e-5,
+            b = (from = 0.0, to = 0.0), rating = 10.0,
+            angle_limits = (min = -1.57, max = 1.57),
+        ),
+    )
+    return sys
+end
+
 # c_sys14 with a second Line named "dup" in parallel with the first line. `r_scale` makes
 # the pair lossy and unequal in r/x, so the group susceptance is not the sum of 1/x;
 # `x_scale` scales the duplicate's reactance, negative for a series-compensated member.
@@ -1326,3 +1532,39 @@ function _compared_positions(arc, bus_axis, islands)
 end
 
 _transmission(sys, name) = PSY.get_component(PSY.ACTransmission, sys, name)
+
+# Lines `(name, from, to, x)` with r = 0.01 and closed switches `(name, from, to)` with
+# x = 0.01 between `buses`; `reactances` overrides the x of the named branches.
+function _add_node_breaker_branches!(sys, buses, lines, switches, reactances)
+    new_arc(i, j) = (a = PSY.Arc(buses[i], buses[j]); PSY.add_component!(sys, a); a)
+    for (name, i, j, x) in lines
+        _add_test_line!(sys, name, new_arc(i, j), 0.01, get(reactances, name, x))
+    end
+    for (name, i, j) in switches
+        sw = PSY.DiscreteControlledACBranch(nothing)
+        sw.name = name
+        sw.arc = new_arc(i, j)
+        sw.r = 0.0
+        sw.x = get(reactances, name, 0.01)
+        sw.available = true
+        sw.branch_status = PSY.DiscreteControlledBranchStatus.CLOSED
+        PSY.add_component!(sys, sw)
+    end
+    return sys
+end
+
+const _CORRIDOR_LINES = (("L12", 1, 2, 0.10), ("L23", 2, 3, 0.12), ("L13", 1, 3, 0.15),
+    ("L24", 2, 4, 0.20), ("L34", 3, 4, 0.25), ("L56", 5, 6, 0.05),
+    ("L78", 7, 8, 0.06), ("L79", 7, 9, 0.07))
+const _CORRIDOR_SWITCHES = (("s15", 1, 5), ("s67", 6, 7), ("s83", 8, 3), ("s92", 9, 2))
+
+# Backbone triangle 1-2-3 (bus 1 the reference) with bus 4 on 2-4 and 3-4, and a
+# node-breaker corridor through tap buses 5-9 that reaches the grid at buses 1, 2 and 3:
+#   1 =s15= 5 -L56- 6 =s67= 7 -L78- 8 =s83= 3,   7 -L79- 9 =s92= 2
+# `reactances` overrides the x of the named branches, e.g. a negative x for a
+# series-compensated member.
+function _node_breaker_corridor(; reactances = Dict{String, Float64}())
+    sys, buses = _mk_bus_system(9)
+    return _add_node_breaker_branches!(
+        sys, buses, _CORRIDOR_LINES, _CORRIDOR_SWITCHES, reactances)
+end

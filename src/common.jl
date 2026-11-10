@@ -428,13 +428,20 @@ _ba_arc_susceptance(
 
 function _ba_arc_susceptance(nr::NetworkReductionData, arc::Tuple{Int, Int})
     entry, _ = _resolve_arc_entry(nr, arc)
-    added_map = get_added_arc_impedance_map(nr)
-    if haskey(added_map, arc) && added_map[arc] !== entry
-        return _ba_arc_susceptance(entry, added_map[arc], nr)
-    else
-        return _ba_arc_susceptance(entry, nr)
+    added = get(get_added_arc_impedance_map(nr), arc, nothing)
+    # A Ward equivalent alone on its arc is the entry itself.
+    if added === entry
+        added = nothing
     end
+    return _ba_entry_susceptance(entry, added, nr)
 end
+
+# BA's susceptance for an arc's resolved entry, plus the Ward equivalent filed on the same arc
+# when there is one.
+_ba_entry_susceptance(entry, ::Nothing, nr::NetworkReductionData) =
+    _ba_arc_susceptance(entry, nr)
+_ba_entry_susceptance(entry, added::PSY.GenericArcImpedance, nr::NetworkReductionData) =
+    _ba_arc_susceptance(entry, added, nr)
 
 """
     get_effective_series_susceptance(segment, nr::NetworkReductionData) -> Float64
@@ -1040,15 +1047,18 @@ function _member_susceptance_after_outage(
     iszero(n_tripped) && return _finite_series_susceptance(member, nr)
     n_tripped == length(leaves) && return 0.0
     branch = first(Iterators.filter(in(tripped_set), leaves))
-    return error(
-        "Tripping $(typeof(branch)) $(get_name(branch)) leaves $(typeof(member)) " *
-        "$(get_name(member)) partly in service on arc $(get_arc_tuple(member, nr)), and " *
-        "a partial susceptance delta is not supported on the nested aggregate it sits on.",
+    throw(
+        UnsupportedOutageError(
+            "Tripping $(typeof(branch)) $(get_name(branch)) leaves $(typeof(member)) " *
+            "$(get_name(member)) partly in service on arc $(get_arc_tuple(member, nr)), and " *
+            "a partial susceptance delta is not supported on the nested aggregate it sits on.",
+        ),
     )
 end
 
-# A series chain opens the moment any leaf trips, mirroring `_member_outage_delta_b`'s series
-# rule; a nested aggregate segment only partly tripped is not representable, same as there.
+# A series chain opens the moment any leaf trips, mirroring `_validate_outaged_member`'s
+# series rule; a nested aggregate segment only partly tripped is not representable, same as
+# there.
 function _member_susceptance_after_outage(
     member::BranchesSeries,
     tripped_set::Set{<:PSY.ACTransmission},
@@ -1060,11 +1070,13 @@ function _member_susceptance_after_outage(
     delta_b = _compute_series_outage_delta_b(member, tripped_leaves, nr)
     if !_is_full_outage(delta_b, b_old)
         branch = first(tripped_leaves)
-        error(
-            "Tripping $(typeof(branch)) $(get_name(branch)) leaves series chain " *
-            "$(get_name(member)) partly in service on arc $(get_arc_tuple(member, nr)), " *
-            "and a partial susceptance delta is not supported on the nested aggregate it " *
-            "sits on.",
+        throw(
+            UnsupportedOutageError(
+                "Tripping $(typeof(branch)) $(get_name(branch)) leaves series chain " *
+                "$(get_name(member)) partly in service on arc $(get_arc_tuple(member, nr)), " *
+                "and a partial susceptance delta is not supported on the nested aggregate it " *
+                "sits on.",
+            ),
         )
     end
     return 0.0

@@ -157,7 +157,11 @@ end
         @test full[2] ≈ PNM.YBUS_ELTYPE(-Y12)
 
         # Partial Δb is rejected.
-        @test_throws ErrorException PNM._compute_arc_ybus_delta(nr, arc, -0.5 * b_arc)
+        @test_throws PNM.UnsupportedOutageError PNM._compute_arc_ybus_delta(
+            nr,
+            arc,
+            -0.5 * b_arc,
+        )
         @test_throws "Partial" PNM._compute_arc_ybus_delta(nr, arc, -0.5 * b_arc)
         @test_throws PNM.get_name(winding) PNM._compute_arc_ybus_delta(
             nr,
