@@ -101,6 +101,7 @@ import PowerSystems as PSY
 using PowerSystems: @u_str, PerUnit
 import PowerSystems: ACBusTypes
 
+import PowerMatricesCore as PMC
 import DataStructures
 import DataStructures: SortedDict
 import HDF5

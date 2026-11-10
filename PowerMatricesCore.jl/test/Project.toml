@@ -1,0 +1,9 @@
+[deps]
+PowerMatricesCore = "d468fdeb-a9d8-47d1-a5e6-1c14dd2e267b"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[sources]
+PowerMatricesCore = {path = ".."}
+
+[compat]
+julia = "^1.10"
