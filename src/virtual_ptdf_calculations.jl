@@ -192,16 +192,13 @@ function VirtualPTDF(
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}(),
 )
-    bus_ax = core.axes[2]
-    look_up = core.lookup
     if isempty(dist_slack)
         dist_slack_vector = Float64[]
     else
         dist_slack_vector = redistribute_dist_slack(dist_slack, core)
     end
 
-    empty_cache =
-        _persistent_row_cache(max_cache_size, look_up, persistent_arcs, length(bus_ax))
+    empty_cache = _persistent_row_cache(max_cache_size, core, persistent_arcs)
 
     if !isempty(dist_slack_vector)
         dist_slack_normalized = dist_slack_vector / sum(dist_slack_vector)
@@ -344,7 +341,7 @@ Returns a dictionary mapping row indices to lazily computed row vectors.
 get_ptdf_data(mat::VirtualPTDF) = get_cache(mat).temp_cache
 
 """
-    get_ptdf_row(vptdf::VirtualPTDF, arc::Tuple{Int, Int}) -> Union{Vector{Float64}, SparseVector{Float64}}
+    get_ptdf_row(vptdf::VirtualPTDF, arc::Tuple{Int, Int}) -> Union{Vector{Float64}, SparseVector{Float64, Int}}
 
 Return the PTDF row for `arc` as the cache's own stored vector, without copying; on a miss the
 row is computed and cached first. The row is dense, or a `SparseVector` when the matrix's

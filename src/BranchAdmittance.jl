@@ -154,7 +154,7 @@ _get_shunts(::PSY.SeriesCompensator) = (zero(ComplexF64), zero(ComplexF64))
     return
 end
 
-# `r == x == 0` -> `min_x_eps`, the substitution Ybus assembly applies. The `br` method warns.
+# `r == x == 0` -> `min_x_eps`, the substitution Ybus assembly applies.
 @inline function _retained_x(r::Float64, x::Float64, min_x_eps::Float64)
     if iszero(r) && iszero(x)
         return min_x_eps
@@ -162,11 +162,19 @@ end
     return x
 end
 
-function _retained_x(br::PSY.ACTransmission, r::Float64, x::Float64, min_x_eps::Float64)
-    if iszero(r) && iszero(x)
-        _warn_zero_impedance(br, min_x_eps)
-    end
-    return _retained_x(r, x, min_x_eps)
+_has_zero_impedance(b::PSY.ACTransmission) =
+    iszero(_branch_r(b, u"SU")) && iszero(_branch_x(b, u"SU"))
+_has_zero_impedance(b::PSY.GenericArcImpedance) =
+    iszero(PSY.get_r(b, u"CU")) && iszero(PSY.get_x(b, u"CU"))
+_has_zero_impedance(b::PSY.TwoWindingTransformer) = _has_zero_impedance(PSY.get_circuit(b))
+_has_zero_impedance(w::ThreeWindingTransformerCircuit) = _has_zero_impedance(w.circuit)
+_has_zero_impedance(c::PSY.TransformerCircuit) =
+    iszero(PSY.get_r(c, u"SU")) && iszero(PSY.get_x(c, u"SU"))
+
+# Warns when `br` has `r == x == 0`, the case `equivalent_branch` substitutes `min_x_eps` for.
+@inline function _warn_if_zero_impedance(br::PSY.ACTransmission, min_x_eps::Float64)
+    _has_zero_impedance(br) && _warn_zero_impedance(br, min_x_eps)
+    return
 end
 
 # `@inline` because the explicit-units getters expand past the inliner's cost model (~35 IR
@@ -204,7 +212,7 @@ The from/to shunts carry the real `PSY.get_g` conductance. A caller wanting Powe
 )
     r = _branch_r(b, u"SU")
     x = _branch_x(b, u"SU")
-    x = _retained_x(b, r, x, min_x_eps)
+    x = _retained_x(r, x, min_x_eps)
     y_fr, y_to = _get_shunts(b)
     return EquivalentBranch(
         r, x,
@@ -222,7 +230,7 @@ function equivalent_branch(
 )
     r = PSY.get_r(b, u"CU")
     x = PSY.get_x(b, u"CU")
-    x = _retained_x(b, r, x, min_x_eps)
+    x = _retained_x(r, x, min_x_eps)
     return EquivalentBranch(
         r, x,
         0.0, 0.0, 0.0, 0.0,
@@ -238,7 +246,7 @@ function equivalent_branch(
         PSY.get_magnetizing_shunt(b, u"SU"),
         PSY.get_shunt_location(b),
     )
-    return _circuit_equivalent_branch(PSY.get_circuit(b), sh, b, min_x_eps)
+    return _circuit_equivalent_branch(PSY.get_circuit(b), sh, min_x_eps)
 end
 
 function equivalent_branch(
@@ -251,22 +259,19 @@ function equivalent_branch(
         PSY.get_shunt_location(transformer),
         get_winding_number(w),
     )
-    return _circuit_equivalent_branch(w.circuit, sh, w, min_x_eps)
+    return _circuit_equivalent_branch(w.circuit, sh, min_x_eps)
 end
 
 # The whole of "a transformer is a circuit": the circuit owns r/x/tap/α for both arities, so
-# 2W and 3W differ only in which shunt-split rule produced `sh`. `br` is the nameable owner —
-# a bare `PSY.TransformerCircuit` has no `get_name`, so the warning cannot be raised from here
-# without it.
+# 2W and 3W differ only in which shunt-split rule produced `sh`.
 function _circuit_equivalent_branch(
     circuit::PSY.TransformerCircuit,
     sh::@NamedTuple{g_fr::Float64, b_fr::Float64, g_to::Float64, b_to::Float64},
-    br::PSY.ACTransmission,
     min_x_eps::Float64,
 )
     r = PSY.get_r(circuit, u"SU")
     x = PSY.get_x(circuit, u"SU")
-    x = _retained_x(br, r, x, min_x_eps)
+    x = _retained_x(r, x, min_x_eps)
     return EquivalentBranch(
         r, x,
         sh.g_fr, sh.b_fr, sh.g_to, sh.b_to,

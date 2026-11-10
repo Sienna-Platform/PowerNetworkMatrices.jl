@@ -91,9 +91,7 @@ function VirtualPTDF(
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
 )
     _check_worker_core(get_core(vptdf), core)
-    cache = _persistent_row_cache(
-        max_cache_size, core.lookup, Tuple{Int, Int}[], size(core.BA, 1),
-    )
+    cache = _persistent_row_cache(max_cache_size, core, Tuple{Int, Int}[])
     return VirtualPTDF(
         core,
         get_dist_slack(vptdf),

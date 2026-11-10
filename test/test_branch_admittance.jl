@@ -688,3 +688,32 @@ end
     ix = findfirst(==((2, 3)), PNM.get_arc_axis(nr))
     @test BA_Matrix(ybus).data[i, ix] ≈ b_expected rtol = 1e-5
 end
+
+@testset "only Ybus assembly warns about a zero-impedance branch" begin
+    sys, buses = _mk_bus_system(2)
+    arc = PSY.Arc(buses[1], buses[2])
+    PSY.add_component!(sys, arc)
+    _add_test_line!(sys, "zero", arc, 0.0, 0.0)
+    line = PSY.get_component(PSY.Line, sys, "zero")
+    @test_logs min_level = Logging.Warn branch_admittance(line)
+    @test_logs (:warn, r"zero has r=0.0 and x=0.0") match_mode = :any Ybus(sys)
+end
+
+@testset "a zero-impedance branch merged by ZeroImpedanceBranchReduction warns once per Ybus build" begin
+    sys, buses = _mk_bus_system(3)
+    arc12 = PSY.Arc(buses[1], buses[2])
+    arc23 = PSY.Arc(buses[2], buses[3])
+    PSY.add_component!(sys, arc12)
+    PSY.add_component!(sys, arc23)
+    _add_test_line!(sys, "zero", arc12, 0.0, 0.0)
+    _add_test_line!(sys, "normal", arc23, 0.01, 0.1)
+    for reductions in (
+        PNM.NetworkReduction[],
+        PNM.NetworkReduction[PNM.ZeroImpedanceBranchReduction()],
+    )
+        logs, ybus = Test.collect_test_logs(; min_level = Logging.Warn) do
+            Ybus(sys; network_reductions = reductions)
+        end
+        @test count(l -> occursin("Branch zero has r=0.0 and x=0.0", l.message), logs) == 1
+    end
+end
