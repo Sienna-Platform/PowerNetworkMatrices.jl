@@ -119,12 +119,20 @@ end
     row_bytes = 5 * sizeof(Float64)
     budget = 100 * 2^20
     cache = PNM.RowCache(budget, Set{Int}(), row_bytes, 7)
-    @test cache.max_num_keys == 7
+    @test cache.max_num_keys == 8
     for k in 1:7
         cache[k] = fill(Float64(k), 5)
     end
     @test length(cache) == 7
     @test all(haskey(cache, k) for k in 1:7)
+
+    # `populate_cache` pins every row one at a time.
+    pinned = PNM.RowCache(budget, Set{Int}(), row_bytes, 7)
+    for k in 1:7
+        PNM.set_persistent_row!(pinned, k, fill(Float64(k), 5))
+    end
+    @test length(pinned) == 7
+    @test pinned.persistent_cache_keys == Set(1:7)
 
     # A byte budget smaller than the matrix still bounds the cache.
     @test PNM.RowCache(3 * row_bytes, Set{Int}(), row_bytes, 7).max_num_keys == 3

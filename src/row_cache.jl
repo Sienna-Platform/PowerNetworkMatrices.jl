@@ -44,9 +44,10 @@ function RowCache(max_cache_size::Int, persistent_rows::Set{Int}, row_size, n_ro
     else
         @debug "required cache for persisted values = $((length(persistent_rows) + 1)*row_size). Max cache specification = $(max_cache_size)"
     end
+    # `n_rows + 1`: `_pin!` keeps one slot evictable, so pinning every row needs one more.
     max_num_keys = max(
         length(persistent_rows) + 1,
-        min(floor(Int, max_cache_size / row_size), n_rows),
+        min(floor(Int, max_cache_size / row_size), n_rows + 1),
     )
     # Storage grows as rows are inserted, up to `max_num_keys`: most caches hold far fewer
     # rows than that, and a VirtualMODF keeps one cache per network.
