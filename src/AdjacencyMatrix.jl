@@ -71,7 +71,7 @@ function get_reduction(A::AdjacencyMatrix, sys::PSY.System, reduction::DegreeTwo
 
     exempt_bus_positions = Set(get_irreducible_indices(A, collect(working_set)))
     series_branch_map, parallel_additions, reverse_series_branch_map, removed_buses,
-    removed_arcs =
+    removed_arcs, removed_arc_composite =
         get_degree2_reduction(
             A.data,
             A.lookup[2],
@@ -86,6 +86,7 @@ function get_reduction(A::AdjacencyMatrix, sys::PSY.System, reduction::DegreeTwo
         reverse_series_branch_map = reverse_series_branch_map,
         removed_buses = removed_buses,
         removed_arcs = removed_arcs,
+        removed_arc_composite = removed_arc_composite,
         reductions = ReductionContainer(; degree_two_reduction = reduction),
     )
 end

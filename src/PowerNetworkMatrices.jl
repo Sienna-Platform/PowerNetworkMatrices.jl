@@ -1,6 +1,15 @@
 module PowerNetworkMatrices
 
 export ABA_Matrix
+export BranchArcTable
+export get_branch_kind
+export get_branch_id
+export get_branch_parent
+export get_branch_sign
+export get_branch_susceptance
+export get_branch_alpha
+export get_branch_arc_count
+export branch_flows
 export LinearSolverCache
 export AutoTolerance
 export discover_data_precision
@@ -55,7 +64,19 @@ export compute_woodbury_factors
 export factorize
 export get_post_modification_ptdf_row
 export BranchOutageTable
+export get_outage_rows
+export get_outage_ids
+export get_outage_opens_arc
+export get_outage_member
 export from_hdf5
+export get_reduction_codes
+export no_arc_reason
+export no_arc_surviving_bus
+export NO_ARC_HAS_ARC
+export NO_ARC_RADIAL
+export NO_ARC_ZERO_IMPEDANCE
+export NO_ARC_WARD
+export NO_ARC_NOT_IN_NETWORK
 export get_system_uuid
 export is_factorized
 export populate_cache

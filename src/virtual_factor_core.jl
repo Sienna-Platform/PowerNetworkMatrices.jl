@@ -103,6 +103,7 @@ function get_ref_bus_position(c::VirtualFactorCore)
     return [get_bus_index(x, bus_lookup, nr) for x in keys(c.subnetwork_axes)]
 end
 get_branch_catalog(c::VirtualFactorCore) = c.branch_catalog
+holds_components(c::VirtualFactorCore) = holds_components(c.branch_catalog)
 get_network_reduction_data(c::VirtualFactorCore) =
     get_network_reduction_data(get_branch_catalog(c))
 get_system_uuid(c::VirtualFactorCore) = c.system_uuid
@@ -164,6 +165,10 @@ Return the per-branch susceptances for each arc, computing them on first access
 and caching them on the core.
 """
 function get_branch_susceptances_by_arc(c::VirtualFactorCore)
+    holds_components(c) || error(
+        "get_branch_susceptances_by_arc needs the branches of each arc, and a matrix " *
+        "restored from a factor file has none.",
+    )
     return _publish_once!(
         c.branch_susceptances_by_arc,
         c.branch_susceptances_ready,
@@ -187,6 +192,203 @@ function _check_virtual_solver(::MKLPardisoSolver)
     )
 end
 
+# ponytail: no real network has |b| near 1e12 (the smallest reactance gives about 1e6); raise
+# the limit if a valid case needs more.
+const MAX_ARC_SUSCEPTANCE = 1e12
+
+# The residual is measured against the right-hand side, so a garbage solution of large norm
+# cannot hide it. A healthy solve on ACTIVSg2000 leaves 4e-11 (KLU) and 6e-11 (AppleAccelerate),
+# and a singular factorization that a solver does not report leaves a residual of order 1.
+# A near-singular but non-singular ABA passes: its solution is correct to the data's conditioning.
+# A backward-stable solve leaves about eps * |ABA| * |x|, which grows with the largest
+# susceptance (ACTIVSg10k: 2e-9, and 8e-8 with one arc at b = 1e6). The limit therefore scales
+# with that product, between a floor of 1e-6 and an absolute cap that a singular solve exceeds.
+const MIN_FACTORIZATION_RESIDUAL = 1e-6
+const MAX_FACTORIZATION_RESIDUAL = 1e-1
+const FACTORIZATION_RESIDUAL_SLACK = 1e3
+
+_is_singular_error(::LinearAlgebra.SingularException) = true
+_is_singular_error(::Exception) = false
+
+# AppleAccelerate reports no column, so its `SingularException` carries 0.
+_singular_column_text(info::Integer) = ifelse(info > 0, " (column $info)", "")
+
+function _create_verified_factorization(
+    solver::LinearSolverType,
+    ABA::SparseArrays.SparseMatrixCSC{Float64, Int},
+)
+    K = try
+        _create_factorization(solver, ABA)
+    catch e
+        _is_singular_error(e) || rethrow()
+        error(
+            "The ABA matrix of the factor file is singular$(_singular_column_text(e.info)). " *
+            "The file has a susceptance that disconnects a subnetwork or that cancels another.",
+        )
+    end
+    rhs = ones(size(ABA, 1))
+    x = copy(_solve_factorization(K, copy(rhs)))
+    residual = LinearAlgebra.norm(ABA * x - rhs, Inf) / LinearAlgebra.norm(rhs, Inf)
+    limit = clamp(
+        FACTORIZATION_RESIDUAL_SLACK * eps() * LinearAlgebra.opnorm(ABA, Inf) *
+        LinearAlgebra.norm(x, Inf),
+        MIN_FACTORIZATION_RESIDUAL,
+        MAX_FACTORIZATION_RESIDUAL,
+    )
+    (isfinite(residual) && residual <= limit) || error(
+        "The factorization of the ABA matrix of the factor file failed its check: relative " *
+        "residual $residual, limit $limit. The matrix is singular or " *
+        "near singular.",
+    )
+    return K
+end
+
+function _position_map(axis::Vector{T}, what::String) where {T}
+    positions = Dict{T, Int}()
+    sizehint!(positions, length(axis))
+    for (ix, x) in enumerate(axis)
+        haskey(positions, x) &&
+            error(
+                "The $what axis has the entry $x twice (positions $(positions[x]) and $ix).",
+            )
+        positions[x] = ix
+    end
+    return positions
+end
+
+function _find_root!(parent::Vector{Int}, x::Int)
+    while parent[x] != x
+        parent[x] = parent[parent[x]]
+        x = parent[x]
+    end
+    return x
+end
+
+"""
+    _validate_dc_arrays(arc_susceptances, ref_bus_positions, axes, subnetwork_axes,
+        arc_live_members, reverse_bus_map)
+
+Check that the DC arrays describe a consistent network, before the ABA matrix is built. The
+function throws an error with context if an axis has a duplicate entry, an arc is a self-loop
+or has an endpoint outside the bus axis, a susceptance is not finite or is larger than
+`MAX_ARC_SUSCEPTANCE`, or `arc_live_members` has an entry below 1. A subnetwork key resolves
+through `reverse_bus_map` to a bus of the axis, and that bus must be the reference bus. It
+also throws an error if the subnetworks do not partition the buses and the arcs, a subnetwork
+does not hold exactly one reference bus, or the buses of a subnetwork are not exactly one
+connected component of the graph of arcs with non-zero susceptance. The cost is O(n α(n)).
+"""
+function _validate_dc_arrays(
+    arc_susceptances::Vector{Float64},
+    ref_bus_positions::Set{Int},
+    axes::Tuple{Vector{Tuple{Int, Int}}, Vector{Int}},
+    subnetwork_axes::Dict{Int, Tuple{Vector{Tuple{Int, Int}}, Vector{Int}}},
+    arc_live_members::Vector{Int},
+    reverse_bus_map::Dict{Int, Int},
+)
+    arc_ax, bus_ax = axes
+    n_bus = length(bus_ax)
+    n_arc = length(arc_ax)
+    bus_position = _position_map(bus_ax, "bus")
+    arc_position = _position_map(arc_ax, "arc")
+    for arc in arc_ax
+        (haskey(bus_position, arc[1]) && haskey(bus_position, arc[2])) ||
+            error("Arc $arc has an endpoint outside the bus axis.")
+        arc[1] == arc[2] && error("Arc $arc is a self-loop.")
+    end
+    length(arc_susceptances) == n_arc || error(
+        "arc_susceptances has length $(length(arc_susceptances)); expected n_arc = $n_arc.",
+    )
+    for (i, b) in enumerate(arc_susceptances)
+        abs(b) <= MAX_ARC_SUSCEPTANCE || error(
+            "The DC susceptance of the arc $(arc_ax[i]) at position $i is $b; " *
+            "it is not finite or has a magnitude above $MAX_ARC_SUSCEPTANCE.",
+        )
+    end
+    length(arc_live_members) == n_arc || error(
+        "arc_live_members has length $(length(arc_live_members)); expected n_arc = $n_arc.",
+    )
+    bad_live = findfirst(<(1), arc_live_members)
+    isnothing(bad_live) || error(
+        "The arc $(arc_ax[bad_live]) has arc_live_members $(arc_live_members[bad_live]), " *
+        "below 1. A factor file cannot hold an opened arc.",
+    )
+    length(ref_bus_positions) == length(subnetwork_axes) || error(
+        "$(length(ref_bus_positions)) reference bus positions for " *
+        "$(length(subnetwork_axes)) subnetworks; expected one for each subnetwork.",
+    )
+    all(pos -> 1 <= pos <= n_bus, ref_bus_positions) ||
+        error("Reference bus positions $ref_bus_positions must lie in 1:$n_bus.")
+
+    subnetwork_of_bus = zeros(Int, n_bus)
+    for (s, (key, (_, sub_buses))) in enumerate(subnetwork_axes)
+        isempty(sub_buses) && error("Subnetwork $key has no buses.")
+        for bus in sub_buses
+            pos = get(bus_position, bus, 0)
+            iszero(pos) && error("Subnetwork $key has the bus $bus outside the bus axis.")
+            iszero(subnetwork_of_bus[pos]) ||
+                error("The bus $bus is in more than one subnetwork.")
+            subnetwork_of_bus[pos] = s
+        end
+    end
+    all(!iszero, subnetwork_of_bus) ||
+        error("Bus $(bus_ax[findfirst(iszero, subnetwork_of_bus)]) is in no subnetwork.")
+
+    reference_of_subnetwork = zeros(Int, length(subnetwork_axes))
+    for pos in ref_bus_positions
+        s = subnetwork_of_bus[pos]
+        iszero(reference_of_subnetwork[s]) || error(
+            "Subnetwork with the reference bus $(bus_ax[pos]) has a second reference bus.",
+        )
+        reference_of_subnetwork[s] = pos
+    end
+    for (s, key) in enumerate(keys(subnetwork_axes))
+        pos = get(bus_position, get(reverse_bus_map, key, key), 0)
+        iszero(pos) && error(
+            "Subnetwork key $key is not on the bus axis and no reduction maps it onto the axis.",
+        )
+        pos == reference_of_subnetwork[s] || error(
+            "Subnetwork key $key resolves to a bus that is not the reference bus of its subnetwork.",
+        )
+    end
+
+    seen = falses(n_arc)
+    for (s, (key, (sub_arcs, _))) in enumerate(subnetwork_axes)
+        for arc in sub_arcs
+            ix = get(arc_position, arc, 0)
+            iszero(ix) && error("Subnetwork $key has the arc $arc outside the arc axis.")
+            seen[ix] && error("The arc $arc is in more than one subnetwork.")
+            seen[ix] = true
+            (
+                subnetwork_of_bus[bus_position[arc[1]]] == s &&
+                subnetwork_of_bus[bus_position[arc[2]]] == s
+            ) || error("The arc $arc of subnetwork $key has an endpoint outside it.")
+        end
+    end
+    all(seen) || error("Arc $(arc_ax[findfirst(!, seen)]) is in no subnetwork.")
+
+    parent = collect(1:n_bus)
+    for (ix, arc) in enumerate(arc_ax)
+        iszero(arc_susceptances[ix]) && continue
+        parent[_find_root!(parent, bus_position[arc[1]])] =
+            _find_root!(parent, bus_position[arc[2]])
+    end
+    component_size = zeros(Int, n_bus)
+    for pos in 1:n_bus
+        component_size[_find_root!(parent, pos)] += 1
+    end
+    for (key, (_, sub_buses)) in subnetwork_axes
+        root = _find_root!(parent, bus_position[first(sub_buses)])
+        (
+            component_size[root] == length(sub_buses) &&
+            all(bus -> _find_root!(parent, bus_position[bus]) == root, sub_buses)
+        ) || error(
+            "The buses of subnetwork $key are not one connected component of the " *
+            "graph of arcs with non-zero susceptance.",
+        )
+    end
+    return
+end
+
 """
     VirtualFactorCore(BA, A, ref_bus_positions, axes, subnetwork_axes, arc_live_members,
         branch_catalog; linear_solver, tol, system_uuid) -> VirtualFactorCore
@@ -199,7 +401,9 @@ entries in `{-1, 0, 1}`. Each entry of `ref_bus_positions` is an index into the 
 outage can open on arc `i`. The constructor holds `branch_catalog` and does not read it.
 
 The `tol` keyword is the sparsification spec, a `Float64` or an `AutoTolerance`. The
-constructor keeps it in `tol_spec` and resolves the per-row cutoff from it.
+constructor keeps it in `tol_spec` and resolves the per-row cutoff from it. With
+`verify_factorization = true`, the constructor checks the residual of a solve against the ABA
+matrix and throws an error if the factorization is singular or near singular.
 """
 function VirtualFactorCore(
     BA::SparseArrays.SparseMatrixCSC{Float64, Int},
@@ -212,6 +416,7 @@ function VirtualFactorCore(
     linear_solver::String = _default_linear_solver(),
     tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     system_uuid::Union{Base.UUID, Nothing} = nothing,
+    verify_factorization::Bool = false,
 )
     n_arc = length(axes[1])
     n_bus = length(axes[2])
@@ -229,12 +434,19 @@ function VirtualFactorCore(
     solver = resolve_linear_solver(linear_solver)
     _check_virtual_solver(solver)
     ABA = calculate_ABA_matrix(A, BA, ref_bus_positions)
+    iszero(size(ABA, 1)) && error(
+        "The ABA matrix is empty: every bus is a reference bus.",
+    )
     lookup = (make_ax_ref(axes[1]), make_ax_ref(axes[2]))
     if length(subnetwork_axes) > 1
         @info "Network is not connected, using subnetworks"
     end
 
-    K = _create_factorization(solver, ABA)
+    K = if verify_factorization
+        _create_verified_factorization(solver, ABA)
+    else
+        _create_factorization(solver, ABA)
+    end
 
     # Resolve the per-row sparsification rule once: a Float64 becomes an absolute
     # cutoff, an AutoTolerance a relative cutoff (κ logged via the reused K).
@@ -303,16 +515,20 @@ function VirtualFactorCore(
     length(arc_susceptances) == n_arc || error(
         "arc_susceptances has length $(length(arc_susceptances)); expected n_arc = $n_arc.",
     )
+    _validate_dc_arrays(
+        arc_susceptances,
+        ref_bus_positions,
+        axes,
+        subnetwork_axes,
+        arc_live_members,
+        get_reverse_bus_search_map(get_network_reduction_data(branch_catalog)),
+    )
     bus_position = make_ax_ref(bus_ax)
     rows = Vector{Int}(undef, 2 * n_arc)
     cols = Vector{Int}(undef, 2 * n_arc)
     vals = Vector{Float64}(undef, 2 * n_arc)
     signs = Vector{Int8}(undef, 2 * n_arc)
     for (ix, arc) in enumerate(arc_ax)
-        (haskey(bus_position, arc[1]) && haskey(bus_position, arc[2])) ||
-            error("Arc $arc has an endpoint outside the bus axis.")
-        isfinite(arc_susceptances[ix]) ||
-            error("Non-finite DC susceptance $(arc_susceptances[ix]) on arc $arc.")
         rows[2 * ix - 1] = bus_position[arc[1]]
         rows[2 * ix] = bus_position[arc[2]]
         cols[2 * ix - 1] = ix
@@ -333,6 +549,7 @@ function VirtualFactorCore(
         subnetwork_axes,
         arc_live_members,
         branch_catalog;
+        verify_factorization = true,
         kwargs...,
     )
 end

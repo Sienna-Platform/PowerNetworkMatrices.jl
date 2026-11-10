@@ -315,7 +315,7 @@ end
 
 # --- Outage registration ---
 
-_warn_or_rethrow_failed_outage(e::ErrorException) =
+_warn_or_rethrow_failed_outage(e::Union{ErrorException, UnsupportedOutageError}) =
     @warn "Could not register outage: $(e.msg)"
 _warn_or_rethrow_failed_outage(e) = rethrow()
 

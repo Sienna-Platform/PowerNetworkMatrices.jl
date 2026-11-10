@@ -1,5 +1,18 @@
 const YBUS_ELTYPE = ComplexF32
 
+"""
+    UnsupportedOutageError(msg)
+
+`NetworkModification` throws it for an outage that the network representation cannot express,
+such as a partial outage on a composite arc. Other errors are internal invariant failures.
+"""
+struct UnsupportedOutageError <: Exception
+    msg::String
+end
+
+Base.showerror(io::IO, e::UnsupportedOutageError) =
+    print(io, "UnsupportedOutageError: ", e.msg)
+
 # Cached two-port `(Y11, Y12, Y21, Y22)` of a reduction aggregate. Deliberately ComplexF64, not
 # YBUS_ELTYPE: `ybus_branch_entries` hands back ComplexF64 for parallel groups but ComplexF32 for
 # series chains (`_build_chain_ybus` assembles at Ybus storage precision), so the declared field

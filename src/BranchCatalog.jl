@@ -53,6 +53,7 @@ struct BranchCatalog
     name_to_arc::NAME_TO_ARC
     component_to_entry_name::COMPONENT_TO_ENTRY
     component_name_index::COMPONENT_NAME_INDEX
+    holds_components::Bool
 end
 
 get_network_reduction_data(c::BranchCatalog) = c.network_reduction_data
@@ -60,6 +61,13 @@ get_arc_table(c::BranchCatalog) = c.arcs
 get_name_to_arc_maps(c::BranchCatalog) = c.name_to_arc
 get_component_to_reduction_name_map(c::BranchCatalog) = c.component_to_entry_name
 get_component_name_index(c::BranchCatalog) = c.component_name_index
+
+"""
+    holds_components(c::BranchCatalog) -> Bool
+
+True if the catalog indexes components, false for a catalog restored from a factor file.
+"""
+holds_components(c::BranchCatalog) = c.holds_components
 
 """
     get_reduction_entry(c::BranchCatalog, arc) -> PSY.ACTransmission
@@ -526,6 +534,7 @@ function BranchCatalog(nrd::NetworkReductionData, name_to_arc::NAME_TO_ARC)
         name_to_arc,
         COMPONENT_TO_ENTRY(),
         COMPONENT_NAME_INDEX(),
+        false,
     )
 end
 
@@ -568,5 +577,6 @@ function BranchCatalog(nrd::NetworkReductionData, predicate)
         name_to_arc,
         component_to_entry,
         _build_component_name_index(nrd, arcs, predicate),
+        true,
     )
 end

@@ -23,6 +23,9 @@ network reduction algorithms.
 - `added_admittance_map::Dict{Int, PSY.FixedAdmittance}`: Admittances added to buses during reduction
 - `added_arc_impedance_map::Dict{Tuple{Int, Int}, PSY.GenericArcImpedance}`: New arcs created during reduction
 - `reductions::ReductionContainer`: Container tracking applied reduction algorithms
+- `removed_arc_reduction::Dict{Tuple{Int, Int}, Int}`: Maps each removed arc to the code of the reduction that removed it (see `REDUCTION_CODE_ZERO_IMPEDANCE`, `REDUCTION_CODE_RADIAL`, `REDUCTION_CODE_DEGREE_TWO`, `REDUCTION_CODE_WARD`). The arc key is in the bus numbering of that step
+- `removed_arc_composite::Dict{Tuple{Int, Int}, Tuple{Int, Int}}`: Maps each arc that the degree-two reduction removed to the composite arc of its chain
+- `reduction_codes::Vector{Int}`: Codes of the reductions that changed the network, in application order
 - `impedance_correction_factors::Dict{Tuple{Int, Int}, Float64}`: Series-impedance multipliers from `PSY.ImpedanceCorrectionData`, keyed by `(transformer id, winding)` where the winding is the `PSY.WindingCategory` code (`0` for a two-winding transformer). Built once by [`build_impedance_correction_factors!`](@ref); empty when the system defines no correction tables
 """
 @kwdef mutable struct NetworkReductionData <:
@@ -54,6 +57,35 @@ network reduction algorithms.
     reductions::ReductionContainer = ReductionContainer()
     impedance_correction_factors::Dict{Tuple{Int, Int}, Float64} =
         Dict{Tuple{Int, Int}, Float64}()
+    removed_arc_reduction::Dict{Tuple{Int, Int}, Int} = Dict{Tuple{Int, Int}, Int}()
+    removed_arc_composite::Dict{Tuple{Int, Int}, Tuple{Int, Int}} =
+        Dict{Tuple{Int, Int}, Tuple{Int, Int}}()
+    reduction_codes::Vector{Int} = Int[]
+end
+
+const REDUCTION_CODE_ZERO_IMPEDANCE = 1
+const REDUCTION_CODE_RADIAL = 2
+const REDUCTION_CODE_DEGREE_TWO = 3
+const REDUCTION_CODE_WARD = 4
+
+"""
+    get_reduction_codes(nr::NetworkReductionData) -> Vector{Int}
+
+Codes of the reductions that ran, in application order: 1 zero-impedance, 2 radial,
+3 degree-two, 4 Ward. The list holds each radial, degree-two and Ward reduction that ran.
+It holds the zero-impedance reduction only when that reduction merged a bus. A
+matrix that `from_hdf5` restored has the same codes as the matrix that was written.
+"""
+get_reduction_codes(nr::NetworkReductionData) = nr.reduction_codes
+
+# ZeroImpedanceBranchReduction is the only reduction that fills `merged_bus_pairs`, and it
+# does not record itself in `reductions`.
+function _reduction_code(nr_new::NetworkReductionData)
+    isempty(nr_new.merged_bus_pairs) || return REDUCTION_CODE_ZERO_IMPEDANCE
+    has_radial_reduction(nr_new.reductions) && return REDUCTION_CODE_RADIAL
+    has_degree_two_reduction(nr_new.reductions) && return REDUCTION_CODE_DEGREE_TWO
+    has_ward_reduction(nr_new.reductions) && return REDUCTION_CODE_WARD
+    error("A network reduction step names no reduction: cannot record its code.")
 end
 
 function get_name(device::T) where {T <: PSY.ACTransmission}
