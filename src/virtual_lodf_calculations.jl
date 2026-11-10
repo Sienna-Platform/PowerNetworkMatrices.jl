@@ -189,9 +189,7 @@ function VirtualLODF(
         subnetwork_axes[key] = (core.subnetwork_axes[key][1], core.subnetwork_axes[key][1])
     end
 
-    bus_ax = core.axes[2]
-    empty_cache =
-        _persistent_row_cache(max_cache_size, look_up, persistent_arcs, length(bus_ax))
+    empty_cache = _persistent_row_cache(max_cache_size, core, persistent_arcs)
 
     return VirtualLODF(
         core,

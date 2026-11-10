@@ -32,8 +32,10 @@ Structure used for saving the rows of the Virtual PTDF and LODF matrix.
         Set listing the rows to keep in `temp_cache`.
 - `row_size`
         Defines the size of the single row to store.
+- `n_rows::Int`
+        Number of rows in the matrix; the cache never holds more keys than that.
 """
-function RowCache(max_cache_size::Int, persistent_rows::Set{Int}, row_size)
+function RowCache(max_cache_size::Int, persistent_rows::Set{Int}, row_size, n_rows::Int)
     persistent_data_size = (length(persistent_rows) + 1) * row_size
     if persistent_data_size > max_cache_size
         error(
@@ -42,10 +44,12 @@ function RowCache(max_cache_size::Int, persistent_rows::Set{Int}, row_size)
     else
         @debug "required cache for persisted values = $((length(persistent_rows) + 1)*row_size). Max cache specification = $(max_cache_size)"
     end
-    max_num_keys = max(length(persistent_rows) + 1, floor(Int, max_cache_size / row_size))
-    # Storage grows as rows are inserted, up to `max_num_keys`: a byte budget over short
-    # rows allows far more keys than most caches hold, and a VirtualMODF keeps one cache per
-    # network.
+    max_num_keys = max(
+        length(persistent_rows) + 1,
+        min(floor(Int, max_cache_size / row_size), n_rows),
+    )
+    # Storage grows as rows are inserted, up to `max_num_keys`: most caches hold far fewer
+    # rows than that, and a VirtualMODF keeps one cache per network.
     return RowCache(
         Dict{Int, Union{Vector{Float64}, SparseArrays.SparseVector{Float64, Int}}}(),
         # Copy: the cache mutates this set (pinning, and `empty!`), and the caller's own

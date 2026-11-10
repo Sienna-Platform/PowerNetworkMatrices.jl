@@ -221,17 +221,16 @@ function _gather_to_buses!(
     return dest
 end
 
-# Shared by VirtualPTDF and VirtualLODF: `persistent_arcs` names are resolved to row indices
-# through `look_up[1]`.
+# Shared by VirtualPTDF and VirtualLODF: one row per arc, each `n_bus` long.
 function _persistent_row_cache(
     max_cache_size::Int,
-    look_up,
+    core,
     persistent_arcs::Vector{Tuple{Int, Int}},
-    n_bus::Int,
 )
     return RowCache(
         max_cache_size * MiB,
-        Set{Int}(look_up[1][k] for k in persistent_arcs),
-        n_bus * sizeof(Float64),
+        Set{Int}(core.lookup[1][k] for k in persistent_arcs),
+        length(core.axes[2]) * sizeof(Float64),
+        length(core.axes[1]),
     )
 end

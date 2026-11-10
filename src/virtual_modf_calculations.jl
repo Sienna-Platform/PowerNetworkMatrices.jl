@@ -406,8 +406,15 @@ function _compute_modf_entry(
 end
 
 # Per-modification row cache: one n_bus-long row per monitored arc.
-_new_modf_row_cache(vmodf::VirtualMODF) =
-    RowCache(get_max_cache_size_bytes(vmodf), Set{Int}(), size(vmodf)[2] * sizeof(Float64))
+function _new_modf_row_cache(vmodf::VirtualMODF)
+    n_arcs, n_bus = size(vmodf)
+    return RowCache(
+        get_max_cache_size_bytes(vmodf),
+        Set{Int}(),
+        n_bus * sizeof(Float64),
+        n_arcs,
+    )
+end
 
 # --- getindex: by integer monitored index + NetworkModification ---
 
