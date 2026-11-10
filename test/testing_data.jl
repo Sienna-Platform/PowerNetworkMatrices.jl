@@ -1411,3 +1411,160 @@ function build_degenerate_3wt_system()
     )
     return sys
 end
+
+# c_sys14 with a second Line named "dup" in parallel with the first line. `r_scale` makes
+# the pair lossy and unequal in r/x, so the group susceptance is not the sum of 1/x;
+# `x_scale` scales the duplicate's reactance, negative for a series-compensated member.
+function _c_sys14_with_parallel_pair(; r_scale = 1.0, x_scale = 1.0)
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    lines = sort!(collect(PSY.get_components(PSY.Line, sys)); by = PSY.get_name)
+    return _add_parallel_line!(sys, lines[1], r_scale; x_scale = x_scale)
+end
+
+function _add_parallel_line!(sys, base, r_scale; x_scale = 1.0)
+    dup = PSY.Line(;
+        input_basis = u"CU",
+        name = "dup",
+        available = true,
+        active_power_flow = 0.0,
+        reactive_power_flow = 0.0,
+        arc = PSY.get_arc(base),
+        r = r_scale * PSY.get_r(base, u"Ω"),
+        x = x_scale * PSY.get_x(base, u"Ω"),
+        b = (from = 0.0, to = 0.0),
+        rating = 10.0,
+        angle_limits = (min = -1.5, max = 1.5),
+    )
+    PSY.add_component!(sys, dup)
+    return sys, base, dup
+end
+
+_arc_numbers(b) = (
+    PSY.get_number(PSY.get_from(PSY.get_arc(b))),
+    PSY.get_number(PSY.get_to(PSY.get_arc(b))),
+)
+
+# A lossless phase-shifting transformer named "shifter" on `arc`, with reactance `x` in
+# system base.
+function _add_shifter!(sys, arc, x; α)
+    shifter = PSY.TwoWindingTransformer(; input_basis = u"CU",
+        name = "shifter",
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
+            arc = arc, tap = 1.0, α = α, available = true,
+            active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 10.0,
+            base_power = PSY.get_base_power(sys),
+            base_voltage_primary = PSY.get_base_voltage(PSY.get_from(arc)),
+            r = 0.0, x = x,
+        ),
+        magnetizing_shunt = Complex(0.0, 0.0),
+    )
+    PSY.add_component!(sys, shifter)
+    return shifter
+end
+
+# c_sys14 with a "dup" line parallel to Line1 (1-2) and a phase shifter on a new arc 1-3.
+# Trans4 (7-8) is the only branch to bus 8, so opening it islands the bus.
+function _c_sys14_for_row_batches()
+    sys, line1, dup = _c_sys14_with_parallel_pair(; r_scale = 2.0)
+    shifter_arc = PSY.Arc(;
+        from = PSY.get_component(
+            PSY.ACBus,
+            sys,
+            PSY.get_name(PSY.get_from(PSY.get_arc(line1))),
+        ),
+        to = only(b for b in PSY.get_components(PSY.ACBus, sys) if PSY.get_number(b) == 3),
+    )
+    PSY.add_component!(sys, shifter_arc)
+    _add_shifter!(sys, shifter_arc, 0.2; α = 0.1)
+    return sys
+end
+
+# A dense PTDF of `builder()` with the transmission components named in `names` out.
+function _ref_ptdf_without(builder, names::Vector{String}; kwargs...)
+    sys_ref = builder()
+    for n in names
+        PSY.set_available!(PSY.get_component(PSY.ACTransmission, sys_ref, n), false)
+    end
+    return PTDF(sys_ref; kwargs...), sys_ref
+end
+
+# Largest entry-wise gap between `rows_of_arc(arc)` over `arcs` and a dense PTDF of
+# `builder()` rebuilt with the `names` components out; `bus_axis` orders each row's entries.
+# An arc the rebuild drops must give a zero row. With `islands` (bus-number sets), an arc is
+# compared only when both endpoints lie in one island, and only on that island's buses.
+function _max_error_against_rebuild(
+    rows_of_arc,
+    arcs,
+    bus_axis,
+    names;
+    builder = _c_sys14_for_row_batches,
+    islands = nothing,
+    kwargs...,
+)
+    ref, _ = _ref_ptdf_without(builder, names; kwargs...)
+    arc_lookup = PNM.get_arc_lookup(ref)
+    bus_lookup = PNM.get_bus_lookup(ref)
+    err = 0.0
+    for arc in arcs
+        positions = _compared_positions(arc, bus_axis, islands)
+        isempty(positions) && continue
+        row = rows_of_arc(arc)
+        if !haskey(arc_lookup, arc)
+            err = max(err, maximum(j -> abs(row[j]), positions))
+            continue
+        end
+        for j in positions
+            err = max(err, abs(row[j] - ref[arc_lookup[arc], bus_lookup[bus_axis[j]]]))
+        end
+    end
+    return err
+end
+
+# Positions in `bus_axis` that `arc`'s row is compared on: every bus without `islands`, else
+# the buses of the island holding both endpoints, or none when no island holds both.
+function _compared_positions(arc, bus_axis, islands)
+    isnothing(islands) && return collect(eachindex(bus_axis))
+    for island in islands
+        (arc[1] in island && arc[2] in island) || continue
+        return [j for (j, bus) in enumerate(bus_axis) if bus in island]
+    end
+    return Int[]
+end
+
+_transmission(sys, name) = PSY.get_component(PSY.ACTransmission, sys, name)
+
+# Lines `(name, from, to, x)` with r = 0.01 and closed switches `(name, from, to)` with
+# x = 0.01 between `buses`; `reactances` overrides the x of the named branches.
+function _add_node_breaker_branches!(sys, buses, lines, switches, reactances)
+    new_arc(i, j) = (a = PSY.Arc(buses[i], buses[j]); PSY.add_component!(sys, a); a)
+    for (name, i, j, x) in lines
+        _add_test_line!(sys, name, new_arc(i, j), 0.01, get(reactances, name, x))
+    end
+    for (name, i, j) in switches
+        sw = PSY.DiscreteControlledACBranch(nothing)
+        sw.name = name
+        sw.arc = new_arc(i, j)
+        sw.r = 0.0
+        sw.x = get(reactances, name, 0.01)
+        sw.available = true
+        sw.branch_status = PSY.DiscreteControlledBranchStatus.CLOSED
+        PSY.add_component!(sys, sw)
+    end
+    return sys
+end
+
+const _CORRIDOR_LINES = (("L12", 1, 2, 0.10), ("L23", 2, 3, 0.12), ("L13", 1, 3, 0.15),
+    ("L24", 2, 4, 0.20), ("L34", 3, 4, 0.25), ("L56", 5, 6, 0.05),
+    ("L78", 7, 8, 0.06), ("L79", 7, 9, 0.07))
+const _CORRIDOR_SWITCHES = (("s15", 1, 5), ("s67", 6, 7), ("s83", 8, 3), ("s92", 9, 2))
+
+# Backbone triangle 1-2-3 (bus 1 the reference) with bus 4 on 2-4 and 3-4, and a
+# node-breaker corridor through tap buses 5-9 that reaches the grid at buses 1, 2 and 3:
+#   1 =s15= 5 -L56- 6 =s67= 7 -L78- 8 =s83= 3,   7 -L79- 9 =s92= 2
+# `reactances` overrides the x of the named branches, e.g. a negative x for a
+# series-compensated member.
+function _node_breaker_corridor(; reactances = Dict{String, Float64}())
+    sys, buses = _mk_bus_system(9)
+    return _add_node_breaker_branches!(
+        sys, buses, _CORRIDOR_LINES, _CORRIDOR_SWITCHES, reactances)
+end

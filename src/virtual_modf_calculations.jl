@@ -279,8 +279,9 @@ end
 
 For an outage whose ACTransmission components resolved to no arc modifications: throw when
 any is in service (a reduction eliminated it, so every query would return the base-case row);
-warn when all are out of service (a legitimate no-op). This is the only survive-check
-possible on a core that was reduced before outages were known.
+warn when all are out of service (a legitimate no-op). A component is in service when it is
+available and, for a switch, closed. This is the only survive-check possible on a core that
+was reduced before outages were known.
 """
 function _validate_transmission_survived(
     sys::PSY.System,
@@ -293,9 +294,7 @@ function _validate_transmission_survived(
             PSY.get_associated_components(sys, outage; component_type = PSY.ACTransmission),
         )
     isempty(transmission) && return
-    # `get_available` is derived for a ThreeWindingTransformer, so this one predicate covers
-    # every transmission type without a type check.
-    in_service = filter(PSY.get_available, transmission)
+    in_service = filter(_in_service, transmission)
     if isempty(in_service)
         @warn "Outage (label=$(mod.label)) references only out-of-service transmission " *
               "component(s) $(join(sort!([PSY.get_name(c) for c in transmission]), ", ")); " *
