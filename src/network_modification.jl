@@ -61,9 +61,6 @@ function _outaged_group_member(
     )
 end
 
-# Names are unique only per type.
-_member_sort_key(member::PSY.ACTransmission) = (get_name(member), string(typeof(member)))
-
 # Rejects a trip the group arc cannot represent. The susceptance change itself comes from the
 # group's two-port, never from the member alone. A physical member always leaves whole.
 _validate_outaged_member(
@@ -343,14 +340,12 @@ two-port, and the tripped segments of one series chain from the chain's impedanc
 """
 function NetworkModification(mat::PowerNetworkMatrix, sys::PSY.System, components)
     _validate_system_uuid(mat, sys)
-    unique_components = collect(
-        keys(IdDict(c => nothing for c in components if _in_network_candidate(c))),
-    )
+    unique_components = unique(c for c in components if _in_network_candidate(c))
     isempty(unique_components) && return NetworkModification("", ArcModification[])
     return _network_modification_from_components(mat, unique_components, "")
 end
 
-_in_network_candidate(device::PSY.Device) = PSY.get_available(device)
+_in_network_candidate(device::PSY.Device) = _in_service(device)
 _in_network_candidate(::PSY.Component) = true
 
 """
@@ -441,18 +436,23 @@ function _parallel_arc_modification(
     tripped::Vector{PSY.ACTransmission},
 )::ArcModification
     bp = nr.parallel_branch_map[arc_tuple]
-    tripped_members = PSY.ACTransmission[]
+    resolved = PSY.ACTransmission[]
     for branch in tripped
         member = _outaged_group_member(bp, branch)
         _validate_outaged_member(member, branch, nr)
-        any(m -> m === member, tripped_members) || push!(tripped_members, member)
+        push!(resolved, member)
     end
-    # Floating-point sums below follow this order, so it must not depend on input order.
-    sort!(tripped_members; by = _member_sort_key)
-    remaining = PSY.ACTransmission[
-        m for m in bp if !any(t -> t === m, tripped_members)
-    ]
-    delta_b = _parallel_remaining_susceptance(nr, bp, remaining, arc_tuple) - b_arc
+    # Taken in the group's own order, so the floating-point sums below do not depend on the
+    # order the components arrive in, and a member tripped twice counts once.
+    tripped_members = PSY.ACTransmission[m for m in bp if m in resolved]
+    remaining = PSY.ACTransmission[m for m in bp if !(m in resolved)]
+    # Signed relative to the base arc, the frame `delta_b` lives in: on a series-compensated
+    # group with negative net susceptance the kernel's `sign(b_e) · Δ|b|` then lands on the
+    # signed remainder.
+    b_remaining =
+        copysign(1.0, _ba_arc_susceptance(nr, arc_tuple)) *
+        _remaining_arc_susceptance(nr, bp, remaining, arc_tuple)
+    delta_b = b_remaining - b_arc
     delta_shift = -sum(_member_shift_injection(bp, nr, m) for m in tripped_members)
     delta_y = zeros(ComplexF64, 4)
     for member in tripped_members
@@ -470,40 +470,22 @@ function _parallel_arc_modification(
     )
 end
 
-# The susceptance BA would hold for `arc_tuple` with only `remaining` group members (and any
-# Ward equivalent filed on the arc) in service, in the magnitude frame `delta_b` lives in:
-# signed relative to the base arc, so positive when it shares the base arc's sign. On a
-# series-compensated group with negative net susceptance the signed remainder is negated, and
-# the kernel's `sign(b_e) · Δ|b|` then lands on the signed remainder.
-function _parallel_remaining_susceptance(
+# The susceptance BA would hold for `arc_tuple` with only `remaining` group members, and any
+# Ward equivalent filed on the arc, in service: BA's own rule applied to the remaining group.
+function _remaining_arc_susceptance(
     nr::NetworkReductionData,
     bp::AbstractBranchesParallel,
     remaining::Vector{PSY.ACTransmission},
     arc_tuple::Tuple{Int, Int},
 )::Float64
-    b_remaining = _parallel_remaining_signed_susceptance(nr, bp, remaining, arc_tuple)
-    return copysign(1.0, _ba_arc_susceptance(nr, arc_tuple)) * b_remaining
-end
-
-function _parallel_remaining_signed_susceptance(
-    nr::NetworkReductionData,
-    bp::AbstractBranchesParallel,
-    remaining::Vector{PSY.ACTransmission},
-    arc_tuple::Tuple{Int, Int},
-)::Float64
-    added = get(get_added_arc_impedance_map(nr), arc_tuple, nothing)
-    # A lone member is what BA would hold for it on its own arc, by BA's own dispatch.
+    isempty(remaining) && return _added_arc_susceptance(nr, arc_tuple)
     if length(remaining) == 1
-        isnothing(added) && return _ba_arc_susceptance(only(remaining), nr)
-        return _ba_arc_susceptance(only(remaining), added, nr)
+        entry = only(remaining)
+    else
+        entry = MixedBranchesParallel(remaining, get_arc_tuple(bp), EMPTY_TWO_PORT, false)
     end
-    entries = _subset_two_port(remaining, get_arc_tuple(bp, nr), nr)
-    fallback = sum(_finite_series_susceptance(m, nr) for m in remaining; init = 0.0)
-    if !isnothing(added)
-        entries = entries .+ ybus_branch_entries(added, nr)
-        fallback += _finite_series_susceptance(added, nr)
-    end
-    return _ba_arc_susceptance(entries, fallback)
+    added = get(get_added_arc_impedance_map(nr), arc_tuple, nothing)
+    return _ba_entry_susceptance(entry, added, nr)
 end
 
 # Susceptance BA holds for the Ward equivalent filed on `arc_tuple` alone; zero when none.

@@ -428,13 +428,20 @@ _ba_arc_susceptance(
 
 function _ba_arc_susceptance(nr::NetworkReductionData, arc::Tuple{Int, Int})
     entry, _ = _resolve_arc_entry(nr, arc)
-    added_map = get_added_arc_impedance_map(nr)
-    if haskey(added_map, arc) && added_map[arc] !== entry
-        return _ba_arc_susceptance(entry, added_map[arc], nr)
-    else
-        return _ba_arc_susceptance(entry, nr)
+    added = get(get_added_arc_impedance_map(nr), arc, nothing)
+    # A Ward equivalent alone on its arc is the entry itself.
+    if added === entry
+        added = nothing
     end
+    return _ba_entry_susceptance(entry, added, nr)
 end
+
+# BA's susceptance for an arc's resolved entry, plus the Ward equivalent filed on the same arc
+# when there is one.
+_ba_entry_susceptance(entry, ::Nothing, nr::NetworkReductionData) =
+    _ba_arc_susceptance(entry, nr)
+_ba_entry_susceptance(entry, added::PSY.GenericArcImpedance, nr::NetworkReductionData) =
+    _ba_arc_susceptance(entry, added, nr)
 
 """
     get_effective_series_susceptance(segment, nr::NetworkReductionData) -> Float64

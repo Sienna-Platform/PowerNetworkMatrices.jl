@@ -174,17 +174,9 @@ equivalent built by [`WardReduction`](@ref) is not attached to a system; its lim
 already stored on the system base.
 """
 function get_equivalent_rating(bs::PSY.GenericArcImpedance)
-    return _largest_flow_limit(PSY.get_operational_flow_limit(bs, _system_base_units(bs)))
-end
-
-# A detached component cannot resolve the system base power. The only detached generic arcs
-# are Ward equivalents, whose values are already system-base, which `u"CU"` returns
-# unchanged.
-function _system_base_units(bs::PSY.GenericArcImpedance)
-    if isnothing(IS.get_base_value(bs))
-        return u"CU"
-    end
-    return u"SU"
+    # A generic arc's base power is the system base, so its device base (`u"CU"`) is the
+    # system base too, and it resolves for a detached Ward equivalent, where `u"SU"` cannot.
+    return _largest_flow_limit(PSY.get_operational_flow_limit(bs, u"CU"))
 end
 
 _largest_flow_limit(::Nothing) = Inf
