@@ -78,10 +78,9 @@ mod_branch = NetworkModification(vmodf, branch)
 mod_outage = NetworkModification(vmodf, sys, outage)
 ```
 
-When a `VirtualMODF` is constructed from a `PSY.System`, all `PSY.Outage`
-supplemental attributes in the system are automatically resolved and
-registered. Registered contingencies can be inspected with
-`get_registered_contingencies(vmodf)` and queried directly by `PSY.Outage`.
+When a `VirtualMODF` is constructed from a `PSY.System`, all `PSY.UnplannedOutage` supplemental attributes in the system are automatically resolved and registered.
+A `PSY.PlannedOutage` is not a contingency: it is not registered and does not protect its branch from network reductions.
+Registered contingencies can be inspected with `get_registered_contingencies(vmodf)` and queried directly by `PSY.Outage`.
 
 ## Querying post-contingency rows
 
