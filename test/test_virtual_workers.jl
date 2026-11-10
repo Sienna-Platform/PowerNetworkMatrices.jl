@@ -204,8 +204,8 @@ end
 end
 
 # Line1 plus a lossy parallel line with a different r and x on the same arc, both under one
-# outage: the group susceptance is not the exact sum of its members', so a susceptance test
-# cannot tell that the whole arc is out.
+# outage: the group susceptance is not the exact sum of its members', yet opening every member
+# leaves the arc with exactly zero susceptance.
 @testset "A full outage of a lossy parallel group zeroes the monitored arc" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     line1 = PSY.get_component(PSY.Line, sys, "Line1")
@@ -235,7 +235,7 @@ end
     wf = PNM.compute_woodbury_factors(vmodf, mod)
     @test wf.arc_out == [true]
     b_post = PNM._post_modification_susceptance(vmodf.arc_susceptances, e, wf)
-    @test !iszero(b_post)
+    @test iszero(b_post)
 
     @test all(iszero, vmodf[e, ctg])
     n_bus = size(vmodf.BA, 1)
