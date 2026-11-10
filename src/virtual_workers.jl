@@ -352,14 +352,15 @@ arc_flows!(
     arcs::AbstractVector{Int},
     wf::WoodburyFactors,
 ) = arc_flows!(
-    flows, mat, θ, arcs, wf, WoodburyFlowScratch(length(wf.arc_indices), size(θ, 2)),
+    flows, mat, θ, arcs, wf, WoodburyFlowScratch(_woodbury_rank(wf), size(θ, 2)),
 )
 
 """
-    WoodburyFlowScratch(max_modified_arcs, max_columns = 1)
+    WoodburyFlowScratch(max_rank, max_columns = 1)
 
-Buffers of the Woodbury [`arc_flows!`](@ref) for modifications of up to `max_modified_arcs`
-arcs and angles of up to `max_columns` columns, so a caller reusing one allocates nothing.
+Buffers of the Woodbury [`arc_flows!`](@ref) for updates of rank up to `max_rank` (at most
+the number of modified arcs) and angles of up to `max_columns` columns, so a caller reusing
+one allocates nothing.
 """
 struct WoodburyFlowScratch
     u::Matrix{Float64}
@@ -367,10 +368,10 @@ struct WoodburyFlowScratch
     zm_Z::Vector{Float64}
 end
 
-WoodburyFlowScratch(max_modified_arcs::Int, max_columns::Int = 1) = WoodburyFlowScratch(
-    Matrix{Float64}(undef, max_modified_arcs, max_columns),
-    Matrix{Float64}(undef, max_modified_arcs, max_columns),
-    Vector{Float64}(undef, max_modified_arcs),
+WoodburyFlowScratch(max_rank::Int, max_columns::Int = 1) = WoodburyFlowScratch(
+    Matrix{Float64}(undef, max_rank, max_columns),
+    Matrix{Float64}(undef, max_rank, max_columns),
+    Vector{Float64}(undef, max_rank),
 )
 
 """
@@ -391,11 +392,11 @@ function arc_flows!(
     _check_flows(flows, θ, arcs)
     BA = core.BA
     arc_sus = core.arc_susceptances
-    M = length(wf.arc_indices)
+    M = _woodbury_rank(wf)
     T = size(θ, 2)
     M <= length(scratch.zm_Z) && T <= size(scratch.u, 2) || throw(
         DimensionMismatch(
-            "The WoodburyFlowScratch holds $(length(scratch.zm_Z)) modified arcs and " *
+            "The WoodburyFlowScratch holds rank $(length(scratch.zm_Z)) and " *
             "$(size(scratch.u, 2)) columns; this call needs $M and $T.",
         ),
     )

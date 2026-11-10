@@ -283,8 +283,10 @@ _buffered_flow_allocations(flows, core, θ, arcs, wf, scratch) =
         @test iszero(_buffered_flow_allocations(flows, core, θ, arcs, wf, scratch))
     end
     wf = PNM.compute_woodbury_factors(core, mods[end])
+    @test PNM._woodbury_rank(wf) >= 1
     @test_throws DimensionMismatch PNM.arc_flows!(
-        zeros(length(arcs)), core, θ, arcs, wf, PNM.WoodburyFlowScratch(1),
+        zeros(length(arcs)), core, θ, arcs, wf,
+        PNM.WoodburyFlowScratch(PNM._woodbury_rank(wf) - 1),
     )
 end
 
