@@ -97,10 +97,12 @@ function _check_branch_map(t::BranchArcTable)
         (sign[r] == 1 || sign[r] == -1) || fail("sign is not 1 or -1")
         if k <= 8
             id[r] > 0 || fail("id is not positive")
-            # Exact zero is BA's "no DC coupling", for example a purely resistive branch.
-            (iszero(b[r]) || _in_susceptance_range(b[r])) ||
+            # Exact zero is BA's "no DC coupling", for example a purely resistive branch. BA
+            # uses component values inside a series chain, which are never zero.
+            in_chain = p > 0 && kind[p] == 10
+            ((iszero(b[r]) && !in_chain) || _in_susceptance_range(b[r])) ||
                 fail(
-                    "b is $(b[r]); expected 0 or a magnitude from $(1 / MAX_ARC_SUSCEPTANCE) to $MAX_ARC_SUSCEPTANCE",
+                    "b is $(b[r]); expected 0 outside a series chain or a magnitude from $(1 / MAX_ARC_SUSCEPTANCE) to $MAX_ARC_SUSCEPTANCE",
                 )
             isfinite(alpha[r]) || fail("alpha is $(alpha[r]); expected a finite value")
             key = (id[r], max(k - 5, 0))
@@ -829,9 +831,11 @@ function _candidate_arcs(nr::NetworkReductionData, from::Int, to::Int)
 end
 
 # The removed arcs that match the buses, in the order of `_candidate_arcs`.
-_removed_arcs(nr::NetworkReductionData, from::Int, to::Int) = Tuple{Int, Int}[
-    a for a in _candidate_arcs(nr, from, to) if haskey(nr.removed_arc_reduction, a)
-]
+function _removed_arcs(nr::NetworkReductionData, from::Int, to::Int)
+    return Tuple{Int, Int}[
+        a for a in _candidate_arcs(nr, from, to) if haskey(nr.removed_arc_reduction, a)
+    ]
+end
 
 # The reason for the in-service branch between the bus numbers `from` and `to`, as the system
 # document has them. In-service branches between one pair of buses share their fate, so the
@@ -856,9 +860,10 @@ function _bus_pair_reason(
     return NO_ARC_NOT_IN_NETWORK
 end
 
-_is_query_bus(nr::NetworkReductionData, bus::Int) =
-    haskey(nr.bus_reduction_map, bus) || haskey(nr.reverse_bus_search_map, bus) ||
-    bus in nr.removed_buses || haskey(nr.merged_bus_pairs, bus)
+function _is_query_bus(nr::NetworkReductionData, bus::Int)
+    return haskey(nr.bus_reduction_map, bus) || haskey(nr.reverse_bus_search_map, bus) ||
+           bus in nr.removed_buses || haskey(nr.merged_bus_pairs, bus)
+end
 
 # A degree-two member has an arc while its composite arc survives. A later reduction can
 # remove the composite arc, and then that record gives the reason.
@@ -924,13 +929,14 @@ struct BranchReasonTable
 end
 
 """
-    BranchReasonTable(mat::PowerNetworkMatrix, sys::PSY.System) -> BranchReasonTable
+    BranchReasonTable(mat::Union{VirtualPTDF, VirtualMODF}, sys::PSY.System) -> BranchReasonTable
 
-Give each AC branch of `sys` its code in `mat`. A branch or circuit that is not available, or
-that touches a bus the matrix excluded, has the code `NO_ARC_NOT_IN_NETWORK`. The function
+Give each AC branch of `sys` its code in `mat`. A branch or circuit that the Ybus build skips
+(not available, or an open breaker), or that touches a bus the matrix excluded, has the code
+`NO_ARC_NOT_IN_NETWORK`. The function
 throws an error if `mat` was built from another system.
 """
-function BranchReasonTable(mat::PowerNetworkMatrix, sys::PSY.System)
+function BranchReasonTable(mat::Union{VirtualPTDF, VirtualMODF}, sys::PSY.System)
     _validate_system_uuid(mat, sys)
     nr = get_network_reduction_data(mat)
     arc_lookup = get_arc_lookup(mat)
@@ -938,7 +944,7 @@ function BranchReasonTable(mat::PowerNetworkMatrix, sys::PSY.System)
     for branch in PSY.get_components(PSY.ACTransmission, sys)
         for (w, part) in _windings(branch)
             rows[(IS.get_id(branch), w)] =
-                _reason_row(nr, arc_lookup, PSY.get_available(part), PSY.get_arc(part))
+                _reason_row(nr, arc_lookup, _in_ybus(part), PSY.get_arc(part))
         end
     end
     return BranchReasonTable(rows)
@@ -951,12 +957,12 @@ _windings(trf::PSY.ThreeWindingTransformer) = enumerate(PSY.get_circuits(trf))
 function _reason_row(
     nr::NetworkReductionData,
     arc_lookup::Dict{Tuple{Int, Int}, Int},
-    available::Bool,
+    in_ybus::Bool,
     arc::PSY.Arc,
 )
     from, to = get_arc_tuple(arc)
-    # Ybus skips an unavailable branch and every branch at a bus that it excluded.
-    if !available || !_is_query_bus(nr, from) || !_is_query_bus(nr, to)
+    # Ybus also skips every branch at a bus that it excluded.
+    if !in_ybus || !_is_query_bus(nr, from) || !_is_query_bus(nr, to)
         return (NO_ARC_NOT_IN_NETWORK, 0)
     end
     code = _bus_pair_reason(nr, arc_lookup, from, to)

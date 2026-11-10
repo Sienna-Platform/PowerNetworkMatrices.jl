@@ -199,10 +199,14 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         @test_throws "sign is not 1 or -1" check(bad(:sign, 3, 0))
         @test_throws "id is not positive" check(bad(:id, 1, 0))
         @test isnothing(check(bad(:b, 1, 0.0)))
-        @test_throws "b is NaN; expected 0 or a magnitude from" check(bad(:b, 1, NaN))
-        @test_throws "b is 1.0e308; expected 0 or a magnitude from" check(bad(:b, 1, 1e308))
-        @test_throws "b is 1.0e-320; expected 0 or a magnitude from" check(
-            bad(:b, 1, 1e-320),
+        @test_throws "b is NaN; expected 0 outside a series chain" check(bad(:b, 1, NaN))
+        @test_throws "b is 1.0e308; expected 0 outside" check(bad(:b, 1, 1e308))
+        @test_throws "b is 1.0e-320; expected 0 outside" check(bad(:b, 1, 1e-320))
+        # A zero inside a series chain would make the chain sum infinite.
+        chain = bad(:kind, 2, 10)
+        @test isnothing(check(chain))
+        @test_throws "b is 0.0; expected 0 outside a series chain" check(
+            merge(chain, (b = [10.0, 0.0, 0.0, -4.0, 2.0],)),
         )
         @test_throws "alpha is Inf; expected a finite value" check(bad(:alpha, 1, Inf))
         @test_throws "alpha is NaN; expected a finite value" check(bad(:alpha, 1, NaN))
@@ -2649,12 +2653,20 @@ end
     _add_test_line!(sys, "out_twin", PSY.get_arc(twin), 0.01, 0.1)
     out = PSY.get_component(PSY.Line, sys, "out_twin")
     PSY.set_available!(out, false)
+    # Ybus skips an available breaker that is open.
+    breaker = PSY.DiscreteControlledACBranch(; input_basis = u"CU",
+        name = "open_breaker", available = true, active_power_flow = 0.0,
+        reactive_power_flow = 0.0, arc = PSY.get_arc(twin), r = 0.0, x = 0.01,
+        rating = 1.0, branch_status = PSY.DiscreteControlledBranchStatus.OPEN,
+    )
+    PSY.add_component!(sys, breaker)
     vptdf = VirtualPTDF(sys; tol = 0.0)
     path = joinpath(mktempdir(), "twin.h5")
     to_hdf5(vptdf, path, sys; outages = false)
     reasons = from_hdf5(BranchReasonTable, path)
     @test no_arc_reason(reasons, IS.get_id(twin)) == NO_ARC_HAS_ARC
     @test no_arc_reason(reasons, IS.get_id(out)) == NO_ARC_NOT_IN_NETWORK
+    @test no_arc_reason(reasons, IS.get_id(breaker)) == NO_ARC_NOT_IN_NETWORK
     @test !HDF5.h5open(f -> haskey(f, "branch_outages"), path, "r")
     @test_throws "no branch outage table" from_hdf5(BranchOutageTable, path)
 
