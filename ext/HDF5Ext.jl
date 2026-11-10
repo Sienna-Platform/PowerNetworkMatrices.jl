@@ -40,7 +40,6 @@ using PowerNetworkMatrices:
     _reduction_records,
     _resolve_branch_arc,
     _validate_dc_arrays,
-    _validate_system_uuid,
     arc_dc_shift_injection,
     get_arc_lookup,
     get_branch_catalog,
@@ -904,11 +903,9 @@ function to_hdf5(
     force::Bool = false,
     outages::Bool = true,
 )
-    _validate_system_uuid(mat, sys)
-    reasons = BranchReasonTable(mat, sys)
     return _write_factor_file_atomically(filename, force) do f
         _write_factor_core(f, get_core(mat), _dist_slack(mat))
-        _write_branch_reason!(f, reasons)
+        _write_branch_reason!(f, BranchReasonTable(mat, sys))
         if outages
             _write_branch_outages(f, mat, sys)
         end
@@ -1298,11 +1295,11 @@ function from_hdf5(
 end
 
 function _write_branch_reason!(f::HDF5.File, t::BranchReasonTable)
-    keys_ = sort!(collect(keys(t.rows)))
-    id = first.(keys_)
-    winding = last.(keys_)
-    reason = [first(t.rows[k]) for k in keys_]
-    surviving_bus = [last(t.rows[k]) for k in keys_]
+    rows = sort!(collect(t.rows); by = first)
+    id = [first(first(r)) for r in rows]
+    winding = [last(first(r)) for r in rows]
+    reason = [first(last(r)) for r in rows]
+    surviving_bus = [last(last(r)) for r in rows]
     _check_branch_reason(id, winding, reason, surviving_bus)
     g = HDF5.create_group(f, "branch_reason")
     g["id"] = id

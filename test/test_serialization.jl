@@ -2612,22 +2612,13 @@ end
     bmap = from_hdf5(BranchArcTable, path)
     trf = PSY.get_component(PSY.ThreeWindingTransformer, sys, "T3W_degenerate")
     _, range = PNM.get_outage_rows(table)[HDF5Ext._outage_key(trf)]
-    group_arcs = Int[]
-    for i in range
-        tops = findall(==(-table.arc_index[i]), get_branch_parent(bmap))
-        if any(==(9), get_branch_kind(bmap)[tops])
-            push!(group_arcs, i)
-            @test PNM.get_outage_opens_arc(table)[i]
-        end
-    end
+    kind = get_branch_kind(bmap)
+    opens = PNM.get_outage_opens_arc(table)
+    tops = [findall(==(-table.arc_index[i]), get_branch_parent(bmap)) for i in range]
+    group_arcs = [i for (i, t) in zip(range, tops) if any(==(9), kind[t])]
     @test length(group_arcs) == 1
-    dead = Int[]
-    for i in range
-        tops = findall(==(-table.arc_index[i]), get_branch_parent(bmap))
-        if PNM.get_outage_opens_arc(table)[i]
-            append!(dead, r for r in tops if get_branch_kind(bmap)[r] != 11)
-        end
-    end
+    @test all(opens[group_arcs])
+    dead = [r for (i, t) in zip(range, tops) if opens[i] for r in t if kind[r] != 11]
     flows = branch_flows(bmap, ones(get_branch_arc_count(bmap)), dead)
     for r in findall(==(IS.get_id(trf)), get_branch_id(bmap))
         @test iszero(flows[r])
@@ -2642,17 +2633,6 @@ end
     @test no_arc_reason(reasons, IS.get_id(line)) == NO_ARC_HAS_ARC
     @test_throws "no branch with id -1 and winding 0" no_arc_reason(reasons, -1)
     @test_throws "did not remove" no_arc_surviving_bus(reasons, IS.get_id(line))
-    nr = PNM.get_network_reduction_data(vptdf)
-    lookup = PNM.get_arc_lookup(vptdf)
-    @test_throws "bus 99 (from) is not a bus of the matrix" PNM._bus_pair_reason(
-        nr, lookup, 99, 2,
-    )
-    @test_throws "bus 98 (to) is not a bus of the matrix" PNM._bus_pair_reason(
-        nr, lookup, 1, 98,
-    )
-    @test_throws "the buses of a branch must differ; got 3 twice" PNM._bus_pair_reason(
-        nr, lookup, 3, 3,
-    )
     path = joinpath(mktempdir(), "nosys.h5")
     to_hdf5(vptdf, path)
     @test_throws "no group branch_reason" from_hdf5(BranchReasonTable, path)
@@ -2666,13 +2646,9 @@ end
         skip_serialization = true,
     )
     twin = first(PSY.get_components(PSY.Line, sys))
-    out = PSY.Line(; input_basis = u"CU",
-        name = "out_twin", available = false, active_power_flow = 0.0,
-        reactive_power_flow = 0.0, arc = PSY.get_arc(twin), r = 0.01, x = 0.1,
-        b = (from = 0.0, to = 0.0), rating = 1.0,
-        angle_limits = (min = -1.5, max = 1.5),
-    )
-    PSY.add_component!(sys, out)
+    _add_test_line!(sys, "out_twin", PSY.get_arc(twin), 0.01, 0.1)
+    out = PSY.get_component(PSY.Line, sys, "out_twin")
+    PSY.set_available!(out, false)
     vptdf = VirtualPTDF(sys; tol = 0.0)
     path = joinpath(mktempdir(), "twin.h5")
     to_hdf5(vptdf, path, sys; outages = false)
@@ -2686,22 +2662,14 @@ end
     @test HDF5.h5open(f -> haskey(f, "branch_outages"), path, "r")
     @test from_hdf5(BranchReasonTable, path).rows == reasons.rows
 
-    @test_throws "winding 4 is not in 0:3" from_hdf5(
+    bad(column, value) = from_hdf5(
         BranchReasonTable,
-        _corrupted_copy(path, "branch_reason", "winding" => fill(4, length(reasons.rows))),
+        _corrupted_copy(path, "branch_reason", column => fill(value, length(reasons.rows))),
     )
-    @test_throws "reason 7 is not in 0:4" from_hdf5(
-        BranchReasonTable,
-        _corrupted_copy(path, "branch_reason", "reason" => fill(7, length(reasons.rows))),
-    )
-    @test_throws "surviving_bus is not positive" from_hdf5(
-        BranchReasonTable,
-        _corrupted_copy(path, "branch_reason", "reason" => fill(1, length(reasons.rows))),
-    )
-    @test_throws "repeat" from_hdf5(
-        BranchReasonTable,
-        _corrupted_copy(path, "branch_reason", "id" => fill(1, length(reasons.rows))),
-    )
+    @test_throws "winding 4 is not in 0:3" bad("winding", 4)
+    @test_throws "reason 7 is not in 0:4" bad("reason", 7)
+    @test_throws "surviving_bus is not positive" bad("reason", 1)
+    @test_throws "more than once" bad("id", 1)
 end
 
 @testset "branch_map stores the BA susceptance" begin

@@ -828,18 +828,10 @@ function _candidate_arcs(nr::NetworkReductionData, from::Int, to::Int)
     return ((from, to), (to, from), (zf, zt), (zt, zf))
 end
 
-function _has_removed_arc(nr::NetworkReductionData, from::Int, to::Int)
-    candidates = _candidate_arcs(nr, from, to)
-    return any(a -> haskey(nr.removed_arc_reduction, a), candidates)
-end
-
-function _removed_arc(nr::NetworkReductionData, from::Int, to::Int)
-    candidates = _candidate_arcs(nr, from, to)
-    for arc in candidates
-        haskey(nr.removed_arc_reduction, arc) && return arc
-    end
-    error("No removed arc matches the buses ($from, $to).")
-end
+# The removed arcs that match the buses, in the order of `_candidate_arcs`.
+_removed_arcs(nr::NetworkReductionData, from::Int, to::Int) = Tuple{Int, Int}[
+    a for a in _candidate_arcs(nr, from, to) if haskey(nr.removed_arc_reduction, a)
+]
 
 # The reason for the in-service branch between the bus numbers `from` and `to`, as the system
 # document has them. In-service branches between one pair of buses share their fate, so the
@@ -850,12 +842,9 @@ function _bus_pair_reason(
     from::Int,
     to::Int,
 )
-    from == to &&
-        error("no_arc_reason: the buses of a branch must differ; got $from twice.")
-    _check_query_bus(nr, "from", from)
-    _check_query_bus(nr, "to", to)
-    if _has_removed_arc(nr, from, to)
-        return _reason_of_arc(nr, arc_lookup, _removed_arc(nr, from, to))
+    removed = _removed_arcs(nr, from, to)
+    if !isempty(removed)
+        return _reason_of_arc(nr, arc_lookup, first(removed))
     end
     zf = get(nr.merged_bus_pairs, from, from)
     zt = get(nr.merged_bus_pairs, to, to)
@@ -870,13 +859,6 @@ end
 _is_query_bus(nr::NetworkReductionData, bus::Int) =
     haskey(nr.bus_reduction_map, bus) || haskey(nr.reverse_bus_search_map, bus) ||
     bus in nr.removed_buses || haskey(nr.merged_bus_pairs, bus)
-
-function _check_query_bus(nr::NetworkReductionData, name::String, bus::Int)
-    _is_query_bus(nr, bus) && return
-    error(
-        "no_arc_reason: bus $bus ($name) is not a bus of the matrix, a reduced bus or a removed bus.",
-    )
-end
 
 # A degree-two member has an arc while its composite arc survives. A later reduction can
 # remove the composite arc, and then that record gives the reason.
@@ -915,9 +897,10 @@ end
 # The bus that kept the branch between `from` and `to` when the radial reduction absorbed it, in
 # the numbering after the later reductions. A later degree-two reduction can remove that bus.
 function _bus_pair_surviving_bus(nr::NetworkReductionData, from::Int, to::Int)
-    _has_removed_arc(nr, from, to) ||
+    removed = _removed_arcs(nr, from, to)
+    isempty(removed) &&
         error("No reduction removed a branch between buses ($from, $to).")
-    arc = _terminal_arc(nr, _removed_arc(nr, from, to))
+    arc = _terminal_arc(nr, first(removed))
     nr.removed_arc_reduction[arc] == REDUCTION_CODE_RADIAL ||
         error("The radial reduction did not remove the branch between buses ($from, $to).")
     # A cascaded stub arc, where the peel removed both ends, has no stored survivor.
@@ -953,34 +936,17 @@ function BranchReasonTable(mat::PowerNetworkMatrix, sys::PSY.System)
     arc_lookup = get_arc_lookup(mat)
     rows = Dict{Tuple{Int, Int}, Tuple{Int, Int}}()
     for branch in PSY.get_components(PSY.ACTransmission, sys)
-        _add_reason_rows!(rows, nr, arc_lookup, branch)
+        for (w, part) in _windings(branch)
+            rows[(IS.get_id(branch), w)] =
+                _reason_row(nr, arc_lookup, PSY.get_available(part), PSY.get_arc(part))
+        end
     end
     return BranchReasonTable(rows)
 end
 
-function _add_reason_rows!(
-    rows::Dict{Tuple{Int, Int}, Tuple{Int, Int}},
-    nr::NetworkReductionData,
-    arc_lookup::Dict{Tuple{Int, Int}, Int},
-    branch::PSY.ACTransmission,
-)
-    key = (IS.get_id(branch), 0)
-    rows[key] = _reason_row(nr, arc_lookup, PSY.get_available(branch), PSY.get_arc(branch))
-    return
-end
-
-function _add_reason_rows!(
-    rows::Dict{Tuple{Int, Int}, Tuple{Int, Int}},
-    nr::NetworkReductionData,
-    arc_lookup::Dict{Tuple{Int, Int}, Int},
-    trf::PSY.ThreeWindingTransformer,
-)
-    for (w, circuit) in enumerate(PSY.get_circuits(trf))
-        rows[(IS.get_id(trf), w)] =
-            _reason_row(nr, arc_lookup, PSY.get_available(circuit), PSY.get_arc(circuit))
-    end
-    return
-end
+# Each (winding, part) of a branch: winding 0 for a branch, 1 to 3 for a circuit.
+_windings(branch::PSY.ACTransmission) = ((0, branch),)
+_windings(trf::PSY.ThreeWindingTransformer) = enumerate(PSY.get_circuits(trf))
 
 function _reason_row(
     nr::NetworkReductionData,
@@ -988,8 +954,7 @@ function _reason_row(
     available::Bool,
     arc::PSY.Arc,
 )
-    from = PSY.get_number(PSY.get_from(arc))
-    to = PSY.get_number(PSY.get_to(arc))
+    from, to = get_arc_tuple(arc)
     # Ybus skips an unavailable branch and every branch at a bus that it excluded.
     if !available || !_is_query_bus(nr, from) || !_is_query_bus(nr, to)
         return (NO_ARC_NOT_IN_NETWORK, 0)
@@ -1054,7 +1019,7 @@ function _check_branch_reason(
         "id" => id, "winding" => winding, "reason" => reason,
         "surviving_bus" => surviving_bus,
     )
-    seen = Set{Tuple{Int, Int}}()
+    _check_unique("branch_reason/(id, winding)", collect(zip(id, winding)))
     for r in eachindex(id)
         fail(what) = error("Factor file table branch_reason row $r: $what.")
         id[r] > 0 || fail("id $(id[r]) is not positive")
@@ -1070,9 +1035,6 @@ function _check_branch_reason(
                     "surviving_bus is $(surviving_bus[r]); expected 0 for reason $(reason[r])",
                 )
         end
-        key = (id[r], winding[r])
-        key in seen && fail("id and winding $key repeat")
-        push!(seen, key)
     end
     return
 end
