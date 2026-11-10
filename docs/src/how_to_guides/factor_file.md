@@ -6,8 +6,11 @@ rebuild the matrix in another process, for example a service that only computes 
 
 ## Write and read
 
+The factor file functions need HDF5 to be loaded. Run `using HDF5` before you call them.
+
 ```julia
 using PowerNetworkMatrices
+using HDF5
 
 vptdf = VirtualPTDF(sys; network_reductions = [RadialReduction(), DegreeTwoReduction()])
 to_hdf5(vptdf, "factors.h5")
@@ -79,11 +82,13 @@ Groups and datasets:
 | `reduction`                          | group           | The records of the network reductions that need no component: `applied`, `removed_arc_from`, `removed_arc_to`, `removed_arc_code`, `composite_from`, `composite_to`, `survivor_from`, `survivor_to`, `survivor_bus`, `boundary_bus`, `boundary_from`, `boundary_to`, `removed_buses`, `merged_from`, `merged_to`, `irreducible_buses`. All are integer vectors. `applied` lists the reductions in order of application (1 zero-impedance, 2 radial, 3 degree-two, 4 Ward). It holds each radial, degree-two and Ward reduction that ran, and the zero-impedance reduction only when it merged a bus. |
 | `subnetworks`                        | group           | One subgroup per reference bus, with `ref`, `arc_from`, `arc_to` and `bus`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `branch_outages`                     | group           | Optional. One row per branch: `type`, `name`, `id`, `is_islanding`, `start`, `len`. `id` is `IS.get_id` of the branch, the integer id of the component in the system document, and it is unique. The arrays `arc_index`, `delta_b`, `delta_shift`, `opened`, `opens_arc`, `member` hold the arc rows.                                                                                                                                                                                                                                                                                                |
+| `branch_reason`                      | group           | Written when a `System` is passed. One row per branch or three-winding circuit of the system: `id`, `winding`, `reason`, `surviving_bus`. See the section on why a branch has no arc.                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `outages`                            | group           | Optional, `VirtualMODF` only. One row per registered contingency: `id`, `label`, `is_islanding`, `start`, `len`, and the arrays `arc_index`, `delta_b`, `delta_shift`, `opened`.                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 ## Outages by name
 
-Pass the `System` to write a table of branch outages:
+Pass the `System` to write a table of branch outages. Pass `outages = false` to skip the
+table; the file still holds the `branch_reason` group.
 
 ```julia
 to_hdf5(vmodf, "outages.h5", sys)
@@ -146,7 +151,7 @@ the reduction tree of an arc, in depth-first preorder, arc by arc. The columns a
 | `id`     | `IS.get_id` of the branch, which equals the `id` in the document. For kinds 6 to 8 it is the id of the transformer. It is 0 for kinds 9 to 11.                                                                                                   |
 | `parent` | Above 0: the row of the parent aggregate, always below the own row. Below 0: the row is a top node of arc `-parent`, an index into `arc_from` and `arc_to`.                                                                                      |
 | `sign`   | +1 or -1: the orientation of the row against its parent. For a top node the parent frame is (`arc_from`, `arc_to`).                                                                                                                              |
-| `b`      | Susceptance of a leaf or Ward row, in system base. It is 0.0 for kinds 9 and 10.                                                                                                                                                                 |
+| `b`      | Susceptance of a leaf or Ward row as `BA_Matrix` uses it, in system base. 0.0 means no DC coupling, for example a purely resistive branch. It is 0.0 for kinds 9 and 10.                                                                         |
 | `alpha`  | Phase shift of a leaf row in radians. It is 0.0 for kinds 9 to 11.                                                                                                                                                                               |
 
 A leaf row has the key (`id`, winding), with winding 0 for a branch and 1, 2 or 3 for the
@@ -195,23 +200,29 @@ shift.
 
 ### Why a branch has no arc
 
-A branch that the radial, zero-impedance or Ward reduction removed has no leaf row. `no_arc_reason(mat, from, to)`
-takes the bus numbers of the branch, as the document has them, and returns a code. It throws an
-error if `from` equals `to`, or if a bus is not a bus of the matrix, a reduced bus or a removed bus. It reads
-only the records of the `reduction` group, so a restored matrix gives the same answer as the
-matrix that wrote the file.
+A branch that the radial, zero-impedance or Ward reduction removed has no leaf row, and
+neither has a branch out of service. Pass the `System` to `to_hdf5` to store the reason for
+each branch, then query it with the key of a leaf row:
 
-| Code | Constant                | Meaning                                                                                                       |
-|:---- |:----------------------- |:------------------------------------------------------------------------------------------------------------- |
-| 0    | `NO_ARC_HAS_ARC`        | The branch has an arc, alone or inside a parallel group or a series chain.                                    |
-| 1    | `NO_ARC_RADIAL`         | The radial reduction absorbed the branch. `no_arc_surviving_bus(mat, from, to)` returns the bus that kept it. |
-| 2    | `NO_ARC_ZERO_IMPEDANCE` | The zero-impedance reduction merged both ends into one bus.                                                   |
-| 3    | `NO_ARC_WARD`           | The Ward reduction eliminated the branch.                                                                     |
-| 4    | `NO_ARC_NOT_IN_NETWORK` | No record names the branch. It is out of service.                                                             |
+```julia
+reasons = from_hdf5(BranchReasonTable, "factors.h5")
+code = no_arc_reason(reasons, id)           # winding 0
+code = no_arc_reason(reasons, id, winding)  # a three-winding circuit
+```
 
-The pair of buses identifies the branch. Two branches between the same pair of buses have the
-same code, so a branch out of service in parallel with a branch in service has the code of the
-latter. A branch with impedance between two buses that the zero-impedance reduction merged has
+`BranchReasonTable(mat, sys)` builds the same table without a file. `no_arc_reason` throws an
+error for an id that the table does not hold. `from_hdf5(BranchReasonTable, filename)` throws an
+error for a file written without a `System`.
+
+| Code | Constant                | Meaning                                                                                                              |
+|:---- |:----------------------- |:-------------------------------------------------------------------------------------------------------------------- |
+| 0    | `NO_ARC_HAS_ARC`        | The branch has an arc, alone or inside a parallel group or a series chain.                                           |
+| 1    | `NO_ARC_RADIAL`         | The radial reduction absorbed the branch. `no_arc_surviving_bus(reasons, id, winding)` returns the bus that kept it. |
+| 2    | `NO_ARC_ZERO_IMPEDANCE` | The zero-impedance reduction merged both ends into one bus.                                                          |
+| 3    | `NO_ARC_WARD`           | The Ward reduction eliminated the branch.                                                                            |
+| 4    | `NO_ARC_NOT_IN_NETWORK` | The branch is out of service, or it touches a bus that the matrix excluded.                                          |
+
+A branch with impedance between two buses that the zero-impedance reduction merged has
 code 2, as the branch with zero impedance that caused the merge.
 
 ### Limits
@@ -220,17 +231,16 @@ code 2, as the branch with zero impedance that caused the merge.
     the member susceptances. The largest difference occurs on an arc with a Ward equivalent
     beside a lossy branch (measured 5.0e-2 relative on the Ward test fixture). The split uses
     the `b` of the rows.
-  - `b` is the uncorrected susceptance of the component. It is not the entry of the Ybus.
-  - A purely resistive parallel member (`r > 0`, `x = 0`) gets `b = 1 / min_x_eps`, with
-    `min_x_eps` equal to `1e-6` unless the zero-impedance reduction sets another value. It takes
-    almost all the flow of its group.
+  - Inside a series chain, `b` is the component value, because `BA_Matrix` sums the components
+    of a chain. A purely resistive segment there gets `b = 1 / min_x_eps`, with `min_x_eps`
+    equal to `1e-6` unless the zero-impedance reduction sets another value.
   - The split assumes zero injection at the interior buses of a degree-two chain.
     The reduction removed these buses, so a load there changes the flow along the chain.
 
 ## Limits of a restored matrix
 
 A restored matrix has no components. It holds the component-free records of the network
-reductions, which `no_arc_reason` reads. Rows by arc and bus number work.
+reductions. Rows by arc and bus number work.
 These calls fail with their usual error messages:
 
   - `NetworkModification(mat, arc)`

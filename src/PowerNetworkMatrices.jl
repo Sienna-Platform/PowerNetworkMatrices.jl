@@ -64,6 +64,7 @@ export compute_woodbury_factors
 export factorize
 export get_post_modification_ptdf_row
 export BranchOutageTable
+export BranchReasonTable
 export get_outage_rows
 export get_outage_ids
 export get_outage_opens_arc
@@ -101,7 +102,6 @@ using PowerSystems: @u_str, PerUnit
 import PowerSystems: ACBusTypes
 
 import DataStructures
-import HDF5
 import DataStructures: SortedDict
 import SparseArrays
 import SparseArrays: rowvals, nzrange
@@ -199,5 +199,21 @@ include("serialization.jl")
 # AppleAccelerate-related functions live in `src/` now (no extension needed)
 # and are not redeclared here.
 function _calculate_PTDF_matrix_MKLPardiso end
+
+"""
+    to_hdf5(mat, filename; kwargs...)
+
+Write the factor data of a `VirtualPTDF` or `VirtualMODF` to an HDF5 file. The methods are
+in a package extension. Run `using HDF5` (or `import HDF5`) to load them.
+"""
+function to_hdf5 end
+
+"""
+    from_hdf5(T, filename; kwargs...)
+
+Read a matrix or a table from a factor file. The methods are in a package extension. Run
+`using HDF5` (or `import HDF5`) to load them.
+"""
+function from_hdf5 end
 
 end

@@ -1,4 +1,5 @@
 using Documenter, PowerNetworkMatrices
+using HDF5
 import DataStructures: OrderedDict
 using Literate
 using DocumenterInterLinks
@@ -43,7 +44,7 @@ pages = OrderedDict(
 )
 
 makedocs(;
-    modules = [PowerNetworkMatrices],
+    modules = [PowerNetworkMatrices, Base.get_extension(PowerNetworkMatrices, :HDF5Ext)],
     format = Documenter.HTML(;
         mathengine = Documenter.MathJax(),
         prettyurls = haskey(ENV, "GITHUB_ACTIONS"),
