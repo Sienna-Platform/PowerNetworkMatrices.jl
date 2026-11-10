@@ -522,7 +522,12 @@ function _arc_outage_delta_bs(
     entry, _ = _resolve_arc_entry(nr, arc_tuple)
     entry === added_map[arc_tuple] && return (-b_arc, -b_arc)
     own = _ba_arc_susceptance(entry, nr)
-    return (_added_arc_susceptance(nr, arc_tuple) - b_arc, -own)
+    # `b_arc` is the magnitude BA holds; the kernel applies the sign of the signed arc sum, so
+    # the Ward remainder takes that sign, as in `_parallel_arc_modification`.
+    b_ward =
+        copysign(1.0, _ba_arc_susceptance(nr, arc_tuple)) *
+        _added_arc_susceptance(nr, arc_tuple)
+    return (b_ward - b_arc, -own)
 end
 
 struct _OutageAccumulator
