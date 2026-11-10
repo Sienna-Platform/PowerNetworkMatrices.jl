@@ -240,19 +240,27 @@ function VirtualMODF(
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     automatically_register_outages::Bool = true,
 )
-    max_cache_bytes = max_cache_size * MiB
-    vmodf = VirtualMODF(
-        core,
-        Dict{Int, ContingencySpec}(),
-        Dict{NetworkModification, WoodburyFactors}(),
-        Dict{NetworkModification, RowCache{RowCacheValue}}(),
-        max_cache_bytes,
-    )
+    vmodf = VirtualMODF(core; max_cache_size = max_cache_size)
 
     # Auto-register all outage attributes from the system
     automatically_register_outages && _register_all_outages!(vmodf, sys)
 
     return vmodf
+end
+
+"""
+    VirtualMODF(core::VirtualFactorCore; max_cache_size) -> VirtualMODF
+
+Wrap `core` in a VirtualMODF with no registered contingencies and empty caches.
+"""
+function VirtualMODF(core::VirtualFactorCore; max_cache_size::Int = MAX_CACHE_SIZE_MiB)
+    return VirtualMODF(
+        core,
+        Dict{Int, ContingencySpec}(),
+        Dict{NetworkModification, WoodburyFactors}(),
+        Dict{NetworkModification, RowCache{RowCacheValue}}(),
+        max_cache_size * MiB,
+    )
 end
 
 """
@@ -308,7 +316,7 @@ end
 
 # --- Outage registration ---
 
-_warn_or_rethrow_failed_outage(e::ErrorException) =
+_warn_or_rethrow_failed_outage(e::Union{ErrorException, UnsupportedOutageError}) =
     @warn "Could not register outage: $(e.msg)"
 _warn_or_rethrow_failed_outage(e) = rethrow()
 

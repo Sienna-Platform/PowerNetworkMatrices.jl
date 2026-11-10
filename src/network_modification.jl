@@ -78,10 +78,12 @@ function _validate_outaged_member(
     branch::PSY.ACTransmission,
     ::NetworkReductionData,
 )
-    return error(
-        "Tripping $(typeof(branch)) $(get_name(branch)) leaves $(get_name(member)) partly " *
-        "in service, and a partial Pi-model delta is not supported on the composite arc " *
-        "it sits on.",
+    throw(
+        UnsupportedOutageError(
+            "Tripping $(typeof(branch)) $(get_name(branch)) leaves $(get_name(member)) partly " *
+            "in service, and a partial Pi-model delta is not supported on the composite arc " *
+            "it sits on.",
+        ),
     )
 end
 
@@ -95,10 +97,12 @@ function _validate_outaged_member(
 )
     delta_b = _compute_series_outage_delta_b(member, branch, nr)
     if !_is_full_outage(delta_b, _finite_series_susceptance(member, nr))
-        error(
-            "Tripping $(typeof(branch)) $(get_name(branch)) leaves the series chain " *
-            "$(get_name(member)) partly in service. A partial Ybus delta is not supported " *
-            "on the composite arc it was grouped onto. Δb=$(delta_b).",
+        throw(
+            UnsupportedOutageError(
+                "Tripping $(typeof(branch)) $(get_name(branch)) leaves the series chain " *
+                "$(get_name(member)) partly in service. A partial Ybus delta is not supported " *
+                "on the composite arc it was grouped onto. Δb=$(delta_b).",
+            ),
         )
     end
     return
@@ -132,10 +136,12 @@ function _direct_arc_ybus_delta(
     entries = ybus_branch_entries(tr, nr)
     b_arc = _ba_arc_susceptance(entries, tr, nr)
     if !_is_full_outage(delta_b, b_arc)
-        error(
-            "Partial Ybus delta is not supported on the three-winding transformer " *
-            "star-leg arc $(get_arc_tuple(tr, nr)) of $(get_name(tr)): a circuit is " *
-            "either in service or out. Δb=$(delta_b), arc b=$(b_arc).",
+        throw(
+            UnsupportedOutageError(
+                "Partial Ybus delta is not supported on the three-winding transformer " *
+                "star-leg arc $(get_arc_tuple(tr, nr)) of $(get_name(tr)): a circuit is " *
+                "either in service or out. Δb=$(delta_b), arc b=$(b_arc).",
+            ),
         )
     end
     return _negated_pi_model(entries)
@@ -169,9 +175,11 @@ function _series_arc_ybus_delta(
     delta_b::Float64,
 )::NTuple{4, YBUS_ELTYPE}
     if !_is_full_outage(delta_b, _finite_series_susceptance(series_chain, nr))
-        error(
-            "Partial Ybus delta is not supported on series-reduced arcs. " *
-            "Arc $(arc_tuple), Δb=$(delta_b).",
+        throw(
+            UnsupportedOutageError(
+                "Partial Ybus delta is not supported on series-reduced arcs. " *
+                "Arc $(arc_tuple), Δb=$(delta_b).",
+            ),
         )
     end
     return _negated_pi_model(ybus_branch_entries(series_chain, nr))
@@ -542,6 +550,11 @@ _OutageAccumulator() = _OutageAccumulator(
 # Classify `components`, then compute each series arc's Δb once with all its tripped
 # components grouped. Returns the accumulator and the combined arc modifications.
 function _classify_outage_components(mat::PowerNetworkMatrix, components)
+    holds_components(get_branch_catalog(mat)) || error(
+        "The matrix was restored from a factor file and has no components, so it cannot " *
+        "classify a branch outage. Use `NetworkModification(table, type, name)` with a " *
+        "`BranchOutageTable`.",
+    )
     nr = get_network_reduction_data(mat)
     arc_lookup = get_arc_lookup(mat)
     arc_sus = _get_arc_susceptances(mat)

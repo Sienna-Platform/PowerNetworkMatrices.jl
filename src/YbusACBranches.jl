@@ -14,6 +14,16 @@ function Base.length(b::YbusACBranches)::Int
            length(b.series_compensators)
 end
 
+# Ybus stamps a branch or a circuit only when this is true. `BranchReasonTable` uses the
+# same rule, so a branch that Ybus skips gets `NO_ARC_NOT_IN_NETWORK`.
+_in_ybus(br::PSY.ACTransmission) = PSY.get_available(br)
+_in_ybus(circuit::PSY.TransformerCircuit) = PSY.get_available(circuit)
+
+function _in_ybus(br::PSY.DiscreteControlledACBranch)
+    return PSY.get_available(br) &&
+           PSY.get_branch_status(br) == PSY.DiscreteControlledBranchStatus.CLOSED
+end
+
 function _populate_ybus_branch_vector!(
     vec::Vector{T},
     sys::PSY.System,
@@ -21,21 +31,7 @@ function _populate_ybus_branch_vector!(
     iter = PSY.get_components(T, sys)
     sizehint!(vec, length(iter))
     for br in iter
-        PSY.get_available(br) && push!(vec, br)
-    end
-    return
-end
-
-function _populate_ybus_branch_vector!(
-    vec::Vector{T},
-    sys::PSY.System,
-) where {T <: PSY.DiscreteControlledACBranch}
-    iter = PSY.get_components(T, sys)
-    sizehint!(vec, length(iter))
-    for br in iter
-        PSY.get_available(br) &&
-            PSY.get_branch_status(br) == PSY.DiscreteControlledBranchStatus.CLOSED &&
-            push!(vec, br)
+        _in_ybus(br) && push!(vec, br)
     end
     return
 end

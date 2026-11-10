@@ -34,6 +34,7 @@ function get_degree2_reduction(
 
     removed_buses = Set{Int}()
     removed_arcs = Set{Tuple{Int, Int}}()
+    removed_arc_composite = Dict{Tuple{Int, Int}, Tuple{Int, Int}}()
     # Chains sharing an endpoint pair are electrically in parallel. Group them by the unordered
     # pair so traversal direction cannot split a sibling pair across two arcs: the pair is an
     # ordered tuple and which way a chain is traversed depends on interior bus numbering, so
@@ -46,6 +47,7 @@ function get_degree2_reduction(
         )
         segments = _build_chain_segments!(
             removed_arcs,
+            removed_arc_composite,
             removed_buses,
             composite_arc,
             segment_ix,
@@ -73,12 +75,14 @@ function get_degree2_reduction(
     parallel_additions,
     reverse_series_branch_map,
     removed_buses,
-    removed_arcs
+    removed_arcs,
+    removed_arc_composite
 end
 
 # Assemble one chain's `BranchesSeries` and record the arcs and interior buses it consumes.
 function _build_chain_segments!(
     removed_arcs::Set{Tuple{Int, Int}},
+    removed_arc_composite::Dict{Tuple{Int, Int}, Tuple{Int, Int}},
     removed_buses::Set{Int},
     composite_arc::Tuple{Int, Int},
     segment_ix::Vector{Int},
@@ -108,6 +112,7 @@ function _build_chain_segments!(
         add_branch!(segments, entry, orientation)
         for (key, _, _) in entries
             push!(removed_arcs, key)
+            removed_arc_composite[key] = composite_arc
         end
         ix != 1 && push!(removed_buses, segment_numbers[ix])
     end

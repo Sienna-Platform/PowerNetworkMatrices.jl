@@ -50,24 +50,9 @@ end
     # A non-winding zero-impedance branch between two terminal buses of one 3W transformer
     # merges them, so two winding arcs collide on (merged, star) and become a parallel
     # group. Both are indexed under the PARENT transformer type, never the wrapper.
-    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5_ml")
+    sys = build_degenerate_3wt_system()
     busD = PSY.get_component(PSY.ACBus, sys, "nodeD")
-    sec_bus, ter_bus, star_bus = _add_star_buses!(sys, busD)
-    _add_three_winding_transformer!(
-        sys, busD, sec_bus, ter_bus, star_bus; name = "T3W_degenerate",
-    )
-    zi_arc = PSY.Arc(; from = busD, to = sec_bus)
-    PSY.add_component!(sys, zi_arc)
-    PSY.add_component!(
-        sys,
-        PSY.Line(; input_basis = u"CU",
-            name = "zi_line", available = true, active_power_flow = 0.0,
-            reactive_power_flow = 0.0, arc = zi_arc, r = 0.0, x = 1.0e-5,
-            b = (from = 0.0, to = 0.0), rating = 10.0,
-            angle_limits = (min = -1.57, max = 1.57),
-        ),
-    )
-
+    star_bus = PSY.get_component(PSY.ACBus, sys, "Bus3WT_103")
     ybus = Ybus(sys)
     nrd = PNM.get_network_reduction_data(ybus)
     merged_arc = (PSY.get_number(busD), PSY.get_number(star_bus))

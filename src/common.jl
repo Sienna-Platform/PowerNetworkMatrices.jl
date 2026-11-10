@@ -1047,10 +1047,12 @@ function _member_susceptance_after_outage(
     iszero(n_tripped) && return _finite_series_susceptance(member, nr)
     n_tripped == length(leaves) && return 0.0
     branch = first(Iterators.filter(in(tripped_set), leaves))
-    return error(
-        "Tripping $(typeof(branch)) $(get_name(branch)) leaves $(typeof(member)) " *
-        "$(get_name(member)) partly in service on arc $(get_arc_tuple(member, nr)), and " *
-        "a partial susceptance delta is not supported on the nested aggregate it sits on.",
+    throw(
+        UnsupportedOutageError(
+            "Tripping $(typeof(branch)) $(get_name(branch)) leaves $(typeof(member)) " *
+            "$(get_name(member)) partly in service on arc $(get_arc_tuple(member, nr)), and " *
+            "a partial susceptance delta is not supported on the nested aggregate it sits on.",
+        ),
     )
 end
 
@@ -1068,11 +1070,13 @@ function _member_susceptance_after_outage(
     delta_b = _compute_series_outage_delta_b(member, tripped_leaves, nr)
     if !_is_full_outage(delta_b, b_old)
         branch = first(tripped_leaves)
-        error(
-            "Tripping $(typeof(branch)) $(get_name(branch)) leaves series chain " *
-            "$(get_name(member)) partly in service on arc $(get_arc_tuple(member, nr)), " *
-            "and a partial susceptance delta is not supported on the nested aggregate it " *
-            "sits on.",
+        throw(
+            UnsupportedOutageError(
+                "Tripping $(typeof(branch)) $(get_name(branch)) leaves series chain " *
+                "$(get_name(member)) partly in service on arc $(get_arc_tuple(member, nr)), " *
+                "and a partial susceptance delta is not supported on the nested aggregate it " *
+                "sits on.",
+            ),
         )
     end
     return 0.0

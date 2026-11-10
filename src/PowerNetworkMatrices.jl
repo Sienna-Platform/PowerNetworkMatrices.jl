@@ -1,6 +1,15 @@
 module PowerNetworkMatrices
 
 export ABA_Matrix
+export BranchArcTable
+export get_branch_kind
+export get_branch_id
+export get_branch_parent
+export get_branch_sign
+export get_branch_susceptance
+export get_branch_alpha
+export get_branch_arc_count
+export branch_flows
 export LinearSolverCache
 export AutoTolerance
 export discover_data_precision
@@ -54,9 +63,25 @@ export clear_caches!
 export compute_woodbury_factors
 export factorize
 export get_post_modification_ptdf_row
+export BranchOutageTable
+export BranchReasonTable
+export get_outage_rows
+export get_outage_ids
+export get_outage_opens_arc
+export get_outage_member
+export from_hdf5
+export get_reduction_codes
+export no_arc_reason
+export no_arc_surviving_bus
+export NO_ARC_HAS_ARC
+export NO_ARC_RADIAL
+export NO_ARC_ZERO_IMPEDANCE
+export NO_ARC_WARD
+export NO_ARC_NOT_IN_NETWORK
 export get_system_uuid
 export is_factorized
 export populate_cache
+export to_hdf5
 
 export find_subnetworks
 export get_bus_reduction_map
@@ -168,10 +193,27 @@ include("woodbury_kernel.jl")
 include("populate_cache.jl")
 include("virtual_workers.jl")
 include("system_utils.jl")
+include("serialization.jl")
 
 # Forward declarations for symbols still defined inside package extensions.
 # AppleAccelerate-related functions live in `src/` now (no extension needed)
 # and are not redeclared here.
 function _calculate_PTDF_matrix_MKLPardiso end
+
+"""
+    to_hdf5(mat, filename; kwargs...)
+
+Write the factor data of a `VirtualPTDF` or `VirtualMODF` to an HDF5 file. The methods are
+in a package extension. Run `using HDF5` (or `import HDF5`) to load them.
+"""
+function to_hdf5 end
+
+"""
+    from_hdf5(T, filename; kwargs...)
+
+Read a matrix or a table from a factor file. The methods are in a package extension. Run
+`using HDF5` (or `import HDF5`) to load them.
+"""
+function from_hdf5 end
 
 end
