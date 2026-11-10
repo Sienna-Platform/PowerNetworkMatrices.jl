@@ -15,7 +15,6 @@ using TimeSeries
 using DelimitedFiles
 using InteractiveUtils
 import PowerNetworkMatrices as PNM
-const HDF5Ext = Base.get_extension(PowerNetworkMatrices, :HDF5Ext)
 import InfrastructureSystems as IS
 using PowerSystems
 import PowerSystems as PSY

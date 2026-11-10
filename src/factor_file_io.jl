@@ -1,65 +1,3 @@
-module HDF5Ext
-
-import HDF5
-import PowerNetworkMatrices as PNM
-import PowerNetworkMatrices: to_hdf5, from_hdf5
-using PowerNetworkMatrices:
-    ARC_ENTRY,
-    ArcModification,
-    AutoTolerance,
-    BranchArcTable,
-    BranchCatalog,
-    BranchOutageTable,
-    BranchReasonTable,
-    ContingencySpec,
-    MAX_CACHE_SIZE_MiB,
-    NAME_TO_ARC,
-    NetworkModification,
-    NetworkReductionData,
-    REDUCTION_CODE_DEGREE_TWO,
-    ShuntModification,
-    ThreeWindingTransformerCircuit,
-    UnsupportedOutageError,
-    VirtualFactorCore,
-    VirtualMODF,
-    VirtualPTDF,
-    _REDUCTION_COLUMNS,
-    _arc_modifications,
-    _build_branch_arc_table,
-    _check_branch_map,
-    _check_branch_reason,
-    _check_dist_slack,
-    _check_outage_arcs,
-    _check_reduction_records,
-    _check_row_ranges,
-    _check_row_values,
-    _check_same_length,
-    _check_unique,
-    _default_linear_solver,
-    _outaged_group_member,
-    _reduction_records,
-    _resolve_branch_arc,
-    _validate_dc_arrays,
-    arc_dc_shift_injection,
-    get_arc_lookup,
-    get_branch_catalog,
-    get_branch_susceptances_by_arc,
-    get_core,
-    get_dist_slack,
-    get_equivalent_available,
-    get_name_to_arc_maps,
-    get_network_reduction_data,
-    get_ref_bus_position,
-    get_registered_contingencies,
-    get_reverse_bus_search_map,
-    get_system_uuid,
-    get_tol_spec,
-    holds_components
-
-const PSY = PNM.PSY
-const IS = PNM.IS
-const DataStructures = PNM.DataStructures
-
 const FACTOR_FILE_FORMAT_VERSION = 1
 
 # The names table maps a type name to a PSY type through this fixed table. The reader never
@@ -1336,6 +1274,4 @@ function from_hdf5(::Type{BranchReasonTable}, filename::AbstractString)
             Dict(zip(zip(id, winding), zip(reason, surviving_bus))),
         )
     end
-end
-
 end

@@ -44,7 +44,7 @@ pages = OrderedDict(
 )
 
 makedocs(;
-    modules = [PowerNetworkMatrices, Base.get_extension(PowerNetworkMatrices, :HDF5Ext)],
+    modules = [PowerNetworkMatrices],
     format = Documenter.HTML(;
         mathengine = Documenter.MathJax(),
         prettyurls = haskey(ENV, "GITHUB_ACTIONS"),

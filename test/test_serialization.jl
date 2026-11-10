@@ -88,7 +88,7 @@ function _add_outage!(sys, components...)
 end
 
 _store(g, name, value) = (g[name] = value)
-_store(g, name, value::Vector{String}) = HDF5Ext._write_strings!(g, name, value)
+_store(g, name, value::Vector{String}) = PNM._write_strings!(g, name, value)
 
 _flows_by_leaf_key(fref) = Dict(
     (PNM._branch_map_id(l), max(PNM._branch_map_kind(l) - 5, 0)) => f for (l, f) in fref
@@ -546,7 +546,7 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         @testset "round trip" begin
             n_checked = 0
             for br in PSY.get_components(PSY.ACTransmission, sys)
-                key = HDF5Ext._outage_key(br)
+                key = PNM._outage_key(br)
                 haskey(PNM.get_outage_rows(table), key) || continue
                 @test PNM.get_outage_ids(table)[IS.get_id(br)] == key
                 @test NetworkModification(table, IS.get_id(br)) ==
@@ -1283,7 +1283,7 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         n_names = HDF5.h5open(f -> length(read(f["names"]["name"])), path, "r")
         HDF5.h5open(path, "r+") do f
             HDF5.delete_object(f["names"], "type")
-            HDF5Ext._write_strings!(f["names"], "type", fill("eval", n_names))
+            PNM._write_strings!(f["names"], "type", fill("eval", n_names))
         end
         @test_throws "unknown branch type" from_hdf5(VirtualPTDF, path)
     end
@@ -1313,13 +1313,13 @@ end
     for i in 1:12, j in 1:i
         push!(rejected, "b$i$j" => "msg$(lpad(i, 2, '0'))")
     end
-    lines = split(HDF5Ext._rejection_summary(rejected), "\n")
-    @test length(lines) == HDF5Ext._MAX_REJECTION_LINES + 1
+    lines = split(PNM._rejection_summary(rejected), "\n")
+    @test length(lines) == PNM._MAX_REJECTION_LINES + 1
     @test lines[1] == "12 x msg12"
     @test lines[2] == "11 x msg11"
     @test lines[end - 1] == "3 x msg03"
     @test lines[end] == "and 2 more"
-    tie = HDF5Ext._rejection_summary(["a" => "zeta", "b" => "alpha"])
+    tie = PNM._rejection_summary(["a" => "zeta", "b" => "alpha"])
     @test tie == "1 x alpha\n1 x zeta"
 end
 
@@ -1331,7 +1331,7 @@ end
             RTS_NR.reverse_parallel_branch_map,
         )
             branch = first(keys(map))
-            key = HDF5Ext._outage_key(branch)
+            key = PNM._outage_key(branch)
             @test NetworkModification(RTS_TABLE, key[1], key[2]) ==
                   NetworkModification(RTS_TABLE, [key])
             _test_modf_rows_equal(
@@ -1343,7 +1343,7 @@ end
         end
         checked = 0
         for branch in keys(RTS_NR.reverse_series_branch_map)
-            key = HDF5Ext._outage_key(branch)
+            key = PNM._outage_key(branch)
             haskey(PNM.get_outage_rows(RTS_TABLE), key) || continue
             @test all(
                 PNM.get_outage_opens_arc(RTS_TABLE)[PNM.get_outage_rows(RTS_TABLE)[key][2]],
@@ -1378,7 +1378,7 @@ end
         restored = from_hdf5(VirtualMODF, path)
         table = from_hdf5(BranchOutageTable, path)
         trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
-        key = HDF5Ext._outage_key(trf)
+        key = PNM._outage_key(trf)
         _test_modf_rows_equal(
             vmodf,
             restored,
@@ -1392,7 +1392,7 @@ end
         ]
         @test length(chain) == 2
         for branch in chain
-            @test !haskey(PNM.get_outage_rows(table), HDF5Ext._outage_key(branch))
+            @test !haskey(PNM.get_outage_rows(table), PNM._outage_key(branch))
         end
     end
 
@@ -1401,13 +1401,13 @@ end
         vmodf = VirtualMODF(sys; network_reductions = RTS_REDUCTIONS)
         nr = PNM.get_network_reduction_data(vmodf)
         trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
-        @test !HDF5Ext._is_absorbed(nr, trf)
+        @test !PNM._is_absorbed(nr, trf)
         PSY.set_available!(trf, false)
-        @test HDF5Ext._is_absorbed(nr, trf)
+        @test PNM._is_absorbed(nr, trf)
         path = joinpath(mktempdir(), "absorbed.h5")
         to_hdf5(vmodf, path, sys)
         table = from_hdf5(BranchOutageTable, path)
-        @test !haskey(PNM.get_outage_rows(table), HDF5Ext._outage_key(trf))
+        @test !haskey(PNM.get_outage_rows(table), PNM._outage_key(trf))
         # The warning gives the count, the first branch and each distinct message with a count.
         @test_logs (:warn, r"in no reduction map") (
             :warn,
@@ -1425,10 +1425,10 @@ end
         @test_logs (:warn, Regex("susceptance is zero.*$(PSY.get_name(line))")) match_mode =
             :any to_hdf5(vptdf, path, sys)
         table = from_hdf5(BranchOutageTable, path)
-        @test !haskey(PNM.get_outage_rows(table), HDF5Ext._outage_key(line))
+        @test !haskey(PNM.get_outage_rows(table), PNM._outage_key(line))
         for other in PSY.get_components(PSY.Line, sys)
             other === line && continue
-            key = HDF5Ext._outage_key(other)
+            key = PNM._outage_key(other)
             @test haskey(PNM.get_outage_rows(table), key)
             _test_arc_rows_equal(
                 NetworkModification(vptdf, other),
@@ -1449,11 +1449,11 @@ end
                 ArcModification(3, -2.0, 0.0, z, z, z, z, 1),
             ],
         )
-        kept = HDF5Ext._drop_zero_susceptance_arcs(mixed)
+        kept = PNM._drop_zero_susceptance_arcs(mixed)
         @test [m.arc_index for m in kept.arc_modifications] == [1, 3]
-        @test HDF5Ext._drop_zero_susceptance_arcs(kept) === kept
+        @test PNM._drop_zero_susceptance_arcs(kept) === kept
         all_zero = NetworkModification("z", [ArcModification(2, 0.0, 0.0, z, z, z, z, 1)])
-        @test isempty(HDF5Ext._drop_zero_susceptance_arcs(all_zero).arc_modifications)
+        @test isempty(PNM._drop_zero_susceptance_arcs(all_zero).arc_modifications)
     end
 
     @testset "VirtualMODF warns on a partial series outage" begin
@@ -1481,7 +1481,7 @@ end
         line = get_component(Line, sys, COMPENSATED_LINE)
         compensator = first(PSY.get_components(PSY.SeriesCompensator, sys))
         for branch in (line, compensator)
-            key = HDF5Ext._outage_key(branch)
+            key = PNM._outage_key(branch)
             @test haskey(PNM.get_outage_rows(table), key)
             _test_modf_rows_equal(
                 vmodf,
@@ -1504,14 +1504,14 @@ end
         keys_ = collect(zip(types, names))
         trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
         @test allunique(keys_)
-        @test count(==(HDF5Ext._outage_key(trf)), keys_) == 1
+        @test count(==(PNM._outage_key(trf)), keys_) == 1
     end
 
     @testset "writer skips only UnsupportedOutageError" begin
-        @test HDF5Ext._skippable(PNM.UnsupportedOutageError("x"))
-        @test !HDF5Ext._skippable(ErrorException("x"))
-        @test !HDF5Ext._skippable(MethodError(sin, ()))
-        @test !HDF5Ext._skippable(InterruptException())
+        @test PNM._skippable(PNM.UnsupportedOutageError("x"))
+        @test !PNM._skippable(ErrorException("x"))
+        @test !PNM._skippable(MethodError(sin, ()))
+        @test !PNM._skippable(InterruptException())
     end
 
     @testset "wrong system" begin
@@ -1545,12 +1545,12 @@ end
         for pair in (chain[1:2], [chain[1], direct])
             sys_outage = _add_outage!(RTS_SYS, pair...)
             oracle = NetworkModification(RTS_VMODF, RTS_SYS, sys_outage)
-            actual = NetworkModification(RTS_TABLE, [HDF5Ext._outage_key(b) for b in pair])
+            actual = NetworkModification(RTS_TABLE, [PNM._outage_key(b) for b in pair])
             @test length(actual.arc_modifications) == length(oracle.arc_modifications)
             _test_modf_rows_equal(RTS_VMODF, RTS_RESTORED, oracle, actual)
         end
         chain_mod =
-            NetworkModification(RTS_TABLE, [HDF5Ext._outage_key(b) for b in chain[1:2]])
+            NetworkModification(RTS_TABLE, [PNM._outage_key(b) for b in chain[1:2]])
         @test length(chain_mod.arc_modifications) == 1
     end
 
@@ -1575,7 +1575,7 @@ end
         @test_throws PNM.UnsupportedOutageError NetworkModification(vmodf, p2)
 
         restored, table = _outage_roundtrip(vmodf, sys)
-        key = HDF5Ext._outage_key
+        key = PNM._outage_key
         @test !haskey(PNM.get_outage_rows(table), key(p1))
         @test !haskey(PNM.get_outage_rows(table), key(p2))
         @test PNM.get_outage_opens_arc(table)[only(PNM.get_outage_rows(table)[key(l1)][2])]
@@ -1643,7 +1643,7 @@ end
         @test oracle == NetworkModification(vmodf, a)
 
         restored, table = _outage_roundtrip(vmodf, sys)
-        actual = NetworkModification(table, HDF5Ext._outage_key.([a, b]))
+        actual = NetworkModification(table, PNM._outage_key.([a, b]))
         @test only(actual.arc_modifications).delta_b ≈ -b_chain
         _test_arc_rows_equal(oracle, actual)
         _test_post_outage_rows_equal(vmodf, restored, oracle, actual)
@@ -1662,7 +1662,7 @@ end
         @test line in collect(nr.series_branch_map[(110, 1001)])
         restored, table = _outage_roundtrip(vmodf, sys)
         oracle = NetworkModification(vmodf, sys, _add_outage!(sys, trf, line))
-        actual = NetworkModification(table, HDF5Ext._outage_key.([trf, line]))
+        actual = NetworkModification(table, PNM._outage_key.([trf, line]))
         _test_arc_rows_equal(oracle, actual)
         _test_post_outage_rows_equal(vmodf, restored, oracle, actual)
     end
@@ -1712,7 +1712,7 @@ end
         @test_throws "System UUID mismatch" to_hdf5(vptdf, path, other; force = true)
         _test_same_core(vptdf, from_hdf5(VirtualPTDF, path))
         @test readdir(dir) == listing
-        @test_throws "write failed" HDF5Ext._write_factor_file_atomically(path, true) do f
+        @test_throws "write failed" PNM._write_factor_file_atomically(path, true) do f
             f["partial"] = [1, 2, 3]
             error("write failed")
         end
@@ -1724,7 +1724,7 @@ end
     @testset "no overwrite when a file appears during the write" begin
         dir = mktempdir()
         path = joinpath(dir, "race.h5")
-        @test_throws "exists. Pass `force = true`" HDF5Ext._write_factor_file_atomically(
+        @test_throws "exists. Pass `force = true`" PNM._write_factor_file_atomically(
             path,
             false,
         ) do f
@@ -1740,7 +1740,7 @@ end
         vmodf = VirtualMODF(sys)
         restored, table = _outage_roundtrip(vmodf, sys)
         pst = PSY.get_component(PSY.TwoWindingTransformer, sys, "PST")
-        key = HDF5Ext._outage_key(pst)
+        key = PNM._outage_key(pst)
         @test any(!iszero, table.delta_shift[PNM.get_outage_rows(table)[key][2]])
         _test_modf_rows_equal(
             vmodf,
@@ -1856,8 +1856,8 @@ end
             nm[2] = nm[1]
             HDF5.delete_object(g, "type")
             HDF5.delete_object(g, "name")
-            HDF5Ext._write_strings!(g, "type", t)
-            HDF5Ext._write_strings!(g, "name", nm)
+            PNM._write_strings!(g, "type", t)
+            PNM._write_strings!(g, "name", nm)
         end
         @test_throws "more than once" from_hdf5(BranchOutageTable, path)
 
@@ -1889,7 +1889,7 @@ end
                 g["delta_shift"] = zeros(n)
                 g["opened"] = ones(Int, n)
                 g["id"] = id
-                HDF5Ext._write_strings!(g, "label", ["o$i" for i in 1:length(start)])
+                PNM._write_strings!(g, "label", ["o$i" for i in 1:length(start)])
                 g["is_islanding"] = fill(false, length(start))
             end
             return
@@ -2092,11 +2092,11 @@ end
             H.create_dataset(f, "arc_from", Int, (2^40,); chunk = (1024,))
         end
         H.h5open(path, "r") do f
-            @test_throws "declares 1099511627776 elements" HDF5Ext._check_before_read(
+            @test_throws "declares 1099511627776 elements" PNM._check_before_read(
                 f["arc_from"],
                 "arc_from",
                 Vector{Int},
-                HDF5Ext.ReadBudget(filesize(path)),
+                PNM.ReadBudget(filesize(path)),
             )
         end
     end
@@ -2113,17 +2113,17 @@ end
             H.create_dataset(f, "wide", fixed_type(2^26), H.dataspace((16,)); chunk = (1,))
         end
         H.h5open(path, "r") do f
-            @test_throws "string of 67108864 bytes per element" HDF5Ext._check_before_read(
+            @test_throws "string of 67108864 bytes per element" PNM._check_before_read(
                 f["wide"],
                 "wide",
                 Vector{String},
-                HDF5Ext.ReadBudget(filesize(path)),
+                PNM.ReadBudget(filesize(path)),
             )
         end
     end
 
     @testset "string element beyond the string cap" begin
-        @test_throws "string of 1073741824 bytes" HDF5Ext._check_stored_type(
+        @test_throws "string of 1073741824 bytes" PNM._check_stored_type(
             String,
             "system_uuid",
             (Int(H.API.H5T_STRING), 2^30, false),
@@ -2143,11 +2143,11 @@ end
             )
         end
         H.h5open(path, "r") do f
-            @test_throws "bus_axis has the HDF5 class 3" HDF5Ext._check_before_read(
+            @test_throws "bus_axis has the HDF5 class 3" PNM._check_before_read(
                 f["bus_axis"],
                 "bus_axis",
                 Vector{Int},
-                HDF5Ext.ReadBudget(filesize(path)),
+                PNM.ReadBudget(filesize(path)),
             )
         end
     end
@@ -2187,7 +2187,7 @@ end
             H.create_dataset(
                 g,
                 "name",
-                fixed_type(HDF5Ext.MAX_FIXED_STRING_BYTES + 1),
+                fixed_type(PNM.MAX_FIXED_STRING_BYTES + 1),
                 H.dataspace((n,));
                 chunk = (1,),
             )
@@ -2198,17 +2198,17 @@ end
     @testset "writer rejects a string beyond the string cap" begin
         path = fresh_path()
         H.h5open(path, "w") do f
-            @test_throws "the limit is 65536" HDF5Ext._write_strings!(
+            @test_throws "the limit is 65536" PNM._write_strings!(
                 f,
                 "x",
-                [repeat("a", HDF5Ext.MAX_FIXED_STRING_BYTES + 1)],
+                [repeat("a", PNM.MAX_FIXED_STRING_BYTES + 1)],
             )
         end
     end
 
     @testset "writer rejects a string with a null byte" begin
         H.h5open(joinpath(mktempdir(), "nul.h5"), "w") do f
-            @test_throws "holds a string with a null byte" HDF5Ext._write_strings!(
+            @test_throws "holds a string with a null byte" PNM._write_strings!(
                 f,
                 "x",
                 ["a\0"],
@@ -2229,15 +2229,15 @@ end
         path = fresh_path()
         names = ["bus one", "héllo wörld ✓", "", "a"]
         H.h5open(path, "w") do f
-            HDF5Ext._write_strings!(f, "s", names)
-            HDF5Ext._write_string_attribute!(H.attributes(f), "a", "naïve uuid")
-            HDF5Ext._write_strings!(f, "empty", String[])
+            PNM._write_strings!(f, "s", names)
+            PNM._write_string_attribute!(H.attributes(f), "a", "naïve uuid")
+            PNM._write_strings!(f, "empty", String[])
         end
         H.h5open(path, "r") do f
-            budget = HDF5Ext.ReadBudget(filesize(path))
-            @test HDF5Ext._read(f, "s", Vector{String}, budget) == names
-            @test HDF5Ext._read(f, "empty", Vector{String}, budget) == String[]
-            @test HDF5Ext._read(H.attributes(f), "a", String, budget) == "naïve uuid"
+            budget = PNM.ReadBudget(filesize(path))
+            @test PNM._read(f, "s", Vector{String}, budget) == names
+            @test PNM._read(f, "empty", Vector{String}, budget) == String[]
+            @test PNM._read(H.attributes(f), "a", String, budget) == "naïve uuid"
             dt = H.datatype(f["s"])
             @test !H.API.h5t_is_variable_str(dt)
             close(dt)
@@ -2249,7 +2249,7 @@ end
         path = fresh_path()
         mutate!(path) do f
             H.delete_attribute(f, "system_uuid")
-            HDF5Ext._write_system_uuid!(H.attributes(f), uuid)
+            PNM._write_system_uuid!(H.attributes(f), uuid)
         end
         @test H.h5open(f -> H.read_attribute(f, "system_uuid"), path, "r") ==
               reinterpret(Int64, [0xffeeddccbbaa9988, 0x7766554433221100])
@@ -2273,7 +2273,7 @@ end
         @test_throws "system_uuid has 3 values; expected 2" from_hdf5(VirtualPTDF, path)
         mutate!(path) do f
             H.delete_attribute(f, "system_uuid")
-            HDF5Ext._write_string_attribute!(H.attributes(f), "system_uuid", "not-a-uuid")
+            PNM._write_string_attribute!(H.attributes(f), "system_uuid", "not-a-uuid")
         end
         @test_throws "system_uuid has the HDF5 class 3 and 10 bytes" from_hdf5(
             VirtualPTDF,
@@ -2290,18 +2290,18 @@ end
             end
         end
         H.h5open(path, "r") do f
-            budget = HDF5Ext.ReadBudget(filesize(path))
-            @test HDF5Ext._check_before_read(f["big1"], "big1", Vector{Int}, budget) == 8
-            @test_throws "remaining read budget" HDF5Ext._check_before_read(
+            budget = PNM.ReadBudget(filesize(path))
+            @test PNM._check_before_read(f["big1"], "big1", Vector{Int}, budget) == 8
+            @test_throws "remaining read budget" PNM._check_before_read(
                 f["big2"],
                 "big2",
                 Vector{Int},
                 budget,
             )
         end
-        budget = HDF5Ext.ReadBudget(100)
-        @test_throws "declares" HDF5Ext._charge!(budget, "x", typemax(Int) ÷ 2, 4)
-        @test_throws "declares 16 elements of 67108864 bytes" HDF5Ext._charge!(
+        budget = PNM.ReadBudget(100)
+        @test_throws "declares" PNM._charge!(budget, "x", typemax(Int) ÷ 2, 4)
+        @test_throws "declares 16 elements of 67108864 bytes" PNM._charge!(
             budget,
             "x",
             16,
@@ -2310,7 +2310,7 @@ end
     end
 
     @testset "hard link failure message" begin
-        msg = HDF5Ext._hardlink_failure_message("a.h5", ErrorException("boom"))
+        msg = PNM._hardlink_failure_message("a.h5", ErrorException("boom"))
         @test occursin("boom", msg)
         @test occursin("hard links", msg)
         @test occursin("force = true", msg)
@@ -2536,7 +2536,7 @@ end
                 @test isapprox(row[j], ptdf[a, bus]; atol = 1e-6)
             end
         end
-        rt = NetworkModification(table, HDF5Ext._outage_key(branch)...)
+        rt = NetworkModification(table, PNM._outage_key(branch)...)
         file_m = only(x for x in rt.arc_modifications if x.arc_index == arc_lookup[arc])
         @test file_m.delta_b ≈ m.delta_b
         @test file_m.delta_shift_injection ≈ m.delta_shift_injection
@@ -2618,7 +2618,7 @@ end
     table = from_hdf5(BranchOutageTable, path)
     bmap = from_hdf5(BranchArcTable, path)
     trf = PSY.get_component(PSY.ThreeWindingTransformer, sys, "T3W_degenerate")
-    _, range = PNM.get_outage_rows(table)[HDF5Ext._outage_key(trf)]
+    _, range = PNM.get_outage_rows(table)[PNM._outage_key(trf)]
     kind = get_branch_kind(bmap)
     opens = PNM.get_outage_opens_arc(table)
     tops = [findall(==(-table.arc_index[i]), get_branch_parent(bmap)) for i in range]

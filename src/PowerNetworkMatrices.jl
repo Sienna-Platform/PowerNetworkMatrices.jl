@@ -103,6 +103,7 @@ import PowerSystems: ACBusTypes
 
 import DataStructures
 import DataStructures: SortedDict
+import HDF5
 import SparseArrays
 import SparseArrays: rowvals, nzrange
 import LinearAlgebra
@@ -194,6 +195,7 @@ include("populate_cache.jl")
 include("virtual_workers.jl")
 include("system_utils.jl")
 include("serialization.jl")
+include("factor_file_io.jl")
 
 # Forward declarations for symbols still defined inside package extensions.
 # AppleAccelerate-related functions live in `src/` now (no extension needed)
@@ -203,16 +205,14 @@ function _calculate_PTDF_matrix_MKLPardiso end
 """
     to_hdf5(mat, filename; kwargs...)
 
-Write the factor data of a `VirtualPTDF` or `VirtualMODF` to an HDF5 file. The methods are
-in a package extension. Run `using HDF5` (or `import HDF5`) to load them.
+Write the factor data of a `VirtualPTDF` or `VirtualMODF` to an HDF5 file.
 """
 function to_hdf5 end
 
 """
     from_hdf5(T, filename; kwargs...)
 
-Read a matrix or a table from a factor file. The methods are in a package extension. Run
-`using HDF5` (or `import HDF5`) to load them.
+Read a matrix or a table from a factor file.
 """
 function from_hdf5 end
 
