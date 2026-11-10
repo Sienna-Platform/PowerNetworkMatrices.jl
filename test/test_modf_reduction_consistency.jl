@@ -482,6 +482,33 @@ end
     @test length(PNM.get_registered_contingencies(vmodf)) == 1
 end
 
+@testset "A component set holding an eliminated in-service component throws" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    vptdf = VirtualPTDF(sys; network_reductions = NetworkReduction[RadialReduction()])
+    nrd = get_network_reduction_data(vptdf)
+    eliminated = _branch_off_every_map(sys, nrd)
+    surviving = first(
+        br for br in PSY.get_components(PSY.ACTransmission, sys) if
+        PNM._resolve_branch_arc(nrd, br)[1] === :direct
+    )
+    @test PSY.get_available(eliminated)
+
+    err = try
+        NetworkModification(vptdf, sys, [surviving, eliminated])
+        nothing
+    catch e
+        e
+    end
+    @test err isa IS.ConflictingInputsError
+    @test occursin(PSY.get_name(eliminated), sprint(showerror, err))
+    @test !occursin(PSY.get_name(surviving), sprint(showerror, err))
+
+    # An out-of-service eliminated component is skipped.
+    PSY.set_available!(eliminated, false)
+    mod = NetworkModification(vptdf, sys, [surviving, eliminated])
+    @test length(mod.arc_modifications) == 1
+end
+
 @testset "an outage holding an open switch registers" begin
     sys = _node_breaker_corridor()
     open_switch = PSY.DiscreteControlledACBranch(nothing)

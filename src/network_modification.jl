@@ -337,12 +337,16 @@ the network and are skipped silently, and other components outside the network, 
 injectors, contribute nothing. All components are resolved through the reduction maps
 together: the tripped members of one parallel group are resolved jointly from the group's
 two-port, and the tripped segments of one series chain from the chain's impedance sum.
+Throws `IS.ConflictingInputsError` if an in-service transmission component was eliminated
+by the network reduction.
 """
 function NetworkModification(mat::PowerNetworkMatrix, sys::PSY.System, components)
     _validate_system_uuid(mat, sys)
     unique_components = unique(c for c in components if _in_network_candidate(c))
     isempty(unique_components) && return NetworkModification("", ArcModification[])
-    return _network_modification_from_components(mat, unique_components, "")
+    acc, mods = _classify_outage_components(mat, unique_components)
+    _check_all_resolved(acc, "Component set")
+    return _network_modification_from_classified(mat, unique_components, "", acc, mods)
 end
 
 _in_network_candidate(device::PSY.Device) = _in_service(device)
@@ -367,27 +371,25 @@ function NetworkModification(
     end
     label = string(IS.get_id(outage))
     acc, mods = _classify_outage_components(mat, all_components)
-    if !isempty(acc.unresolved)
-        throw(
-            IS.ConflictingInputsError(
-                "Outage (label=$label) references in-service transmission component(s) \
-                $(join(sort(acc.unresolved), ", ")) that no network reduction map holds, \
-                so the contingency would silently omit them. Build with \
-                VirtualMODF(sys; network_reductions = ...) or select them with \
-                irreducible_buses.",
-            ),
-        )
-    end
+    _check_all_resolved(acc, "Outage (label=$label)")
     return _network_modification_from_classified(mat, all_components, label, acc, mods)
 end
 
-function _network_modification_from_components(
-    mat::PowerNetworkMatrix,
-    components::Vector,
-    fallback_label::String,
-)
-    acc, mods = _classify_outage_components(mat, components)
-    return _network_modification_from_classified(mat, components, fallback_label, acc, mods)
+"""
+Throw if an in-service transmission component was eliminated by the network reduction,
+since the modification would otherwise leave it out without notice.
+"""
+function _check_all_resolved(acc, source::String)
+    isempty(acc.unresolved) && return
+    throw(
+        IS.ConflictingInputsError(
+            "$source references in-service transmission component(s) \
+            $(join(sort(acc.unresolved), ", ")) that no network reduction map holds, \
+            so the modification would silently omit them. Build with \
+            VirtualMODF(sys; network_reductions = ...) or select them with \
+            irreducible_buses.",
+        ),
+    )
 end
 
 function _network_modification_from_classified(

@@ -52,13 +52,16 @@ end
     sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
     vptdf = VirtualPTDF(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
     nr = PNM.get_network_reduction_data(vptdf)
-    chain = first(values(nr.series_branch_map))
-    segments = [seg for seg in chain if seg isa PSY.ACTransmission]
-    @assert length(segments) >= 2
-    together = NetworkModification(vptdf, sys, segments[1:2])
+    # Chain segments are a `Line`, a parallel pair and a three-winding transformer circuit.
+    chain = only(c for c in values(nr.series_branch_map) if any(s -> s isa PSY.Line, c))
+    line = only(s for s in chain if s isa PSY.Line)
+    pair = only(s for s in chain if s isa PNM.BranchesParallel)
+    together = NetworkModification(vptdf, sys, [line, pair.branches...])
     @test length(together.arc_modifications) == 1
     @test together.arc_modifications[1].delta_b ≈
-          NetworkModification(vptdf, sys, segments[1:1]).arc_modifications[1].delta_b
+          NetworkModification(vptdf, sys, [line]).arc_modifications[1].delta_b
+    @test together.arc_modifications[1].delta_b ≈
+          NetworkModification(vptdf, sys, pair.branches).arc_modifications[1].delta_b
 end
 
 @testset "Unavailable components are skipped" begin
