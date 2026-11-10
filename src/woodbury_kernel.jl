@@ -31,7 +31,7 @@ function _invert_woodbury_W(
         is_island =
             abs(det_W * signed_delta_b[1] * signed_delta_b[2]) < MODF_ISLANDING_TOLERANCE
         if is_island
-            return LinearAlgebra.pinv(W_mat; atol = MODF_ISLANDING_TOLERANCE), is_island
+            return _island_pinv(W_mat, signed_delta_b), is_island
         end
         inv_det = 1.0 / det_W
         W_inv = Matrix{Float64}(undef, 2, 2)
@@ -45,10 +45,17 @@ function _invert_woodbury_W(
     S_lu = LinearAlgebra.lu(scale * W_mat; check = false)
     is_island = any(i -> abs(S_lu.factors[i, i]) < MODF_ISLANDING_TOLERANCE, 1:M)
     if is_island
-        return LinearAlgebra.pinv(W_mat; atol = MODF_ISLANDING_TOLERANCE), is_island
+        return _island_pinv(W_mat, signed_delta_b), is_island
     end
     # W = D⁻¹S, so W⁻¹ = S⁻¹D.
     return LinearAlgebra.inv(S_lu) * scale, is_island
+end
+
+# Pseudo-inverse of a singular W, cut on S = D·W for the reason the detection uses S: an
+# absolute cutoff on W itself also drops the directions of very low-impedance arcs.
+function _island_pinv(W_mat::Matrix{Float64}, signed_delta_b::Vector{Float64})
+    scale = LinearAlgebra.Diagonal(signed_delta_b)
+    return LinearAlgebra.pinv(scale * W_mat; atol = MODF_ISLANDING_TOLERANCE) * scale
 end
 
 # --- Islanding zero-forcing (shared by VirtualPTDF and VirtualMODF) -----------
@@ -470,6 +477,12 @@ function _apply_woodbury_correction(
     row = _apply_woodbury_correction(get_core(vptdf), monitored_idx, wf)
     return _apply_dist_slack!(row, vptdf, wf)
 end
+
+_apply_woodbury_correction(
+    vmodf::VirtualMODF,
+    monitored_idx::Int,
+    wf::WoodburyFactors,
+) = _apply_woodbury_correction(get_core(vmodf), monitored_idx, wf)
 
 function _apply_dist_slack!(row::Vector{Float64}, vptdf::VirtualPTDF, wf::WoodburyFactors)
     _use_dist_slack(vptdf) || return row
