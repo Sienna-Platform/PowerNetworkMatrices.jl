@@ -107,6 +107,39 @@ end
     end
 end
 
+_planned_outage() = PSY.PlannedOutage(; outage_schedule = "planned")
+
+@testset "planned outages are not contingencies" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    forced_line = PSY.get_component(PSY.ACTransmission, sys, "1")
+    planned_line = PSY.get_component(PSY.ACTransmission, sys, "2")
+    forced = _fixed_outage()
+    PSY.add_supplemental_attribute!(sys, forced_line, forced)
+    PSY.add_supplemental_attribute!(sys, planned_line, _planned_outage())
+
+    contingencies = get_registered_contingencies(VirtualMODF(sys))
+    @test length(contingencies) == 1
+    @test collect(keys(contingencies)) == [IS.get_id(forced)]
+end
+
+@testset "a planned outage does not protect buses; a forced outage does" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    line = PSY.get_component(PSY.ACTransmission, sys, "1")
+    fb, tb = _arc_buses(line)
+    planned = _planned_outage()
+    PSY.add_supplemental_attribute!(sys, line, planned)
+    protected = PNM._collect_protected_buses(sys)
+    @test fb ∉ protected
+    @test tb ∉ protected
+    @test isempty(PNM._contingency_relevant_branches(sys))
+
+    PSY.add_supplemental_attribute!(sys, line, _fixed_outage())
+    protected = PNM._collect_protected_buses(sys)
+    @test fb in protected
+    @test tb in protected
+    @test line in PNM._contingency_relevant_branches(sys)
+end
+
 # --- Phase 2/3: constructor wiring + validation ----------------------------
 
 @testset "VirtualMODF auto-protects outaged branch under reduction (RTS)" begin
@@ -416,4 +449,53 @@ end
     @test tested_any
     # The would-be-reduced branch's own contingency was numerically validated.
     @test tested_target
+end
+
+@testset "a system with only planned outages registers no contingencies" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    line = PSY.get_component(PSY.ACTransmission, sys, "1")
+    PSY.add_supplemental_attribute!(sys, line, _planned_outage())
+    vmodf = @test_logs (:warn, r"No unplanned outage") match_mode = :any VirtualMODF(sys)
+    @test isempty(get_registered_contingencies(vmodf))
+end
+
+# c_sys14 with a dangling line from "Bus 8" to a new bus, which RadialReduction removes.
+function _c_sys14_with_radial_line()
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14"; add_forecasts = false)
+    new_bus = deepcopy(first(PSY.get_components(PSY.ACBus, sys)))
+    new_bus.internal = IS.InfrastructureSystemsInternal()
+    PSY.set_name!(new_bus, "TestBus")
+    PSY.set_number!(new_bus, 61)
+    PSY.set_base_voltage!(new_bus, 18.0)
+    PSY.add_component!(sys, new_bus)
+    arc = PSY.Arc(PSY.get_component(PSY.ACBus, sys, "Bus 8"), new_bus)
+    PSY.add_component!(sys, arc)
+    line = PSY.Line(
+        "tl",
+        true,
+        0.0,
+        0.0,
+        arc,
+        0.0,
+        0.01,
+        (from = 0.0, to = 0.0),
+        100.0,
+        (0.0, 0.0),
+    )
+    PSY.add_component!(sys, line)
+    return sys, line
+end
+
+@testset "a planned outage on a radial line does not keep it; a forced outage does" begin
+    reductions = () -> NetworkReduction[RadialReduction()]
+    has_arc(m, fb, tb) =
+        (arcs = PNM.get_arc_lookup(m); haskey(arcs, (fb, tb)) || haskey(arcs, (tb, fb)))
+
+    sys, line = _c_sys14_with_radial_line()
+    PSY.add_supplemental_attribute!(sys, line, _planned_outage())
+    @test !has_arc(VirtualMODF(sys; network_reductions = reductions()), 8, 61)
+
+    sys, line = _c_sys14_with_radial_line()
+    PSY.add_supplemental_attribute!(sys, line, _fixed_outage())
+    @test has_arc(VirtualMODF(sys; network_reductions = reductions()), 8, 61)
 end

@@ -1468,8 +1468,10 @@ end
             :any PNM._register_all_outages!(vmodf, sys)
     end
 
+    # Disabled until the SeriesCompensator `bypassed` schema reaches PowerSystems psy6.
+    #=
     @testset "SeriesCompensator system round trip" begin
-        sys, _ = compensated_sys5(-0.01, SeriesCompensatorControlMode.FIXED)
+        sys, _ = compensated_sys5(-0.01)
         vptdf, restored, _ = _roundtrip_ptdf(sys)
         _test_same_core(vptdf, restored)
         _test_ptdf_rows_equal(vptdf, restored, PNM.get_arc_axis(vptdf))
@@ -1489,6 +1491,7 @@ end
             )
         end
     end
+    =#
 
     @testset "case10 branch outage keys are unique" begin
         sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")

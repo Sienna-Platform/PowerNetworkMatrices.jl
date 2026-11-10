@@ -3,8 +3,9 @@ The Virtual Multiple Outage Distribution Factor (VirtualMODF) structure computes
 post-contingency PTDF rows lazily for registered contingencies using the
 Woodbury matrix identity (van Dijk et al. Eq. 29).
 
-Contingencies are resolved from PSY.Outage supplemental attributes at construction
-time. After registration, the System is not needed for queries.
+Contingencies are resolved from `PSY.UnplannedOutage` supplemental attributes at
+construction time. `PSY.PlannedOutage`s are not contingencies and are not registered.
+After registration, the System is not needed for queries.
 
 Internally the factorization and topology live in a private
 [`VirtualFactorCore`](@ref) held in the `core` field; the VirtualMODF only adds
@@ -132,7 +133,8 @@ Base.setindex!(::VirtualMODF, _, ::CartesianIndex) =
     VirtualMODF(sys::PSY.System; kwargs...) -> VirtualMODF
 
 Build a VirtualMODF from a PowerSystems System. Automatically registers all
-Outage supplemental attributes found in the system.
+`PSY.UnplannedOutage` supplemental attributes found in the system. Planned outages
+are not contingencies and are ignored.
 
 The buses of every outaged component and the components each outage declares
 monitored (`get_monitored_components`) are automatically added to the irreducible
@@ -157,7 +159,7 @@ auto-applied during `Ybus` construction.
 - `network_reductions::Vector{NetworkReduction}`: Network reductions to apply
 - `irreducible_buses::IS.ComponentSelector`: Components whose buses the network reductions must
         keep (see [`get_irreducible_bus_numbers`](@ref)). Default: `IS.make_selector()`
-- `automatically_register_outages::Bool`: Register all system Outage attributes (default: true)
+- `automatically_register_outages::Bool`: Register all system `PSY.UnplannedOutage` attributes (default: true)
 """
 function VirtualMODF(
     sys::PSY.System;
@@ -322,12 +324,13 @@ _warn_or_rethrow_failed_outage(e) = rethrow()
 """
     _register_all_outages!(vmodf, sys)
 
-Bulk-register all Outage supplemental attributes in the system.
+Bulk-register all `PSY.UnplannedOutage` supplemental attributes in the system.
+`PSY.PlannedOutage`s are not contingencies and are skipped.
 Called automatically by the VirtualMODF constructor.
 """
 function _register_all_outages!(vmodf::VirtualMODF, sys::PSY.System)
     count = 0
-    for outage in PSY.get_supplemental_attributes(PSY.Outage, sys)
+    for outage in PSY.get_supplemental_attributes(PSY.UnplannedOutage, sys)
         try
             _register_outage!(vmodf, sys, outage)
             count += 1
@@ -337,7 +340,7 @@ function _register_all_outages!(vmodf::VirtualMODF, sys::PSY.System)
     end
 
     if iszero(count)
-        @warn "No outage supplemental attributes found in system. " *
+        @warn "No unplanned outage supplemental attributes found in system. " *
               "VirtualMODF contingency cache is empty."
     else
         @info "Registered $count contingencies from system outage attributes."

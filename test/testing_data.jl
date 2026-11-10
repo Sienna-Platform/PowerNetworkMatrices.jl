@@ -1210,7 +1210,7 @@ const COMPENSATED_LINE = "1"
 const MID_BUS = 100
 
 """The 5-bus case with `COMPENSATED_LINE` split by a `SeriesCompensator` of reactance `x`."""
-function compensated_sys5(x, mode)
+function compensated_sys5(x; bypassed = false)
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     line = get_component(Line, sys, COMPENSATED_LINE)
     from, to = get_from(get_arc(line)), get_to(get_arc(line))
@@ -1230,7 +1230,7 @@ function compensated_sys5(x, mode)
         SeriesCompensator(;
             name = "compensator", available = true, active_power_flow = 0.0,
             reactive_power_flow = 0.0, arc = compensator_arc, r = 0.0, x = x,
-            rating = get_rating(line, u"SU"), control_mode = mode, input_basis = u"CU",
+            rating = get_rating(line, u"SU"), bypassed = bypassed, input_basis = u"CU",
         ),
     )
     return sys, line
