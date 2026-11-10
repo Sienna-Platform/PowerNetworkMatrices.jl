@@ -1,5 +1,6 @@
 using Test
 using PowerMatricesCore
+import PowerMatricesCore as PMC
 
 const TEST_DIR = @__DIR__
 

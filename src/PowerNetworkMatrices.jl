@@ -110,13 +110,8 @@ import SparseArrays: rowvals, nzrange
 import LinearAlgebra
 import LinearAlgebra: ldiv!, mul!, I, dot
 
-"""Supertype of the cached sparse-factorization backends (`KLULinSolveCache`,
-`AAFactorCache`, and `PardisoLinSolveCache`).
-Defined ahead of the wrapper submodules so their cache structs can subtype it."""
-abstract type LinearSolverCache end
-
-include("KLUWrapper/KLUWrapper.jl")
-import .KLUWrapper:
+import PowerMatricesCore:
+    LinearSolverCache,
     KLULinSolveCache,
     klu_factorize,
     symbolic_factor!,
@@ -129,15 +124,46 @@ import .KLUWrapper:
     solve_sparse!,
     solve_sparse,
     condest!,
-    is_factored
+    is_factored,
+    AAFactorCache,
+    aa_factorize,
+    YBUS_ELTYPE,
+    KiB,
+    MiB,
+    GiB,
+    MAX_CACHE_SIZE_MiB,
+    ROW_PERSISTENT_CACHE_WARN,
+    MODF_ISLANDING_TOLERANCE,
+    AUTO_TOLERANCE_BUS_LIMIT,
+    LinearSolverType,
+    KLUSolver,
+    DenseSolver,
+    MKLPardisoSolver,
+    AppleAccelerateLUSolver,
+    SUPPORTED_LINEAR_SOLVERS,
+    resolve_linear_solver,
+    _has_mkl_pardiso_ext,
+    _mkl_pardiso_install_error,
+    _AA_MIN_MACOS,
+    _macos_product_version,
+    _macos_at_least,
+    _has_apple_accelerate_backend,
+    _apple_accelerate_unavailable_error,
+    _default_linear_solver,
+    PardisoLinSolveCache,
+    _make_pardiso_cache,
+    with_solver,
+    make_linear_solver_cache,
+    SINGULAR_PROBE_RTOL,
+    factorization_ok,
+    DEFAULT_REFINEMENT_MAX_ITER,
+    solve_w_refinement,
+    solve_w_refinement!,
+    calculate_ABA_matrix,
+    _calculate_PTDF_matrix_MKLPardiso
 
-include("AccelerateWrapper/AccelerateWrapper.jl")
-import .AccelerateWrapper: AAFactorCache, aa_factorize
-
-include("linalg_settings.jl")
-include("pardiso_cache.jl")
-include("solver_dispatch.jl")
-include("iterative_refinement.jl")
+const KLUWrapper = PMC.KLUWrapper
+const AccelerateWrapper = PMC.AccelerateWrapper
 
 @template DEFAULT = """
                     $(SIGNATURES)
@@ -148,7 +174,6 @@ include("iterative_refinement.jl")
 include("PowerNetworkMatrix.jl")
 include("ThreeWindingTransformerCircuit.jl")
 include("definitions.jl")
-include("linear_solver_generic.jl")
 include("EquivalentBranch.jl")
 include("BranchesSeries.jl")
 include("BranchesParallel.jl")
@@ -197,11 +222,6 @@ include("virtual_workers.jl")
 include("system_utils.jl")
 include("serialization.jl")
 include("factor_file_io.jl")
-
-# Forward declarations for symbols still defined inside package extensions.
-# AppleAccelerate-related functions live in `src/` now (no extension needed)
-# and are not redeclared here.
-function _calculate_PTDF_matrix_MKLPardiso end
 
 """
     to_hdf5(mat, filename; kwargs...)

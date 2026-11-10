@@ -4,14 +4,23 @@ version = "0.1.0"
 authors = ["SIENNA TEAM"]
 
 [deps]
+DocStringExtensions = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
 HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 SuiteSparse_jll = "bea87d4a-7f5b-5778-9afe-8cc45184846c"
 
+[weakdeps]
+Pardiso = "46dd5b70-b6fb-5a00-ae2d-e8fea33afaf2"
+
+[extensions]
+MKLPardisoExt = "Pardiso"
+
 [compat]
+DocStringExtensions = "~0.8, ~0.9"
 HDF5 = "0.17"
 LinearAlgebra = "1"
+Pardiso = "1"
 SparseArrays = "1"
 SuiteSparse_jll = "5, 6, 7"
 julia = "^1.10"

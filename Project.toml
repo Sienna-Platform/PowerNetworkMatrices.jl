@@ -14,12 +14,6 @@ PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 SuiteSparse_jll = "bea87d4a-7f5b-5778-9afe-8cc45184846c"
 
-[weakdeps]
-Pardiso = "46dd5b70-b6fb-5a00-ae2d-e8fea33afaf2"
-
-[extensions]
-MKLPardisoExt = "Pardiso"
-
 [sources]
 PowerMatricesCore = {path = "PowerMatricesCore.jl"}
 InfrastructureSystems = {url = "https://github.com/Sienna-Platform/InfrastructureSystems.jl.git", rev = "IS4"}
@@ -31,7 +25,6 @@ DocStringExtensions = "~0.8, ~0.9"
 HDF5 = "0.17"
 InfrastructureSystems = "3"
 LinearAlgebra = "1"
-Pardiso = "1"
 PowerMatricesCore = "0.1"
 PowerSystems = "5"
 SparseArrays = "1"

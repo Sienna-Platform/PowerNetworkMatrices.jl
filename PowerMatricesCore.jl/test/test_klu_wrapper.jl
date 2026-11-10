@@ -3,9 +3,9 @@ import LinearAlgebra
 import Random
 
 @testset "Linear-solver caches share the LinearSolverCache supertype" begin
-    @test PNM.KLULinSolveCache{Float64, Int32} <: PNM.LinearSolverCache
-    @test PNM.KLULinSolveCache{Float64, Int64} <: PNM.LinearSolverCache
-    @test PNM.AAFactorCache <: PNM.LinearSolverCache
+    @test PMC.KLULinSolveCache{Float64, Int32} <: PMC.LinearSolverCache
+    @test PMC.KLULinSolveCache{Float64, Int64} <: PMC.LinearSolverCache
+    @test PMC.AAFactorCache <: PMC.LinearSolverCache
 end
 
 @testset "KLU wrapper: real round-trip and refactor" begin
@@ -16,12 +16,12 @@ end
     x = collect(1.0:n)
     b = A * x
 
-    cache = PNM.klu_factorize(A)
-    @test PNM.is_factored(cache)
+    cache = PMC.klu_factorize(A)
+    @test PMC.is_factored(cache)
     @test size(cache) == (n, n)
 
     y = copy(b)
-    PNM.solve!(cache, y)
+    PMC.solve!(cache, y)
     @test isapprox(y, x, atol = 1e-10)
 
     # Refactor with new values, same pattern.
@@ -29,15 +29,15 @@ end
         1 => fill(0.2, n - 1), -1 => fill(0.2, n - 1))
     x2 = randn(n)
     b2 = A2 * x2
-    PNM.numeric_refactor!(cache, A2)
+    PMC.numeric_refactor!(cache, A2)
     y2 = copy(b2)
-    PNM.solve!(cache, y2)
+    PMC.solve!(cache, y2)
     @test isapprox(y2, x2, atol = 1e-9)
 
     # Pattern change should be rejected with check_pattern=true.
     A3 = copy(A2)
     A3[2, n] = 1.0
-    @test_throws ArgumentError PNM.numeric_refactor!(cache, A3)
+    @test_throws ArgumentError PMC.numeric_refactor!(cache, A3)
 end
 
 @testset "KLU wrapper: tsolve! solves Aᵀ x = b" begin
@@ -48,20 +48,20 @@ end
         1 => fill(0.5, n - 1),
         -1 => fill(0.1, n - 1),
     )
-    cache = PNM.klu_factorize(A)
+    cache = PMC.klu_factorize(A)
 
     # Single RHS.
     x = randn(n)
     b = transpose(A) * x
     y = copy(b)
-    PNM.tsolve!(cache, y)
+    PMC.tsolve!(cache, y)
     @test isapprox(y, x, atol = 1e-10)
 
     # Multiple RHS, dense matrix path.
     X = randn(n, 4)
     B = transpose(A) * X
     Y = copy(B)
-    PNM.tsolve!(cache, Y)
+    PMC.tsolve!(cache, Y)
     @test isapprox(Y, X, atol = 1e-10)
 end
 
@@ -72,10 +72,10 @@ end
     x = collect(1.0:n)
     b = A * x
 
-    cache = PNM.klu_factorize(A; reuse_symbolic = false)
-    @test PNM.is_factored(cache)
+    cache = PMC.klu_factorize(A; reuse_symbolic = false)
+    @test PMC.is_factored(cache)
     y = copy(b)
-    PNM.solve!(cache, y)
+    PMC.solve!(cache, y)
     @test isapprox(y, x, atol = 1e-10)
 
     # A pattern change is allowed because each refactor reruns
@@ -84,9 +84,9 @@ end
     A2[1, n] = 0.25
     x2 = randn(n)
     b2 = A2 * x2
-    PNM.full_refactor!(cache, A2)
+    PMC.full_refactor!(cache, A2)
     y2 = copy(b2)
-    PNM.solve!(cache, y2)
+    PMC.solve!(cache, y2)
     @test isapprox(y2, x2, atol = 1e-9)
 end
 
@@ -94,7 +94,7 @@ end
     n, m = 30, 40
     A = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 1.0,
         1 => fill(0.1, n - 1), -1 => fill(0.1, n - 1))
-    cache = PNM.klu_factorize(A)
+    cache = PMC.klu_factorize(A)
 
     # Build a deliberately sparse RHS.
     rows = vcat([1, 5, 12, n], [3, 9, n - 1])
@@ -102,9 +102,9 @@ end
     vals = [1.0, -2.0, 3.5, -0.5, 2.0, -1.0, 1.5]
     B = SparseArrays.sparse(rows, cols, vals, n, m)
 
-    out = PNM.solve_sparse(cache, B)
+    out = PMC.solve_sparse(cache, B)
     Bdense = Matrix(B)
-    PNM.solve!(cache, Bdense)
+    PMC.solve!(cache, Bdense)
     @test isapprox(out, Bdense, atol = 1e-10)
 end
 
@@ -112,13 +112,13 @@ end
     n = 20
     A = SparseArrays.spdiagm(0 => fill(2.0, n), 1 => fill(-1.0, n - 1),
         -1 => fill(-1.0, n - 1))
-    cache = PNM.klu_factorize(A)
+    cache = PMC.klu_factorize(A)
     rows = [3, 7]
     cols = [3, 3]
     vals = [1.0, 2.0]
     B = SparseArrays.sparse(rows, cols, vals, n, 5)
 
-    out = PNM.solve_sparse(cache, B)
+    out = PMC.solve_sparse(cache, B)
     @test all(==(0.0), out[:, 1])
     @test all(==(0.0), out[:, 2])
     @test all(==(0.0), out[:, 4])
@@ -126,7 +126,7 @@ end
     @test !all(==(0.0), out[:, 3])
 
     Bdense = Matrix(B)
-    PNM.solve!(cache, Bdense)
+    PMC.solve!(cache, Bdense)
     @test isapprox(out, Bdense, atol = 1e-12)
 end
 
@@ -134,7 +134,7 @@ end
     n = 25
     A = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 1.0,
         1 => fill(0.1, n - 1), -1 => fill(0.1, n - 1))
-    cache = PNM.klu_factorize(A)
+    cache = PMC.klu_factorize(A)
     x = randn(n)
     b = A * x
     @test isapprox(cache \ b, x, atol = 1e-10)
@@ -150,9 +150,9 @@ end
     x = ComplexF64.(randn(n) .+ 1im .* randn(n))
     b = A * x
 
-    cache = PNM.klu_factorize(A)
+    cache = PMC.klu_factorize(A)
     y = copy(b)
-    PNM.solve!(cache, y)
+    PMC.solve!(cache, y)
     @test isapprox(y, x, atol = 1e-10)
 
     # Sparse RHS path on the complex cache.
@@ -160,9 +160,9 @@ end
     cols = [1, 2]
     vals = ComplexF64.([1.0 + 0.5im, 2.0 - 0.3im])
     B = SparseArrays.sparse(rows, cols, vals, n, 3)
-    out = PNM.solve_sparse(cache, B)
+    out = PMC.solve_sparse(cache, B)
     Bdense = Matrix(B)
-    PNM.solve!(cache, Bdense)
+    PMC.solve!(cache, Bdense)
     @test isapprox(out, Bdense, atol = 1e-10)
 end
 
@@ -170,15 +170,15 @@ end
     n = 15
     A = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 5.0,
         1 => fill(0.1, n - 1), -1 => fill(0.1, n - 1))
-    cache = PNM.klu_factorize(A)
+    cache = PMC.klu_factorize(A)
     nrhs = 6
     B = SparseArrays.sprand(n, nrhs, 0.2)
 
     full = zeros(n + 4, nrhs)
-    PNM.solve_sparse!(cache, B, view(full, 3:(n + 2), :))
+    PMC.solve_sparse!(cache, B, view(full, 3:(n + 2), :))
 
     Bdense = Matrix(B)
-    PNM.solve!(cache, Bdense)
+    PMC.solve!(cache, Bdense)
     @test isapprox(full[3:(n + 2), :], Bdense, atol = 1e-10)
     @test all(==(0.0), full[1:2, :])
     @test all(==(0.0), full[(n + 3):end, :])
@@ -192,15 +192,15 @@ end
     nrhs = 250
     A = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 5.0,
         1 => fill(0.1, n - 1), -1 => fill(0.1, n - 1))
-    cache = PNM.klu_factorize(A)
+    cache = PMC.klu_factorize(A)
     B = SparseArrays.sprand(n, nrhs, 0.05)
 
-    Xbig = PNM.solve_sparse(cache, B; block = 256)
-    Xsmall = PNM.solve_sparse(cache, B; block = 7)
+    Xbig = PMC.solve_sparse(cache, B; block = 256)
+    Xsmall = PMC.solve_sparse(cache, B; block = 7)
     @test isapprox(Xbig, Xsmall, atol = 1e-12)
 
     Bdense = Matrix(B)
-    PNM.solve!(cache, Bdense)
+    PMC.solve!(cache, Bdense)
     @test isapprox(Xsmall, Bdense, atol = 1e-10)
 end
 
@@ -208,22 +208,22 @@ end
     n = 40
     A = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 1.0,
         1 => fill(0.1, n - 1), -1 => fill(0.1, n - 1))
-    cache = PNM.klu_factorize(A)
+    cache = PMC.klu_factorize(A)
     b = randn(n)
 
     # Warm-up to compile.
     y = copy(b)
-    PNM.solve!(cache, y)
+    PMC.solve!(cache, y)
     A2 = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 2.0,
         1 => fill(0.2, n - 1), -1 => fill(0.2, n - 1))
-    PNM.numeric_refactor!(cache, A2)
+    PMC.numeric_refactor!(cache, A2)
 
     # Hot path: solve! mutates the buffer in place; no allocations.
     y .= b
-    alloc_solve = @allocated PNM.solve!(cache, y)
+    alloc_solve = @allocated PMC.solve!(cache, y)
     @test alloc_solve == 0
 
-    alloc_refactor = @allocated PNM.numeric_refactor!(cache, A2)
+    alloc_refactor = @allocated PMC.numeric_refactor!(cache, A2)
     @test alloc_refactor == 0
 end
 
@@ -231,13 +231,13 @@ end
     n = 50
     A = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 1.0,
         1 => fill(0.1, n - 1), -1 => fill(0.1, n - 1))
-    cache = PNM.klu_factorize(A)
+    cache = PMC.klu_factorize(A)
     B = SparseArrays.sprand(n, 100, 0.05)
     out = Matrix{Float64}(undef, n, 100)
 
-    PNM.solve_sparse!(cache, B, out; block = 32)
+    PMC.solve_sparse!(cache, B, out; block = 32)
     # Warm call must not scale with `n * nrhs`; bound is well below that.
-    alloc_warm = @allocated PNM.solve_sparse!(cache, B, out; block = 32)
+    alloc_warm = @allocated PMC.solve_sparse!(cache, B, out; block = 32)
     @test alloc_warm < n * size(B, 2) * sizeof(Float64) ÷ 4
 end
 
@@ -254,13 +254,13 @@ end
     x = collect(1.0:n)
     b = A64 * x
 
-    cache = PNM.klu_factorize(A)
-    @test PNM.is_factored(cache)
-    @test cache isa PNM.KLUWrapper.KLULinSolveCache{Float64, Int32}
+    cache = PMC.klu_factorize(A)
+    @test PMC.is_factored(cache)
+    @test cache isa PMC.KLUWrapper.KLULinSolveCache{Float64, Int32}
     @test size(cache) == (n, n)
 
     y = copy(b)
-    PNM.solve!(cache, y)
+    PMC.solve!(cache, y)
     @test isapprox(y, x, atol = 1e-10)
 
     # Refactor with new values, same pattern.
@@ -269,9 +269,9 @@ end
     A2 = SparseArrays.SparseMatrixCSC{Float64, Int32}(A2_64)
     x2 = randn(n)
     b2 = A2_64 * x2
-    PNM.numeric_refactor!(cache, A2)
+    PMC.numeric_refactor!(cache, A2)
     y2 = copy(b2)
-    PNM.solve!(cache, y2)
+    PMC.solve!(cache, y2)
     @test isapprox(y2, x2, atol = 1e-9)
 end
 
@@ -284,16 +284,16 @@ end
         -1 => 0.1 .* rand(n - 1))
     A32 = SparseArrays.SparseMatrixCSC{Float64, Int32}(A64)
 
-    c64 = PNM.klu_factorize(A64)
-    c32 = PNM.klu_factorize(A32)
-    @test c64 isa PNM.KLUWrapper.KLULinSolveCache{Float64, Int64}
-    @test c32 isa PNM.KLUWrapper.KLULinSolveCache{Float64, Int32}
+    c64 = PMC.klu_factorize(A64)
+    c32 = PMC.klu_factorize(A32)
+    @test c64 isa PMC.KLUWrapper.KLULinSolveCache{Float64, Int64}
+    @test c32 isa PMC.KLUWrapper.KLULinSolveCache{Float64, Int32}
 
     b = randn(n)
     y64 = copy(b)
     y32 = copy(b)
-    PNM.solve!(c64, y64)
-    PNM.solve!(c32, y32)
+    PMC.solve!(c64, y64)
+    PMC.solve!(c32, y32)
     @test y64 == y32   # bit-equal
 end
 
@@ -302,12 +302,12 @@ end
     n = 80
     A_dense = Matrix(SparseArrays.sprandn(n, n, 0.1)) + 4 * LinearAlgebra.I
     A = SparseArrays.SparseMatrixCSC{Float64, Int32}(SparseArrays.sparse(A_dense))
-    cache = PNM.klu_factorize(A)
+    cache = PMC.klu_factorize(A)
 
     B_dense = SparseArrays.sprandn(n, 20, 0.1)
     B = SparseArrays.SparseMatrixCSC{Float64, Int32}(B_dense)
 
-    out = PNM.solve_sparse(cache, B)
+    out = PMC.solve_sparse(cache, B)
     @test isapprox(out, A_dense \ Matrix(B_dense); atol = 1e-9)
 end
 
@@ -316,15 +316,15 @@ end
     A64 = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 1.0,
         1 => fill(0.05, n - 1), -1 => fill(0.05, n - 1))
     A = SparseArrays.SparseMatrixCSC{Float64, Int32}(A64)
-    cache = PNM.klu_factorize(A)
+    cache = PMC.klu_factorize(A)
 
     A2_64 = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 1.5,
         1 => fill(0.07, n - 1), -1 => fill(0.07, n - 1))
     A2 = SparseArrays.SparseMatrixCSC{Float64, Int32}(A2_64)
 
     # Warm up specialization on the Int32 path.
-    PNM.numeric_refactor!(cache, A2)
-    alloc = @allocated PNM.numeric_refactor!(cache, A2)
+    PMC.numeric_refactor!(cache, A2)
+    alloc = @allocated PMC.numeric_refactor!(cache, A2)
     @test alloc == 0
 end
 
@@ -338,13 +338,13 @@ end
         1 => fill(0.1, n - 1), -1 => fill(0.1, n - 1))
     A32 = SparseArrays.SparseMatrixCSC{Float64, Int32}(A64)
 
-    for cache in (PNM.klu_factorize(A64), PNM.klu_factorize(A32))
+    for cache in (PMC.klu_factorize(A64), PMC.klu_factorize(A32))
         b = randn(n)
         y = copy(b)
-        PNM.solve!(cache, y)
+        PMC.solve!(cache, y)
         @test isapprox(y, A64 \ b, atol = 1e-10)
 
-        c = PNM.KLUWrapper.condest!(cache)
+        c = PMC.KLUWrapper.condest!(cache)
         @test c > 0
     end
 end
@@ -356,21 +356,21 @@ end
     A = D + one_at(1, n)
     for Ti in (Int64, Int32)
         At = SparseArrays.SparseMatrixCSC{Float64, Ti}(A)
-        cache = PNM.klu_factorize(At)
+        cache = PMC.klu_factorize(At)
         colptr = copy(cache.colptr)
         rowval = copy(cache.rowval)
         # Same nnz: a different row in the same column, then a different column.
         for B in (D + one_at(2, n), D + one_at(n, 1))
             Bt = SparseArrays.SparseMatrixCSC{Float64, Ti}(B)
             @test SparseArrays.nnz(Bt) == SparseArrays.nnz(At)
-            @test_throws ArgumentError PNM.numeric_refactor!(cache, Bt)
-            @test_throws ArgumentError PNM.KLUWrapper.symbolic_refactor!(cache, Bt)
+            @test_throws ArgumentError PMC.numeric_refactor!(cache, Bt)
+            @test_throws ArgumentError PMC.KLUWrapper.symbolic_refactor!(cache, Bt)
             @test cache.colptr == colptr
             @test cache.rowval == rowval
         end
-        PNM.numeric_refactor!(cache, At)
+        PMC.numeric_refactor!(cache, At)
         y = ones(n)
-        PNM.solve!(cache, y)
+        PMC.solve!(cache, y)
         @test isapprox(y, A \ ones(n); atol = 1e-12)
     end
 end
@@ -384,24 +384,24 @@ end
     for Ti in (Int64, Int32)
         At = SparseArrays.SparseMatrixCSC{Float64, Ti}(A)
         A2t = SparseArrays.SparseMatrixCSC{Float64, Ti}(A2)
-        on = PNM.klu_factorize(At)
-        off = PNM.klu_factorize(At; snapshot_values = false)
-        PNM.numeric_refactor!(on, A2t)
-        PNM.numeric_refactor!(off, A2t)
+        on = PMC.klu_factorize(At)
+        off = PMC.klu_factorize(At; snapshot_values = false)
+        PMC.numeric_refactor!(on, A2t)
+        PMC.numeric_refactor!(off, A2t)
         @test isempty(off.nzval)
         b = randn(n)
         y_on = copy(b)
         y_off = copy(b)
-        PNM.solve!(on, y_on)
-        PNM.solve!(off, y_off)
+        PMC.solve!(on, y_on)
+        PMC.solve!(off, y_off)
         @test y_on == y_off
-        @test (@allocated PNM.numeric_refactor!(off, A2t)) == 0
+        @test (@allocated PMC.numeric_refactor!(off, A2t)) == 0
         # Snapshot-dependent paths error loudly; the explicit-matrix condest! works.
-        @test_throws ErrorException PNM.KLUWrapper.condest!(off)
-        @test_throws ErrorException PNM.KLUWrapper._recover_factorization!(off)
-        @test PNM.KLUWrapper.condest!(off, A2t) == PNM.KLUWrapper.condest!(on)
-        @test PNM.KLUWrapper.condest!(on, A2t) == PNM.KLUWrapper.condest!(on)
-        @test_throws ArgumentError PNM.KLUWrapper.condest!(
+        @test_throws ErrorException PMC.KLUWrapper.condest!(off)
+        @test_throws ErrorException PMC.KLUWrapper._recover_factorization!(off)
+        @test PMC.KLUWrapper.condest!(off, A2t) == PMC.KLUWrapper.condest!(on)
+        @test PMC.KLUWrapper.condest!(on, A2t) == PMC.KLUWrapper.condest!(on)
+        @test_throws ArgumentError PMC.KLUWrapper.condest!(
             off,
             SparseArrays.SparseMatrixCSC{Float64, Ti}(
                 A2 + SparseArrays.sparse([1], [n], [1.0], n, n),
@@ -419,11 +419,11 @@ end
     n = 40
     A = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 1.0,
         1 => fill(0.1, n - 1), -1 => fill(0.1, n - 1))
-    cache = PNM.klu_factorize(A)
+    cache = PMC.klu_factorize(A)
 
     x_true = randn(n)
     b = A * x_true
-    X = PNM.solve_w_refinement(cache, A, b)
+    X = PMC.solve_w_refinement(cache, A, b)
     @test isapprox(X, x_true, atol = 1e-12)
 end
 
@@ -433,31 +433,31 @@ end
     Random.seed!(3)
     n = 50
     A = SparseArrays.spdiagm(0 => fill(1.0, n), 1 => fill(1.0 - 1e-10, n - 1))
-    cache = PNM.klu_factorize(A)
+    cache = PMC.klu_factorize(A)
 
     x_true = randn(n)
     b = A * x_true
     X = zeros(n)
-    PNM.solve_w_refinement!(cache, A, X, b; tol = 1e-12)
+    PMC.solve_w_refinement!(cache, A, X, b; tol = 1e-12)
     @test isapprox(X, x_true, atol = 1e-8)
 end
 
 @testset "KLU wrapper: solve_w_refinement requires a factored cache" begin
     n = 10
     A = SparseArrays.spdiagm(0 => 1.0:n)
-    cache = PNM.KLUWrapper.KLULinSolveCache(A)  # not factored
+    cache = PMC.KLUWrapper.KLULinSolveCache(A)  # not factored
     b = randn(n)
-    @test_throws ErrorException PNM.solve_w_refinement(cache, A, b)
+    @test_throws ErrorException PMC.solve_w_refinement(cache, A, b)
 end
 
 @testset "KLU wrapper: solve_w_refinement rejects mismatched element types" begin
     n = 10
     A = SparseArrays.spdiagm(0 => 1.0:n)
-    cache = PNM.KLUWrapper.KLULinSolveCache(A)
-    PNM.KLUWrapper.full_factor!(cache, A)
-    @test_throws MethodError PNM.solve_w_refinement(cache, A, rand(Float32, n))
+    cache = PMC.KLUWrapper.KLULinSolveCache(A)
+    PMC.KLUWrapper.full_factor!(cache, A)
+    @test_throws MethodError PMC.solve_w_refinement(cache, A, rand(Float32, n))
     Ac = SparseArrays.spdiagm(0 => ComplexF64.(1.0:n))
-    @test_throws ArgumentError PNM.solve_w_refinement(cache, Ac, rand(ComplexF64, n))
+    @test_throws ArgumentError PMC.solve_w_refinement(cache, Ac, rand(ComplexF64, n))
 end
 
 @testset "KLU wrapper: solve_w_refinement works on Int32 cache" begin
@@ -466,19 +466,19 @@ end
     A64 = SparseArrays.spdiagm(0 => collect(1.0:n) .+ 1.0,
         1 => fill(0.05, n - 1), -1 => fill(0.05, n - 1))
     A = SparseArrays.SparseMatrixCSC{Float64, Int32}(A64)
-    cache = PNM.klu_factorize(A)
+    cache = PMC.klu_factorize(A)
     x_true = randn(n)
     b = A64 * x_true
-    X = PNM.solve_w_refinement(cache, A, b)
+    X = PMC.solve_w_refinement(cache, A, b)
     @test isapprox(X, x_true, atol = 1e-10)
 end
 
 @testset "make_linear_solver_cache and factorization_ok on KLU" begin
     A = SparseArrays.spdiagm(0 => fill(2.0, 5), 1 => fill(0.1, 4), -1 => fill(0.1, 4))
-    cache = PNM.make_linear_solver_cache(PNM.KLUSolver(), A; snapshot_values = false)
-    @test cache isa PNM.KLULinSolveCache{Float64, Int}
+    cache = PMC.make_linear_solver_cache(PMC.KLUSolver(), A; snapshot_values = false)
+    @test cache isa PMC.KLULinSolveCache{Float64, Int}
     @test !cache.snapshot_values
-    @test PNM.make_linear_solver_cache(PNM.KLUSolver(), A).snapshot_values
-    PNM.full_factor!(cache, A)
-    @test PNM.factorization_ok(cache, A)
+    @test PMC.make_linear_solver_cache(PMC.KLUSolver(), A).snapshot_values
+    PMC.full_factor!(cache, A)
+    @test PMC.factorization_ok(cache, A)
 end
