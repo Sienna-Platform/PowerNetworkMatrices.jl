@@ -29,12 +29,10 @@ mutable struct KLULinSolveCache{
     # the caller having to re-supply `A`. Empty before the first factor call,
     # and always when `snapshot_values` is false.
     nzval::Vector{Tv}
-    # `Base.RefValue{KluLCommon}` for Int64 or `Base.RefValue{KluCommon}` for
-    # Int32 — we keep the field untyped here because Julia's untyped
-    # `Base.RefValue` lookup is fast enough (the dispatch helpers recover the
-    # concrete type at each callsite via `_common_type(Ti)`) and avoiding a
-    # third type parameter keeps the surface tidy.
-    common::Base.RefValue
+    # `Base.RefValue{KluLCommon}` for Int64 or `Base.RefValue{KluCommon}` for Int32.
+    # A union of the two concrete types keeps reads of the field type stable and
+    # does not add a third type parameter.
+    common::Union{Base.RefValue{KluCommon}, Base.RefValue{KluLCommon}}
     # Opaque Symbolic/Numeric pointers. `Ptr{Cvoid}` is safe: each callsite
     # threads through the typed `SymbolicPtr` / `SymbolicPtr32` (resp.
     # Numeric) at the ccall boundary; on the Julia side the values are

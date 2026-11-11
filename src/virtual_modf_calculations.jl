@@ -391,7 +391,7 @@ function _get_woodbury_factors(vmodf::VirtualMODF, mod::NetworkModification)
     # function arguments eagerly, so the 3-arg form would run the M KLU solves
     # on every call (cache hit included), defeating the cache.
     return get!(get_woodbury_cache(vmodf), mod) do
-        _compute_woodbury_factors(vmodf, mod.arc_modifications)
+        _compute_woodbury_factors(vmodf, _arc_modification_vector(mod))
     end
 end
 

@@ -31,8 +31,8 @@ single-scratch model.
 - `subnetwork_axes::Dict{Int, Ax}`: per-reference-bus subnetwork axes (bus form).
 - `tol::SparsificationCutoff`: resolved per-row sparsification rule (absolute
   cutoff for a `Float64` `tol`, relative cutoff for an [`AutoTolerance`](@ref)).
-- `tol_spec::Union{Float64, AutoTolerance}`: the `tol` keyword as given; a factor
-  file stores it and a reader resolves it again.
+- `tol_spec::Union{Float64, AutoTolerance{Float64}, AutoTolerance{Symbol}}`: the `tol`
+  keyword as given; a factor file stores it and a reader resolves it again.
 - `temp_data::Vector{Vector{Float64}}`: single-slot scratch (size n_buses).
 - `work_ba_col::Vector{Vector{Float64}}`: single-slot scratch (size n_valid).
 - `solver_lock::ReentrantLock`: serializes solves + scratch access.
@@ -59,7 +59,8 @@ struct FactorCore{Ax, L <: NTuple{2, Dict}, K, N}
     bus_to_valid_idx::Vector{Int}
     subnetwork_axes::Dict{Int, Ax}
     tol::SparsificationCutoff
-    tol_spec::Union{Float64, AutoTolerance}
+    # Each member is concrete, so a read of the field is type stable.
+    tol_spec::Union{Float64, AutoTolerance{Float64}, AutoTolerance{Symbol}}
     temp_data::Vector{Vector{Float64}}
     work_ba_col::Vector{Vector{Float64}}
     solver_lock::ReentrantLock
@@ -217,6 +218,11 @@ end
 
 # --- Constructor ---
 
+# A solver given by its type gives a `FactorCore` of a concrete type. A solver name gives a
+# union of the solver types.
+_linear_solver_type(name::String) = resolve_linear_solver(name)
+_linear_solver_type(solver::LinearSolverType) = solver
+
 # The virtual matrices solve through `_solve_factorization`, which has KLU and
 # AppleAccelerate arms only.
 _check_virtual_solver(::LinearSolverType) = nothing
@@ -354,7 +360,10 @@ function _validate_dc_arrays(
         "$(length(subnetwork_axes)) subnetworks; expected one for each subnetwork.",
     )
     all(pos -> 1 <= pos <= n_bus, ref_bus_positions) ||
-        error("Reference bus positions $ref_bus_positions must lie in 1:$n_bus.")
+        error(
+            "Reference bus positions $(join(sort!(collect(ref_bus_positions)), ", ")) " *
+            "must lie in 1:$n_bus.",
+        )
 
     subnetwork_of_bus = zeros(Int, n_bus)
     for (s, (key, (_, sub_buses))) in enumerate(subnetwork_axes)
@@ -437,7 +446,8 @@ entries in `{-1, 0, 1}`. Each entry of `ref_bus_positions` is an index into the 
 `axes` is `(arc_axis, bus_axis)`. `arc_live_members[i]` is the number of members that an
 outage can open on arc `i`. The constructor holds `network_data` and does not read it.
 
-The `tol` keyword is the sparsification spec, a `Float64` or an `AutoTolerance`. The
+The `linear_solver` keyword is a solver name, such as `"KLU"`, or a `LinearSolverType`
+value, such as `KLUSolver()`. The `tol` keyword is the sparsification spec, a `Float64` or an `AutoTolerance`. The
 constructor keeps it in `tol_spec` and resolves the per-row cutoff from it. With
 `verify_factorization = true`, the constructor checks the residual of a solve against the ABA
 matrix and throws an error if the factorization is singular or near singular.
@@ -450,7 +460,7 @@ function FactorCore(
     subnetwork_axes::Dict{Int, Tuple{Vector{Tuple{Int, Int}}, Vector{Int}}},
     arc_live_members::Vector{Int};
     network_data,
-    linear_solver::String = _default_linear_solver(),
+    linear_solver::Union{String, LinearSolverType} = _default_linear_solver(),
     tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     system_uuid::Union{Base.UUID, Nothing} = nothing,
     verify_factorization::Bool = false,
@@ -467,8 +477,11 @@ function FactorCore(
         "arc_live_members has length $(length(arc_live_members)); expected n_arc = $n_arc.",
     )
     all(pos -> 1 <= pos <= n_bus, ref_bus_positions) ||
-        error("Reference bus positions $ref_bus_positions must lie in 1:$n_bus.")
-    solver = resolve_linear_solver(linear_solver)
+        error(
+            "Reference bus positions $(join(sort!(collect(ref_bus_positions)), ", ")) " *
+            "must lie in 1:$n_bus.",
+        )
+    solver = _linear_solver_type(linear_solver)
     _check_virtual_solver(solver)
     ABA = calculate_ABA_matrix(A, BA, ref_bus_positions)
     iszero(size(ABA, 1)) && error(
@@ -544,7 +557,9 @@ function FactorCore(
     arc_live_members::Vector{Int};
     network_data,
     reverse_bus_map::Dict{Int, Int} = Dict{Int, Int}(),
-    kwargs...,
+    linear_solver::Union{String, LinearSolverType} = _default_linear_solver(),
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
+    system_uuid::Union{Base.UUID, Nothing} = nothing,
 )
     arc_ax, bus_ax = axes
     n_arc = length(arc_ax)
@@ -586,8 +601,10 @@ function FactorCore(
         subnetwork_axes,
         arc_live_members;
         network_data = network_data,
+        linear_solver = linear_solver,
+        tol = tol,
+        system_uuid = system_uuid,
         verify_factorization = true,
-        kwargs...,
     )
 end
 

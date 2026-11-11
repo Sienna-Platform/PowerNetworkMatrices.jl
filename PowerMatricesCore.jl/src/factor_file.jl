@@ -550,7 +550,8 @@ end
     read_factor_core(path::AbstractString; network_data = nothing, linear_solver) -> FactorCore
 
 Read the core arrays of a factor file and build a `FactorCore` from them. The function
-factorizes the ABA matrix again with `linear_solver` and checks the factorization. The core
+factorizes the ABA matrix again with `linear_solver`, a solver name or a `LinearSolverType`
+value, and checks the factorization. The core
 holds `network_data` and does not read it. A subnetwork key that is not on the bus axis
 resolves through the map in `reduced_bus_from` and `reduced_bus_to`.
 """
@@ -558,7 +559,7 @@ function read_factor_core(
     f::HDF5.File,
     budget::ReadBudget = ReadBudget(HDF5.filename(f));
     network_data = nothing,
-    linear_solver::String = _default_linear_solver(),
+    linear_solver::Union{String, LinearSolverType} = _default_linear_solver(),
 )
     arrays = read_factor_arrays(f, budget)
     return FactorCore(
@@ -575,9 +576,18 @@ function read_factor_core(
     )
 end
 
-function read_factor_core(path::AbstractString; kwargs...)
+function read_factor_core(
+    path::AbstractString;
+    network_data = nothing,
+    linear_solver::Union{String, LinearSolverType} = _default_linear_solver(),
+)
     return HDF5.h5open(path, "r") do f
-        read_factor_core(f, ReadBudget(path); kwargs...)
+        read_factor_core(
+            f,
+            ReadBudget(path);
+            network_data = network_data,
+            linear_solver = linear_solver,
+        )
     end
 end
 

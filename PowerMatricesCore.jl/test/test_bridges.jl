@@ -68,9 +68,9 @@ end
         sus = ones(m)
         bl = PMC.BridgeLabels(BA)
         cases =
-            Tuple{Vararg{PMC.ArcModification}}[(PMC.ArcModification(e, -1.0),) for e in 1:m]
-        push!(cases, (PMC.ArcModification(1, -0.5),))
-        m > 1 && push!(cases, (PMC.ArcModification(1, -1.0), PMC.ArcModification(m, -1.0)))
+            Vector{PMC.ArcModification}[[PMC.ArcModification(e, -1.0)] for e in 1:m]
+        push!(cases, [PMC.ArcModification(1, -0.5)])
+        m > 1 && push!(cases, [PMC.ArcModification(1, -1.0), PMC.ArcModification(m, -1.0)])
         for mods in cases
             uf = PMC._post_contingency_bus_labels(BA, sus, mods, n)
             @test _first_seen(bl(BA, sus, mods, n)) == _first_seen(uf)

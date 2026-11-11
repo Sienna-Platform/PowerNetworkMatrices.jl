@@ -7,7 +7,7 @@ or a `VirtualFactorCore` (solving on that core's factorization).
 """
 _compute_woodbury_factors(
     mat::Union{VirtualPTDF, VirtualMODF},
-    modifications::Tuple{Vararg{ArcModification}},
+    modifications::Vector{ArcModification},
 ) = _compute_woodbury_factors(get_core(mat), modifications)
 
 function _apply_woodbury_correction(

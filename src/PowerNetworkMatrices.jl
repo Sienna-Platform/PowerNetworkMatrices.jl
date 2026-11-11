@@ -297,6 +297,7 @@ import PowerMatricesCore:
     _woodbury_rank,
     _monitored_Z!,
     _arcs_fully_opened,
+    _arc_modification_vector,
     _post_modification_susceptance,
     _monitored_arc_out,
     _woodbury_correction!,

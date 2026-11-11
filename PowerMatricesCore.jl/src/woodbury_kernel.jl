@@ -75,7 +75,7 @@ _removes_arc(arc_sus::Vector{Float64}, m::ArcModification) =
 function _post_contingency_bus_labels(
     BA::SparseArrays.SparseMatrixCSC{Float64, Int},
     arc_sus::Vector{Float64},
-    modifications::Tuple{Vararg{ArcModification}},
+    modifications::Vector{ArcModification},
     n_bus::Int,
 )::Vector{Int}
     removed = Set{Int}()
@@ -143,7 +143,7 @@ end
 function (bl::BridgeLabels)(
     BA::SparseArrays.SparseMatrixCSC{Float64, Int},
     arc_sus::Vector{Float64},
-    modifications::Tuple{Vararg{ArcModification}},
+    modifications::Vector{ArcModification},
     n_bus::Int,
 )::Vector{Int}
     removed = 0
@@ -208,7 +208,7 @@ function _woodbury_factors_from_Z(
     BA::SparseArrays.SparseMatrixCSC{Float64, Int},
     signs::Vector{Float64},
     arc_sus::Vector{Float64},
-    modifications::Tuple{Vararg{ArcModification}},
+    modifications::Vector{ArcModification},
     arc_out::Vector{Bool},
     labeler::F = _post_contingency_bus_labels,
 )::WoodburyFactors where {F}
@@ -296,7 +296,7 @@ end
 # comparing susceptances, because the group susceptance is not the exact sum of its members'.
 function _arcs_fully_opened(
     core::FactorCore,
-    modifications::Tuple{Vararg{ArcModification}},
+    modifications::Vector{ArcModification},
 )::Vector{Bool}
     return Bool[
         m.opened > 0 && m.opened >= core.arc_live_members[m.arc_index] for
@@ -395,7 +395,7 @@ end
 
 function _check_arc_indices(
     core::FactorCore,
-    modifications::Tuple{Vararg{ArcModification}},
+    modifications::Vector{ArcModification},
 )
     n_arc = length(core.arc_susceptances)
     for mod in modifications
@@ -411,7 +411,7 @@ end
 
 function _compute_woodbury_factors(
     core::FactorCore,
-    modifications::Tuple{Vararg{ArcModification}},
+    modifications::Vector{ArcModification},
     labeler::F = _post_contingency_bus_labels,
 )::WoodburyFactors where {F}
     _check_arc_indices(core, modifications)

@@ -175,6 +175,16 @@ Base.:(==)(a::NetworkModification, b::NetworkModification) =
     a.shunt_modifications == b.shunt_modifications &&
     a.is_islanding == b.is_islanding
 
+# The Woodbury kernel takes a `Vector`: a tuple of unknown length makes its calls dynamic.
+function _arc_modification_vector(mod::NetworkModification)
+    tup = mod.arc_modifications
+    mods = Vector{ArcModification}(undef, length(tup))
+    for i in eachindex(mods)
+        mods[i] = tup[i]
+    end
+    return mods
+end
+
 """
     ContingencySpec
 

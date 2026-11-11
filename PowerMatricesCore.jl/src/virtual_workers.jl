@@ -337,7 +337,7 @@ function compute_woodbury_factors(
     mod::NetworkModification,
     labeler::F = _post_contingency_bus_labels,
 ) where {F}
-    return _compute_woodbury_factors(get_core(mat), mod.arc_modifications, labeler)
+    return _compute_woodbury_factors(get_core(mat), _arc_modification_vector(mod), labeler)
 end
 
 """

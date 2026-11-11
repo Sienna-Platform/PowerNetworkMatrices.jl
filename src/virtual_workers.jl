@@ -99,7 +99,7 @@ function get_woodbury_factors(
         haskey(cache, resolved) && return cache[resolved]
         resolved
     end
-    wf = _compute_woodbury_factors(solver, mod.arc_modifications)
+    wf = _compute_woodbury_factors(solver, _arc_modification_vector(mod))
     return @lock core.solver_lock get!(cache, mod, wf)
 end
 

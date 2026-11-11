@@ -15,7 +15,7 @@ function compute_woodbury_factors(
     vptdf::VirtualPTDF,
     mod::NetworkModification,
 )::WoodburyFactors
-    return _compute_woodbury_factors(vptdf, mod.arc_modifications)
+    return _compute_woodbury_factors(vptdf, _arc_modification_vector(mod))
 end
 
 """
