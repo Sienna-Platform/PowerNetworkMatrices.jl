@@ -160,7 +160,52 @@ import PowerMatricesCore:
     solve_w_refinement,
     solve_w_refinement!,
     calculate_ABA_matrix,
-    _calculate_PTDF_matrix_MKLPardiso
+    _calculate_PTDF_matrix_MKLPardiso,
+    AutoTolerance,
+    discover_data_precision,
+    DEFAULT_AUTO_TOLERANCE,
+    MIN_RELATIVE_TOLERANCE,
+    MAX_RELATIVE_TOLERANCE,
+    AbsoluteCutoff,
+    RelativeCutoff,
+    SparsificationCutoff,
+    apply_cutoff,
+    cutoff_value,
+    _validate_data_precision,
+    _sigfigs,
+    _quantile_sorted,
+    _resolve_delta,
+    _relative_alpha,
+    _hager_invnorm1,
+    _condition_estimate,
+    _log_condition_estimate,
+    _dense_tol,
+    _resolve_virtual_cutoff,
+    RowCacheValue,
+    RowCache,
+    set_persistent_row!,
+    pin_row!,
+    purge_one!,
+    check_cache_size!,
+    _pin!,
+    _cached_row,
+    ArcModification,
+    ShuntModification,
+    NetworkModification,
+    ContingencySpec,
+    WoodburyFactors,
+    _merge_arc_modifications,
+    _merge_shunt_modifications,
+    get_representative,
+    union_sets!,
+    _build_bus_to_valid_idx,
+    sparsify,
+    _create_factorization,
+    _solve_factorization,
+    _solve_ba_column!,
+    _ba_column_susceptance,
+    _extract_arc_susceptances,
+    _get_PTDF_A_diag
 
 const KLUWrapper = PMC.KLUWrapper
 const AccelerateWrapper = PMC.AccelerateWrapper
@@ -201,17 +246,14 @@ include("bridges.jl")
 include("subnetworks.jl")
 include("common.jl")
 include("BranchAdmittance.jl")
-include("auto_tolerance.jl")
 include("BA_ABA_matrices.jl")
 include("virtual_factor_helpers.jl")
 include("virtual_factor_core.jl")
 include("ptdf_calculations.jl")
-include("row_cache.jl")
 include("virtual_ptdf_calculations.jl")
 include("PowerflowMatrixTypes.jl")
 include("lodf_calculations.jl")
 include("virtual_lodf_calculations.jl")
-include("modf_definitions.jl")
 include("network_modification.jl")
 include("virtual_ptdf_modification.jl")
 include("modf_reduction_consistency.jl")

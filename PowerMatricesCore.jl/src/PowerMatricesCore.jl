@@ -47,6 +47,12 @@ include("iterative_refinement.jl")
 
 include("linear_solver_generic.jl")
 include("aba_matrix.jl")
+include("common.jl")
+include("auto_tolerance.jl")
+include("virtual_factor_helpers.jl")
+include("row_cache.jl")
+include("connectivity.jl")
+include("modf_definitions.jl")
 
 # Forward declaration for the function that `MKLPardisoExt` defines.
 function _calculate_PTDF_matrix_MKLPardiso end
