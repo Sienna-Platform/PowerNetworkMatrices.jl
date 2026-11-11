@@ -1,4 +1,5 @@
 using Documenter, PowerNetworkMatrices
+import PowerMatricesCore
 using HDF5
 import DataStructures: OrderedDict
 using Literate
@@ -39,7 +40,6 @@ pages = OrderedDict(
     "Reference" => Any[
         "Matrix Overview" => "reference/network_matrices_overview.md",
         "Public API" => "reference/public.md",
-        "Internals" => "reference/internals.md",
     ],
 )
 
