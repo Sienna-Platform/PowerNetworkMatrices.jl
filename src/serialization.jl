@@ -1,31 +1,3 @@
-# Columns of one table must agree in length, or `zip` would drop rows in silence.
-function _check_same_length(table::String, columns::Pair{String, <:AbstractVector}...)
-    lengths = map(column -> first(column) => length(last(column)), columns)
-    allequal(map(last, lengths)) ||
-        error("Factor file table $table has columns of unequal length: $lengths.")
-    return
-end
-
-function _check_dist_slack(weights::Vector{Float64}, bus_ax::Vector{Int})
-    isempty(weights) && return
-    _check_same_length("dist_slack", "bus_axis" => bus_ax, "dist_slack" => weights)
-    for (i, w) in enumerate(weights)
-        isfinite(w) || error(
-            "Factor file entry dist_slack has the value $w at position $i; " *
-            "the value must be finite.",
-        )
-        w >= 0 || error(
-            "Factor file entry dist_slack has the weight $w at position $i; " *
-            "the weight must not be negative.",
-        )
-    end
-    total = sum(weights)
-    (isfinite(total) && total > 0) || error(
-        "Factor file entry dist_slack has the sum $total; the sum must be finite and positive.",
-    )
-    return
-end
-
 """
     BranchArcTable
 
@@ -302,18 +274,6 @@ function _reduction_records(nr::NetworkReductionData)::_ReductionRecords
         merged_to = last.(merged),
         irreducible_buses = sort!(collect(nr.irreducible_buses)),
     )
-end
-
-function _check_unique(path::String, values::Vector{T}) where {T}
-    seen = Set{T}()
-    for (i, v) in enumerate(values)
-        v in seen &&
-            error(
-                "Factor file entry $path has the value $v more than once, at row $i.",
-            )
-        push!(seen, v)
-    end
-    return
 end
 
 function _check_known_bus(name::String, bus::Int, i::Int, known::Set{Int})

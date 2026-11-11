@@ -7,6 +7,7 @@ module PowerMatricesCore
 using DocStringExtensions
 import SparseArrays
 import SparseArrays: rowvals, nzrange
+import HDF5
 import LinearAlgebra
 import LinearAlgebra: ldiv!, mul!, I, dot
 
@@ -54,6 +55,7 @@ include("row_cache.jl")
 include("connectivity.jl")
 include("modf_definitions.jl")
 include("factor_core.jl")
+include("factor_file.jl")
 include("bridges.jl")
 include("woodbury_kernel.jl")
 include("virtual_workers.jl")

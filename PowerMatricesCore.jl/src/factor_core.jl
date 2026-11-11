@@ -489,6 +489,71 @@ function FactorCore(
     )
 end
 
+"""
+    FactorCore(arc_susceptances, ref_bus_positions, axes, subnetwork_axes, arc_live_members;
+        network_data, reverse_bus_map, linear_solver, tol, system_uuid) -> FactorCore
+
+Build the shared factorization core from one signed DC susceptance per arc. The method builds
+the `BA` and `A` matrices from `axes` and `arc_susceptances`, then calls the matrix method.
+Entry `i` of `arc_susceptances` is the susceptance of arc `i`, positive from the first bus of
+the arc to the second. A subnetwork key that is not on the bus axis resolves through
+`reverse_bus_map`.
+"""
+function FactorCore(
+    arc_susceptances::Vector{Float64},
+    ref_bus_positions::Set{Int},
+    axes::Tuple{Vector{Tuple{Int, Int}}, Vector{Int}},
+    subnetwork_axes::Dict{Int, Tuple{Vector{Tuple{Int, Int}}, Vector{Int}}},
+    arc_live_members::Vector{Int};
+    network_data,
+    reverse_bus_map::Dict{Int, Int} = Dict{Int, Int}(),
+    kwargs...,
+)
+    arc_ax, bus_ax = axes
+    n_arc = length(arc_ax)
+    n_bus = length(bus_ax)
+    length(arc_susceptances) == n_arc || error(
+        "arc_susceptances has length $(length(arc_susceptances)); expected n_arc = $n_arc.",
+    )
+    _validate_dc_arrays(
+        arc_susceptances,
+        ref_bus_positions,
+        axes,
+        subnetwork_axes,
+        arc_live_members,
+        reverse_bus_map,
+    )
+    bus_position = make_ax_ref(bus_ax)
+    rows = Vector{Int}(undef, 2 * n_arc)
+    cols = Vector{Int}(undef, 2 * n_arc)
+    vals = Vector{Float64}(undef, 2 * n_arc)
+    signs = Vector{Int8}(undef, 2 * n_arc)
+    for (ix, arc) in enumerate(arc_ax)
+        rows[2 * ix - 1] = bus_position[arc[1]]
+        rows[2 * ix] = bus_position[arc[2]]
+        cols[2 * ix - 1] = ix
+        cols[2 * ix] = ix
+        vals[2 * ix - 1] = arc_susceptances[ix]
+        vals[2 * ix] = -arc_susceptances[ix]
+        signs[2 * ix - 1] = 1
+        signs[2 * ix] = -1
+    end
+    BA = SparseArrays.sparse(rows, cols, vals, n_bus, n_arc)
+    SparseArrays.dropzeros!(BA)
+    A = SparseArrays.sparse(cols, rows, signs, n_arc, n_bus)
+    return FactorCore(
+        BA,
+        A,
+        ref_bus_positions,
+        axes,
+        subnetwork_axes,
+        arc_live_members;
+        network_data = network_data,
+        verify_factorization = true,
+        kwargs...,
+    )
+end
+
 # --- PTDF row kernel ---
 
 """

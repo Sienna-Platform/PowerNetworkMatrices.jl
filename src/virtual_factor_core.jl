@@ -147,47 +147,16 @@ function VirtualFactorCore(
     branch_catalog::BranchCatalog;
     kwargs...,
 )
-    arc_ax, bus_ax = axes
-    n_arc = length(arc_ax)
-    n_bus = length(bus_ax)
-    length(arc_susceptances) == n_arc || error(
-        "arc_susceptances has length $(length(arc_susceptances)); expected n_arc = $n_arc.",
-    )
-    _validate_dc_arrays(
+    return PMC.FactorCore(
         arc_susceptances,
         ref_bus_positions,
         axes,
         subnetwork_axes,
-        arc_live_members,
-        get_reverse_bus_search_map(get_network_reduction_data(branch_catalog)),
-    )
-    bus_position = make_ax_ref(bus_ax)
-    rows = Vector{Int}(undef, 2 * n_arc)
-    cols = Vector{Int}(undef, 2 * n_arc)
-    vals = Vector{Float64}(undef, 2 * n_arc)
-    signs = Vector{Int8}(undef, 2 * n_arc)
-    for (ix, arc) in enumerate(arc_ax)
-        rows[2 * ix - 1] = bus_position[arc[1]]
-        rows[2 * ix] = bus_position[arc[2]]
-        cols[2 * ix - 1] = ix
-        cols[2 * ix] = ix
-        vals[2 * ix - 1] = arc_susceptances[ix]
-        vals[2 * ix] = -arc_susceptances[ix]
-        signs[2 * ix - 1] = 1
-        signs[2 * ix] = -1
-    end
-    BA = SparseArrays.sparse(rows, cols, vals, n_bus, n_arc)
-    SparseArrays.dropzeros!(BA)
-    A = SparseArrays.sparse(cols, rows, signs, n_arc, n_bus)
-    return VirtualFactorCore(
-        BA,
-        A,
-        ref_bus_positions,
-        axes,
-        subnetwork_axes,
-        arc_live_members,
-        branch_catalog;
-        verify_factorization = true,
+        arc_live_members;
+        network_data = CoreNetworkData(branch_catalog),
+        reverse_bus_map = get_reverse_bus_search_map(
+            get_network_reduction_data(branch_catalog),
+        ),
         kwargs...,
     )
 end
