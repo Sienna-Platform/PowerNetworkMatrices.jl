@@ -89,12 +89,13 @@ end
 
     for i in 1:n_tasks
         @test diags[i] === core.PTDF_A_diag
-        @test susceptances[i] === core.branch_susceptances_by_arc
+        @test susceptances[i] === PNM.get_network_data(core).branch_susceptances_by_arc
         @test isapprox(diags[i], reference_diag; atol = 1e-12)
         @test all(w -> all(isfinite, w), susceptances[i])
     end
     @test length(core.PTDF_A_diag) == length(PNM.get_arc_axis(core))
-    @test length(core.branch_susceptances_by_arc) == length(PNM.get_arc_axis(core))
+    @test length(PNM.get_network_data(core).branch_susceptances_by_arc) ==
+          length(PNM.get_arc_axis(core))
 end
 
 @testset "VirtualFactorCore from arrays" begin

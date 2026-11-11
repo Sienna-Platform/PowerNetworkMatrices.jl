@@ -73,7 +73,7 @@ function Base.getproperty(vlodf::VirtualLODF, name::Symbol)
     name === :PTDF_A_diag && return get_PTDF_A_diag(get_core(vlodf))
     name === :branch_susceptances_by_arc &&
         return get_branch_susceptances_by_arc(get_core(vlodf))
-    return getproperty(get_core(vlodf), name)
+    return _core_property(get_core(vlodf), name)
 end
 
 # Field getters. `getfield` is confined to these (and the `getproperty` hook

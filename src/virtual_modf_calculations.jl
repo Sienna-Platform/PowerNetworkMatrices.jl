@@ -63,7 +63,7 @@ function Base.getproperty(vmodf::VirtualMODF, name::Symbol)
     name === :PTDF_A_diag && return get_PTDF_A_diag(get_core(vmodf))
     name === :branch_susceptances_by_arc &&
         return get_branch_susceptances_by_arc(get_core(vmodf))
-    return getproperty(get_core(vmodf), name)
+    return _core_property(get_core(vmodf), name)
 end
 
 # --- Accessors ---

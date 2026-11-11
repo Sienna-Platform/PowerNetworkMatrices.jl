@@ -12,8 +12,8 @@ Most users load `PowerNetworkMatrices.jl`, which builds the network matrices fro
 ## Installation
 
 ```julia
-julia> ]
-(v1.10) pkg> add PowerMatricesCore
+using Pkg
+Pkg.add("PowerMatricesCore")
 ```
 
 ## License

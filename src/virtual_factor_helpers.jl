@@ -38,21 +38,6 @@ function _extract_branch_susceptances_by_arc(
     return result
 end
 
-# Scatter a valid-bus solve `lin_solve` (optionally divided) back into full-bus-space `dest`,
-# zeroing the reference-bus entries first.
-function _gather_to_buses!(
-    dest::AbstractVector{Float64},
-    valid_ix::Vector{Int},
-    lin_solve,
-    divisor::Float64 = 1.0,
-)
-    fill!(dest, 0.0)
-    @inbounds for i in eachindex(valid_ix)
-        dest[valid_ix[i]] = lin_solve[i] / divisor
-    end
-    return dest
-end
-
 # Shared by VirtualPTDF and VirtualLODF: one row per arc, each `n_bus` long.
 function _persistent_row_cache(
     max_cache_size::Int,

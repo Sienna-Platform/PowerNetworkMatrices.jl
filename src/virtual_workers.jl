@@ -43,7 +43,7 @@ function worker_core(mat)
     n_bus = size(core.BA, 1)
     lock = _worker_lock(core.K, core.solver_lock)
     K = _worker_factorization(core.K, core, lock)
-    return VirtualFactorCore(
+    return PMC.FactorCore(
         K,
         core.BA,
         core.A,
@@ -57,15 +57,13 @@ function worker_core(mat)
         core.subnetwork_axes,
         core.tol,
         core.tol_spec,
-        core.branch_catalog,
         [zeros(n_bus)],
         [zeros(length(core.valid_ix))],
         lock,
         core.system_uuid,
         Float64[],
         Threads.Atomic{Bool}(false),
-        Vector{Vector{Float64}}(),
-        Threads.Atomic{Bool}(false),
+        CoreNetworkData(get_branch_catalog(core)),
     )
 end
 

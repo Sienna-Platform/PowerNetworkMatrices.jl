@@ -187,18 +187,6 @@ function _zero_islanded_entries!(
     return row
 end
 
-# Sign of an arc's DC susceptance: BA holds it at the arc's from bus, the bus `A` marks +1.
-function _arc_susceptance_sign(
-    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
-    A::SparseArrays.SparseMatrixCSC{Int8, Int},
-    e::Int,
-)::Float64
-    rng = SparseArrays.nzrange(BA, e)
-    isempty(rng) && return 1.0
-    p = first(rng)
-    return sign(SparseArrays.nonzeros(BA)[p]) * A[e, SparseArrays.rowvals(BA)[p]]
-end
-
 """
     _woodbury_factors_from_Z(Z, BA, signs, arc_sus, modifications, arc_out[, labeler]) -> WoodburyFactors
 

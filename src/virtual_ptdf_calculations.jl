@@ -57,7 +57,7 @@ function Base.getproperty(vptdf::VirtualPTDF, name::Symbol)
        name === :cache_lock
         return getfield(vptdf, name)
     end
-    return getproperty(get_core(vptdf), name)
+    return _core_property(get_core(vptdf), name)
 end
 
 # Field getters. `getfield` is confined to these (and the `getproperty` hook
@@ -273,9 +273,7 @@ function _compute_ptdf_row(
     return with_solver(
         core.K, core.work_ba_col, core.temp_data, core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
-        lin_solve =
-            _solve_ba_column!(K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, row)
-        _gather_to_buses!(temp_data, core.valid_ix, lin_solve)
+        ptdf_row!(temp_data, K_solver, work_ba_col, core, row)
         if use_dist_slack
             adjustment = dot(temp_data, dist_slack_normalized)
             return temp_data .- adjustment
