@@ -415,7 +415,7 @@ function _check_format_version(a::HDF5.Attributes, budget::ReadBudget)
     if version != FACTOR_FILE_FORMAT_VERSION
         error(
             "Unsupported factor file format version $version; " *
-            "this version of PowerNetworkMatrices reads version $FACTOR_FILE_FORMAT_VERSION.",
+            "this version of PowerMatricesCore reads version $FACTOR_FILE_FORMAT_VERSION.",
         )
     end
     return

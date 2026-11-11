@@ -7,7 +7,7 @@ DC factorization of the network, the PTDF and Woodbury row kernels, and the read
 writes of the factor-file arrays. It has no dependency on `PowerSystems.jl`.
 
 Most users load `PowerNetworkMatrices.jl`, which builds the network matrices from a
-`PowerSystems.System` and re-exports the public names of this package.
+`PowerSystems.System` and calls this package for the numerics.
 
 ## Installation
 

@@ -1221,7 +1221,7 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         vptdf = VirtualPTDF(sys)
         arc = PNM.get_arc_axis(vptdf)[3]
         PNM.get_core(vptdf).arc_live_members[3] = 0
-        @test_throws "The arc $arc has arc_live_members 0, below 1. A factor file cannot hold an opened arc" to_hdf5(
+        @test_throws "The arc $arc has arc_live_members 0, below 1. A FactorCore cannot hold an opened arc" to_hdf5(
             vptdf, joinpath(mktempdir(), "open.h5"),
         )
     end

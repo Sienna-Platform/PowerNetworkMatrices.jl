@@ -223,15 +223,14 @@ end
 _linear_solver_type(name::String) = resolve_linear_solver(name)
 _linear_solver_type(solver::LinearSolverType) = solver
 
-# The virtual matrices solve through `_solve_factorization`, which has KLU and
+# A FactorCore solves its rows through `_solve_factorization`, which has KLU and
 # AppleAccelerate arms only.
 _check_virtual_solver(::LinearSolverType) = nothing
 
 function _check_virtual_solver(::MKLPardisoSolver)
     return error(
-        "VirtualPTDF, VirtualLODF, and VirtualMODF support the \"KLU\" and " *
-        "\"AppleAccelerateLU\" solvers; got \"MKLPardiso\". Use " *
-        "`PTDF(sys; linear_solver = \"MKLPardiso\")` for a dense matrix.",
+        "A FactorCore solves its rows with the \"KLU\" and \"AppleAccelerateLU\" " *
+        "solvers; got \"MKLPardiso\".",
     )
 end
 
@@ -265,8 +264,8 @@ function _create_verified_factorization(
     catch e
         _is_singular_error(e) || rethrow()
         error(
-            "The ABA matrix of the factor file is singular$(_singular_column_text(e.info)). " *
-            "The file has a susceptance that disconnects a subnetwork or that cancels another.",
+            "The ABA matrix built from the arc susceptances is singular$(_singular_column_text(e.info)). " *
+            "A susceptance disconnects a subnetwork or cancels another.",
         )
     end
     rhs = ones(size(ABA, 1))
@@ -279,7 +278,8 @@ function _create_verified_factorization(
         MAX_FACTORIZATION_RESIDUAL,
     )
     (isfinite(residual) && residual <= limit) || error(
-        "The factorization of the ABA matrix of the factor file failed its check: relative " *
+        "The factorization of the ABA matrix built from the arc susceptances failed its check: " *
+        "relative " *
         "residual $residual, limit $limit. The matrix is singular or " *
         "near singular.",
     )
@@ -353,7 +353,7 @@ function _validate_dc_arrays(
     bad_live = findfirst(<(1), arc_live_members)
     isnothing(bad_live) || error(
         "The arc $(arc_ax[bad_live]) has arc_live_members $(arc_live_members[bad_live]), " *
-        "below 1. A factor file cannot hold an opened arc.",
+        "below 1. A FactorCore cannot hold an opened arc.",
     )
     length(ref_bus_positions) == length(subnetwork_axes) || error(
         "$(length(ref_bus_positions)) reference bus positions for " *

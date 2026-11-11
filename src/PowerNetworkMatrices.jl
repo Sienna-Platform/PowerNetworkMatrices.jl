@@ -127,8 +127,6 @@ import PowerMatricesCore:
     AAFactorCache,
     aa_factorize,
     YBUS_ELTYPE,
-    MiB,
-    MAX_CACHE_SIZE_MiB,
     AUTO_TOLERANCE_BUS_LIMIT,
     LinearSolverType,
     KLUSolver,

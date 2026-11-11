@@ -18,7 +18,7 @@ linear algebra under
 
 The package has no dependency on `PowerSystems.jl`. `PowerNetworkMatrices.jl` builds the
 network matrices from a `PowerSystems.System`, calls this package for the numerics, and
-re-exports its public names. Most users load `PowerNetworkMatrices.jl` and do not need to
+re-exports the names its users need. Most users load `PowerNetworkMatrices.jl` and do not need to
 load this package directly.
 
 ## Documentation Structure
