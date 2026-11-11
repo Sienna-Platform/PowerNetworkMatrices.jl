@@ -77,6 +77,43 @@ get_arc_lookup(c::FactorCore) = c.lookup[1]
 get_bus_lookup(c::FactorCore) = c.lookup[2]
 get_arc_axis(c::FactorCore) = c.axes[1]
 get_bus_axis(c::FactorCore) = c.axes[2]
+
+"""
+    get_arc_axis(fb::Vector{Int}, tb::Vector{Int}, bus_axis::Vector{Int}) -> Vector{Tuple{Int, Int}}
+
+Generate unique arc axis from from-bus and to-bus index vectors.
+
+Creates a vector of unique (from_bus, to_bus) tuples representing the arcs (branches)
+in the system. Used for constructing arc admittance matrices and organizing
+network topology data.
+
+# Arguments
+- `fb::Vector{Int}`: Vector of from-bus indices into bus_axis
+- `tb::Vector{Int}`: Vector of to-bus indices into bus_axis
+- `bus_axis::Vector{Int}`: Vector of bus numbers
+
+# Returns
+- `Vector{Tuple{Int, Int}}`: Unique arcs as (from_bus_number, to_bus_number) tuples
+
+# Examples
+```julia
+fb = [1, 2, 1]  # indices into bus_axis
+tb = [2, 3, 3]  # indices into bus_axis
+bus_axis = [101, 102, 103]  # bus numbers
+arcs = get_arc_axis(fb, tb, bus_axis)
+# Returns: [(101, 102), (102, 103), (101, 103)]
+```
+
+# Implementation Details
+- Maps indices to actual bus numbers using bus_axis
+- Removes duplicates with unique()
+- Preserves arc direction (from → to)
+"""
+function get_arc_axis(fb::Vector{Int}, tb::Vector{Int}, bus_axis::Vector{Int})
+    #TODO - handle arc axis consistently between BranchAdmittanceMatrices and IncidenceMatrix
+    return unique(collect(zip(bus_axis[fb], bus_axis[tb])))
+end
+
 get_ref_bus(c::FactorCore) = sort!(collect(keys(c.subnetwork_axes)))
 get_system_uuid(c::FactorCore) = c.system_uuid
 # Resolved cutoff object (used for per-row sparsification); `get_tol` returns its

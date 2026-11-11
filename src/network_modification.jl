@@ -330,15 +330,6 @@ end
 """
 $(TYPEDSIGNATURES)
 
-Construct a `NetworkModification` from an existing [`ContingencySpec`](@ref).
-"""
-function NetworkModification(ctg::ContingencySpec)
-    return ctg.modification
-end
-
-"""
-$(TYPEDSIGNATURES)
-
 Construct a `NetworkModification` that removes every component in `components` (any
 iterable of PSY components). Duplicates collapse; unavailable devices are already out of
 the network and are skipped silently, and other components outside the network, such as

@@ -308,6 +308,7 @@ import PowerMatricesCore:
     _worker_lock,
     _worker_factorization,
     worker_core,
+    worker_network_data,
     _check_worker_core,
     _check_bus_rows,
     solve_bus_angles!,

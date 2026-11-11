@@ -192,6 +192,15 @@ struct ContingencySpec
 end
 
 """
+$(TYPEDSIGNATURES)
+
+Construct a `NetworkModification` from an existing [`ContingencySpec`](@ref).
+"""
+function NetworkModification(ctg::ContingencySpec)
+    return ctg.modification
+end
+
+"""
     WoodburyFactors
 
 Cached Woodbury intermediates shared across monitored arcs for one contingency.

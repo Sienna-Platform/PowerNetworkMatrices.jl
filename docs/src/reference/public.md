@@ -18,5 +18,7 @@ Filter = t -> t in (
     PowerMatricesCore.ArcModification,
     PowerMatricesCore.ShuntModification,
     PowerMatricesCore.ContingencySpec,
+    PowerMatricesCore.worker_core,
+    PowerMatricesCore.worker_network_data,
 )
 ```

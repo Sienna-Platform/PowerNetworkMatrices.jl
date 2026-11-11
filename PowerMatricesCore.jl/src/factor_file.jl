@@ -431,9 +431,10 @@ _ref_bus_positions(core::FactorCore) = setdiff(1:length(core.axes[2]), core.vali
 Write the root attributes and the datasets that `read_factor_core` needs:
 `format_version`, `system_uuid`, the `tol` attributes, `bus_axis`, `arc_from`, `arc_to`,
 `ref_bus_positions`, `arc_susceptances`, `arc_live_members`, `shift_injection`, `dist_slack`,
-and the group `subnetworks`. `shift_injection` holds one value for each arc. `dist_slack` is
-empty or holds one weight for each bus. The function checks the arrays before it writes. A
-subnetwork key that is not on the bus axis resolves through `reverse_bus_map`.
+`reduced_bus_from`, `reduced_bus_to`, and the group `subnetworks`. `shift_injection` holds one
+value for each arc. `dist_slack` is empty or holds one weight for each bus. The function checks
+the arrays before it writes. A subnetwork key that is not on the bus axis resolves through
+`reverse_bus_map`, which the function writes as `reduced_bus_from` and `reduced_bus_to`.
 """
 function write_factor_core(
     f::HDF5.File,
@@ -467,6 +468,8 @@ function write_factor_core(
     f["arc_live_members"] = core.arc_live_members
     f["shift_injection"] = shift_injection
     f["dist_slack"] = dist_slack
+    f["reduced_bus_from"] = collect(keys(reverse_bus_map))
+    f["reduced_bus_to"] = collect(values(reverse_bus_map))
 
     g = HDF5.create_group(f, "subnetworks")
     for (ref, (axis_arcs, axis_buses)) in core.subnetwork_axes
@@ -483,9 +486,9 @@ end
     read_factor_arrays(f::HDF5.File, budget::ReadBudget) -> NamedTuple
 
 Read and check the core arrays of a factor file. The result has the fields `axes`,
-`arc_susceptances`, `ref_bus_positions`, `subnetwork_axes`, `arc_live_members`, `tol`, and
-`system_uuid`, in the form that the arc-susceptance `FactorCore` constructor takes. The
-function checks the format version first.
+`arc_susceptances`, `ref_bus_positions`, `subnetwork_axes`, `arc_live_members`,
+`reverse_bus_map`, `tol`, and `system_uuid`, in the form that the arc-susceptance `FactorCore`
+constructor takes. The function checks the format version first.
 """
 function read_factor_arrays(f::HDF5.File, budget::ReadBudget)
     _check_hard_links(f)
@@ -513,12 +516,29 @@ function read_factor_arrays(f::HDF5.File, budget::ReadBudget)
 
     ref_positions = _read(f, "ref_bus_positions", Vector{Int}, budget)
     _check_unique("ref_bus_positions", ref_positions)
+
+    reduced_from = _read(f, "reduced_bus_from", Vector{Int}, budget)
+    reduced_to = _read(f, "reduced_bus_to", Vector{Int}, budget)
+    _check_same_length(
+        "reduced buses",
+        "reduced_bus_from" => reduced_from,
+        "reduced_bus_to" => reduced_to,
+    )
+    _check_unique("reduced_bus_from", reduced_from)
+    bus_set = Set(bus_ax)
+    for from in reduced_from
+        from in bus_set &&
+            error(
+                "Factor file entry reduced_bus_from holds bus $from, which is on the bus axis.",
+            )
+    end
     return (
         axes = (arc_ax, bus_ax),
         arc_susceptances = _read(f, "arc_susceptances", Vector{Float64}, budget),
         ref_bus_positions = Set{Int}(ref_positions),
         subnetwork_axes = subnetwork_axes,
         arc_live_members = _read(f, "arc_live_members", Vector{Int}, budget),
+        reverse_bus_map = Dict{Int, Int}(zip(reduced_from, reduced_to)),
         tol = _read_tol(a, budget),
         system_uuid = _restore_system_uuid(a, budget),
     )
@@ -526,20 +546,18 @@ end
 
 """
     read_factor_core(f::HDF5.File, budget = ReadBudget(HDF5.filename(f));
-        network_data = nothing, reverse_bus_map, linear_solver) -> FactorCore
-    read_factor_core(path::AbstractString; network_data = nothing, reverse_bus_map,
-        linear_solver) -> FactorCore
+        network_data = nothing, linear_solver) -> FactorCore
+    read_factor_core(path::AbstractString; network_data = nothing, linear_solver) -> FactorCore
 
 Read the core arrays of a factor file and build a `FactorCore` from them. The function
 factorizes the ABA matrix again with `linear_solver` and checks the factorization. The core
 holds `network_data` and does not read it. A subnetwork key that is not on the bus axis
-resolves through `reverse_bus_map`.
+resolves through the map in `reduced_bus_from` and `reduced_bus_to`.
 """
 function read_factor_core(
     f::HDF5.File,
     budget::ReadBudget = ReadBudget(HDF5.filename(f));
     network_data = nothing,
-    reverse_bus_map::Dict{Int, Int} = Dict{Int, Int}(),
     linear_solver::String = _default_linear_solver(),
 )
     arrays = read_factor_arrays(f, budget)
@@ -550,7 +568,7 @@ function read_factor_core(
         arrays.subnetwork_axes,
         arrays.arc_live_members;
         network_data = network_data,
-        reverse_bus_map = reverse_bus_map,
+        reverse_bus_map = arrays.reverse_bus_map,
         linear_solver = linear_solver,
         tol = arrays.tol,
         system_uuid = arrays.system_uuid,

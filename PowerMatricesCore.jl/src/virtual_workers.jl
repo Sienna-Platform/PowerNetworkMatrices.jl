@@ -69,6 +69,32 @@ function worker_core(core::FactorCore, network_data)
     )
 end
 
+"""
+    worker_network_data(network_data) -> Any
+
+Return the network data that a [`worker_core`](@ref) copy holds. The default shares
+`network_data` with the parent core. Add a method for a network data type that keeps lazy
+per-core state.
+"""
+worker_network_data(network_data) = network_data
+
+"""
+    worker_core(mat) -> FactorCore
+
+A new core sharing the read-only topology of `mat`'s core (a `FactorCore` or a matrix with a
+`get_core` method) with its own solve scratch. On KLU the worker also has its own
+factorization of the same ABA matrix and its own `solver_lock`. The factorization is
+deterministic, so every solve on the worker equals the same solve on the original bit for bit,
+and workers solve concurrently. On Apple Accelerate the worker shares the parent's
+factorization and lock, so its solves serialize with the parent's and every other worker's.
+The lazy `PTDF_A_diag` starts empty. The worker holds the result of
+[`worker_network_data`](@ref) for the network data of the parent core.
+"""
+function worker_core(mat)
+    core = get_core(mat)
+    return worker_core(core, worker_network_data(get_network_data(core)))
+end
+
 function _check_worker_core(core::FactorCore, solver::FactorCore)
     solver.BA === core.BA || error(
         "The solver core does not share this matrix's topology; build it with " *

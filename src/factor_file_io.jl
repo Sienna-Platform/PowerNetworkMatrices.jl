@@ -108,17 +108,14 @@ function _write_factor_core(
     )
     nr = get_network_reduction_data(core)
     arc_ax, bus_ax = core.axes
-    reduced = get_reverse_bus_search_map(nr)
     write_factor_core(
         f,
         core;
         shift_injection = Float64[arc_dc_shift_injection(nr, arc) for arc in arc_ax],
         dist_slack = dist_slack,
         ref_bus_positions = get_ref_bus_position(core),
-        reverse_bus_map = reduced,
+        reverse_bus_map = get_reverse_bus_search_map(nr),
     )
-    f["reduced_bus_from"] = collect(keys(reduced))
-    f["reduced_bus_to"] = collect(values(reduced))
 
     types = String[]
     names = String[]
@@ -668,29 +665,7 @@ end
 function _read_factor_core(f::HDF5.File, budget::ReadBudget; linear_solver::String)
     arrays = read_factor_arrays(f, budget)
     arc_ax, bus_ax = arrays.axes
-
-    reduced_from = _read(f, "reduced_bus_from", Vector{Int}, budget)
-    reduced_to = _read(f, "reduced_bus_to", Vector{Int}, budget)
-    _check_same_length(
-        "reduced buses",
-        "reduced_bus_from" => reduced_from,
-        "reduced_bus_to" => reduced_to,
-    )
-    _check_unique("reduced_bus_from", reduced_from)
-    bus_set = Set(bus_ax)
-    for from in reduced_from
-        from in bus_set &&
-            error(
-                "Factor file entry reduced_bus_from holds bus $from, which is on the bus axis.",
-            )
-    end
-    nrd = _read_reduction(
-        f,
-        bus_ax,
-        arc_ax,
-        Dict{Int, Int}(zip(reduced_from, reduced_to)),
-        budget,
-    )
+    nrd = _read_reduction(f, bus_ax, arc_ax, arrays.reverse_bus_map, budget)
     name_to_arc = NAME_TO_ARC()
     g = _group(f, "names")
     types = _read(g, "type", Vector{String}, budget)
