@@ -26,8 +26,7 @@ function _worker_factorization(
     core::FactorCore,
     lock::ReentrantLock,
 )
-    n_bus = size(core.BA, 1)
-    ref = Set{Int}(setdiff(1:n_bus, core.valid_ix))
+    ref = Set{Int}(_ref_bus_positions(core))
     ABA = calculate_ABA_matrix(core.A, core.BA, ref)
     return @lock lock _create_factorization(KLUSolver(), ABA)
 end

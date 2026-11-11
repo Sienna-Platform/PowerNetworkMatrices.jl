@@ -54,9 +54,7 @@ get_network_reduction_data(c::VirtualFactorCore) =
 # Field reads that the wrappers forward to the core. The branch data is not a field of the
 # core, so its names resolve through the attached `CoreNetworkData`.
 function _core_property(c::VirtualFactorCore, name::Symbol)
-    if name === :branch_catalog ||
-       name === :branch_susceptances_by_arc ||
-       name === :branch_susceptances_ready
+    if name in fieldnames(CoreNetworkData)
         return getfield(get_network_data(c), name)
     end
     return getfield(c, name)
