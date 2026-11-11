@@ -31,7 +31,8 @@ in the branch data, so a core shared between wrappers computes them only once.
 The type parameter order `{Ax, L, K}` matches `VirtualPTDF` so the PTDF/MODF
 wrappers can carry `core::VirtualFactorCore{Ax, L, K}` with the same parameters.
 """
-const VirtualFactorCore = PMC.FactorCore{Ax, L, K, CoreNetworkData} where {Ax, L, K}
+const VirtualFactorCore =
+    PMC.FactorCore{Ax, L, K, CoreNetworkData} where {Ax, L <: NTuple{2, Dict}, K}
 
 # --- Accessors that need the branch data ---
 

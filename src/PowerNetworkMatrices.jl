@@ -237,7 +237,41 @@ import PowerMatricesCore:
     _position_map,
     _find_root!,
     _validate_dc_arrays,
-    ptdf_row!
+    ptdf_row!,
+    get_core,
+    BridgeTree,
+    is_bridge,
+    bridge_far_side,
+    _other_end,
+    find_bridges,
+    _invert_woodbury_W,
+    _island_pinv,
+    _removes_arc,
+    _post_contingency_bus_labels,
+    BridgeLabels,
+    _zero_islanded_entries!,
+    _woodbury_factors_from_Z,
+    _woodbury_rank,
+    _monitored_Z!,
+    _arcs_fully_opened,
+    _post_modification_susceptance,
+    _monitored_arc_out,
+    _woodbury_correction!,
+    _check_arc_indices,
+    _compute_woodbury_factors,
+    _apply_woodbury_correction,
+    apply_woodbury_correction,
+    compute_woodbury_factors,
+    _worker_lock,
+    _worker_factorization,
+    worker_core,
+    _check_worker_core,
+    _check_bus_rows,
+    solve_bus_angles!,
+    _ba_dot,
+    _check_flows,
+    arc_flows!,
+    WoodburyFlowScratch
 
 const KLUWrapper = PMC.KLUWrapper
 const AccelerateWrapper = PMC.AccelerateWrapper
@@ -274,7 +308,6 @@ include("reduction_helpers.jl")
 include("irreducible_bus_selection.jl")
 include("AdjacencyMatrix.jl")
 include("connectivity_checks.jl")
-include("bridges.jl")
 include("subnetworks.jl")
 include("common.jl")
 include("BranchAdmittance.jl")

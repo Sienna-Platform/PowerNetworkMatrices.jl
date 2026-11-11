@@ -54,6 +54,9 @@ include("row_cache.jl")
 include("connectivity.jl")
 include("modf_definitions.jl")
 include("factor_core.jl")
+include("bridges.jl")
+include("woodbury_kernel.jl")
+include("virtual_workers.jl")
 
 # Forward declaration for the function that `MKLPardisoExt` defines.
 function _calculate_PTDF_matrix_MKLPardiso end
