@@ -25,10 +25,14 @@ jobs:
           version: ${{ matrix.julia-version }}
           arch: ${{ matrix.julia-arch }}
       - uses: julia-actions/julia-buildpkg@latest
+        with:
+          project: PowerNetworkMatrices.jl
         env:
           PYTHON: ""
       - uses: julia-actions/julia-runtest@latest
         continue-on-error: ${{ matrix.julia-version == 'nightly' }}
+        with:
+          project: PowerNetworkMatrices.jl
         env:
           PYTHON: ""
           JULIA_NUM_THREADS: "2"
@@ -38,7 +42,7 @@ jobs:
       - uses: julia-actions/julia-processcoverage@v1
         if: matrix.os == 'ubuntu-latest' && matrix.julia-version == '1'
         with:
-          directories: src,PowerMatricesCore.jl/src,PowerMatricesCore.jl/ext
+          directories: PowerNetworkMatrices.jl/src,PowerMatricesCore.jl/src,PowerMatricesCore.jl/ext
       - uses: codecov/codecov-action@v7
         if: matrix.os == 'ubuntu-latest' && matrix.julia-version == '1'
         with:

@@ -67,6 +67,8 @@ The `ThreeWindingTransformerCircuit` arm is load-bearing: the wrapper subtypes `
 
 ## Source layout
 
+The PNM files below are in `PowerNetworkMatrices.jl/src/`, its tests in `PowerNetworkMatrices.jl/test/`, its manual in `PowerNetworkMatrices.jl/docs/`.
+
   - Core: `PowerNetworkMatrix.jl` (abstract `PowerNetworkMatrix{T} <: AbstractArray{T,2}`), `definitions.jl` (`AUTO_TOLERANCE_BUS_LIMIT = 2000`, `ZERO_IMPEDANCE_X_EPSILON = 1e-6`, `abstract type AbstractReductionAggregate`)
   - Matrices: `Ybus.jl`, `YbusACBranches.jl`, `ArcAdmittanceMatrix.jl`, `IncidenceMatrix.jl`, `AdjacencyMatrix.jl`, `BA_ABA_matrices.jl`, `ptdf_calculations.jl` (N_arcs×N_buses, transposed storage), `lodf_calculations.jl` (diagonal = −1.0), `virtual_{ptdf,lodf,modf}_calculations.jl`
   - Modification/contingency: `network_modification.jl`, `woodbury_kernel.jl` — **mainline in psy6**; POM's branch-side N-1 builds on `VirtualMODF`/`ContingencySpec`
@@ -103,16 +105,20 @@ Exports live only in the main module file.
 ## Commands
 
 ```sh
+# PNM: run from PowerNetworkMatrices.jl/
 julia --project=test -e 'using Pkg; Pkg.instantiate()'                         # once per clone
 julia --project=test test/runtests.jl                                          # full suite (ParallelTestRunner)
 julia --project=test test/runtests.jl test_ptdf                                # FILE-name filter (startswith)
 julia --project=test test/runtests.jl --list                                   # list discoverable tests
 julia --project=test test/runtests.jl --jobs=4                                 # cap parallelism
 julia --project=docs docs/make.jl                                              # docs must build clean
+# Core: run from PowerMatricesCore.jl/
+julia --project=test test/runtests.jl                                          # core suite
+# Both packages: run from the repository root
 julia --project=scripts/formatter -e 'include("scripts/formatter/formatter_code.jl")'
 ```
 
-Compile-check: `julia --project=test -e 'using PowerNetworkMatrices'`.
+Compile-check, from `PowerNetworkMatrices.jl/`: `julia --project=test -e 'using PowerNetworkMatrices'`.
 
 **Never `Pkg.develop` into an environment carrying `[sources]` git pins.** It re-resolves and pulls a mismatched PSY/IS pair — the psy6 envs pin `PowerSystems#psy6` (5.10.0) and `InfrastructureSystems#IS4`, and `develop` will happily swap in registry PSY 5.12.0, which fails to precompile with `UndefVarError: SystemUnitsSettings`. `test/Project.toml` already pins what it needs; plain `Pkg.instantiate()` is the whole setup step.
 

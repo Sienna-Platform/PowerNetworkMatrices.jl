@@ -18,7 +18,7 @@ PrettyTables = "08abe8d2-0d0c-5749-adfa-8a2ac140af0d"
 # environment — without these the docs env resolves registry PowerSystems against IS4 and dies
 # precompiling with `UndefVarError: SystemUnitsSettings`. Mirrors test/Project.toml.
 [sources]
-PowerMatricesCore = {path = "../PowerMatricesCore.jl"}
+PowerMatricesCore = {path = "../../PowerMatricesCore.jl"}
 InfrastructureSystems = {rev = "IS4", url = "https://github.com/Sienna-Platform/InfrastructureSystems.jl.git"}
 PowerFlowFileParser = {rev = "psy6", url = "https://github.com/Sienna-Platform/PowerFlowFileParser.jl.git"}
 PowerSystemCaseBuilder = {rev = "psy6", url = "https://github.com/Sienna-Platform/PowerSystemCaseBuilder.jl.git"}

@@ -14,8 +14,28 @@
   - PowerNetworkMatrices.jl will work with Julia v1.10+.
   - PowerNetworkMatrices.jl exports Matrix methods that were available in PowerSystems.jl version 1.0 and have been implemented as a separate package since 2022.
 
+## Installation
+
+```julia
+using Pkg
+Pkg.add("PowerNetworkMatrices")
+```
+
+To install from a git checkout of the repository, use:
+
+```julia
+Pkg.add(;
+    url = "https://github.com/Sienna-Platform/PowerNetworkMatrices.jl",
+    subdir = "PowerNetworkMatrices.jl",
+)
+```
+
+This package depends on [`PowerMatricesCore.jl`](../PowerMatricesCore.jl), which holds the
+linear algebra without a `PowerSystems.jl` dependency. The
+[repository README](../README.md) describes both packages.
+
 ## License
 
-PowerNetworkMatrices is released under a BSD [license](https://github.com/Sienna-Platform/PowerNetworkMatrices.jl/blob/master/LICENSE).
+PowerNetworkMatrices is released under a BSD [license](https://github.com/Sienna-Platform/PowerNetworkMatrices.jl/blob/main/PowerNetworkMatrices.jl/LICENSE).
 PowerNetworkMatrices has been developed as part of the Scalable Integrated Infrastructure Planning (SIIP)
 initiative at the U.S. Department of Energy's National Laboratory of the Rockies (formerly known as NREL) ([NLR](https://www.nlr.gov/)).

@@ -16,9 +16,32 @@ coverage:
         threshold: 5        # allowed to drop X% and still result in a "success" commit status
         if_not_found: success  # if parent is not found report status as success, error, or failure
         if_ci_failed: error    # if ci fails report status as success, error, or failure
+      pnm:
+        target: auto
+        threshold: 5
+        if_not_found: success
+        if_ci_failed: error
+        flags:
+          - pnm
+      core:
+        target: auto
+        threshold: 5
+        if_not_found: success
+        if_ci_failed: error
+        flags:
+          - core
     patch:
       default:
         target: 70
+
+flags:
+  pnm:
+    paths:
+      - PowerNetworkMatrices.jl/src/
+  core:
+    paths:
+      - PowerMatricesCore.jl/src/
+      - PowerMatricesCore.jl/ext/
 
 parsers:
   gcov:
