@@ -564,7 +564,18 @@ function read_factor_core(
     network_data = nothing,
     linear_solver::Union{String, LinearSolverType} = _default_linear_solver(),
 )
-    arrays = read_factor_arrays(f, budget)
+    return _factor_core(
+        read_factor_arrays(f, budget);
+        network_data = network_data,
+        linear_solver = linear_solver,
+    )
+end
+
+function _factor_core(
+    arrays::NamedTuple;
+    network_data = nothing,
+    linear_solver::Union{String, LinearSolverType} = _default_linear_solver(),
+)
     return FactorCore(
         arrays.arc_susceptances,
         arrays.ref_bus_positions,

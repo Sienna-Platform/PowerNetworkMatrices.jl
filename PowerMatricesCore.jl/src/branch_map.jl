@@ -148,10 +148,12 @@ end
 
 """
     read_branch_map(path::AbstractString) -> BranchArcTable
+    read_branch_map(f::HDF5.File, budget::ReadBudget, n_arc::Int) -> BranchArcTable
 
 Read the group `branch_map` of a factor file. The function does not factorize the network.
 It throws an error if the format version is not 1, the group is missing, or a column breaks
-a rule of the table.
+a rule of the table. The second method reads from an open file and does not read the arcs.
+`n_arc` is the number of arcs of the network of the file.
 """
 function read_branch_map(path::AbstractString)
     return HDF5.h5open(path, "r") do f
@@ -161,18 +163,21 @@ function read_branch_map(path::AbstractString)
         arc_from = _read(f, "arc_from", Vector{Int}, budget)
         arc_to = _read(f, "arc_to", Vector{Int}, budget)
         _check_same_length("arcs", "arc_from" => arc_from, "arc_to" => arc_to)
-        g = _group(f, "branch_map")
-        kind = _read(g, "kind", Vector{Int}, budget)
-        id = _read(g, "id", Vector{Int}, budget)
-        parent = _read(g, "parent", Vector{Int}, budget)
-        sign = _read(g, "sign", Vector{Int}, budget)
-        b = _read(g, "b", Vector{Float64}, budget)
-        alpha = _read(g, "alpha", Vector{Float64}, budget)
-        n_arc = length(arc_from)
-        table = BranchArcTable(kind, id, parent, sign, b, alpha, n_arc)
-        _check_branch_map(table)
-        return table
+        return read_branch_map(f, budget, length(arc_from))
     end
+end
+
+function read_branch_map(f::HDF5.File, budget::ReadBudget, n_arc::Int)
+    g = _group(f, "branch_map")
+    kind = _read(g, "kind", Vector{Int}, budget)
+    id = _read(g, "id", Vector{Int}, budget)
+    parent = _read(g, "parent", Vector{Int}, budget)
+    sign = _read(g, "sign", Vector{Int}, budget)
+    b = _read(g, "b", Vector{Float64}, budget)
+    alpha = _read(g, "alpha", Vector{Float64}, budget)
+    table = BranchArcTable(kind, id, parent, sign, b, alpha, n_arc)
+    _check_branch_map(table)
+    return table
 end
 
 """
@@ -194,14 +199,63 @@ function branch_flows(
     arc_flows::Vector{Float64},
     outaged_rows::Vector{Int} = Int[],
 )
+    length(arc_flows) == table.n_arc ||
+        error(
+            "branch_flows: arc_flows has $(length(arc_flows)) values; expected $(table.n_arc).",
+        )
+    return _split_rows(_FlowRule(), table, table.alpha, arc_flows, outaged_rows)
+end
+
+# The rule of the final split of `_split_rows`: `_FlowRule` splits flows, and `_ShareRule`
+# splits the share of the arc flow.
+abstract type _SplitRule end
+struct _FlowRule <: _SplitRule end
+struct _ShareRule <: _SplitRule end
+
+_rule_name(::_FlowRule) = "branch_flows"
+_rule_name(::_ShareRule) = "branch_shares"
+
+function _split_rule(
+    ::_FlowRule,
+    r::Int,
+    sign::Int,
+    b::Float64,
+    alpha::Float64,
+    b_sum::Float64,
+    flow::Float64,
+)
+    return _split_flow(r, sign, b, alpha, b_sum, flow)
+end
+
+function _check_split(::_FlowRule, r::Int, kind::Int, value::Float64)
+    isfinite(value) || error(
+        "branch_flows: the flow of row $r (kind $kind) is $value; " *
+        "an arc flow or a susceptance is out of range.",
+    )
+    return
+end
+
+function _check_split(::_ShareRule, ::Int, ::Int, ::Float64)
+    return
+end
+
+# The pass of `branch_flows` and `branch_shares`: add the leaves into the arcs, mark the
+# dead rows, then split down. `rule` holds the final split of one row. `alpha_rows` is the
+# phase shift of each row, and `arc_flows` is the flow to split for each arc.
+function _split_rows(
+    rule::_SplitRule,
+    table::BranchArcTable,
+    alpha_rows::Vector{Float64},
+    arc_flows::Vector{Float64},
+    outaged_rows::Vector{Int},
+)
+    name = _rule_name(rule)
     n = length(table.kind)
     n_arc = table.n_arc
-    length(arc_flows) == n_arc ||
-        error("branch_flows: arc_flows has $(length(arc_flows)) values; expected $n_arc.")
     dead = falses(n)
     for r in outaged_rows
         1 <= r <= n ||
-            error("branch_flows: outaged row $r is not in 1:$n.")
+            error("$name: outaged row $r is not in 1:$n.")
         dead[r] = true
     end
     outaged = copy(dead)
@@ -209,7 +263,7 @@ function branch_flows(
     parent = table.parent
     sign = table.sign
     b = copy(table.b)
-    alpha = copy(table.alpha)
+    alpha = copy(alpha_rows)
     sb = zeros(n)
     ss = zeros(n)
     sr = zeros(n)
@@ -237,7 +291,7 @@ function branch_flows(
                 dead[r] = true
             else
                 iszero(sr[r]) &&
-                    error("branch_flows: row $r (series chain) has a zero impedance sum.")
+                    error("$name: row $r (series chain) has a zero impedance sum.")
                 b[r] = 1 / sr[r]
                 alpha[r] = sa[r]
             end
@@ -261,7 +315,7 @@ function branch_flows(
             end
         end
     end
-    flows = zeros(n)
+    values = zeros(n)
     inherited = falses(n)
     for r in 1:n
         p = parent[r]
@@ -273,7 +327,8 @@ function branch_flows(
         end
         dead[r] && continue
         if p < 0
-            flows[r] = _split_flow(
+            values[r] = _split_rule(
+                rule,
                 r,
                 sign[r],
                 b[r],
@@ -282,16 +337,14 @@ function branch_flows(
                 arc_flows[-p] + arc_ss[-p],
             )
         elseif kind[p] == 9
-            flows[r] = _split_flow(r, sign[r], b[r], alpha[r], sb[p], flows[p] + ss[p])
+            values[r] =
+                _split_rule(rule, r, sign[r], b[r], alpha[r], sb[p], values[p] + ss[p])
         else
-            flows[r] = sign[r] * flows[p]
+            values[r] = sign[r] * values[p]
         end
-        isfinite(flows[r]) || error(
-            "branch_flows: the flow of row $r (kind $(kind[r])) is $(flows[r]); " *
-            "an arc flow or a susceptance is out of range.",
-        )
+        _check_split(rule, r, kind[r], values[r])
     end
-    return flows
+    return values
 end
 
 # A zero susceptance sum is BA's "no DC coupling": the rows carry no flow, and the flow to

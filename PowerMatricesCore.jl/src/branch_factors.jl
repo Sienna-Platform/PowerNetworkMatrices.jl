@@ -12,79 +12,25 @@ function branch_shares(
     table::BranchArcTable,
     outaged_rows::Vector{Int} = Int[],
 )
-    n = length(table.kind)
-    n_arc = table.n_arc
-    dead = falses(n)
-    for r in outaged_rows
-        1 <= r <= n ||
-            error("branch_shares: outaged row $r is not in 1:$n.")
-        dead[r] = true
-    end
-    outaged = copy(dead)
-    kind = table.kind
-    parent = table.parent
-    sign = table.sign
-    b = copy(table.b)
-    sb = zeros(n)
-    sr = zeros(n)
-    live_children = zeros(Int, n)
-    dead_children = zeros(Int, n)
-    arc_sb = zeros(n_arc)
-    for r in n:-1:1
-        if dead[r]
-            # An outaged row carries no flow, so no sum is checked.
-        elseif kind[r] == 9
-            if iszero(live_children[r])
-                dead[r] = true
-            elseif iszero(sb[r])
-                b[r] = 0.0
-            else
-                b[r] = sb[r]
-            end
-        elseif kind[r] == 10
-            if !iszero(dead_children[r])
-                dead[r] = true
-            else
-                iszero(sr[r]) &&
-                    error("branch_shares: row $r (series chain) has a zero impedance sum.")
-                b[r] = 1 / sr[r]
-            end
-        end
-        p = parent[r]
-        if p > 0 && kind[p] == 10
-            if dead[r]
-                dead_children[p] += 1
-            else
-                sr[p] += 1 / b[r]
-            end
-        elseif !dead[r]
-            if p < 0
-                arc_sb[-p] += b[r]
-            else
-                live_children[p] += 1
-                sb[p] += b[r]
-            end
-        end
-    end
-    shares = zeros(n)
-    inherited = falses(n)
-    for r in 1:n
-        p = parent[r]
-        if p > 0 && (inherited[p] || (outaged[p] && kind[p] == 9))
-            dead[r] = true
-            inherited[r] = true
-        end
-        if !dead[r]
-            if p < 0
-                shares[r] = _split_share(sign[r], b[r], arc_sb[-p], 1.0)
-            elseif kind[p] == 9
-                shares[r] = _split_share(sign[r], b[r], sb[p], shares[p])
-            else
-                shares[r] = sign[r] * shares[p]
-            end
-        end
-    end
-    return shares
+    return _split_rows(
+        _ShareRule(),
+        table,
+        zeros(length(table.kind)),
+        ones(table.n_arc),
+        outaged_rows,
+    )
+end
+
+function _split_rule(
+    ::_ShareRule,
+    ::Int,
+    sign::Int,
+    b::Float64,
+    ::Float64,
+    b_sum::Float64,
+    share::Float64,
+)
+    return _split_share(sign, b, b_sum, share)
 end
 
 function _split_share(sign::Int, b::Float64, b_sum::Float64, share::Float64)
@@ -182,41 +128,60 @@ Read a factor file for queries by branch id. The function factorizes the network
 `linear_solver`. It reads the branch map, and the branch outage table if the file has one.
 It throws an error if the file has no branch map. It also throws an error if the file holds
 distributed slack weights and the network has more than one reference bus. It throws an error
-if a series chain of the branch map has a zero impedance sum.
+if a series chain of the branch map has a zero impedance sum. It throws an error if a reduced
+bus of the file maps to a target that is not on the bus axis.
 """
 function read_branch_factors(
     path::AbstractString;
     linear_solver::Union{String, LinearSolverType} = _default_linear_solver(),
 )
-    core = read_factor_core(path; linear_solver = linear_solver)
-    branch_map = read_branch_map(path)
-    has_outages = HDF5.h5open(f -> haskey(f, "branch_outages"), path, "r")
-    if has_outages
-        outages = read_branch_outages(path)
-    else
-        outages = _empty_outage_table(get_branch_arc_count(branch_map))
-    end
-    reverse_bus_map, weights = HDF5.h5open(path, "r") do f
+    return HDF5.h5open(path, "r") do f
         budget = ReadBudget(path)
         arrays = read_factor_arrays(f, budget)
-        return arrays.reverse_bus_map, read_dist_slack(f, core, budget)
+        _check_reduced_targets(f, arrays, budget)
+        core = _factor_core(arrays; linear_solver = linear_solver)
+        branch_map = read_branch_map(f, budget, length(get_arc_axis(core)))
+        has_outages = haskey(f, "branch_outages")
+        if has_outages
+            outages = read_branch_outages(f, budget, arrays.arc_susceptances)
+        else
+            outages = _empty_outage_table(get_branch_arc_count(branch_map))
+        end
+        dist_slack = read_dist_slack(f, core, budget)
+        if !isempty(dist_slack)
+            _check_dist_slack_network(core)
+            dist_slack = dist_slack ./ sum(dist_slack)
+        end
+        return BranchFactors(
+            core,
+            branch_map,
+            _leaf_rows(branch_map),
+            _row_arcs(branch_map),
+            branch_shares(branch_map),
+            outages,
+            has_outages,
+            _bus_columns(get_bus_axis(core), arrays.reverse_bus_map),
+            dist_slack,
+        )
     end
-    dist_slack = weights
-    if !isempty(weights)
-        _check_dist_slack_network(core)
-        dist_slack = weights ./ sum(weights)
+end
+
+# For a file with the group `reduction`, the group reader checks the reduced-bus targets. A
+# file without it can name no removed bus, so every target is on the bus axis.
+function _check_reduced_targets(f::HDF5.File, arrays::NamedTuple, budget::ReadBudget)
+    bus_ax, arc_ax = arrays.axes[2], arrays.axes[1]
+    if haskey(f, "reduction")
+        read_reduction_records(f, bus_ax, arc_ax, arrays.reverse_bus_map, budget)
+        return
     end
-    return BranchFactors(
-        core,
-        branch_map,
-        _leaf_rows(branch_map),
-        _row_arcs(branch_map),
-        branch_shares(branch_map),
-        outages,
-        has_outages,
-        _bus_columns(get_bus_axis(core), reverse_bus_map),
-        dist_slack,
-    )
+    bus_set = Set(bus_ax)
+    for (from, to) in arrays.reverse_bus_map
+        to in bus_set || error(
+            "Factor file entry reduced_bus_to holds bus $to for the reduced bus $from, " *
+            "which is not on the bus axis.",
+        )
+    end
+    return
 end
 
 "Return the `FactorCore` of `x`."
@@ -335,7 +300,7 @@ function _branch_ptdf_row(x::BranchFactors, r::Int)
         return _zero_row(x)
     end
     row = ptdf_row(x.core, x.row_arcs[r])
-    if !isempty(x.dist_slack)
+    if has_dist_slack(x)
         apply_dist_slack!(row, x.core, x.dist_slack)
     end
     return _finish_row(x, row, x.shares[r])
@@ -375,7 +340,7 @@ if the outage gives a series chain a zero impedance sum.
 """
 function branch_contingency(x::BranchFactors, ids::Vector{Int})
     x.has_outages || error(
-        "The factor file has no branch outage table, so a contingency by branch id is not available. Write the file with the system.",
+        "The factor file has no branch outage table, so a contingency by branch id is not available. The writer of the file did not add it.",
     )
     modification = NetworkModification(x.outages, ids)
     woodbury = compute_woodbury_factors(x.core, modification)
@@ -424,8 +389,8 @@ function _branch_ptdf_row(x::BranchFactors, r::Int, c::BranchContingency)
         return _zero_row(x)
     end
     row = apply_woodbury_correction(x.core, x.row_arcs[r], c.woodbury)
-    if !isempty(x.dist_slack)
-        apply_dist_slack!(row, x.core, x.dist_slack, c.woodbury)
+    if has_dist_slack(x)
+        apply_dist_slack!(row, x.core, x.dist_slack)
     end
     return _finish_row(x, row, c.shares[r])
 end

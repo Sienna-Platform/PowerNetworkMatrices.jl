@@ -193,7 +193,7 @@ end
         x = PMC.read_branch_factors(path; linear_solver = "KLU")
         @test !x.has_outages
         @test PMC.branch_ptdf_row(x, 101) ≈ 0.4 .* _slack_row(core, 1)
-        @test_throws "The factor file has no branch outage table, so a contingency by branch id is not available. Write the file with the system." PMC.branch_contingency(
+        @test_throws "The factor file has no branch outage table, so a contingency by branch id is not available. The writer of the file did not add it." PMC.branch_contingency(
             x,
             [101],
         )
@@ -358,6 +358,7 @@ end
         island = PMC.branch_contingency(x, [106])
         @test PMC.is_islanding(island) && PMC.has_dist_slack(x)
         @test_throws islanding_text PMC.branch_ptdf_row(x, 103, island)
+        @test_throws islanding_text PMC.branch_ptdf_row(x, 106, island)
         # An outage row with no branch map row.
         HDF5.h5open(path, "r+") do f
             _replace_entry!(f["branch_outages"], "id", [101, 102, 13, 105, 109])
@@ -455,6 +456,94 @@ end
         path = joinpath(dir, "zero_sum.h5")
         _write_query_file(path; with_outages = false, table = chain)
         @test_throws "branch_shares: row 8 (series chain) has a zero impedance sum" PMC.read_branch_factors(
+            path;
+            linear_solver = "KLU",
+        )
+    end
+end
+
+@testset "Queries by id: one read budget for the whole file" begin
+    mktempdir() do dir
+        path = joinpath(dir, "q.h5")
+        _write_query_file(path)
+        HDF5.h5open(path, "r") do f
+            probe = PMC.ReadBudget(path)
+            PMC.read_factor_arrays(f, probe)
+            core_bytes = filesize(path) - probe.remaining
+            budget = PMC.ReadBudget(core_bytes)
+            PMC.read_factor_arrays(f, budget)
+            @test_throws "branch_map" PMC.read_branch_map(f, budget, 6)
+        end
+    end
+end
+
+@testset "Queries by id: the branch map must match the arcs of the core" begin
+    t = _six_arc_table()
+    seven = PMC.BranchArcTable(
+        [t.kind; 1],
+        [t.id; 109],
+        [t.parent; -7],
+        [t.sign; 1],
+        [t.b; 3.0],
+        [t.alpha; 0.0],
+        7,
+    )
+    mktempdir() do dir
+        path = joinpath(dir, "q.h5")
+        _write_query_file(path; table = seven)
+        @test_throws "parent -7 is not an arc of the 6 arcs" PMC.read_branch_factors(
+            path;
+            linear_solver = "KLU",
+        )
+    end
+end
+
+@testset "Queries by id: a reduced bus names a bus of the file" begin
+    mktempdir() do dir
+        path = joinpath(dir, "q.h5")
+        _write_query_file(path; reverse_bus_map = Dict(98 => 3))
+        HDF5.h5open(path, "r+") do f
+            _replace_entry!(f, "reduced_bus_to", [77])
+        end
+        @test_throws "reduced_bus_to holds bus 77 for the reduced bus 98" PMC.read_branch_factors(
+            path;
+            linear_solver = "KLU",
+        )
+    end
+    mktempdir() do dir
+        path = joinpath(dir, "q.h5")
+        reduced = Dict(99 => 98)
+        _write_query_file(path; reverse_bus_map = reduced)
+        rec = (
+            applied = [2],
+            removed_arc_from = [3],
+            removed_arc_to = [98],
+            removed_arc_code = [2],
+            composite_from = [0],
+            composite_to = [0],
+            survivor_from = [3],
+            survivor_to = [98],
+            survivor_bus = [3],
+            boundary_bus = [3],
+            boundary_from = [3],
+            boundary_to = [98],
+            removed_buses = [98],
+            merged_from = [99],
+            merged_to = [98],
+            irreducible_buses = Int[],
+        )
+        arc_ax = [(1, 2), (1, 3), (2, 3), (2, 4), (3, 5), (4, 5)]
+        HDF5.h5open(path, "r+") do f
+            PMC.write_reduction_records!(f, rec, [1, 2, 3, 4, 5], arc_ax, reduced)
+        end
+        x = PMC.read_branch_factors(path; linear_solver = "KLU")
+        @test !PMC.has_bus_column(x, 99)
+        @test !PMC.has_bus_column(x, 98)
+        @test PMC.has_bus_column(x, 3)
+        HDF5.h5open(path, "r+") do f
+            _replace_entry!(f, "reduced_bus_to", [77])
+        end
+        @test_throws "reduced_bus_to holds bus 77" PMC.read_branch_factors(
             path;
             linear_solver = "KLU",
         )

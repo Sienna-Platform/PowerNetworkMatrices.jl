@@ -387,72 +387,85 @@ end
 
 """
     read_branch_outages(path::AbstractString) -> BranchOutageTable
+    read_branch_outages(f::HDF5.File, budget::ReadBudget, arc_susceptances::Vector{Float64}) -> BranchOutageTable
 
 Read the group `branch_outages` of a factor file. The function does not factorize the
 network. It throws an error if the file has no such group. The `type` of a key is a `String`
-that the function does not interpret.
+that the function does not interpret. The second method reads from an open file and does
+not read the arcs. `arc_susceptances` holds the susceptance of each arc of the network of the
+file.
 """
 function read_branch_outages(path::AbstractString)
     return HDF5.h5open(path, "r") do f
         budget = ReadBudget(path)
         _check_hard_links(f)
         _check_format_version(HDF5.attributes(f), budget)
-        if !haskey(f, "branch_outages")
-            error(
-                "File $path has no branch outage table. " *
-                "The file was written without a system.",
-            )
-        end
-        g = _group(f, "branch_outages")
-        arc_susceptances = _read_arc_susceptances(f, budget)
-        n_arc = length(arc_susceptances)
-        opens_arc = _read(g, "opens_arc", Vector{Bool}, budget)
-        member = _read(g, "member", Vector{Int}, budget)
-        ranges, arrays = _read_row_arrays(
-            g,
-            n_arc,
-            budget,
-            "opens_arc" => opens_arc,
-            "member" => member,
-        )
-        _check_outage_arcs(arrays.arc_index, arc_susceptances)
-        # A row that does not open its arc removes one group member, and the reader keys it
-        # by that member.
-        for (row, m) in enumerate(member)
-            opens_arc[row] || m >= 1 ||
-                error(
-                    "Factor file entry branch_outages/member has the value $m at row $row, " *
-                    "a partial row; expected 1 or more.",
-                )
-        end
-        types = _read(g, "type", Vector{String}, budget)
-        names = _read(g, "name", Vector{String}, budget)
-        ids = _read(g, "id", Vector{Int}, budget)
-        is_islanding = _read(g, "is_islanding", Vector{Bool}, budget)
-        _check_same_length(
-            "branch_outages",
-            "start" => ranges,
-            "type" => types,
-            "name" => names,
-            "id" => ids,
-            "is_islanding" => is_islanding,
-        )
-        _check_unique("branch_outages/id", ids)
-        _check_unique("branch_outages/(type, name)", collect(zip(types, names)))
-        rows = Dict(zip(zip(types, names), zip(is_islanding, ranges)))
-        id_keys = Dict(id => (t, n) for (id, t, n) in zip(ids, types, names))
-        return BranchOutageTable(
-            rows,
-            arrays.arc_index,
-            arrays.delta_b,
-            arrays.delta_shift,
-            arrays.opened,
-            opens_arc,
-            member,
-            id_keys,
-            n_arc,
-        )
+        return read_branch_outages(f, budget, _read_arc_susceptances(f, budget))
     end
+end
+
+function _check_has_outage_table(f::HDF5.File)
+    haskey(f, "branch_outages") || error(
+        "File $(HDF5.filename(f)) has no branch outage table. " *
+        "The writer of the file did not add it.",
+    )
+    return
+end
+
+function read_branch_outages(
+    f::HDF5.File,
+    budget::ReadBudget,
+    arc_susceptances::Vector{Float64},
+)
+    _check_has_outage_table(f)
+    g = _group(f, "branch_outages")
+    n_arc = length(arc_susceptances)
+    opens_arc = _read(g, "opens_arc", Vector{Bool}, budget)
+    member = _read(g, "member", Vector{Int}, budget)
+    ranges, arrays = _read_row_arrays(
+        g,
+        n_arc,
+        budget,
+        "opens_arc" => opens_arc,
+        "member" => member,
+    )
+    _check_outage_arcs(arrays.arc_index, arc_susceptances)
+    # A row that does not open its arc removes one group member, and the reader keys it
+    # by that member.
+    for (row, m) in enumerate(member)
+        opens_arc[row] || m >= 1 ||
+            error(
+                "Factor file entry branch_outages/member has the value $m at row $row, " *
+                "a partial row; expected 1 or more.",
+            )
+    end
+    types = _read(g, "type", Vector{String}, budget)
+    names = _read(g, "name", Vector{String}, budget)
+    ids = _read(g, "id", Vector{Int}, budget)
+    is_islanding = _read(g, "is_islanding", Vector{Bool}, budget)
+    _check_same_length(
+        "branch_outages",
+        "start" => ranges,
+        "type" => types,
+        "name" => names,
+        "id" => ids,
+        "is_islanding" => is_islanding,
+    )
+    _check_unique("branch_outages/id", ids)
+    _check_unique("branch_outages/(type, name)", collect(zip(types, names)))
+    rows = Dict(zip(zip(types, names), zip(is_islanding, ranges)))
+    id_keys = Dict(id => (t, n) for (id, t, n) in zip(ids, types, names))
+    return BranchOutageTable(
+        rows,
+        arrays.arc_index,
+        arrays.delta_b,
+        arrays.delta_shift,
+        arrays.opened,
+        opens_arc,
+        member,
+        id_keys,
+        n_arc,
+    )
 end
 
 function _read_registered_outages!(

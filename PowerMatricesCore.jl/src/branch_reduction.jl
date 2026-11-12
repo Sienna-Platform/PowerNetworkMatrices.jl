@@ -25,7 +25,7 @@ function _branch_reduction_row(t::BranchReductionTable, id::Int)
         t.rows,
         id,
         "The branch reduction table has no branch with id $id. " *
-        "It holds the branches of the system that built it.",
+        "It holds the branches of the network of the file.",
     )
     return t.rows[key]
 end
@@ -33,7 +33,7 @@ end
 function _branch_reduction_row(t::BranchReductionTable, key::Tuple{Int, Int})
     haskey(t.rows, key) || error(
         "The branch reduction table has no branch with id $(key[1]) and winding $(key[2]). " *
-        "It holds the branches of the system that built it.",
+        "It holds the branches of the network of the file.",
     )
     return t.rows[key]
 end
@@ -142,7 +142,7 @@ end
     read_branch_reductions(path::AbstractString) -> BranchReductionTable
 
 Read the `branch_reduction` group of a factor file. The function throws an error if the file has
-no such group, because a file written without a system cannot name its branches. It also
+no such group, because the writer of the file did not add the branch reduction table. It also
 throws an error if the format version is not 1 or a column breaks a rule of the table.
 """
 function read_branch_reductions(path::AbstractString)
@@ -151,8 +151,8 @@ function read_branch_reductions(path::AbstractString)
         _check_hard_links(f)
         _check_format_version(HDF5.attributes(f), budget)
         haskey(f, "branch_reduction") || error(
-            "Factor file $path has no group branch_reduction: it was written without a " *
-            "System. Write it with `to_hdf5(mat, filename, sys)`.",
+            "Factor file $path has no group branch_reduction. " *
+            "The writer of the file did not add the branch reduction table.",
         )
         g = _group(f, "branch_reduction")
         id = _read(g, "id", Vector{Int}, budget)

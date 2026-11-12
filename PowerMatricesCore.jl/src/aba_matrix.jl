@@ -1,6 +1,6 @@
 
 """
-Evaluates the ABA matrix given the System's Incidence matrix (A), BA matrix and
+Evaluates the ABA matrix given the incidence matrix of the network (A), BA matrix and
 reference bus positions.
 
 # Arguments
