@@ -56,8 +56,12 @@ include("connectivity.jl")
 include("modf_definitions.jl")
 include("factor_core.jl")
 include("factor_file.jl")
+include("outage_tables.jl")
+include("branch_map.jl")
+include("branch_reason.jl")
 include("bridges.jl")
 include("woodbury_kernel.jl")
+include("branch_factors.jl")
 include("virtual_workers.jl")
 
 # Forward declaration for the function that `MKLPardisoExt` defines.

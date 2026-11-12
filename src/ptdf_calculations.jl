@@ -187,8 +187,8 @@ function _calculate_PTDF_matrix_DENSE(
     return
 end
 
-# _calculate_PTDF_matrix_MKLPardiso is defined in ext/MKLPardisoExt.jl
-# when Pardiso package is loaded
+# The MKLPardisoExt extension of PowerMatricesCore defines
+# _calculate_PTDF_matrix_MKLPardiso when the Pardiso package is loaded.
 
 @static if Sys.isapple()
     """

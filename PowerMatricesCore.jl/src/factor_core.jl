@@ -541,13 +541,16 @@ end
 
 """
     FactorCore(arc_susceptances, ref_bus_positions, axes, subnetwork_axes, arc_live_members;
-        network_data, reverse_bus_map, linear_solver, tol, system_uuid) -> FactorCore
+        network_data, reverse_bus_map, linear_solver, tol, system_uuid,
+        verify_factorization) -> FactorCore
 
 Build the shared factorization core from one signed DC susceptance per arc. The method builds
 the `BA` and `A` matrices from `axes` and `arc_susceptances`, then calls the matrix method.
 Entry `i` of `arc_susceptances` is the susceptance of arc `i`, positive from the first bus of
 the arc to the second. A subnetwork key that is not on the bus axis resolves through
-`reverse_bus_map`.
+`reverse_bus_map`. The default `verify_factorization = true` makes the constructor check the
+residual of a solve against the ABA matrix. The check throws an error if the factorization is
+singular or near singular.
 """
 function FactorCore(
     arc_susceptances::Vector{Float64},
@@ -560,6 +563,7 @@ function FactorCore(
     linear_solver::Union{String, LinearSolverType} = _default_linear_solver(),
     tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     system_uuid::Union{Base.UUID, Nothing} = nothing,
+    verify_factorization::Bool = true,
 )
     arc_ax, bus_ax = axes
     n_arc = length(arc_ax)
@@ -604,7 +608,7 @@ function FactorCore(
         linear_solver = linear_solver,
         tol = tol,
         system_uuid = system_uuid,
-        verify_factorization = true,
+        verify_factorization = verify_factorization,
     )
 end
 
@@ -626,4 +630,76 @@ function ptdf_row!(
 )
     lin_solve = _solve_ba_column!(K, work_ba_col, core.BA, core.bus_to_valid_idx, row)
     return _gather_to_buses!(dest, core.valid_ix, lin_solve)
+end
+
+function _check_arc_index(core::FactorCore, arc::Int)
+    n_arc = length(core.arc_susceptances)
+    1 <= arc <= n_arc ||
+        throw(ArgumentError("Arc index $arc is outside the $n_arc arcs of the matrix."))
+    return
+end
+
+"""
+    ptdf_row(core::FactorCore, arc::Int) -> Vector{Float64}
+
+Return a new vector with the PTDF row of the arc at index `arc`, in full-bus space with the
+reference-bus entries 0. The function solves under the `solver_lock` of `core`.
+
+The row is for the reference-bus slack. [`apply_dist_slack!`](@ref) changes it into the row for
+a distributed slack. `apply_cutoff(get_cutoff(core), row)` then applies the sparsification rule
+of `core`.
+"""
+function ptdf_row(core::FactorCore, arc::Int)
+    _check_arc_index(core, arc)
+    return with_solver(
+        core.K, core.work_ba_col, core.temp_data, core.solver_lock,
+    ) do K_solver, work_ba_col, temp_data
+        return copy(ptdf_row!(temp_data, K_solver, work_ba_col, core, arc))
+    end
+end
+
+# One set of weights describes the slack of one connected network.
+function _check_dist_slack_network(core::FactorCore)
+    if length(core.subnetwork_axes) != 1
+        error(
+            "Distributed slack is not supported for systems with multiple reference buses.",
+        )
+    end
+    return
+end
+
+"""
+    apply_dist_slack!(row, core::FactorCore, dist_slack_normalized) -> row
+    apply_dist_slack!(row, core::FactorCore, dist_slack_normalized, wf::WoodburyFactors) -> row
+
+Change a sensitivity row of `core` from the reference-bus slack to a distributed slack, in
+place. `dist_slack_normalized` holds one weight for each bus, and the weights sum to 1. A
+distributed slack withdraws each injection in proportion to the weights, which shifts every
+entry of the row by the weighted mean of the row.
+
+The method with `wf` is for a post-modification row. It throws an error if the modification
+islands the network. Both methods throw an error if `core` has more than one reference bus.
+"""
+function apply_dist_slack!(
+    row::Vector{Float64},
+    core::FactorCore,
+    dist_slack_normalized::Vector{Float64},
+)
+    _check_dist_slack_network(core)
+    row .-= LinearAlgebra.dot(row, dist_slack_normalized)
+    return row
+end
+
+function apply_dist_slack!(
+    row::Vector{Float64},
+    core::FactorCore,
+    dist_slack_normalized::Vector{Float64},
+    wf::WoodburyFactors,
+)
+    if wf.is_islanding
+        error(
+            "Distributed slack is not supported for a modification that islands the network.",
+        )
+    end
+    return apply_dist_slack!(row, core, dist_slack_normalized)
 end

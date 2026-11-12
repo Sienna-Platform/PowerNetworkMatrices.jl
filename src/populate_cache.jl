@@ -121,7 +121,7 @@ function populate_cache(vptdf::VirtualPTDF, components)
             full =
                 _gather_to_buses!(zeros(size(core.BA, 1)), core.valid_ix, view(sol, :, j))
             if use_dist_slack
-                full .-= dot(full, dist_slack_normalized)
+                apply_dist_slack!(full, core, dist_slack_normalized)
             end
             stored_rows[j] = apply_cutoff(cutoff, full)
         end

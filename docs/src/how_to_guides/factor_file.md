@@ -6,11 +6,8 @@ rebuild the matrix in another process, for example a service that only computes 
 
 ## Write and read
 
-The factor file functions need HDF5 to be loaded. Run `using HDF5` before you call them.
-
 ```julia
 using PowerNetworkMatrices
-using HDF5
 
 vptdf = VirtualPTDF(sys; network_reductions = [RadialReduction(), DegreeTwoReduction()])
 to_hdf5(vptdf, "factors.h5")
@@ -125,6 +122,11 @@ For a `VirtualMODF`, the file also holds the registered contingencies, with or w
 `from_hdf5(VirtualMODF, filename)` restores them. Restored modifications have no shunt
 modifications and no Ybus deltas, so they serve the DC row kernels only.
 
+`PowerMatricesCore` reads both tables without `PowerSystems`.
+`PowerMatricesCore.read_branch_outages(filename)` returns the same `BranchOutageTable`, and
+`PowerMatricesCore.read_registered_outages(filename)` returns the registered contingencies by
+id. Neither call factorizes the network.
+
 `to_hdf5` writes a temporary file in the target directory and moves it into place when the
 write succeeds. A failed write with `force = true` leaves the old file unchanged. With `force = true`, a symbolic link at `filename` is replaced by the new file; the writer does not write through the link. If the target file system does not support hard links, a write with `force = false` fails with an error that says so. Use `force = true` on such a file system, because it writes with a move.
 
@@ -139,6 +141,9 @@ matrix and split an arc flow into branch flows. The `branch_map` group and the
 table = from_hdf5(BranchArcTable, "factors.h5")
 flows = branch_flows(table, arc_flows)
 ```
+
+`PowerMatricesCore.read_branch_map(filename)` and `PowerMatricesCore.branch_flows` do the same
+without `PowerSystems`.
 
 ### The table
 
@@ -212,7 +217,8 @@ code = no_arc_reason(reasons, id, winding)  # a three-winding circuit
 
 `BranchReasonTable(mat, sys)` builds the same table without a file. `no_arc_reason` throws an
 error for an id that the table does not hold. `from_hdf5(BranchReasonTable, filename)` throws an
-error for a file written without a `System`.
+error for a file written without a `System`. `PowerMatricesCore.read_branch_reasons(filename)`
+reads the same table without PowerSystems.
 
 | Code | Constant                | Meaning                                                                                                              |
 |:---- |:----------------------- |:-------------------------------------------------------------------------------------------------------------------- |
@@ -237,6 +243,39 @@ code 2, as the branch with zero impedance that caused the merge.
   - The split assumes zero injection at the interior buses of a degree-two chain.
     The reduction removed these buses, so a load there changes the flow along the chain.
 
+## Query factors by branch id without PowerSystems
+
+```julia
+import PowerMatricesCore as PMC
+x = PMC.read_branch_factors("factors.h5")
+core = PMC.get_core(x)                            # the FactorCore
+buses = PMC.get_bus_axis(x)                       # bus numbers of the columns
+PMC.has_bus_column(x, 101)                        # does the bus 101 have a column?
+col = PMC.bus_column(x, 101)                      # column of the bus 101
+PMC.has_branch(x, 7)                              # is the branch 7 in the matrix?
+row = PMC.branch_ptdf_row(x, 7)                   # factors of the branch 7, per bus
+ctg = PMC.branch_contingency(x, [12, 13])         # outage of the branches 12 and 13
+PMC.is_islanding(ctg)                             # does the outage split the network?
+row = PMC.branch_ptdf_row(x, 7, ctg)              # factors of the branch 7 after the outage
+tr1 = PMC.branch_ptdf_row(x, 9; winding = 1)      # primary circuit of a transformer
+PMC.has_branch_outages(x)                         # does the file hold an outage table?
+PMC.has_branch_outage(x, 12)                      # can the branch 12 be in a contingency?
+PMC.has_dist_slack(x)                             # does the file hold slack weights?
+```
+
+The `id` is the id of the branch in the document. The keyword `winding` is 0 for a branch with
+two terminals. It is 1, 2 or 3 for the primary, secondary or tertiary circuit of a
+three-winding transformer, and `id` is then the id of the transformer. A branch that a
+network reduction removed has no row, and the query throws an error.
+
+A contingency by branch id needs the branch outage table. Write the file with the system:
+`to_hdf5(matrix, filename, sys)`. The function `branch_contingency` finds the outaged rows of
+the branch map itself, so you do not apply the procedure of the section "After an outage".
+Every query has a predicate, so a caller needs no `try`. Use `has_bus_column` for `bus_column`, and
+`has_branch` for `branch_ptdf_row`. Use `has_branch_outages` and `has_branch_outage` for
+`branch_contingency`. A row with a contingency throws an error if `is_islanding` and
+`has_dist_slack` are both `true`.
+
 ## Limits of a restored matrix
 
 A restored matrix has no components. It holds the component-free records of the network
@@ -245,6 +284,9 @@ These calls fail with their usual error messages:
 
   - `NetworkModification(mat, arc)`
   - `mat[name, bus]`, which looks up a branch by name
+
+`PowerMatricesCore.read_branch_names(filename)` returns the `names` group as a map from
+`(type, name)` to the arc, so a caller can find the arc of a name and query the row by arc.
 
 These calls throw an error that names the cause:
 

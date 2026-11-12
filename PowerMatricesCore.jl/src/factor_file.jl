@@ -632,3 +632,54 @@ function read_dist_slack(
     _check_dist_slack(weights, get_bus_axis(core))
     return weights
 end
+
+function _read_branch_names(
+    f::HDF5.File,
+    arc_ax::Vector{Tuple{Int, Int}},
+    budget::ReadBudget,
+)
+    g = _group(f, "names")
+    types = _read(g, "type", Vector{String}, budget)
+    names = _read(g, "name", Vector{String}, budget)
+    name_from = _read(g, "from", Vector{Int}, budget)
+    name_to = _read(g, "to", Vector{Int}, budget)
+    _check_same_length(
+        "names",
+        "type" => types,
+        "name" => names,
+        "from" => name_from,
+        "to" => name_to,
+    )
+    _check_unique("names/(type, name)", collect(zip(types, names)))
+    arc_set = Set(arc_ax)
+    for (row, (n, from, to)) in enumerate(zip(names, name_from, name_to))
+        (from, to) in arc_set || error(
+            "Factor file group names maps $n to ($from, $to) at row $row, which is not an arc.",
+        )
+    end
+    return Dict{Tuple{String, String}, Tuple{Int, Int}}(
+        (t, n) => (from, to) for
+        (t, n, from, to) in zip(types, names, name_from, name_to)
+    )
+end
+
+"""
+    read_branch_names(path::AbstractString) -> Dict{Tuple{String, String}, Tuple{Int, Int}}
+
+Read the group `names` of a factor file: the arc `(from, to)` of each entry of the group,
+under the key `(type, name)`. Every arc is on the arc axis, and `get_arc_lookup(core)` gives
+its index. Several entries can have the same arc. The function does not factorize the
+network. It throws an error if the file has no such group. The `type` of a key is a `String`
+that the function does not interpret.
+"""
+function read_branch_names(path::AbstractString)
+    return HDF5.h5open(path, "r") do f
+        budget = ReadBudget(path)
+        _check_hard_links(f)
+        _check_format_version(HDF5.attributes(f), budget)
+        arc_from = _read(f, "arc_from", Vector{Int}, budget)
+        arc_to = _read(f, "arc_to", Vector{Int}, budget)
+        _check_same_length("arcs", "arc_from" => arc_from, "arc_to" => arc_to)
+        return _read_branch_names(f, collect(zip(arc_from, arc_to)), budget)
+    end
+end

@@ -27,13 +27,5 @@ _apply_woodbury_correction(
 
 function _apply_dist_slack!(row::Vector{Float64}, vptdf::VirtualPTDF, wf::WoodburyFactors)
     _use_dist_slack(vptdf) || return row
-    if wf.is_islanding
-        error(
-            "Distributed slack is not supported for a modification that islands the network.",
-        )
-    end
-    # A distributed slack withdraws each injection in proportion to the slack weights, which
-    # shifts every entry of a sensitivity row by the row's weighted mean.
-    row .-= LinearAlgebra.dot(row, get_dist_slack_normalized(vptdf))
-    return row
+    return apply_dist_slack!(row, get_core(vptdf), get_dist_slack_normalized(vptdf), wf)
 end

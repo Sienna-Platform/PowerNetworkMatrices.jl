@@ -14,7 +14,9 @@ linear algebra under
   - the DC factorization of the network and the PTDF row kernel;
   - the network modification types and the Woodbury row update for outages;
   - the sparsification cutoffs and the row cache;
-  - the reads and writes of the factor-file arrays.
+  - the reads and writes of the factor-file arrays, and the reads of its name, branch-map
+    and outage tables;
+  - the split of arc flows into branch flows.
 
 The package has no dependency on `PowerSystems.jl`. `PowerNetworkMatrices.jl` builds the
 network matrices from a `PowerSystems.System`, calls this package for the numerics, and

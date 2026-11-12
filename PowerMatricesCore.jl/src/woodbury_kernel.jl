@@ -397,14 +397,8 @@ function _check_arc_indices(
     core::FactorCore,
     modifications::Vector{ArcModification},
 )
-    n_arc = length(core.arc_susceptances)
     for mod in modifications
-        1 <= mod.arc_index <= n_arc ||
-            throw(
-                ArgumentError(
-                    "Arc index $(mod.arc_index) is outside the $n_arc arcs of the matrix.",
-                ),
-            )
+        _check_arc_index(core, mod.arc_index)
     end
     return
 end

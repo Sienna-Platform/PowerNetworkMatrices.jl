@@ -11,18 +11,18 @@ end
 Base.showerror(io::IO, e::UnsupportedOutageError) =
     print(io, "UnsupportedOutageError: ", e.msg)
 
-# Cached two-port `(Y11, Y12, Y21, Y22)` of a reduction aggregate. Deliberately ComplexF64, not
-# YBUS_ELTYPE: `ybus_branch_entries` hands back ComplexF64 for parallel groups but ComplexF32 for
-# series chains (`_build_chain_ybus` assembles at Ybus storage precision), so the declared field
-# type is the one explicit place that conversion happens. It is also load-bearing — the
-# π-recovery representability test resolves at 1e-9, which Float32 cannot. Four numbers per
-# aggregate, so this costs nothing against the sparse Ybus that YBUS_ELTYPE exists to shrink.
 const KiB = 1024
 const MiB = KiB * KiB
 const GiB = MiB * KiB
 const MAX_CACHE_SIZE_MiB = 100
 const ROW_PERSISTENT_CACHE_WARN = 1 * GiB
 
+# Cached two-port `(Y11, Y12, Y21, Y22)` of a reduction aggregate. Deliberately ComplexF64, not
+# YBUS_ELTYPE: `ybus_branch_entries` hands back ComplexF64 for parallel groups but ComplexF32 for
+# series chains (`_build_chain_ybus` assembles at Ybus storage precision), so the declared field
+# type is the one explicit place that conversion happens. It is also load-bearing — the
+# π-recovery representability test resolves at 1e-9, which Float32 cannot. Four numbers per
+# aggregate, so this costs nothing against the sparse Ybus that YBUS_ELTYPE exists to shrink.
 const CACHED_TWO_PORT = NTuple{4, ComplexF64}
 const EMPTY_TWO_PORT =
     (zero(ComplexF64), zero(ComplexF64), zero(ComplexF64), zero(ComplexF64))

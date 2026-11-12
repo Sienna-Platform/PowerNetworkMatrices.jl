@@ -15,6 +15,7 @@ using TimeSeries
 using DelimitedFiles
 using InteractiveUtils
 import PowerNetworkMatrices as PNM
+import PowerMatricesCore as PMC
 import InfrastructureSystems as IS
 using PowerSystems
 import PowerSystems as PSY

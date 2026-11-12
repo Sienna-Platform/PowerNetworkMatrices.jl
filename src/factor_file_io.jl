@@ -24,17 +24,6 @@ function _branch_type_name(::Type{T}) where {T}
     return name
 end
 
-function _write_branch_map!(f::HDF5.File, table::BranchArcTable)
-    g = HDF5.create_group(f, "branch_map")
-    g["kind"] = table.kind
-    g["id"] = table.id
-    g["parent"] = table.parent
-    g["sign"] = table.sign
-    g["b"] = table.b
-    g["alpha"] = table.alpha
-    return
-end
-
 function _write_reduction!(
     f::HDF5.File,
     nr::NetworkReductionData,
@@ -281,37 +270,6 @@ function _arc_row_flags(
     return first.(flags), last.(flags)
 end
 
-function _write_row_arrays(
-    g::HDF5.Group,
-    mods::Vector{NetworkModification},
-    n_arc::Int,
-)
-    starts = Int[]
-    lens = Int[]
-    arc_index = Int[]
-    delta_b = Float64[]
-    delta_shift = Float64[]
-    opened = Int[]
-    for mod in mods
-        push!(starts, length(arc_index) + 1)
-        push!(lens, length(mod.arc_modifications))
-        for m in mod.arc_modifications
-            push!(arc_index, m.arc_index)
-            push!(delta_b, m.delta_b)
-            push!(delta_shift, m.delta_shift_injection)
-            push!(opened, m.opened)
-        end
-    end
-    _check_row_values(HDF5.name(g), arc_index, delta_b, delta_shift, opened, n_arc)
-    g["start"] = starts
-    g["len"] = lens
-    g["arc_index"] = arc_index
-    g["delta_b"] = delta_b
-    g["delta_shift"] = delta_shift
-    g["opened"] = opened
-    return
-end
-
 _is_absorbed(nr::NetworkReductionData, branch::PSY.ACTransmission) =
     _resolve_branch_arc(nr, branch)[1] === :not_found
 
@@ -466,62 +424,6 @@ function to_hdf5(
     end
 end
 
-# `extra` holds the arc-row columns that only one group stores. They join the length check.
-function _read_row_arrays(
-    g::HDF5.Group,
-    n_arc::Int,
-    budget::ReadBudget,
-    extra::Pair{String, <:AbstractVector}...,
-)
-    starts = _read(g, "start", Vector{Int}, budget)
-    lens = _read(g, "len", Vector{Int}, budget)
-    arc_index = _read(g, "arc_index", Vector{Int}, budget)
-    delta_b = _read(g, "delta_b", Vector{Float64}, budget)
-    delta_shift = _read(g, "delta_shift", Vector{Float64}, budget)
-    opened = _read(g, "opened", Vector{Int}, budget)
-    _check_same_length("rows", "start" => starts, "len" => lens)
-    _check_same_length(
-        "arc rows",
-        "arc_index" => arc_index,
-        "delta_b" => delta_b,
-        "delta_shift" => delta_shift,
-        "opened" => opened,
-        extra...,
-    )
-    _check_row_values(HDF5.name(g), arc_index, delta_b, delta_shift, opened, n_arc)
-    n_rows = length(arc_index)
-    _check_row_ranges(HDF5.name(g), starts, lens, n_rows)
-    ranges = [s:(s + l - 1) for (s, l) in zip(starts, lens)]
-    for (k, range) in enumerate(ranges)
-        (isempty(range) || checkbounds(Bool, arc_index, range)) ||
-            error(
-                "Factor file row range $k ($range) is outside the $(length(arc_index)) arc rows.",
-            )
-    end
-    # Overlapping ranges would let a small file allocate one vector per range and row.
-    next = 1
-    for k in eachindex(ranges)
-        starts[k] == next || error(
-            "Factor file row range $k starts at $(starts[k]); " *
-            "ranges must be contiguous and ordered, so it must start at $next.",
-        )
-        next += lens[k]
-    end
-    next == n_rows + 1 || error(
-        "Factor file row ranges cover $(next - 1) of the $n_rows arc rows.",
-    )
-    for (k, range) in enumerate(ranges)
-        seen = Set{Int}()
-        for row in range
-            arc_index[row] in seen && error(
-                "Factor file row range $k has the arc_index $(arc_index[row]) more than once, at row $row.",
-            )
-            push!(seen, arc_index[row])
-        end
-    end
-    return ranges, (; arc_index, delta_b, delta_shift, opened)
-end
-
 """
     from_hdf5(::Type{BranchOutageTable}, filename) -> BranchOutageTable
 
@@ -529,108 +431,11 @@ Read the branch outage table from a file that `to_hdf5(mat, filename, sys)` wrot
 function throws an error if the file has no such table.
 """
 function from_hdf5(::Type{BranchOutageTable}, filename::AbstractString)
-    return HDF5.h5open(filename, "r") do f
-        budget = ReadBudget(filename)
-        _check_hard_links(f)
-        _check_format_version(HDF5.attributes(f), budget)
-        if !haskey(f, "branch_outages")
-            error(
-                "File $filename has no branch outage table. " *
-                "The file was written without a system.",
-            )
-        end
-        g = _group(f, "branch_outages")
-        arc_susceptances = _read(f, "arc_susceptances", Vector{Float64}, budget)
-        n_arc = length(_read(f, "arc_from", Vector{Int}, budget))
-        length(arc_susceptances) == n_arc || error(
-            "Factor file entry arc_susceptances has $(length(arc_susceptances)) values for $n_arc arcs.",
-        )
-        opens_arc = _read(g, "opens_arc", Vector{Bool}, budget)
-        member = _read(g, "member", Vector{Int}, budget)
-        ranges, arrays = _read_row_arrays(
-            g,
-            n_arc,
-            budget,
-            "opens_arc" => opens_arc,
-            "member" => member,
-        )
-        _check_outage_arcs(arrays.arc_index, arc_susceptances)
-        # A row that does not open its arc removes one group member, and the reader keys it
-        # by that member.
-        for (row, m) in enumerate(member)
-            opens_arc[row] || m >= 1 ||
-                error(
-                    "Factor file entry branch_outages/member has the value $m at row $row, " *
-                    "a partial row; expected 1 or more.",
-                )
-        end
-        types = _read(g, "type", Vector{String}, budget)
-        names = _read(g, "name", Vector{String}, budget)
-        for t in types
-            _branch_type(t, "branch_outages/type")
-        end
-        ids = _read(g, "id", Vector{Int}, budget)
-        is_islanding = _read(g, "is_islanding", Vector{Bool}, budget)
-        _check_same_length(
-            "branch_outages",
-            "start" => ranges,
-            "type" => types,
-            "name" => names,
-            "id" => ids,
-            "is_islanding" => is_islanding,
-        )
-        _check_unique("branch_outages/id", ids)
-        _check_unique("branch_outages/(type, name)", collect(zip(types, names)))
-        rows = Dict(zip(zip(types, names), zip(is_islanding, ranges)))
-        id_keys = Dict(id => (t, n) for (id, t, n) in zip(ids, types, names))
-        return BranchOutageTable(
-            rows,
-            arrays.arc_index,
-            arrays.delta_b,
-            arrays.delta_shift,
-            arrays.opened,
-            opens_arc,
-            member,
-            id_keys,
-            n_arc,
-        )
+    table = read_branch_outages(filename)
+    for (type, _) in keys(get_outage_rows(table))
+        _branch_type(type, "branch_outages/type")
     end
-end
-
-function _read_registered_outages!(
-    f::HDF5.File,
-    cache::Dict{Int, ContingencySpec},
-    arc_susceptances::Vector{Float64},
-    budget::ReadBudget,
-)
-    g = _group(f, "outages")
-    ranges, arrays = _read_row_arrays(g, length(arc_susceptances), budget)
-    _check_outage_arcs(arrays.arc_index, arc_susceptances)
-    ids = _read(g, "id", Vector{Int}, budget)
-    labels = _read(g, "label", Vector{String}, budget)
-    is_islanding = _read(g, "is_islanding", Vector{Bool}, budget)
-    _check_same_length(
-        "outages",
-        "start" => ranges,
-        "id" => ids,
-        "label" => labels,
-        "is_islanding" => is_islanding,
-    )
-    _check_unique("outages/id", ids)
-    for (id, label, islanding, range) in zip(ids, labels, is_islanding, ranges)
-        mods = _arc_modifications(
-            arrays.arc_index,
-            arrays.delta_b,
-            arrays.delta_shift,
-            arrays.opened,
-            range,
-        )
-        cache[id] = ContingencySpec(
-            id,
-            NetworkModification(label, mods, ShuntModification[], islanding),
-        )
-    end
-    return
+    return table
 end
 
 """
@@ -641,25 +446,7 @@ error if the format version is not 1, the group is missing, or a column breaks a
 the table.
 """
 function from_hdf5(::Type{BranchArcTable}, filename::AbstractString)
-    return HDF5.h5open(filename, "r") do f
-        budget = ReadBudget(filename)
-        _check_hard_links(f)
-        _check_format_version(HDF5.attributes(f), budget)
-        arc_from = _read(f, "arc_from", Vector{Int}, budget)
-        arc_to = _read(f, "arc_to", Vector{Int}, budget)
-        _check_same_length("arcs", "arc_from" => arc_from, "arc_to" => arc_to)
-        g = _group(f, "branch_map")
-        kind = _read(g, "kind", Vector{Int}, budget)
-        id = _read(g, "id", Vector{Int}, budget)
-        parent = _read(g, "parent", Vector{Int}, budget)
-        sign = _read(g, "sign", Vector{Int}, budget)
-        b = _read(g, "b", Vector{Float64}, budget)
-        alpha = _read(g, "alpha", Vector{Float64}, budget)
-        n_arc = length(arc_from)
-        table = BranchArcTable(kind, id, parent, sign, b, alpha, n_arc)
-        _check_branch_map(table)
-        return table
-    end
+    return read_branch_map(filename)
 end
 
 function _read_factor_core(f::HDF5.File, budget::ReadBudget; linear_solver::String)
@@ -667,31 +454,12 @@ function _read_factor_core(f::HDF5.File, budget::ReadBudget; linear_solver::Stri
     arc_ax, bus_ax = arrays.axes
     nrd = _read_reduction(f, bus_ax, arc_ax, arrays.reverse_bus_map, budget)
     name_to_arc = NAME_TO_ARC()
-    g = _group(f, "names")
-    types = _read(g, "type", Vector{String}, budget)
-    names = _read(g, "name", Vector{String}, budget)
-    name_from = _read(g, "from", Vector{Int}, budget)
-    name_to = _read(g, "to", Vector{Int}, budget)
-    _check_same_length(
-        "names",
-        "type" => types,
-        "name" => names,
-        "from" => name_from,
-        "to" => name_to,
-    )
-    _check_unique("names/(type, name)", collect(zip(types, names)))
-    arc_set = Set(arc_ax)
-    for (row, (n, from, to)) in enumerate(zip(names, name_from, name_to))
-        (from, to) in arc_set || error(
-            "Factor file group names maps $n to ($from, $to) at row $row, which is not an arc.",
-        )
-    end
-    for (t, n, from, to) in zip(types, names, name_from, name_to)
+    for ((t, n), arc) in _read_branch_names(f, arc_ax, budget)
         T = _branch_type(t, "names/type")
         entries = get!(name_to_arc, T) do
             DataStructures.SortedDict{String, ARC_ENTRY}()
         end
-        entries[n] = (from, to)
+        entries[n] = arc
     end
 
     return VirtualFactorCore(
@@ -776,21 +544,6 @@ function from_hdf5(
     end
 end
 
-function _write_branch_reason!(f::HDF5.File, t::BranchReasonTable)
-    rows = sort!(collect(t.rows); by = first)
-    id = [first(first(r)) for r in rows]
-    winding = [last(first(r)) for r in rows]
-    reason = [first(last(r)) for r in rows]
-    surviving_bus = [last(last(r)) for r in rows]
-    _check_branch_reason(id, winding, reason, surviving_bus)
-    g = HDF5.create_group(f, "branch_reason")
-    g["id"] = id
-    g["winding"] = winding
-    g["reason"] = reason
-    g["surviving_bus"] = surviving_bus
-    return
-end
-
 """
     from_hdf5(::Type{BranchReasonTable}, filename) -> BranchReasonTable
 
@@ -800,22 +553,5 @@ its branches. It also throws an error if the format version is not 1 or a column
 rule of the table.
 """
 function from_hdf5(::Type{BranchReasonTable}, filename::AbstractString)
-    return HDF5.h5open(filename, "r") do f
-        budget = ReadBudget(filename)
-        _check_hard_links(f)
-        _check_format_version(HDF5.attributes(f), budget)
-        haskey(f, "branch_reason") || error(
-            "Factor file $filename has no group branch_reason: it was written without a " *
-            "System. Write it with `to_hdf5(mat, filename, sys)`.",
-        )
-        g = _group(f, "branch_reason")
-        id = _read(g, "id", Vector{Int}, budget)
-        winding = _read(g, "winding", Vector{Int}, budget)
-        reason = _read(g, "reason", Vector{Int}, budget)
-        surviving_bus = _read(g, "surviving_bus", Vector{Int}, budget)
-        _check_branch_reason(id, winding, reason, surviving_bus)
-        return BranchReasonTable(
-            Dict(zip(zip(id, winding), zip(reason, surviving_bus))),
-        )
-    end
+    return read_branch_reasons(filename)
 end

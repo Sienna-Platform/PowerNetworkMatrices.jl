@@ -1,10 +1,14 @@
 import HDF5
 import SparseArrays
 
-function _five_bus_core(ref_key::Int = 1)
+function _five_bus_core(
+    ref_key::Int = 1;
+    arc_live_members = ones(Int, 6),
+    b = [10.0, 5.0, 8.0, 4.0, 6.0, 7.0],
+    tol = 0.0,
+)
     bus_ax = [1, 2, 3, 4, 5]
     arc_ax = [(1, 2), (1, 3), (2, 3), (2, 4), (3, 5), (4, 5)]
-    b = [10.0, 5.0, 8.0, 4.0, 6.0, 7.0]
     n_bus = length(bus_ax)
     n_arc = length(arc_ax)
     A = SparseArrays.spzeros(Int8, n_arc, n_bus)
@@ -21,10 +25,10 @@ function _five_bus_core(ref_key::Int = 1)
         Set([1]),
         (arc_ax, bus_ax),
         Dict(ref_key => (copy(arc_ax), copy(bus_ax))),
-        ones(Int, n_arc);
+        arc_live_members;
         network_data = nothing,
         linear_solver = "KLU",
-        tol = 0.0,
+        tol = tol,
     )
 end
 
@@ -37,8 +41,14 @@ function _ptdf_rows(core)
     end
 end
 
-function _write_five_bus(path; ref_key::Int = 1, reverse_bus_map = Dict{Int, Int}())
-    core = _five_bus_core(ref_key)
+function _write_five_bus(
+    path;
+    ref_key::Int = 1,
+    reverse_bus_map = Dict{Int, Int}(),
+    arc_live_members = ones(Int, 6),
+    tol = 0.0,
+)
+    core = _five_bus_core(ref_key; arc_live_members = arc_live_members, tol = tol)
     HDF5.h5open(path, "w") do f
         PMC.write_factor_core(
             f,
@@ -113,5 +123,80 @@ end
         HDF5.delete_object(f, "reduced_bus_to")
         f["reduced_bus_from"] = [4]
         f["reduced_bus_to"] = [1]
+    end
+end
+
+function _replace_entry!(g, name::String, value)
+    HDF5.delete_object(g, name)
+    g[name] = value
+    return
+end
+
+function _write_names!(
+    f;
+    types = ["Line", "Line", "Transformer"],
+    names = ["a", "b", "a"],
+    from = [1, 1, 2],
+    to = [2, 2, 4],
+)
+    g = HDF5.create_group(f, "names")
+    PMC._write_strings!(g, "type", types)
+    PMC._write_strings!(g, "name", names)
+    g["from"] = from
+    g["to"] = to
+    return
+end
+
+function _hostile_names(change!, expected::String)
+    mktempdir() do dir
+        path = joinpath(dir, "core.h5")
+        _write_five_bus(path)
+        HDF5.h5open(change!, path, "r+")
+        @test_throws expected PMC.read_branch_names(path)
+    end
+    return
+end
+
+@testset "Factor file: branch names round trip" begin
+    mktempdir() do dir
+        path = joinpath(dir, "core.h5")
+        core = _write_five_bus(path)
+        @test_throws "no entry /names" PMC.read_branch_names(path)
+        HDF5.h5open(_write_names!, path, "r+")
+        names = PMC.read_branch_names(path)
+        @test names == Dict(
+            ("Line", "a") => (1, 2),
+            ("Line", "b") => (1, 2),
+            ("Transformer", "a") => (2, 4),
+        )
+        @test PMC.get_arc_lookup(core)[names[("Transformer", "a")]] == 4
+    end
+end
+
+@testset "Factor file: hostile branch names" begin
+    _hostile_names("maps a to (2, 5) at row 3, which is not an arc") do f
+        _write_names!(f; to = [2, 2, 5])
+    end
+    _hostile_names("maps b to (2, 1) at row 2, which is not an arc") do f
+        _write_names!(f; from = [1, 2, 2], to = [2, 1, 4])
+    end
+    _hostile_names("more than once") do f
+        _write_names!(f; names = ["a", "a", "a"])
+    end
+    _hostile_names("columns of unequal length") do f
+        _write_names!(f; from = [1, 1])
+    end
+    _hostile_names("entry /names is a dataset; expected a group") do f
+        f["names"] = [1, 2]
+    end
+    _hostile_names("expected a string") do f
+        _write_names!(f)
+        HDF5.delete_object(f["names"], "type")
+        f["names"]["type"] = [1, 2, 3]
+    end
+    _hostile_names("Unsupported factor file format version") do f
+        _write_names!(f)
+        HDF5.delete_attribute(f, "format_version")
+        HDF5.attributes(f)["format_version"] = 2
     end
 end

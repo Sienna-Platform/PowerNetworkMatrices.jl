@@ -129,12 +129,15 @@ end
 
 """
     VirtualFactorCore(arc_susceptances, ref_bus_positions, axes, subnetwork_axes,
-        arc_live_members, branch_catalog; linear_solver, tol, system_uuid) -> VirtualFactorCore
+        arc_live_members, branch_catalog; linear_solver, tol, system_uuid,
+        verify_factorization) -> VirtualFactorCore
 
 Build the shared factorization core from one signed DC susceptance per arc. The method builds
 the `BA` and `A` matrices from `axes` and `arc_susceptances`, then calls the matrix method.
 Entry `i` of `arc_susceptances` is the susceptance of arc `i`, positive from the first bus of
-the arc to the second.
+the arc to the second. The default `verify_factorization = true` makes the constructor
+check the residual of a solve against the ABA matrix. The check throws an error if the
+factorization is singular or near singular.
 """
 function VirtualFactorCore(
     arc_susceptances::Vector{Float64},
@@ -143,7 +146,10 @@ function VirtualFactorCore(
     subnetwork_axes::Dict{Int, Tuple{Vector{Tuple{Int, Int}}, Vector{Int}}},
     arc_live_members::Vector{Int},
     branch_catalog::BranchCatalog;
-    kwargs...,
+    linear_solver::String = _default_linear_solver(),
+    tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
+    system_uuid::Union{Base.UUID, Nothing} = nothing,
+    verify_factorization::Bool = true,
 )
     return PMC.FactorCore(
         arc_susceptances,
@@ -155,7 +161,10 @@ function VirtualFactorCore(
         reverse_bus_map = get_reverse_bus_search_map(
             get_network_reduction_data(branch_catalog),
         ),
-        kwargs...,
+        linear_solver = linear_solver,
+        tol = tol,
+        system_uuid = system_uuid,
+        verify_factorization = verify_factorization,
     )
 end
 
