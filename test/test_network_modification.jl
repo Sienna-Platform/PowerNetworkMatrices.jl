@@ -493,8 +493,10 @@ end
 
     @test !PNM.is_open_after_outage(chain, Set{PSY.ACTransmission}())
     @test PNM.is_open_after_outage(chain, Set{PSY.ACTransmission}([leaf]))
-    @test PNM._compute_series_outage_delta_b(chain, leaf, nr) ≈
-          -PNM._finite_series_susceptance(chain, nr)
+    am = only(NetworkModification(vptdf, leaf).arc_modifications)
+    sibling = only(m for m in bp if m !== chain)
+    b_arc = PNM._get_arc_susceptances(vptdf)[am.arc_index]
+    @test am.delta_b ≈ PNM._ba_arc_susceptance(sibling, nr) - b_arc atol = 1e-12
 end
 
 # The largest difference between the rows of `vmodf` under `mod` and the matrix `ptdf2` of a
@@ -642,7 +644,9 @@ end
     leaves = PSY.ACTransmission[
         PSY.get_component(Line, sys, n) for n in ("L_10_3", "L_10_3_b", "L_3_10")
     ]
-    @test PNM._compute_series_outage_delta_b(chain, leaves, nr) ≈ -b_old rtol = 1e-8
+    am = only(NetworkModification(vptdf, sys, leaves).arc_modifications)
+    @test isone(am.opened)
+    @test am.delta_b ≈ -b_old rtol = 1e-8
 end
 
 @testset "NetworkModification: chain with negative susceptance" begin

@@ -967,44 +967,6 @@ function _entry_after_outage(
     return remaining
 end
 
-"""
-    _compute_series_outage_delta_b(series_chain::BranchesSeries, component::PSY.ACTransmission, nr::NetworkReductionData) -> Float64
-
-Compute the signed change of the chain susceptance when `component` is tripped
-from `series_chain`. Delegates to the vector version.
-"""
-function _compute_series_outage_delta_b(
-    series_chain::BranchesSeries,
-    component::PSY.ACTransmission,
-    nr::NetworkReductionData,
-)::Float64
-    return _compute_series_outage_delta_b(series_chain, [component], nr)
-end
-
-"""
-    _compute_series_outage_delta_b(series_chain::BranchesSeries, tripped::Vector{<:PSY.ACTransmission}, nr::NetworkReductionData) -> Float64
-
-Signed change `b_new - b_old` of the equivalent susceptance of `series_chain` when `tripped`
-leave service. `b_new` is the susceptance of the chain that stays in service. The chain is
-open when a segment loses all its members. Then the function returns `-b_old`. The caller
-converts the result to the change of `|b|` that the kernel reads.
-"""
-function _compute_series_outage_delta_b(
-    series_chain::BranchesSeries,
-    tripped::Vector{<:PSY.ACTransmission},
-    nr::NetworkReductionData,
-)::Float64
-    tripped_set = Set{PSY.ACTransmission}(tripped)
-    if is_open_after_outage(series_chain, tripped_set)
-        return -_finite_series_susceptance(series_chain, nr)
-    end
-    return _series_remaining_delta_b(
-        series_chain,
-        _entry_after_outage(series_chain, tripped_set),
-        nr,
-    )
-end
-
 _series_remaining_delta_b(
     series_chain::BranchesSeries,
     remaining::BranchesSeries,
@@ -1021,25 +983,3 @@ _series_remaining_delta_shift_injection(
     nr::NetworkReductionData,
 )::Float64 =
     _series_shift_injection(remaining, nr) - _series_shift_injection(series_chain, nr)
-
-"""
-    _compute_series_outage_delta_shift_injection(series_chain, tripped, nr) -> Float64
-
-Change in the chain's DC shift injection `b_eq·α_eq` when `tripped` trip. An open chain loses
-its whole injection. Otherwise the chain that stays in service gives the new injection.
-"""
-function _compute_series_outage_delta_shift_injection(
-    series_chain::BranchesSeries,
-    tripped::Vector{<:PSY.ACTransmission},
-    nr::NetworkReductionData,
-)::Float64
-    tripped_set = Set{PSY.ACTransmission}(tripped)
-    if is_open_after_outage(series_chain, tripped_set)
-        return -_series_shift_injection(series_chain, nr)
-    end
-    return _series_remaining_delta_shift_injection(
-        series_chain,
-        _entry_after_outage(series_chain, tripped_set),
-        nr,
-    )
-end

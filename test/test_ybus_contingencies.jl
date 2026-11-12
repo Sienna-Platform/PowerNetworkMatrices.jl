@@ -515,18 +515,17 @@ end
             magnetizing_shunt = Complex(0.0, 0.0),
         ),
     )
-    ybus = Ybus(
+    tripped = PSY.get_component(Line, sys, "L12")
+
+    vptdf = VirtualPTDF(
         sys;
         network_reductions = PNM.NetworkReduction[
             PNM.DegreeTwoReduction(; reduce_reactive_power_injectors = false),
         ],
     )
-    nr = get_network_reduction_data(ybus)
+    nr = get_network_reduction_data(vptdf)
     @test !isempty(PNM.get_series_branch_map(nr))
-    chain = first(values(PNM.get_series_branch_map(nr)))
-    tripped = PSY.get_component(Line, sys, "L12")
-
-    delta = PNM._compute_series_outage_delta_b(chain, tripped, nr)
+    delta = only(NetworkModification(vptdf, tripped).arc_modifications).delta_b
     @test isfinite(delta)
     @test delta < 0.0
 end

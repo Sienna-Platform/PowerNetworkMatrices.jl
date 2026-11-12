@@ -189,10 +189,6 @@ end
     vptdf = VirtualPTDF(sys; network_reductions = NetworkReduction[DegreeTwoReduction()])
     nr = PNM.get_network_reduction_data(vptdf)
     t3 = get_component(PSY.TwoWindingTransformer, sys, "t3")
-    chain = PNM.get_series_branch_map(nr)[(1, 3)]
-
-    delta_b = PNM._compute_series_outage_delta_b(chain, t3, nr)
-    delta_shift = PNM._compute_series_outage_delta_shift_injection(chain, [t3], nr)
 
     # Independent reference built from the fixture impedances: segment 2 is the
     # susceptance-weighted parallel equivalent of t3 and L23, segment 1 is t1 alone.
@@ -212,20 +208,19 @@ end
     injection_new = b_eq_new * α_t1
 
     @test injection_old ≈ PNM.arc_dc_shift_injection(nr, (1, 3))
-    @test delta_b ≈ b_eq_new - b_eq_old
-    # The arc survives on t1 and L23, so this is not a full outage.
-    @test !isapprox(delta_b, -b_eq_old; atol = 1e-9)
-    @test delta_shift ≈ injection_new - injection_old
-    # The surviving chain still shifts, so this is not the arc-opens early return either.
-    @test !isapprox(delta_shift, -injection_old; atol = 1e-9)
-    @test !iszero(delta_shift)
+
+    # L23 out leaves t3 alone on segment 2, so t1 and t3 both still shift the chain.
+    b_eq_l23_out = 1 / (1 / b_t1 + 1 / b_t3)
+    injection_l23_out = b_eq_l23_out * (α_t1 + α_t3)
 
     # The live modification carries the chain values and keeps the arc, for any branch type.
-    for branch in (t3, l23)
+    for (branch, expected_b, expected_injection) in (
+        (t3, b_eq_new, injection_new),
+        (l23, b_eq_l23_out, injection_l23_out),
+    )
         m = only(NetworkModification(vptdf, branch).arc_modifications)
-        @test m.delta_b ≈ PNM._compute_series_outage_delta_b(chain, branch, nr)
-        @test m.delta_shift_injection ≈
-              PNM._compute_series_outage_delta_shift_injection(chain, [branch], nr)
+        @test m.delta_b ≈ expected_b - b_eq_old
+        @test m.delta_shift_injection ≈ expected_injection - injection_old
         @test iszero(m.opened)
     end
 end
