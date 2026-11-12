@@ -220,12 +220,14 @@ end
     @test !isapprox(delta_shift, -injection_old; atol = 1e-9)
     @test !iszero(delta_shift)
 
-    # A partial trip on a series-reduced arc has no Pi-model delta, for any branch type.
-    @test_throws PNM.UnsupportedOutageError NetworkModification(vptdf, t3)
-    @test_throws PNM.UnsupportedOutageError NetworkModification(
-        vptdf,
-        get_component(Line, sys, "L23"),
-    )
+    # The live modification carries the chain values and keeps the arc, for any branch type.
+    for branch in (t3, l23)
+        m = only(NetworkModification(vptdf, branch).arc_modifications)
+        @test m.delta_b ≈ PNM._compute_series_outage_delta_b(chain, branch, nr)
+        @test m.delta_shift_injection ≈
+              PNM._compute_series_outage_delta_shift_injection(chain, [branch], nr)
+        @test iszero(m.opened)
+    end
 end
 
 @testset "pst outage: shifted three-winding winding classifies through the same path" begin

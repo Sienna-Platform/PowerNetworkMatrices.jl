@@ -479,9 +479,8 @@ end
 end
 
 @testset "NetworkModification: series-chain member opens on any leaf trip" begin
-    # Same sibling-chain fixture as above, exercised through `_member_susceptance_after_outage`
-    # directly: a chain nested inside a `BranchesParallel{BranchesSeries}` group opens the
-    # instant any one of its leaves trips, unlike a non-chain aggregate's all-or-none rule.
+    # A chain nested inside a `BranchesParallel{BranchesSeries}` group opens the instant one
+    # of its leaves trips, unlike a non-chain aggregate, which opens only when all leaves trip.
     sys = build_two_parallel_degree_two_chains()
     reductions = NetworkReduction[
         DegreeTwoReduction(; reduce_reactive_power_injectors = false),
@@ -492,38 +491,248 @@ end
     chain = first(bp)
     leaf = first(PNM.leaf_components(chain))
 
-    @test PNM._member_susceptance_after_outage(chain, Set{PSY.ACTransmission}(), nr) ≈
-          PNM._finite_series_susceptance(chain, nr)
-    @test iszero(
-        PNM._member_susceptance_after_outage(chain, Set{PSY.ACTransmission}([leaf]), nr),
-    )
+    @test !PNM.is_open_after_outage(chain, Set{PSY.ACTransmission}())
+    @test PNM.is_open_after_outage(chain, Set{PSY.ACTransmission}([leaf]))
+    @test PNM._compute_series_outage_delta_b(chain, leaf, nr) ≈
+          -PNM._finite_series_susceptance(chain, nr)
 end
 
-@testset "NetworkModification: nested aggregate member requires an all-or-none trip" begin
-    # Chain segment 2 is `MixedBranchesParallel[Line, BranchesParallel{Line}]`: the
-    # anti-parallel twin is a direct member and the same-direction pair nests below it.
-    sys = build_antiparallel_chain_segment_nested_parallel_system()
-    reductions = NetworkReduction[
-        DegreeTwoReduction(; reduce_reactive_power_injectors = false),
-    ]
-    vptdf = VirtualPTDF(sys; network_reductions = reductions)
+# The largest difference between the rows of `vmodf` under `mod` and the matrix `ptdf2` of a
+# rebuild, over the arcs and buses that both hold. Also returns the arcs and buses of `vmodf`
+# that `ptdf2` lacks.
+function _max_ptdf_error(vmodf, mod, ptdf2)
+    arc_lookup2 = PNM.get_arc_lookup(ptdf2)
+    bus_lookup2 = PNM.get_bus_lookup(ptdf2)
+    bus_lookup = PNM.get_bus_lookup(vmodf)
+    dc_err = 0.0
+    missing_arcs = 0
+    missing_buses = Set{Int}()
+    for (i, arc) in enumerate(PNM.get_arc_axis(vmodf))
+        if !haskey(arc_lookup2, arc)
+            missing_arcs += 1
+            continue
+        end
+        row = vmodf[i, mod]
+        for (bus, j) in bus_lookup
+            if !haskey(bus_lookup2, bus)
+                push!(missing_buses, bus)
+                continue
+            end
+            dc_err = max(dc_err, abs(row[j] - ptdf2[arc_lookup2[arc], bus_lookup2[bus]]))
+        end
+    end
+    return dc_err, missing_arcs, missing_buses
+end
+
+# Reference for a trip: the live modification against a rebuild with the branches out of
+# service. Returns the modification, the largest PTDF error over the arcs and buses that
+# both networks hold, and the largest Ybus error on the base bus axis.
+function _trip_against_rebuild(
+    build,
+    reductions,
+    names;
+    ybus_check = true,
+    skipped_arcs::Int = 0,
+    skipped_buses::Int = 0,
+)
+    sys = build()
+    vmodf = VirtualMODF(sys; network_reductions = reductions)
+    ybus = Ybus(sys; network_reductions = reductions)
+    find(sys, name) = first(
+        c for c in PSY.get_components(PSY.ACTransmission, sys) if PSY.get_name(c) == name
+    )
+    mod = NetworkModification(vmodf, sys, [find(sys, n) for n in names])
+
+    sys2 = build()
+    for n in names
+        PSY.set_available!(find(sys2, n), false)
+    end
+    ptdf2 = PTDF(sys2; network_reductions = reductions)
+    dc_err, missing_arcs, missing_buses = _max_ptdf_error(vmodf, mod, ptdf2)
+    @test missing_arcs == skipped_arcs
+    @test length(missing_buses) == skipped_buses
+
+    ac_err = NaN
+    if ybus_check
+        ybus2 = Ybus(sys2; network_reductions = reductions)
+        ax = PNM.get_bus_axis(ybus)
+        ax2 = PNM.get_bus_axis(ybus2)
+        @assert issubset(ax, ax2)
+        Y2 = Matrix{ComplexF64}(ybus2.data)
+        keep = [findfirst(==(b), ax2) for b in ax]
+        drop = setdiff(eachindex(ax2), keep)
+        if !isempty(drop)
+            Y2 = Y2[keep, keep] - Y2[keep, drop] * (Y2[drop, drop] \ Y2[drop, keep])
+        else
+            Y2 = Y2[keep, keep]
+        end
+        out = Matrix{ComplexF64}(PNM.apply_ybus_modification(ybus, mod))
+        ac_err = maximum(abs.(out .- Y2))
+    end
+    return mod, dc_err, ac_err
+end
+
+const _D2_AC =
+    NetworkReduction[DegreeTwoReduction(; reduce_reactive_power_injectors = false)]
+
+@testset "NetworkModification: partial trip of a lone chain matches a rebuild" begin
+    for name in ("L_10_3", "L_3_10")
+        mod, dc_err, ac_err = _trip_against_rebuild(
+            build_antiparallel_chain_segment_system, _D2_AC, [name],
+        )
+        am = only(mod.arc_modifications)
+        @test iszero(am.opened)
+        @test dc_err < 1e-12
+        @test ac_err < 1e-5
+    end
+end
+
+@testset "NetworkModification: joint trip in two segments is not the sum of single trips" begin
+    build = build_two_parallel_segments_chain_system
+    mods = Dict{Vector{String}, ArcModification}()
+    for names in (["L_1_10"], ["L_10_3"], ["L_1_10", "L_10_3"])
+        mod, dc_err, ac_err = _trip_against_rebuild(build, _D2_AC, names)
+        am = only(mod.arc_modifications)
+        mods[names] = am
+        @test iszero(am.opened)
+        @test dc_err < 1e-12
+        @test ac_err < 1e-5
+    end
+    joint = mods[["L_1_10", "L_10_3"]]
+    @test !isapprox(joint.delta_b, mods[["L_1_10"]].delta_b + mods[["L_10_3"]].delta_b)
+    # A trip of both members of one segment opens the chain.
+    mod, dc_err, ac_err = _trip_against_rebuild(
+        build, _D2_AC, ["L_10_3", "L_3_10"]; skipped_arcs = 1,
+    )
+    @test only(mod.arc_modifications).opened == 1
+    @test dc_err < 1e-12
+end
+
+@testset "NetworkModification: partial chain trip inside a parallel group matches a rebuild" begin
+    build = build_grouped_chains_with_parallel_segment
+    for names in (["L_10_3"], ["L_3_10"])
+        mod, dc_err, ac_err = _trip_against_rebuild(build, _D2_AC, names)
+        am = only(mod.arc_modifications)
+        @test iszero(am.opened)
+        @test dc_err < 1e-12
+        @test ac_err < 1e-5
+    end
+    # Chain A stays partly in service and chain B opens.
+    mod, dc_err, _ = _trip_against_rebuild(
+        build, _D2_AC, ["L_10_3", "L_20_3"]; ybus_check = false,
+    )
+    @test dc_err < 1e-12
+    @test only(mod.arc_modifications).opened == 1
+end
+
+@testset "NetworkModification: partial trip of a nested group matches a rebuild" begin
+    build = build_antiparallel_chain_segment_nested_parallel_system
+    for names in (["L_10_3"], ["L_10_3", "L_10_3_b"])
+        mod, dc_err, ac_err = _trip_against_rebuild(build, _D2_AC, names)
+        @test iszero(only(mod.arc_modifications).opened)
+        @test dc_err < 1e-12
+        @test ac_err < 1e-5
+    end
+    # Every leaf of the mixed segment trips, so the chain opens.
+    sys = build()
+    vptdf = VirtualPTDF(sys; network_reductions = _D2_AC)
     nr = PNM.get_network_reduction_data(vptdf)
     chain = only(values(PNM.get_series_branch_map(nr)))
     b_old = PNM._finite_series_susceptance(chain, nr)
+    leaves = PSY.ACTransmission[
+        PSY.get_component(Line, sys, n) for n in ("L_10_3", "L_10_3_b", "L_3_10")
+    ]
+    @test PNM._compute_series_outage_delta_b(chain, leaves, nr) ≈ -b_old rtol = 1e-8
+end
 
-    p1 = PSY.get_component(Line, sys, "L_10_3")
-    p2 = PSY.get_component(Line, sys, "L_10_3_b")
-    ap = PSY.get_component(Line, sys, "L_3_10")
+@testset "NetworkModification: chain with negative susceptance" begin
+    mod, dc_err, ac_err = _trip_against_rebuild(
+        build_negative_chain_system, _D2_AC, ["L_10_3"],
+    )
+    @test iszero(only(mod.arc_modifications).opened)
+    @test dc_err < 1e-12
+    @test ac_err < 1e-5
+    # `L_1_10` is a single-branch segment, so the chain opens.
+    mod, dc_err, ac_err = _trip_against_rebuild(
+        build_negative_chain_system, _D2_AC, ["L_1_10"]; skipped_arcs = 1,
+    )
+    @test only(mod.arc_modifications).opened == 1
+    @test dc_err < 1e-12
+    @test ac_err < 1e-5
+    # The kernel reads delta_b as a change of |b|: opening a negative chain gives -|b|.
+    sys = build_negative_chain_system()
+    vptdf = VirtualPTDF(sys; network_reductions = _D2_AC)
+    nr = PNM.get_network_reduction_data(vptdf)
+    arc = only(keys(PNM.get_series_branch_map(nr)))
+    @test PNM._ba_arc_susceptance(nr, arc) < 0
+    am = only(
+        NetworkModification(
+            vptdf,
+            PSY.get_component(Line, sys, "L_1_10"),
+        ).arc_modifications,
+    )
+    @test am.delta_b ≈ -abs(PNM._ba_arc_susceptance(nr, arc))
+end
 
-    # One nested leaf tripped leaves the `BranchesParallel` it sits inside partly in service;
-    # that has no representation on the composite arc it was grouped onto.
-    @test_throws "BranchesParallel" PNM._compute_series_outage_delta_b(chain, p1, nr)
-    @test_throws r"partly in service" PNM._compute_series_outage_delta_b(chain, p1, nr)
+@testset "NetworkModification: Ward equivalent on a negative chain arc matches a rebuild" begin
+    reductions = NetworkReduction[
+        DegreeTwoReduction(; reduce_reactive_power_injectors = false),
+        WardReduction([1, 2, 3, 4]),
+    ]
+    sys = build_ward_negative_chain_system()
+    vptdf = VirtualPTDF(sys; network_reductions = reductions)
+    nr = PNM.get_network_reduction_data(vptdf)
+    chain = PNM.get_series_branch_map(nr)[(1, 3)]
+    @test PNM._finite_series_susceptance(chain, nr) < 0
+    @test PNM._ba_arc_susceptance(nr, (1, 3)) > 0
+    for (names, opened) in ((["L_1_10"], 1), (["L_10_3"], 0), (["L_3_10"], 0))
+        mod, dc_err, _ = _trip_against_rebuild(
+            build_ward_negative_chain_system, reductions, names; ybus_check = false,
+        )
+        @test only(mod.arc_modifications).opened == opened
+        @test dc_err < 1e-12
+    end
+end
 
-    # Every leaf of the mixed segment tripped -- the nested pair and its anti-parallel twin
-    # -- is a full outage of that segment, and therefore of the whole series arc.
-    delta_b = PNM._compute_series_outage_delta_b(chain, [p1, p2, ap], nr)
-    @test delta_b ≈ -b_old rtol = 1e-8
+@testset "NetworkModification: case10 chain keeps the sign of its susceptance" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    reductions = NetworkReduction[RadialReduction(), DegreeTwoReduction()]
+    vptdf = VirtualPTDF(sys; network_reductions = reductions)
+    nr = PNM.get_network_reduction_data(vptdf)
+    for name in ("MV-SERIES1-i_1", "MV-SERIES1-i_2")
+        line = PSY.get_component(Line, sys, name)
+        am = only(NetworkModification(vptdf, line).arc_modifications)
+        @test am.delta_b ≈ 15.015015015015024
+        @test iszero(am.opened)
+    end
+    # Winding 3 has a negative reactance, so the chain `(106, 1001)` has b = -540.54.
+    chain = PNM.get_series_branch_map(nr)[(106, 1001)]
+    @test PNM._finite_series_susceptance(chain, nr) ≈ -540.5405405405405
+    trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
+    w3 = PNM.ThreeWindingTransformerCircuit(trf, PSY.get_circuits(trf)[3], 3)
+    mod = NetworkModification(vptdf, w3)
+    am = only(mod.arc_modifications)
+    @test am.delta_b ≈ -540.5405405405405
+    @test am.opened == 1
+
+    # The winding opens the chain and isolates buses 106 to 108: rows agree with a rebuild.
+    sys2 = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    trf2 = first(PSY.get_components(PSY.ThreeWindingTransformer, sys2))
+    PSY.set_available!(PSY.get_circuits(trf2)[3], false)
+    ptdf2 = PTDF(sys2; network_reductions = reductions)
+    dc_err, _, _ = _max_ptdf_error(vptdf, mod, ptdf2)
+    @test dc_err < 1e-12
+end
+
+@testset "NetworkModification: transformer twin in a chain segment matches a rebuild" begin
+    for name in ("T_3_10", "L_10_3")
+        mod, dc_err, ac_err = _trip_against_rebuild(
+            build_transformer_twin_chain_system, _D2_AC, [name],
+        )
+        @test iszero(only(mod.arc_modifications).opened)
+        @test dc_err < 1e-12
+        @test ac_err < 1e-5
+    end
 end
 
 # Two identical phase shifters on the same bus pair, one written each way. Their individual
@@ -878,4 +1087,16 @@ end
     @test !iszero(first(mods).delta_shift_injection)
     vmodf = VirtualMODF(vptdf, sys; automatically_register_outages = false)
     @test NetworkModification(vmodf, sys, shifters).arc_modifications == (first(mods),)
+end
+
+@testset "NetworkModification: entry after outage of every parallel member throws" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    line = first(sort!(collect(PSY.get_components(Line, sys)); by = PSY.get_name))
+    shifter = _add_test_shifter!(sys, "shifter_all", PSY.get_arc(line); α = 0.01, x = 0.1)
+    vptdf = VirtualPTDF(sys)
+    nr = PNM.get_network_reduction_data(vptdf)
+    arc_tuple = PNM.get_arc_tuple(line, nr)
+    group = PNM.get_parallel_branch_map(nr)[arc_tuple]
+    tripped = Set{PSY.ACTransmission}(PSY.ACTransmission[line, shifter])
+    @test_throws "has no member in service" PNM._entry_after_outage(group, tripped)
 end

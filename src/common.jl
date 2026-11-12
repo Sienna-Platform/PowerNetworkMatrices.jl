@@ -933,96 +933,44 @@ function _resolve_branch_arc(
     end
 end
 
-# Susceptance one parallel-group member contributes once `tripped_set` is applied.
-function _member_susceptance_after_outage(
-    member::PSY.ACTransmission,
-    tripped_set::Set{<:PSY.ACTransmission},
-    nr::NetworkReductionData,
-)::Float64
-    member ∈ tripped_set && return 0.0
-    return _finite_series_susceptance(member, nr)
-end
+# The entry that stays in service when `tripped` are out. Call it only for an entry that is
+# not open (`is_open_after_outage`). A parallel group keeps its arc frame, so the chain that
+# holds it keeps its segment orientation.
+_entry_after_outage(branch::PSY.ACTransmission, ::AbstractSet{<:PSY.ACTransmission}) =
+    branch
 
-# A non-chain aggregate (e.g. a `BranchesParallel` nested in a `MixedBranchesParallel`) is
-# all-or-none over its leaves; `BranchesSeries` overrides this below with the series rule.
-function _member_susceptance_after_outage(
-    member::AbstractReductionAggregate,
-    tripped_set::Set{<:PSY.ACTransmission},
-    nr::NetworkReductionData,
-)::Float64
-    leaves = leaf_components(member)
-    n_tripped = count(in(tripped_set), leaves)
-    iszero(n_tripped) && return _finite_series_susceptance(member, nr)
-    n_tripped == length(leaves) && return 0.0
-    branch = first(Iterators.filter(in(tripped_set), leaves))
-    throw(
-        UnsupportedOutageError(
-            "Tripping $(typeof(branch)) $(get_name(branch)) leaves $(typeof(member)) " *
-            "$(get_name(member)) partly in service on arc $(get_arc_tuple(member, nr)), and " *
-            "a partial susceptance delta is not supported on the nested aggregate it sits on.",
-        ),
-    )
-end
-
-# A series chain opens the moment any leaf trips, mirroring `_validate_outaged_member`'s
-# series rule; a nested aggregate segment only partly tripped is not representable, same as
-# there.
-function _member_susceptance_after_outage(
-    member::BranchesSeries,
-    tripped_set::Set{<:PSY.ACTransmission},
-    nr::NetworkReductionData,
-)::Float64
-    tripped_leaves = filter(in(tripped_set), leaf_components(member))
-    isempty(tripped_leaves) && return _finite_series_susceptance(member, nr)
-    b_old = _finite_series_susceptance(member, nr)
-    delta_b = _compute_series_outage_delta_b(member, tripped_leaves, nr)
-    if !_is_full_outage(delta_b, b_old)
-        branch = first(tripped_leaves)
-        throw(
-            UnsupportedOutageError(
-                "Tripping $(typeof(branch)) $(get_name(branch)) leaves series chain " *
-                "$(get_name(member)) partly in service on arc $(get_arc_tuple(member, nr)), " *
-                "and a partial susceptance delta is not supported on the nested aggregate it " *
-                "sits on.",
-            ),
+function _entry_after_outage(
+    bp::AbstractBranchesParallel,
+    tripped::AbstractSet{<:PSY.ACTransmission},
+)
+    remaining = PSY.ACTransmission[
+        _entry_after_outage(member, tripped) for
+        member in bp if !is_open_after_outage(member, tripped)
+    ]
+    if isempty(remaining)
+        error(
+            "Parallel group on arc $(get_arc_tuple(bp)) has no member in service; " *
+            "it is open after the outage.",
         )
     end
-    return 0.0
+    return MixedBranchesParallel(remaining, get_arc_tuple(bp), EMPTY_TWO_PORT, false)
 end
 
-"""
-    _segment_susceptance_after_outage(segment, tripped_set, nr::NetworkReductionData) -> Float64
-
-Compute the remaining susceptance of a series chain segment after removing
-tripped components. Dispatches on segment type to handle both single branches
-and parallel groups within a series chain.
-
-Returns 0.0 if the segment (or all branches in a parallel group) is fully tripped.
-"""
-function _segment_susceptance_after_outage(
-    segment::PSY.ACTransmission,
-    tripped_set::Set{<:PSY.ACTransmission},
-    nr::NetworkReductionData,
-)::Float64
-    return _member_susceptance_after_outage(segment, tripped_set, nr)
-end
-
-function _segment_susceptance_after_outage(
-    segment::AbstractBranchesParallel,
-    tripped_set::Set{<:PSY.ACTransmission},
-    nr::NetworkReductionData,
-)::Float64
-    b_remaining = 0.0
-    for branch in segment.branches
-        b_remaining += _member_susceptance_after_outage(branch, tripped_set, nr)
+function _entry_after_outage(
+    bs::BranchesSeries,
+    tripped::AbstractSet{<:PSY.ACTransmission},
+)
+    remaining = BranchesSeries(get_arc_key(bs))
+    for (segment, orientation) in zip(bs, get_segment_orientations(bs))
+        add_branch!(remaining, _entry_after_outage(segment, tripped), orientation)
     end
-    return b_remaining
+    return remaining
 end
 
 """
     _compute_series_outage_delta_b(series_chain::BranchesSeries, component::PSY.ACTransmission, nr::NetworkReductionData) -> Float64
 
-Compute the change in equivalent arc susceptance when `component` is tripped
+Compute the signed change of the chain susceptance when `component` is tripped
 from `series_chain`. Delegates to the vector version.
 """
 function _compute_series_outage_delta_b(
@@ -1036,92 +984,62 @@ end
 """
     _compute_series_outage_delta_b(series_chain::BranchesSeries, tripped::Vector{<:PSY.ACTransmission}, nr::NetworkReductionData) -> Float64
 
-Compute the change in equivalent arc susceptance when multiple components are
-simultaneously tripped from a series chain.
-
-For a series chain with segments of susceptance b₁, b₂, ..., bₙ, the equivalent
-susceptance is: b_eq = 1 / (1/b₁ + 1/b₂ + ... + 1/bₙ).
-
-Segments can be individual branches or `BranchesParallel` groups. When a tripped
-component is inside a parallel group, only that branch's susceptance is removed
-from the group — the rest of the parallel group remains in the series chain.
-
-Returns Δb = b_new - b_old (always negative for outages).
-If all segments are fully tripped, returns -b_eq (full arc outage).
+Signed change `b_new - b_old` of the equivalent susceptance of `series_chain` when `tripped`
+leave service. `b_new` is the susceptance of the chain that stays in service. The chain is
+open when a segment loses all its members. Then the function returns `-b_old`. The caller
+converts the result to the change of `|b|` that the kernel reads.
 """
 function _compute_series_outage_delta_b(
     series_chain::BranchesSeries,
     tripped::Vector{<:PSY.ACTransmission},
     nr::NetworkReductionData,
 )::Float64
-    b_old = _finite_series_susceptance(series_chain, nr)
     tripped_set = Set{PSY.ACTransmission}(tripped)
-    remaining_inv_sum = 0.0
-    for segment in series_chain
-        b_seg = _segment_susceptance_after_outage(segment, tripped_set, nr)
-        if iszero(b_seg)
-            return -b_old
-        end
-        remaining_inv_sum += 1.0 / b_seg
+    if is_open_after_outage(series_chain, tripped_set)
+        return -_finite_series_susceptance(series_chain, nr)
     end
-    b_new = 1.0 / remaining_inv_sum
-    return b_new - b_old
+    return _series_remaining_delta_b(
+        series_chain,
+        _entry_after_outage(series_chain, tripped_set),
+        nr,
+    )
 end
 
-# Equivalent DC phase shift of one chain segment once `tripped_set` is out, in the segment's
-# own arc frame. A single-branch segment only reaches here when it survives (a tripped one
-# zeroes the chain's susceptance first).
-_segment_phase_shift_after_outage(
-    segment::PSY.ACTransmission,
-    ::Set{<:PSY.ACTransmission},
+_series_remaining_delta_b(
+    series_chain::BranchesSeries,
+    remaining::BranchesSeries,
     nr::NetworkReductionData,
-) = _segment_phase_shift(segment, nr)
+)::Float64 =
+    _finite_series_susceptance(remaining, nr) - _finite_series_susceptance(series_chain, nr)
 
-function _segment_phase_shift_after_outage(
-    segment::AbstractBranchesParallel,
-    tripped_set::Set{<:PSY.ACTransmission},
+_series_shift_injection(series_chain::BranchesSeries, nr::NetworkReductionData)::Float64 =
+    _finite_series_susceptance(series_chain, nr) * get_series_phase_shift(series_chain, nr)
+
+_series_remaining_delta_shift_injection(
+    series_chain::BranchesSeries,
+    remaining::BranchesSeries,
     nr::NetworkReductionData,
-)
-    b_total = 0.0
-    b_alpha = 0.0
-    for br in segment.branches
-        b = _member_susceptance_after_outage(br, tripped_set, nr)
-        iszero(b) && continue
-        b_total += b
-        b_alpha += b * _oriented_member_phase_shift(br, segment, nr)
-    end
-    return b_alpha / b_total
-end
+)::Float64 =
+    _series_shift_injection(remaining, nr) - _series_shift_injection(series_chain, nr)
 
 """
     _compute_series_outage_delta_shift_injection(series_chain, tripped, nr) -> Float64
 
-Change in the chain's DC shift injection `b_eq·α_eq` when `tripped` trip. The arc opens and
-loses its whole injection when any segment loses all of its susceptance; otherwise the
-surviving members define the new equivalent susceptance and angle.
+Change in the chain's DC shift injection `b_eq·α_eq` when `tripped` trip. An open chain loses
+its whole injection. Otherwise the chain that stays in service gives the new injection.
 """
 function _compute_series_outage_delta_shift_injection(
     series_chain::BranchesSeries,
     tripped::Vector{<:PSY.ACTransmission},
     nr::NetworkReductionData,
 )::Float64
-    injection_old =
-        _finite_series_susceptance(series_chain, nr) *
-        get_series_phase_shift(series_chain, nr)
     tripped_set = Set{PSY.ACTransmission}(tripped)
-    orientations = get_segment_orientations(series_chain)
-    remaining_inv_sum = 0.0
-    alpha_new = 0.0
-    for (ix, segment) in enumerate(series_chain)
-        b_seg = _segment_susceptance_after_outage(segment, tripped_set, nr)
-        iszero(b_seg) && return -injection_old
-        remaining_inv_sum += 1.0 / b_seg
-        α_seg = _segment_phase_shift_after_outage(segment, tripped_set, nr)
-        if orientations[ix] == :ToFrom
-            alpha_new -= α_seg
-        else
-            alpha_new += α_seg
-        end
+    if is_open_after_outage(series_chain, tripped_set)
+        return -_series_shift_injection(series_chain, nr)
     end
-    return alpha_new / remaining_inv_sum - injection_old
+    return _series_remaining_delta_shift_injection(
+        series_chain,
+        _entry_after_outage(series_chain, tripped_set),
+        nr,
+    )
 end

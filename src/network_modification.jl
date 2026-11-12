@@ -61,53 +61,6 @@ function _outaged_group_member(
     )
 end
 
-# Rejects a trip the group arc cannot represent. The susceptance change itself comes from the
-# group's two-port, never from the member alone. A physical member always leaves whole.
-_validate_outaged_member(
-    ::PSY.ACTransmission,
-    ::PSY.ACTransmission,
-    ::NetworkReductionData,
-) =
-    nothing
-
-# An aggregate member is representable on the group arc only when it opens entirely, since
-# `_member_outage_ybus_delta` can only negate a member's whole Pi-model. Subtypes that can
-# answer refine this; the rest say so rather than reporting the whole member as lost.
-function _validate_outaged_member(
-    member::AbstractReductionAggregate,
-    branch::PSY.ACTransmission,
-    ::NetworkReductionData,
-)
-    throw(
-        UnsupportedOutageError(
-            "Tripping $(typeof(branch)) $(get_name(branch)) leaves $(get_name(member)) partly " *
-            "in service, and a partial Pi-model delta is not supported on the composite arc " *
-            "it sits on.",
-        ),
-    )
-end
-
-# A chain opens when any segment loses all of its susceptance, which is what tripping a
-# single-branch segment does. The same limit `_series_arc_ybus_delta` enforces on a chain
-# standing alone in `series_branch_map`.
-function _validate_outaged_member(
-    member::BranchesSeries,
-    branch::PSY.ACTransmission,
-    nr::NetworkReductionData,
-)
-    delta_b = _compute_series_outage_delta_b(member, branch, nr)
-    if !_is_full_outage(delta_b, _finite_series_susceptance(member, nr))
-        throw(
-            UnsupportedOutageError(
-                "Tripping $(typeof(branch)) $(get_name(branch)) leaves the series chain " *
-                "$(get_name(member)) partly in service. A partial Ybus delta is not supported " *
-                "on the composite arc it was grouped onto. Δb=$(delta_b).",
-            ),
-        )
-    end
-    return
-end
-
 # Direct arc: full outage negates the Pi-model; otherwise scale it by `delta_b / b_arc`.
 # `b_arc` must be what BA holds for the arc: `delta_b` comes from BA, which already
 # substituted `min_x_eps` and, for a symmetric arc, read the corrected Ybus entry. Component
@@ -167,6 +120,18 @@ function _parallel_arc_ybus_delta(
     )
 end
 
+# Series-reduced arc with known tripped components: the two-port of the chain that stays in
+# service minus the two-port of the chain.
+function _series_remaining_ybus_delta(
+    series_chain::BranchesSeries,
+    remaining::BranchesSeries,
+    nr::NetworkReductionData,
+)::NTuple{4, YBUS_ELTYPE}
+    before = ybus_branch_entries(series_chain, nr)
+    after = ybus_branch_entries(remaining, nr)
+    return map((a, b) -> YBUS_ELTYPE(a - b), after, before)
+end
+
 # Series-reduced arc: only full outage of the equivalent chain is supported.
 function _series_arc_ybus_delta(
     series_chain::BranchesSeries,
@@ -183,6 +148,45 @@ function _series_arc_ybus_delta(
         )
     end
     return _negated_pi_model(ybus_branch_entries(series_chain, nr))
+end
+
+# The sign of the base arc, not of the chain: a Ward equivalent can share the arc. `delta_b`
+# is a change in |b|, so a signed value takes the sign that BA holds for the arc.
+_arc_delta_b(nr::NetworkReductionData, arc_tuple::Tuple{Int, Int}, signed_value::Float64) =
+    copysign(1.0, _ba_arc_susceptance(nr, arc_tuple)) * signed_value
+
+# One series arc: the function resolves the tripped components of the chain together. A chain
+# that is open loses its whole two-port; otherwise the chain that stays in service gives the
+# new one.
+function _series_arc_modification(
+    nr::NetworkReductionData,
+    arc_idx::Int,
+    arc_tuple::Tuple{Int, Int},
+    tripped::Vector{PSY.ACTransmission},
+)::ArcModification
+    series_chain = nr.series_branch_map[arc_tuple]
+    tripped_set = Set{PSY.ACTransmission}(tripped)
+    open = is_open_after_outage(series_chain, tripped_set)
+    if open
+        signed_delta_b = -_finite_series_susceptance(series_chain, nr)
+        delta_shift = -_series_shift_injection(series_chain, nr)
+        dy11, dy12, dy21, dy22 = _negated_pi_model(ybus_branch_entries(series_chain, nr))
+    else
+        remaining = _entry_after_outage(series_chain, tripped_set)
+        signed_delta_b = _series_remaining_delta_b(series_chain, remaining, nr)
+        delta_shift = _series_remaining_delta_shift_injection(series_chain, remaining, nr)
+        dy11, dy12, dy21, dy22 = _series_remaining_ybus_delta(series_chain, remaining, nr)
+    end
+    return ArcModification(
+        arc_idx,
+        _arc_delta_b(nr, arc_tuple, signed_delta_b),
+        delta_shift,
+        dy11,
+        dy12,
+        dy21,
+        dy22,
+        Int(open),
+    )
 end
 
 """
@@ -437,28 +441,42 @@ function _parallel_arc_modification(
     tripped::Vector{PSY.ACTransmission},
 )::ArcModification
     bp = nr.parallel_branch_map[arc_tuple]
-    resolved = PSY.ACTransmission[]
-    for branch in tripped
-        member = _outaged_group_member(bp, branch)
-        _validate_outaged_member(member, branch, nr)
-        push!(resolved, member)
-    end
+    tripped_set = Set{PSY.ACTransmission}(tripped)
+    resolved = PSY.ACTransmission[_outaged_group_member(bp, branch) for branch in tripped]
+    reference = get_arc_tuple(bp, nr)
     # Taken in the group's own order, so the floating-point sums below do not depend on the
     # order the components arrive in, and a member tripped twice counts once.
-    tripped_members = PSY.ACTransmission[m for m in bp if m in resolved]
+    touched_members = PSY.ACTransmission[m for m in bp if m in resolved]
     remaining = PSY.ACTransmission[m for m in bp if !(m in resolved)]
+    delta_shift = -sum(_member_shift_injection(bp, nr, m) for m in touched_members)
+    delta_y = zeros(ComplexF64, 4)
+    opened = 0
+    for member in touched_members
+        if is_open_after_outage(member, tripped_set)
+            opened += 1
+            delta_y .+= _member_outage_ybus_delta(bp, nr, member)
+            continue
+        end
+        # The member stays partly in service: a chain that lost one member of a parallel
+        # segment. The arc keeps the member's new two-port and shift injection.
+        after = _entry_after_outage(member, tripped_set)
+        push!(remaining, after)
+        delta_shift +=
+            _finite_series_susceptance(after, nr) *
+            _oriented_member_phase_shift(after, bp, nr)
+        delta_y .+=
+            _subset_two_port((after,), reference, nr) .-
+            _subset_two_port((member,), reference, nr)
+    end
     # Signed relative to the base arc, the frame `delta_b` lives in: on a series-compensated
     # group with negative net susceptance the kernel's `sign(b_e) · Δ|b|` then lands on the
     # signed remainder.
-    b_remaining =
-        copysign(1.0, _ba_arc_susceptance(nr, arc_tuple)) *
-        _remaining_arc_susceptance(nr, bp, remaining, arc_tuple)
+    b_remaining = _arc_delta_b(
+        nr,
+        arc_tuple,
+        _remaining_arc_susceptance(nr, bp, remaining, arc_tuple),
+    )
     delta_b = b_remaining - b_arc
-    delta_shift = -sum(_member_shift_injection(bp, nr, m) for m in tripped_members)
-    delta_y = zeros(ComplexF64, 4)
-    for member in tripped_members
-        delta_y .+= _member_outage_ybus_delta(bp, nr, member)
-    end
     return ArcModification(
         arc_lookup[arc_tuple],
         delta_b,
@@ -467,7 +485,7 @@ function _parallel_arc_modification(
         YBUS_ELTYPE(delta_y[2]),
         YBUS_ELTYPE(delta_y[3]),
         YBUS_ELTYPE(delta_y[4]),
-        length(tripped_members),
+        opened,
     )
 end
 
@@ -572,15 +590,7 @@ function _classify_outage_components(mat::PowerNetworkMatrix, components)
     series_mods = ArcModification[]
     for (arc_idx, tripped) in acc.series_components_by_arc
         arc_tuple = acc.series_arc_tuples[arc_idx]
-        series_chain = nr.series_branch_map[arc_tuple]
-        delta_b = _compute_series_outage_delta_b(series_chain, tripped, nr)
-        delta_shift =
-            _compute_series_outage_delta_shift_injection(series_chain, tripped, nr)
-        dy11, dy12, dy21, dy22 = _compute_arc_ybus_delta(nr, arc_tuple, delta_b)
-        push!(
-            series_mods,
-            ArcModification(arc_idx, delta_b, delta_shift, dy11, dy12, dy21, dy22, 1),
-        )
+        push!(series_mods, _series_arc_modification(nr, arc_idx, arc_tuple, tripped))
     end
     return acc, vcat(acc.direct_mods, parallel_mods, series_mods)
 end

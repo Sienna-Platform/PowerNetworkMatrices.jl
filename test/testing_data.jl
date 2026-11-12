@@ -876,6 +876,121 @@ function build_antiparallel_chain_segment_nested_parallel_system()
     return sys
 end
 
+const _CHAIN_CORE_EDGES = [
+    (1, 2, 0.0, 0.05, 0.0, 0.0), (2, 3, 0.0, 0.06, 0.0, 0.0),
+    (3, 4, 0.0, 0.07, 0.0, 0.0), (4, 1, 0.0, 0.08, 0.0, 0.0),
+    (2, 4, 0.0, 0.09, 0.0, 0.0),
+]
+
+"""
+Ring core plus the chain `1-10-3` whose second segment is an anti-parallel pair with a
+negative net susceptance, so the chain has b < 0. A Ward equivalent on buses 1 to 4 files
+a positive remainder on the arc `(1, 3)`, so the arc and the chain have opposite signs.
+"""
+function build_ward_negative_chain_system()
+    ward_edges = [
+        (1, 30, 0.0, 0.20, 0.0, 0.0), (3, 31, 0.0, 0.25, 0.0, 0.0),
+        (30, 31, 0.0, 0.30, 0.0, 0.0), (30, 32, 0.0, 0.35, 0.0, 0.0),
+        (31, 32, 0.0, 0.40, 0.0, 0.0), (32, 1, 0.0, 0.45, 0.0, 0.0),
+    ]
+    return _build_degree_two_chain_system(
+        vcat(
+            _CHAIN_CORE_EDGES,
+            [
+                (1, 10, 0.0, 0.10, 0.0, 0.0),
+                (10, 3, 0.0, -0.50, 0.0, 0.0),
+                (3, 10, 0.0, 0.60, 0.0, 0.0),
+            ],
+            ward_edges,
+        ),
+    )
+end
+
+"""
+Ring core plus two sibling chains between buses 1 and 3. Chain `1-10-3` has an anti-parallel
+pair as its second segment. Chain `1-20-3` is a plain two-line chain. Both are lossy.
+"""
+function build_grouped_chains_with_parallel_segment()
+    return _build_degree_two_chain_system(
+        vcat(
+            _CHAIN_CORE_EDGES,
+            [
+                (1, 10, 0.010, 0.10, 0.02, 0.03),
+                (10, 3, 0.012, 0.11, 0.03, 0.01),
+                (3, 10, 0.008, 0.17, 0.05, 0.02),
+                (1, 20, 0.020, 0.20, 0.30, 0.05),
+                (20, 3, 0.030, 0.21, 0.25, 0.02),
+            ],
+        ),
+    )
+end
+
+"""
+Ring core plus one chain `1-10-3` whose pair segment has negative reactances, so the net
+susceptance of the chain is negative.
+"""
+function build_negative_chain_system()
+    return _build_degree_two_chain_system(
+        vcat(
+            _CHAIN_CORE_EDGES,
+            [
+                (1, 10, 0.0, 0.10, 0.0, 0.0),
+                (10, 3, 0.0, -0.50, 0.0, 0.0),
+                (3, 10, 0.0, -0.60, 0.0, 0.0),
+            ],
+        ),
+    )
+end
+
+"""
+Ring core plus one chain `1-10-3` with an anti-parallel pair in each of its two segments.
+"""
+function build_two_parallel_segments_chain_system()
+    return _build_degree_two_chain_system(
+        vcat(
+            _CHAIN_CORE_EDGES,
+            [
+                (1, 10, 0.010, 0.10, 0.02, 0.03),
+                (10, 1, 0.020, 0.15, 0.01, 0.04),
+                (10, 3, 0.012, 0.11, 0.03, 0.01),
+                (3, 10, 0.008, 0.17, 0.05, 0.02),
+            ],
+        ),
+    )
+end
+
+"""
+Ring core plus one chain `1-10-3`. Segment 2 is a line `10 -> 3` and an off-nominal
+transformer `T_3_10` (`tap = 1.05`) written `3 -> 10`, so one member of the pair is asymmetric.
+"""
+function build_transformer_twin_chain_system()
+    sys = _build_degree_two_chain_system(
+        vcat(
+            _CHAIN_CORE_EDGES,
+            [(1, 10, 0.010, 0.10, 0.02, 0.03), (10, 3, 0.012, 0.11, 0.03, 0.01)],
+        ),
+    )
+    arc = Arc(;
+        from = PSY.get_component(ACBus, sys, "Bus 3"),
+        to = PSY.get_component(ACBus, sys, "Bus 10"),
+    )
+    PSY.add_component!(sys, arc)
+    PSY.add_component!(
+        sys,
+        PSY.TwoWindingTransformer(; input_basis = u"CU",
+            name = "T_3_10",
+            circuit = PSY.TransformerCircuit(; input_basis = u"CU",
+                arc = arc, tap = 1.05, α = 0.0, available = true,
+                active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
+                base_power = 100.0, base_voltage_primary = 230.0,
+                r = 0.008, x = 0.17,
+            ),
+            magnetizing_shunt = Complex(0.001, -0.02),
+        ),
+    )
+    return sys
+end
+
 ##############################################################################
 ###################### Branch index fingerprinting ###########################
 ##############################################################################
