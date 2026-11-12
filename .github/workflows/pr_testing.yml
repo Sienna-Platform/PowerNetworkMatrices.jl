@@ -5,8 +5,8 @@ on:
     types: [opened, synchronize, reopened]
 
 jobs:
-  test:
-    name: Julia ${{ matrix.julia-version }} - ${{ matrix.os }}
+  test-pnm:
+    name: PNM - Julia ${{ matrix.julia-version }} - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -28,16 +28,9 @@ jobs:
         env:
           PYTHON: ""
           JULIA_NUM_THREADS: "2"
-      - name: Run the PowerMatricesCore tests
-        env:
-          PYTHON: ""
-          JULIA_NUM_THREADS: "2"
-        run: |
-          julia --project=PowerMatricesCore.jl/test -e 'using Pkg; Pkg.instantiate()'
-          julia --project=PowerMatricesCore.jl/test --code-coverage=user PowerMatricesCore.jl/test/runtests.jl
-      # Coverage is reported from a single job: the matrix would otherwise submit three
-      # reports per commit, and the Windows ones carry backslash paths Codecov cannot
-      # match against the repo tree.
+      # Coverage is reported from one job of each matrix: the Windows reports carry
+      # backslash paths that Codecov cannot match against the repo tree. The PNM tests
+      # also run core code, so this report covers the core sources too.
       - uses: julia-actions/julia-processcoverage@v1
         if: matrix.os == 'ubuntu-latest' && matrix.julia-version == '1'
         with:
@@ -47,8 +40,47 @@ jobs:
         with:
           files: ./lcov.info
           disable_search: true
-          flags: unittests
-          name: codecov-umbrella
+          flags: pnm
+          name: pnm
+          slug: ${{ github.repository }}
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  test-core:
+    name: PowerMatricesCore - Julia ${{ matrix.julia-version }} - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        julia-version: ['1']
+        julia-arch: [x64]
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: julia-actions/setup-julia@latest
+        with:
+          version: ${{ matrix.julia-version }}
+          arch: ${{ matrix.julia-arch }}
+      - name: Instantiate the PowerMatricesCore test environment
+        shell: bash
+        run: julia --project=PowerMatricesCore.jl/test -e 'using Pkg; Pkg.instantiate()'
+      - name: Run the PowerMatricesCore tests
+        shell: bash
+        env:
+          JULIA_NUM_THREADS: "2"
+        run: julia --project=PowerMatricesCore.jl/test --code-coverage=user PowerMatricesCore.jl/test/runtests.jl
+      - uses: julia-actions/julia-processcoverage@v1
+        if: matrix.os == 'ubuntu-latest' && matrix.julia-version == '1'
+        with:
+          directories: PowerMatricesCore.jl/src,PowerMatricesCore.jl/ext
+      - uses: codecov/codecov-action@v7
+        if: matrix.os == 'ubuntu-latest' && matrix.julia-version == '1'
+        with:
+          files: ./lcov.info
+          disable_search: true
+          flags: core
+          name: core
           slug: ${{ github.repository }}
           fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
