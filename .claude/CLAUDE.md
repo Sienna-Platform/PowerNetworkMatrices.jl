@@ -124,7 +124,7 @@ Compile-check, from `PowerNetworkMatrices.jl/`: `julia --project=test -e 'using 
 
 **The docs build is a required gate — `docs/make.jl` must pass.** Treat a docs failure like a test failure, and fix `missing_docs` by registering the docstring in `@autodocs`/`@docs`, never by silencing with `warnonly`.
 
-`docs/Project.toml` carries its own `[sources]`, mirroring `test/Project.toml`. It must: the CI workflow runs `Pkg.develop(PackageSpec(path=pwd()))`, and **`[sources]` is not inherited from a dev'd dependency**, so the root pins never reach the docs environment. Without them it resolves registry PowerSystems against `InfrastructureSystems#IS4` and dies precompiling with `UndefVarError: SystemUnitsSettings`. `[sources]` entries also require a matching `[deps]` entry, which is why IS and PowerFlowFileParser are listed there despite not being imported by the docs.
+`docs/Project.toml` carries its own `[sources]`, mirroring `test/Project.toml`. It must: the CI workflow runs `Pkg.develop(PackageSpec(path="PowerNetworkMatrices.jl"))`, and **`[sources]` is not inherited from a dev'd dependency**, so the root pins never reach the docs environment. Without them it resolves registry PowerSystems against `InfrastructureSystems#IS4` and dies precompiling with `UndefVarError: SystemUnitsSettings`. `[sources]` entries also require a matching `[deps]` entry, which is why IS and PowerFlowFileParser are listed there despite not being imported by the docs.
 
 Two ref rules, both learned from a red gate:
 

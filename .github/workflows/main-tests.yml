@@ -37,12 +37,12 @@ jobs:
           PYTHON: ""
           JULIA_NUM_THREADS: "2"
       # Coverage is reported from one job of each matrix: the Windows reports carry
-      # backslash paths that Codecov cannot match against the repo tree. The PNM tests
-      # also run core code, so this report covers the core sources too.
+      # backslash paths that Codecov cannot match against the repo tree. julia-runtest tracks
+      # coverage of the PNM folder only. The core coverage comes from the core job.
       - uses: julia-actions/julia-processcoverage@v1
         if: matrix.os == 'ubuntu-latest' && matrix.julia-version == '1'
         with:
-          directories: PowerNetworkMatrices.jl/src,PowerMatricesCore.jl/src,PowerMatricesCore.jl/ext
+          directories: PowerNetworkMatrices.jl/src
       - uses: codecov/codecov-action@v7
         if: matrix.os == 'ubuntu-latest' && matrix.julia-version == '1'
         with:

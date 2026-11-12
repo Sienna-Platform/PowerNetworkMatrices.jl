@@ -14,33 +14,37 @@ This repository holds two Julia packages.
   - [`PowerMatricesCore.jl`](PowerMatricesCore.jl) holds the linear algebra that does not need
     `PowerSystems.jl`: the sparse solver backends, the factorization of the DC network, the PTDF
     and Woodbury row kernels, and the factor-file reads and writes. See its
-    [README](PowerMatricesCore.jl/README.md) and its
-    [manual](https://sienna-platform.github.io/PowerNetworkMatrices.jl/PowerMatricesCore/stable).
+    [README](PowerMatricesCore.jl/README.md). Its manual is not published yet.
+    Build it from `PowerMatricesCore.jl` with
+    `julia --project=docs docs/make.jl`.
 
 `PowerNetworkMatrices.jl` depends on `PowerMatricesCore.jl`. `PowerMatricesCore.jl` has no
 dependency on `PowerSystems.jl`.
 
 ## Installation
 
-Install the released packages with:
+Install the released `PowerNetworkMatrices.jl` from the registry:
 
 ```julia
 using Pkg
 Pkg.add("PowerNetworkMatrices")
-Pkg.add("PowerMatricesCore")
 ```
 
-To install from a git checkout of this repository, use `subdir` to select the package:
+`PowerMatricesCore.jl` is not registered yet. Add both packages in one `Pkg.add` call, core first.
+Until this layout reaches `main`, pass `rev` in each `PackageSpec` with the name of a branch that has this layout.
 
 ```julia
-Pkg.add(;
-    url = "https://github.com/Sienna-Platform/PowerNetworkMatrices.jl",
-    subdir = "PowerNetworkMatrices.jl",
-)
-Pkg.add(;
-    url = "https://github.com/Sienna-Platform/PowerNetworkMatrices.jl",
-    subdir = "PowerMatricesCore.jl",
-)
+using Pkg
+Pkg.add([
+    PackageSpec(;
+        url = "https://github.com/Sienna-Platform/PowerNetworkMatrices.jl",
+        subdir = "PowerMatricesCore.jl",
+    ),
+    PackageSpec(;
+        url = "https://github.com/Sienna-Platform/PowerNetworkMatrices.jl",
+        subdir = "PowerNetworkMatrices.jl",
+    ),
+])
 ```
 
 ## Development

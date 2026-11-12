@@ -12,12 +12,12 @@ jobs:
       - name: Run Performance Test Main
         run: |
           # Main may still hold the old layout (package at the root) or the new one.
+          url="https://github.com/${{ github.repository }}"
           if curl -fsI "https://raw.githubusercontent.com/${{ github.repository }}/main/PowerNetworkMatrices.jl/Project.toml" > /dev/null; then
-            subdir=PowerNetworkMatrices.jl
+            julia --project=PowerNetworkMatrices.jl/test -e 'using Pkg; Pkg.add([PackageSpec(url=ARGS[1], rev="main", subdir="PowerMatricesCore.jl"), PackageSpec(url=ARGS[1], rev="main", subdir="PowerNetworkMatrices.jl")]); Pkg.instantiate()' "$url"
           else
-            subdir=""
+            julia --project=PowerNetworkMatrices.jl/test -e 'using Pkg; Pkg.add(PackageSpec(url=ARGS[1], rev="main")); Pkg.instantiate()' "$url"
           fi
-          julia --project=PowerNetworkMatrices.jl/test -e 'using Pkg; Pkg.add(PackageSpec(url="https://github.com/${{ github.repository }}", rev="main", subdir=ARGS[1])); Pkg.instantiate()' "$subdir"
           julia --project=PowerNetworkMatrices.jl/test PowerNetworkMatrices.jl/test/performance/performance_test.jl "Main"
       - name: Run Performance Test Branch
         run: |

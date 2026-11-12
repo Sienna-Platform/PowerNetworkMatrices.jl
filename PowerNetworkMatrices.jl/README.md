@@ -21,13 +21,22 @@ using Pkg
 Pkg.add("PowerNetworkMatrices")
 ```
 
-To install from a git checkout of the repository, use:
+To install from a git checkout of the repository, add the core and this package together.
+`PowerMatricesCore.jl` is not registered yet. Until this layout reaches `main`, pass `rev` in each
+`PackageSpec` with the name of a branch that has this layout.
 
 ```julia
-Pkg.add(;
-    url = "https://github.com/Sienna-Platform/PowerNetworkMatrices.jl",
-    subdir = "PowerNetworkMatrices.jl",
-)
+using Pkg
+Pkg.add([
+    PackageSpec(;
+        url = "https://github.com/Sienna-Platform/PowerNetworkMatrices.jl",
+        subdir = "PowerMatricesCore.jl",
+    ),
+    PackageSpec(;
+        url = "https://github.com/Sienna-Platform/PowerNetworkMatrices.jl",
+        subdir = "PowerNetworkMatrices.jl",
+    ),
+])
 ```
 
 This package depends on [`PowerMatricesCore.jl`](../PowerMatricesCore.jl), which holds the
@@ -36,6 +45,6 @@ linear algebra without a `PowerSystems.jl` dependency. The
 
 ## License
 
-PowerNetworkMatrices is released under a BSD [license](https://github.com/Sienna-Platform/PowerNetworkMatrices.jl/blob/main/PowerNetworkMatrices.jl/LICENSE).
+PowerNetworkMatrices is released under a BSD [license](LICENSE).
 PowerNetworkMatrices has been developed as part of the Scalable Integrated Infrastructure Planning (SIIP)
 initiative at the U.S. Department of Energy's National Laboratory of the Rockies (formerly known as NREL) ([NLR](https://www.nlr.gov/)).
