@@ -165,11 +165,8 @@ function NetworkModification(table::BranchOutageTable, keys::Vector{Tuple{String
         islanding |= is_islanding
         for i in range
             arc = table.arc_index[i]
-            if !haskey(by_arc, arc)
-                by_arc[arc] = Int[]
-                push!(arcs, arc)
-            end
-            push!(by_arc[arc], i)
+            haskey(by_arc, arc) || push!(arcs, arc)
+            push!(get!(by_arc, arc, Int[]), i)
         end
     end
     picked = Int[]

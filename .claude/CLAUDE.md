@@ -67,12 +67,12 @@ The `ThreeWindingTransformerCircuit` arm is load-bearing: the wrapper subtypes `
 
 ## Source layout
 
-  - Core: `PowerNetworkMatrix.jl` (abstract `PowerNetworkMatrix{T} <: AbstractArray{T,2}`), `definitions.jl` (`AUTO_TOLERANCE_BUS_LIMIT = 2000`, `ZERO_IMPEDANCE_X_EPSILON = 1e-6`, `abstract type AbstractReductionAggregate`), `linalg_settings.jl`
-  - Matrices: `Ybus.jl`, `YbusACBranches.jl`, `ArcAdmittanceMatrix.jl`, `IncidenceMatrix.jl`, `AdjacencyMatrix.jl`, `BA_ABA_matrices.jl`, `ptdf_calculations.jl` (N_arcs×N_buses, transposed storage), `lodf_calculations.jl` (diagonal = −1.0), `virtual_{ptdf,lodf,modf}_calculations.jl`, `row_cache.jl` (LRU, default 100 MiB)
-  - Modification/contingency: `modf_definitions.jl` (`ArcModification`, `ShuntModification`, `ContingencySpec`, `WoodburyFactors`), `network_modification.jl`, `woodbury_kernel.jl` — **mainline in psy6**; POM's branch-side N-1 builds on `VirtualMODF`/`ContingencySpec`
+  - Core: `PowerNetworkMatrix.jl` (abstract `PowerNetworkMatrix{T} <: AbstractArray{T,2}`), `definitions.jl` (`AUTO_TOLERANCE_BUS_LIMIT = 2000`, `ZERO_IMPEDANCE_X_EPSILON = 1e-6`, `abstract type AbstractReductionAggregate`)
+  - Matrices: `Ybus.jl`, `YbusACBranches.jl`, `ArcAdmittanceMatrix.jl`, `IncidenceMatrix.jl`, `AdjacencyMatrix.jl`, `BA_ABA_matrices.jl`, `ptdf_calculations.jl` (N_arcs×N_buses, transposed storage), `lodf_calculations.jl` (diagonal = −1.0), `virtual_{ptdf,lodf,modf}_calculations.jl`
+  - Modification/contingency: `network_modification.jl`, `woodbury_kernel.jl` — **mainline in psy6**; POM's branch-side N-1 builds on `VirtualMODF`/`ContingencySpec`
   - Reductions: `NetworkReduction.jl`, `NetworkReductionData.jl`, `ReductionContainer.jl`, `reduction_helpers.jl`, `radial_reduction.jl`, `degree_two_reduction.jl`, `ward_reduction.jl`, `zero_impedance_branch_reduction.jl` (the spec) + `apply_zero_impedance_reduction.jl` (the merge), `BranchesParallel.jl`, `BranchesSeries.jl`, `ThreeWindingTransformerCircuit.jl`, `EquivalentBranch.jl`
   - Connectivity: `connectivity_checks.jl`, `subnetworks.jl`
-  - Solvers: `KLUWrapper/` (internal), `AccelerateWrapper/` (macOS built-in), `ext/MKLPardisoExt.jl` (x86_64 weakdep)
+  - PowerMatricesCore (`PowerMatricesCore.jl/src/`): `linalg_settings.jl`, `row_cache.jl` (LRU, default 100 MiB), `modf_definitions.jl` (`ArcModification`, `ShuntModification`, `ContingencySpec`, `WoodburyFactors`), `factor_core.jl`, `factor_file.jl`, `branch_map.jl`, `branch_reduction.jl`, `outage_tables.jl`, `woodbury_kernel.jl`, `virtual_workers.jl`, `KLUWrapper/` (internal), `AccelerateWrapper/` (macOS built-in), `../ext/MKLPardisoExt.jl` (x86_64 weakdep)
 
 Exports live only in the main module file.
 

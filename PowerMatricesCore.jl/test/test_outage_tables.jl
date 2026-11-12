@@ -128,16 +128,6 @@ end
     end
 end
 
-function _hostile_outages(change!, reader, expected::String)
-    mktempdir() do dir
-        path = joinpath(dir, "outages.h5")
-        _write_outage_file(path)
-        HDF5.h5open(change!, path, "r+")
-        @test_throws expected reader(path)
-    end
-    return
-end
-
 @testset "Outage tables: hostile input" begin
     for (group, reader) in (
         ("branch_outages", PMC.read_branch_outages),
@@ -158,32 +148,37 @@ end
             (g -> _replace_entry!(g, "id", fill(7, length(g["id"]))), "more than once"),
             (g -> _replace_entry!(g, "id", Float64[1.0]), "has the HDF5 class"),
         )
-            _hostile_outages(f -> change!(f[group]), reader, expected)
+            _hostile(f -> change!(f[group]), expected, reader, _write_outage_file)
         end
-        _hostile_outages(reader, "entry /$group is a dataset; expected a group") do f
+        _hostile(
+            "entry /$group is a dataset; expected a group",
+            reader,
+            _write_outage_file,
+        ) do f
             HDF5.delete_object(f, group)
             f[group] = [1, 2]
         end
-        _hostile_outages(reader, "arc_susceptances entry is zero") do f
+        _hostile("arc_susceptances entry is zero", reader, _write_outage_file) do f
             b = read(f["arc_susceptances"])
             b[4] = 0.0
             _replace_entry!(f, "arc_susceptances", b)
         end
-        _hostile_outages(reader, "Unsupported factor file format version") do f
+        _hostile("Unsupported factor file format version", reader, _write_outage_file) do f
             HDF5.delete_attribute(f, "format_version")
-            HDF5.attributes(f)["format_version"] = 2
+            HDF5.attributes(f)["format_version"] = PMC.FACTOR_FILE_FORMAT_VERSION + 1
         end
     end
-    _hostile_outages(PMC.read_branch_outages, "columns of unequal length") do f
+    _hostile("columns of unequal length", PMC.read_branch_outages, _write_outage_file) do f
         _replace_entry!(f["branch_outages"], "member", [1, 2])
     end
-    _hostile_outages(
-        PMC.read_branch_outages,
+    _hostile(
         "branch_outages/member has the value 0 at row 1",
+        PMC.read_branch_outages,
+        _write_outage_file,
     ) do f
         _replace_entry!(f["branch_outages"], "member", zeros(Int, 6))
     end
-    _hostile_outages(PMC.read_branch_outages, "more than once") do f
+    _hostile("more than once", PMC.read_branch_outages, _write_outage_file) do f
         HDF5.delete_object(f["branch_outages"], "name")
         PMC._write_strings!(f["branch_outages"], "name", fill("a", 5))
     end

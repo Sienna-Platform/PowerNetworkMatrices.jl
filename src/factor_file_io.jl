@@ -211,7 +211,8 @@ function _outage_members(trf::PSY.ThreeWindingTransformer)
     return filter(get_equivalent_available, windings)
 end
 
-# The live path rejects partial series outages, so every series or direct row removes its arc.
+# `_write_branch_outages` rejects a branch that leaves a series chain partly in service, so every
+# series or direct row removes its arc.
 _opens_arc(::Val{:parallel}) = false
 _opens_arc(::Val) = true
 
@@ -236,8 +237,9 @@ _group_size(nr::NetworkReductionData, ::Val{:parallel}, arc::Tuple{Int, Int}) =
     length(nr.parallel_branch_map[arc].branches)
 
 # For each arc row of `mod`: `true` when the outage of `branch` removes all admittance of
-# that arc, and the position of the tripped member in the parallel group of that arc. An
-# outage that trips every member of a group removes the whole arc.
+# that arc, the position of the tripped member in the parallel group of that arc, and `true`
+# when the row leaves its chain partly in service (its opened count differs from the number of
+# distinct tripped members). An outage that trips every member of a group removes the whole arc.
 function _arc_row_flags(
     mat::Union{VirtualPTDF, VirtualMODF},
     branch::PSY.ACTransmission,
@@ -266,8 +268,18 @@ function _arc_row_flags(
             by_arc[ix] = (true, last(by_arc[ix]))
         end
     end
-    flags = [by_arc[m.arc_index] for m in mod.arc_modifications]
-    return first.(flags), last.(flags)
+    flags = Tuple{Bool, Int}[]
+    partial = Bool[]
+    for m in mod.arc_modifications
+        if !haskey(by_arc, m.arc_index)
+            error(
+                "Arc row $(m.arc_index) of the outage of $(PSY.get_name(branch)) matches no member of the outage.",
+            )
+        end
+        push!(flags, by_arc[m.arc_index])
+        push!(partial, m.opened != length(tripped[m.arc_index]))
+    end
+    return first.(flags), last.(flags), partial
 end
 
 _is_absorbed(nr::NetworkReductionData, branch::PSY.ACTransmission) =
@@ -333,8 +345,19 @@ function _write_branch_outages(
             push!(rejected, PSY.get_name(branch) => sprint(showerror, e))
             continue
         end
+        all_flags, all_positions, partial = _arc_row_flags(mat, branch, mod)
+        if any(partial)
+            push!(
+                rejected,
+                PSY.get_name(
+                    branch,
+                ) => "The branch outage table has no row for a branch that leaves its series chain partly in service.",
+            )
+            continue
+        end
         full_mod = mod
         mod = _drop_zero_susceptance_arcs(full_mod)
+        kept = [!iszero(m.delta_b) for m in full_mod.arc_modifications]
         if isempty(mod.arc_modifications)
             push!(zero_susceptance, PSY.get_name(branch))
             continue
@@ -345,15 +368,14 @@ function _write_branch_outages(
         push!(mods, mod)
         push!(keys_, _outage_key(branch))
         push!(ids, IS.get_id(branch))
-        flags, positions = _arc_row_flags(mat, branch, mod)
-        append!(opens_arc, flags)
-        append!(members, positions)
+        append!(opens_arc, all_flags[kept])
+        append!(members, all_positions[kept])
     end
     if !isempty(absorbed)
         @warn "$(length(absorbed)) branches are in no reduction map of the matrix (a network reduction absorbed them, or they are not in service). First: $(first(absorbed))"
     end
     if !isempty(rejected)
-        @warn "$(length(rejected)) branches have no outage row because NetworkModification rejected them. First: $(first(first(rejected))).\n$(_rejection_summary(rejected))"
+        @warn "$(length(rejected)) branches have no outage row because NetworkModification rejected them, or because the outage leaves a series chain partly in service. First: $(first(first(rejected))).\n$(_rejection_summary(rejected))"
     end
     if !isempty(zero_susceptance)
         @warn "$(length(zero_susceptance)) branches have no outage row because their susceptance is zero, so an outage has no DC effect: $(join(first(zero_susceptance, _MAX_REJECTION_LINES), ", "))"
@@ -393,12 +415,13 @@ end
     to_hdf5(mat::Union{VirtualPTDF, VirtualMODF}, filename, sys::PSY.System; force = false, outages = true)
 
 Write the factor data of `mat` as the method without `sys` does. Also write the group
-`branch_reason` with the [`BranchReasonTable`](@ref) of every AC branch of `sys`. If `outages`
+`branch_reduction` with the [`BranchReductionTable`](@ref) of every AC branch of `sys`. If `outages`
 is `true`, also write the group
 `branch_outages` with one row for each branch of `sys` that `NetworkModification(mat, branch)`
 accepts, so `from_hdf5(BranchOutageTable, filename)` can build outages by name. A branch that
 is in no reduction map of the matrix has no row (a network reduction absorbed it, or it is not
 in service). A branch that `NetworkModification` rejects with an `UnsupportedOutageError` has no row.
+A branch whose outage leaves a member of a series chain partly in service has no row either.
 A branch whose arcs all have zero susceptance has no row either, because its outage has no DC effect.
 A branch with some zero-susceptance arcs (a three-winding transformer) has rows for the other arcs only.
 The function logs one warning for each case with the count. The warning for rejected branches
@@ -416,7 +439,7 @@ function to_hdf5(
 )
     return _write_factor_file_atomically(filename, force) do f
         _write_factor_core(f, get_core(mat), _dist_slack(mat))
-        _write_branch_reason!(f, BranchReasonTable(mat, sys))
+        _write_branch_reduction!(f, BranchReductionTable(mat, sys))
         if outages
             _write_branch_outages(f, mat, sys)
         end
@@ -442,7 +465,7 @@ end
     from_hdf5(::Type{BranchArcTable}, filename) -> BranchArcTable
 
 Read the `branch_map` group from a file that [`to_hdf5`](@ref) wrote. The function throws an
-error if the format version is not 1, the group is missing, or a column breaks a rule of
+error if the format version is not 2, the group is missing, or a column breaks a rule of
 the table.
 """
 function from_hdf5(::Type{BranchArcTable}, filename::AbstractString)
@@ -486,7 +509,7 @@ Read a `VirtualPTDF` from a file that [`to_hdf5`](@ref) wrote. The function does
 The restored matrix has no components and no reduction maps. `NetworkModification(mat, branch)`,
 `NetworkModification(mat, arc)` and `NetworkModification(mat, sys, outage)` throw an error.
 `get_branch_susceptances_by_arc` and `to_hdf5` throw an error. `mat[name, bus]` does not work.
-The function throws an error if the format version of the file is not 1.
+The function throws an error if the format version of the file is not 2.
 """
 function from_hdf5(
     ::Type{VirtualPTDF},
@@ -545,13 +568,13 @@ function from_hdf5(
 end
 
 """
-    from_hdf5(::Type{BranchReasonTable}, filename) -> BranchReasonTable
+    from_hdf5(::Type{BranchReductionTable}, filename) -> BranchReductionTable
 
-Read the `branch_reason` group that `to_hdf5(mat, filename, sys)` wrote. The function throws an
+Read the `branch_reduction` group that `to_hdf5(mat, filename, sys)` wrote. The function throws an
 error if the file has no such group, because a file written without a `System` cannot name
-its branches. It also throws an error if the format version is not 1 or a column breaks a
+its branches. It also throws an error if the format version is not 2 or a column breaks a
 rule of the table.
 """
-function from_hdf5(::Type{BranchReasonTable}, filename::AbstractString)
-    return read_branch_reasons(filename)
+function from_hdf5(::Type{BranchReductionTable}, filename::AbstractString)
+    return read_branch_reductions(filename)
 end

@@ -1,4 +1,4 @@
-const FACTOR_FILE_FORMAT_VERSION = 1
+const FACTOR_FILE_FORMAT_VERSION = 2
 
 # Columns of one table must agree in length, or `zip` would drop rows in silence.
 function _check_same_length(table::String, columns::Pair{String, <:AbstractVector}...)
@@ -409,6 +409,9 @@ end
 function _checked_group(::HDF5.Dataset, name::String)
     return error("Factor file entry $name is a dataset; expected a group.")
 end
+function _checked_group(::HDF5.Datatype, name::String)
+    return error("Factor file entry $name is a committed datatype; expected a group.")
+end
 
 function _check_format_version(a::HDF5.Attributes, budget::ReadBudget)
     version = _read(a, "format_version", Int, budget)
@@ -592,10 +595,11 @@ function read_factor_core(
 end
 
 """
-    read_shift_injection(f::HDF5.File, core::FactorCore, budget) -> Vector{Float64}
+    read_shift_injection(f::HDF5.File, core::FactorCore[, budget]) -> Vector{Float64}
 
 Read the DC phase shift injection of each arc of `core`. The function checks that the dataset
-has one finite value for each arc.
+has one finite value for each arc. The default `budget` is a new `ReadBudget` for the file.
+One budget for all reads of a file bounds their total bytes.
 """
 function read_shift_injection(
     f::HDF5.File,
@@ -618,10 +622,12 @@ function read_shift_injection(
 end
 
 """
-    read_dist_slack(f::HDF5.File, core::FactorCore, budget) -> Vector{Float64}
+    read_dist_slack(f::HDF5.File, core::FactorCore[, budget]) -> Vector{Float64}
 
 Read the distributed slack weights of the buses of `core`. The result is empty if the file
 holds no weights. Otherwise it has one non-negative weight for each bus and a positive sum.
+The default `budget` is a new `ReadBudget` for the file. One budget for all reads of a file
+bounds their total bytes.
 """
 function read_dist_slack(
     f::HDF5.File,

@@ -63,22 +63,9 @@ end
     end
 end
 
-function _hostile_branch_map(change!, expected::String)
-    mktempdir() do dir
-        path = joinpath(dir, "core.h5")
-        _write_five_bus(path)
-        HDF5.h5open(f -> PMC._write_branch_map!(f, _six_arc_table()), path, "r+")
-        HDF5.h5open(change!, path, "r+")
-        @test_throws expected PMC.read_branch_map(path)
-    end
-    return
-end
-
-function _set_column!(f, name::String, row::Int, value)
-    g = f["branch_map"]
-    column = read(g[name])
-    column[row] = value
-    _replace_entry!(g, name, column)
+function _write_branch_map_file(path)
+    _write_five_bus(path)
+    HDF5.h5open(f -> PMC._write_branch_map!(f, _six_arc_table()), path, "r+")
     return
 end
 
@@ -99,24 +86,37 @@ end
         ("b", 1, 1.0, "b is not 0"),
         ("alpha", 4, Inf, "alpha is Inf"),
     )
-        _hostile_branch_map(f -> _set_column!(f, name, row, value), expected)
+        _hostile(
+            f -> _set_column!(f["branch_map"], name, row, value),
+            expected,
+            PMC.read_branch_map,
+            _write_branch_map_file,
+        )
     end
-    _hostile_branch_map("row 8 (kind 10): no child") do f
-        _set_column!(f, "parent", 9, 1)
-        _set_column!(f, "parent", 10, 1)
+    _hostile("row 8 (kind 10): no child", PMC.read_branch_map, _write_branch_map_file) do f
+        _set_column!(f["branch_map"], "parent", 9, 1)
+        _set_column!(f["branch_map"], "parent", 10, 1)
     end
-    _hostile_branch_map("columns of unequal length") do f
+    _hostile("columns of unequal length", PMC.read_branch_map, _write_branch_map_file) do f
         _replace_entry!(f["branch_map"], "b", [1.0])
     end
-    _hostile_branch_map("has the HDF5 class") do f
+    _hostile("has the HDF5 class", PMC.read_branch_map, _write_branch_map_file) do f
         _replace_entry!(f["branch_map"], "kind", ones(10))
     end
-    _hostile_branch_map("entry /branch_map is a dataset; expected a group") do f
+    _hostile(
+        "entry /branch_map is a dataset; expected a group",
+        PMC.read_branch_map,
+        _write_branch_map_file,
+    ) do f
         HDF5.delete_object(f, "branch_map")
         f["branch_map"] = [1, 2]
     end
-    _hostile_branch_map("Unsupported factor file format version") do f
+    _hostile(
+        "Unsupported factor file format version",
+        PMC.read_branch_map,
+        _write_branch_map_file,
+    ) do f
         HDF5.delete_attribute(f, "format_version")
-        HDF5.attributes(f)["format_version"] = 2
+        HDF5.attributes(f)["format_version"] = PMC.FACTOR_FILE_FORMAT_VERSION + 1
     end
 end

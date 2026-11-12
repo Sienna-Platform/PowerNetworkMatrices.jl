@@ -234,7 +234,7 @@ function _check_virtual_solver(::MKLPardisoSolver)
     )
 end
 
-# ponytail: no real network has |b| near 1e12 (the smallest reactance gives about 1e6); raise
+# No real network has |b| near 1e12 (the smallest reactance gives about 1e6); raise
 # the limit if a valid case needs more.
 const MAX_ARC_SUSCEPTANCE = 1e12
 
@@ -668,6 +668,15 @@ function _check_dist_slack_network(core::FactorCore)
     return
 end
 
+function _check_dist_slack_islanding(wf::WoodburyFactors)
+    if wf.is_islanding
+        error(
+            "Distributed slack is not supported for a modification that islands the network.",
+        )
+    end
+    return
+end
+
 """
     apply_dist_slack!(row, core::FactorCore, dist_slack_normalized) -> row
     apply_dist_slack!(row, core::FactorCore, dist_slack_normalized, wf::WoodburyFactors) -> row
@@ -696,10 +705,6 @@ function apply_dist_slack!(
     dist_slack_normalized::Vector{Float64},
     wf::WoodburyFactors,
 )
-    if wf.is_islanding
-        error(
-            "Distributed slack is not supported for a modification that islands the network.",
-        )
-    end
+    _check_dist_slack_islanding(wf)
     return apply_dist_slack!(row, core, dist_slack_normalized)
 end

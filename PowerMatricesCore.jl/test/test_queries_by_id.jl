@@ -158,14 +158,14 @@ end
         _write_query_file(path; reverse_bus_map = Dict(98 => 3))
         x = PMC.read_branch_factors(path; linear_solver = "KLU")
         @test PMC.has_branch(x, 101)
-        @test !PMC.has_branch(x, 101; winding = 1)
+        @test !PMC.has_branch(x, 101, PMC.PRIMARY)
         @test !PMC.has_branch(x, 999)
         @test PMC.has_bus_column(x, 4)
         @test PMC.bus_column(x, 4) == 4
         @test PMC.has_bus_column(x, 98)
         @test PMC.bus_column(x, 98) == 3
         @test !PMC.has_bus_column(x, 77)
-        @test_throws "Branch with id 999 and winding 0 has no row in the branch map. A network reduction removed it, or it is not in service." PMC.branch_ptdf_row(
+        @test_throws "Branch with id 999 has no row in the branch map. A network reduction removed it, or it is not in service." PMC.branch_ptdf_row(
             x,
             999,
         )
@@ -268,6 +268,50 @@ end
             103,
             island,
         )
+        @test_throws text PMC.branch_ptdf_row(y, 999, c)
+        @test_throws text PMC.branch_ptdf_row(y, 999, PMC.PRIMARY, c)
+    end
+end
+
+@testset "Queries by id: a circuit takes its winding" begin
+    circuits = PMC.BranchArcTable(
+        [1, 6, 7, 8, 1, 1],
+        [101, 201, 201, 201, 104, 105],
+        [-1, -2, -3, -4, -5, -6],
+        [1, 1, 1, 1, 1, 1],
+        [4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+        zeros(6),
+        6,
+    )
+    mktempdir() do dir
+        path = joinpath(dir, "q.h5")
+        core = _write_query_file(path; table = circuits)
+        x = PMC.read_branch_factors(path; linear_solver = "KLU")
+        @test PMC.has_branch(x, 101)
+        @test !PMC.has_branch(x, 201)
+        c = PMC.branch_contingency(x, [101])
+        wf = PMC.compute_woodbury_factors(core, PMC.NetworkModification(x.outages, [101]))
+        r = x.leaf_rows[(201, 2)]
+        expected =
+            c.shares[r] .* PMC.apply_dist_slack!(
+                PMC.apply_woodbury_correction(core, x.row_arcs[r], wf),
+                core,
+                _QUERY_SLACK,
+                wf,
+            )
+        @test PMC.branch_ptdf_row(x, 201, PMC.SECONDARY, c) ≈ expected
+        @test !iszero(expected)
+        for w in (PMC.PRIMARY, PMC.SECONDARY, PMC.TERTIARY)
+            @test PMC.has_branch(x, 201, w)
+            @test !PMC.has_branch(x, 101, w)
+            @test length(PMC.branch_ptdf_row(x, 201, w)) == length(PMC.get_bus_axis(x))
+        end
+        @test PMC.branch_ptdf_row(x, 201, PMC.SECONDARY) !=
+              PMC.branch_ptdf_row(x, 201, PMC.PRIMARY)
+        @test_throws "The id 201 is a three-winding transformer. Pass a Winding" PMC.branch_ptdf_row(
+            x,
+            201,
+        )
     end
 end
 
@@ -337,5 +381,82 @@ end
         island = PMC.branch_contingency(x, [106])
         @test PMC.is_islanding(island) && !PMC.has_dist_slack(x)
         @test length(PMC.branch_ptdf_row(x, 103, island)) == length(PMC.get_bus_axis(x))
+    end
+end
+
+@testset "Queries by id: distributed slack needs one reference bus" begin
+    arc_ax = [(1, 2), (3, 4)]
+    bus_ax = [1, 2, 3, 4]
+    core = PMC.FactorCore(
+        [1.0, 1.0],
+        Set([1, 3]),
+        (arc_ax, bus_ax),
+        Dict(1 => ([(1, 2)], [1, 2]), 3 => ([(3, 4)], [3, 4])),
+        [1, 1];
+        network_data = nothing,
+        linear_solver = "KLU",
+        tol = 0.0,
+    )
+    table =
+        PMC.BranchArcTable([1, 1], [101, 102], [-1, -2], [1, 1], [1.0, 1.0], zeros(2), 2)
+    mktempdir() do dir
+        for (name, weights) in (("slack.h5", fill(1.0, 4)), ("plain.h5", Float64[]))
+            path = joinpath(dir, name)
+            HDF5.h5open(path, "w") do f
+                PMC.write_factor_core(
+                    f,
+                    core;
+                    shift_injection = zeros(2),
+                    dist_slack = weights,
+                )
+                PMC._write_branch_map!(f, table)
+            end
+            if isempty(weights)
+                x = PMC.read_branch_factors(path; linear_solver = "KLU")
+                @test !PMC.has_dist_slack(x)
+                @test length(PMC.branch_ptdf_row(x, 101)) == 4
+            else
+                @test_throws "Distributed slack is not supported for systems with multiple reference buses." PMC.read_branch_factors(
+                    path;
+                    linear_solver = "KLU",
+                )
+            end
+        end
+    end
+end
+
+@testset "Queries by id: contingency ids are not empty and do not repeat" begin
+    mktempdir() do dir
+        path = joinpath(dir, "q.h5")
+        _write_query_file(path)
+        x = PMC.read_branch_factors(path; linear_solver = "KLU")
+        @test_throws "An outage needs at least one branch key." PMC.branch_contingency(
+            x,
+            Int[],
+        )
+        @test_throws "Duplicate branch key in outage" PMC.branch_contingency(
+            x,
+            [101, 101],
+        )
+    end
+end
+
+@testset "Queries by id: a zero impedance sum in a file throws" begin
+    chain = PMC.BranchArcTable(
+        [9, 1, 1, 1, 2, 1, 1, 10, 1, 1],
+        [0, 101, 102, 103, 104, 105, 106, 0, 107, 108],
+        [-1, 1, 1, -2, -3, -4, -5, -6, 8, 8],
+        [1, 1, -1, 1, 1, 1, 1, 1, 1, -1],
+        [0.0, 4.0, 6.0, 5.0, 8.0, 4.0, 6.0, 0.0, 10.0, -10.0],
+        zeros(10),
+        6,
+    )
+    mktempdir() do dir
+        path = joinpath(dir, "zero_sum.h5")
+        _write_query_file(path; with_outages = false, table = chain)
+        @test_throws "branch_shares: row 8 (series chain) has a zero impedance sum" PMC.read_branch_factors(
+            path;
+            linear_solver = "KLU",
+        )
     end
 end

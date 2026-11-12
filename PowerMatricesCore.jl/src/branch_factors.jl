@@ -180,7 +180,9 @@ end
 
 Read a factor file for queries by branch id. The function factorizes the network again with
 `linear_solver`. It reads the branch map, and the branch outage table if the file has one.
-It throws an error if the file has no branch map.
+It throws an error if the file has no branch map. It also throws an error if the file holds
+distributed slack weights and the network has more than one reference bus. It throws an error
+if a series chain of the branch map has a zero impedance sum.
 """
 function read_branch_factors(
     path::AbstractString;
@@ -201,6 +203,7 @@ function read_branch_factors(
     end
     dist_slack = weights
     if !isempty(weights)
+        _check_dist_slack_network(core)
         dist_slack = weights ./ sum(weights)
     end
     return BranchFactors(
@@ -240,13 +243,16 @@ function bus_column(x::BranchFactors, number::Int)
 end
 
 """
-    has_branch(x::BranchFactors, id::Int; winding::Int = 0) -> Bool
+    has_branch(x::BranchFactors, id::Int) -> Bool
+    has_branch(x::BranchFactors, id::Int, w::Winding) -> Bool
 
-Return `true` if the branch map of `x` has a row for the branch `id`. For a three-winding
-transformer, `winding` is 1, 2 or 3, and `id` is the id of the transformer.
+Return `true` if the branch map of `x` has a row for the branch `id`. Use the first method for
+a branch with two terminals. Use the second method for a circuit of a three-winding
+transformer: `id` is the id of the transformer, and `w` is `PRIMARY`, `SECONDARY` or `TERTIARY`.
 """
-has_branch(x::BranchFactors, id::Int; winding::Int = 0) =
-    haskey(x.leaf_rows, (id, winding))
+has_branch(x::BranchFactors, id::Int) = haskey(x.leaf_rows, (id, 0))
+
+has_branch(x::BranchFactors, id::Int, w::Winding) = haskey(x.leaf_rows, (id, Int(w)))
 
 """
     has_branch_outages(x::BranchFactors) -> Bool
@@ -276,13 +282,16 @@ function has_branch_outage(x::BranchFactors, id::Int)
 end
 
 function _branch_rows(x::BranchFactors, id::Int)
-    rows = Int[]
-    for winding in 0:3
-        if haskey(x.leaf_rows, (id, winding))
-            push!(rows, x.leaf_rows[(id, winding)])
-        end
-    end
-    return rows
+    return [x.leaf_rows[(id, w)] for w in 0:3 if haskey(x.leaf_rows, (id, w))]
+end
+
+function _leaf_row(x::BranchFactors, id::Int)
+    key = _branch_key(
+        x.leaf_rows,
+        id,
+        "Branch with id $id has no row in the branch map. A network reduction removed it, or it is not in service.",
+    )
+    return x.leaf_rows[key]
 end
 
 function _leaf_row(x::BranchFactors, id::Int, winding::Int)
@@ -303,15 +312,25 @@ function _zero_row(x::BranchFactors)
 end
 
 """
-    branch_ptdf_row(x::BranchFactors, id::Int; winding::Int = 0) -> Vector{Float64}
+    branch_ptdf_row(x::BranchFactors, id::Int) -> Vector{Float64}
+    branch_ptdf_row(x::BranchFactors, id::Int, w::Winding) -> Vector{Float64}
 
 Return the sensitivity factors of the flow of the branch `id` to the injection at each bus,
 in the order of `get_bus_axis(x)`. The row has the distributed slack of the file, if any, and
 the cutoff of the core. The sign follows the frame of the branch. The function throws an
-error if the branch has no row in the branch map.
+error if the branch has no row in the branch map. Use the first method for a branch with two
+terminals. Use the second method for a circuit of a three-winding transformer: `w` is
+`PRIMARY`, `SECONDARY` or `TERTIARY`.
 """
-function branch_ptdf_row(x::BranchFactors, id::Int; winding::Int = 0)
-    r = _leaf_row(x, id, winding)
+function branch_ptdf_row(x::BranchFactors, id::Int)
+    return _branch_ptdf_row(x, _leaf_row(x, id))
+end
+
+function branch_ptdf_row(x::BranchFactors, id::Int, w::Winding)
+    return _branch_ptdf_row(x, _leaf_row(x, id, Int(w)))
+end
+
+function _branch_ptdf_row(x::BranchFactors, r::Int)
     if iszero(x.shares[r])
         return _zero_row(x)
     end
@@ -346,21 +365,13 @@ function _check_owner(x::BranchFactors, c::BranchContingency)
     return
 end
 
-function _check_islanding_slack(x::BranchFactors, c::BranchContingency)
-    if c.woodbury.is_islanding && has_dist_slack(x)
-        error(
-            "Distributed slack is not supported for a modification that islands the network.",
-        )
-    end
-    return
-end
-
 """
     branch_contingency(x::BranchFactors, ids::Vector{Int}) -> BranchContingency
 
 Build the outage of the branches `ids`. The function throws an error if the file has no
 branch outage table, an id has no row in the outage table, or an id has no row in the
-branch map.
+branch map. The vector `ids` must not be empty and must not repeat an id. The function throws an error
+if the outage gives a series chain a zero impedance sum.
 """
 function branch_contingency(x::BranchFactors, ids::Vector{Int})
     x.has_outages || error(
@@ -385,22 +396,30 @@ end
 is_islanding(c::BranchContingency) = c.woodbury.is_islanding
 
 """
-    branch_ptdf_row(x::BranchFactors, id::Int, c::BranchContingency; winding::Int = 0) -> Vector{Float64}
+    branch_ptdf_row(x::BranchFactors, id::Int, c::BranchContingency) -> Vector{Float64}
+    branch_ptdf_row(x::BranchFactors, id::Int, w::Winding, c::BranchContingency) -> Vector{Float64}
 
 Return the sensitivity factors of the flow of the branch `id` after the outage `c`, in the
 order of `get_bus_axis(x)`. The row of a tripped branch is zero. The function throws an
 error in two cases. Case one: `c` belongs to another `BranchFactors`, or the branch has no row
 in the branch map. Case two: `c` islands the network and the file holds a distributed slack.
+Use the second method for a circuit of a three-winding transformer: `w` is `PRIMARY`,
+`SECONDARY` or `TERTIARY`.
 """
-function branch_ptdf_row(
-    x::BranchFactors,
-    id::Int,
-    c::BranchContingency;
-    winding::Int = 0,
-)
+function branch_ptdf_row(x::BranchFactors, id::Int, c::BranchContingency)
     _check_owner(x, c)
-    r = _leaf_row(x, id, winding)
-    _check_islanding_slack(x, c)
+    return _branch_ptdf_row(x, _leaf_row(x, id), c)
+end
+
+function branch_ptdf_row(x::BranchFactors, id::Int, w::Winding, c::BranchContingency)
+    _check_owner(x, c)
+    return _branch_ptdf_row(x, _leaf_row(x, id, Int(w)), c)
+end
+
+function _branch_ptdf_row(x::BranchFactors, r::Int, c::BranchContingency)
+    if has_dist_slack(x)
+        _check_dist_slack_islanding(c.woodbury)
+    end
     if iszero(c.shares[r])
         return _zero_row(x)
     end

@@ -272,7 +272,7 @@ function _check_reduction_records(
                     "is neither on the arc axis nor a removed arc.",
                 )
             # One degree-two step exists, so a composite arc is never a degree-two member.
-            # This also stops the reason lookup from following a loop.
+            # This also stops the reduction lookup from following a loop.
             for key in (pair, (pair[2], pair[1]))
                 get(code_of_arc, key, 0) == REDUCTION_CODE_DEGREE_TWO && error(
                     "Factor file entry reduction/composite row $i holds the degree-two arc $key.",
@@ -319,11 +319,11 @@ function _check_reduction_records(
     return
 end
 
-# Reason a removed arc has no arc of its own. `_reason_of_arc` handles the degree-two code.
-const _REASON_OF_REDUCTION = Dict{Int, Int}(
-    REDUCTION_CODE_ZERO_IMPEDANCE => NO_ARC_ZERO_IMPEDANCE,
-    REDUCTION_CODE_RADIAL => NO_ARC_RADIAL,
-    REDUCTION_CODE_WARD => NO_ARC_WARD,
+# The code of a removed arc that has no arc of its own. `_reduction_of_arc` handles the degree-two code.
+const _BRANCH_REDUCTION_OF_CODE = Dict{Int, Int}(
+    REDUCTION_CODE_ZERO_IMPEDANCE => BRANCH_REDUCTION_ZERO_IMPEDANCE,
+    REDUCTION_CODE_RADIAL => BRANCH_REDUCTION_RADIAL,
+    REDUCTION_CODE_WARD => BRANCH_REDUCTION_WARD,
 )
 
 # The key of a removed arc is in the numbering of its step: the original numbers, or the
@@ -341,10 +341,10 @@ function _removed_arcs(nr::NetworkReductionData, from::Int, to::Int)
     ]
 end
 
-# The reason for the in-service branch between the bus numbers `from` and `to`, as the system
+# The code for the in-service branch between the bus numbers `from` and `to`, as the system
 # document has them. In-service branches between one pair of buses share their fate, so the
-# pair identifies them. An out-of-service branch needs its id: see `BranchReasonTable`.
-function _bus_pair_reason(
+# pair identifies them. An out-of-service branch needs its id: see `BranchReductionTable`.
+function _bus_pair_reduction(
     nr::NetworkReductionData,
     arc_lookup::Dict{Tuple{Int, Int}, Int},
     from::Int,
@@ -352,16 +352,16 @@ function _bus_pair_reason(
 )
     removed = _removed_arcs(nr, from, to)
     if !isempty(removed)
-        return _reason_of_arc(nr, arc_lookup, first(removed))
+        return _reduction_of_arc(nr, arc_lookup, first(removed))
     end
     zf = get(nr.merged_bus_pairs, from, from)
     zt = get(nr.merged_bus_pairs, to, to)
     # A branch with impedance between two merged buses is a self-loop: no record names it.
-    zf == zt && return NO_ARC_ZERO_IMPEDANCE
+    zf == zt && return BRANCH_REDUCTION_ZERO_IMPEDANCE
     if haskey(arc_lookup, (zf, zt)) || haskey(arc_lookup, (zt, zf))
-        return NO_ARC_HAS_ARC
+        return BRANCH_REDUCTION_HAS_ARC
     end
-    return NO_ARC_NOT_IN_NETWORK
+    return BRANCH_REDUCTION_NOT_IN_NETWORK
 end
 
 function _is_query_bus(nr::NetworkReductionData, bus::Int)
@@ -370,22 +370,22 @@ function _is_query_bus(nr::NetworkReductionData, bus::Int)
 end
 
 # A degree-two member has an arc while its composite arc survives. A later reduction can
-# remove the composite arc, and then that record gives the reason.
-function _reason_of_arc(
+# remove the composite arc, and then that record gives the code.
+function _reduction_of_arc(
     nr::NetworkReductionData,
     arc_lookup::Dict{Tuple{Int, Int}, Int},
     arc::Tuple{Int, Int},
 )
     code = nr.removed_arc_reduction[arc]
-    code == REDUCTION_CODE_DEGREE_TWO || return _REASON_OF_REDUCTION[code]
+    code == REDUCTION_CODE_DEGREE_TWO || return _BRANCH_REDUCTION_OF_CODE[code]
     composite = nr.removed_arc_composite[arc]
     reverse_composite = reverse(composite)
     if haskey(arc_lookup, composite) || haskey(arc_lookup, reverse_composite)
-        return NO_ARC_HAS_ARC
+        return BRANCH_REDUCTION_HAS_ARC
     end
     for key in (composite, reverse_composite)
         haskey(nr.removed_arc_reduction, key) &&
-            return _reason_of_arc(nr, arc_lookup, key)
+            return _reduction_of_arc(nr, arc_lookup, key)
     end
     error(
         "The degree-two arc $arc has the composite arc $composite, which no record explains.",
@@ -417,14 +417,14 @@ function _bus_pair_surviving_bus(nr::NetworkReductionData, from::Int, to::Int)
 end
 
 """
-    BranchReasonTable(mat::Union{VirtualPTDF, VirtualMODF}, sys::PSY.System) -> BranchReasonTable
+    BranchReductionTable(mat::Union{VirtualPTDF, VirtualMODF}, sys::PSY.System) -> BranchReductionTable
 
 Give each AC branch of `sys` its code in `mat`. A branch or circuit that the Ybus build skips
 (not available, or an open breaker), or that touches a bus the matrix excluded, has the code
-`NO_ARC_NOT_IN_NETWORK`. The function
+`BRANCH_REDUCTION_NOT_IN_NETWORK`. The function
 throws an error if `mat` was built from another system.
 """
-function BranchReasonTable(mat::Union{VirtualPTDF, VirtualMODF}, sys::PSY.System)
+function BranchReductionTable(mat::Union{VirtualPTDF, VirtualMODF}, sys::PSY.System)
     _validate_system_uuid(mat, sys)
     nr = get_network_reduction_data(mat)
     arc_lookup = get_arc_lookup(mat)
@@ -432,17 +432,17 @@ function BranchReasonTable(mat::Union{VirtualPTDF, VirtualMODF}, sys::PSY.System
     for branch in PSY.get_components(PSY.ACTransmission, sys)
         for (w, part) in _windings(branch)
             rows[(IS.get_id(branch), w)] =
-                _reason_row(nr, arc_lookup, _in_ybus(part), PSY.get_arc(part))
+                _reduction_row(nr, arc_lookup, _in_ybus(part), PSY.get_arc(part))
         end
     end
-    return BranchReasonTable(rows)
+    return BranchReductionTable(rows)
 end
 
 # Each (winding, part) of a branch: winding 0 for a branch, 1 to 3 for a circuit.
 _windings(branch::PSY.ACTransmission) = ((0, branch),)
 _windings(trf::PSY.ThreeWindingTransformer) = enumerate(PSY.get_circuits(trf))
 
-function _reason_row(
+function _reduction_row(
     nr::NetworkReductionData,
     arc_lookup::Dict{Tuple{Int, Int}, Int},
     in_ybus::Bool,
@@ -451,10 +451,10 @@ function _reason_row(
     from, to = get_arc_tuple(arc)
     # Ybus also skips every branch at a bus that it excluded.
     if !in_ybus || !_is_query_bus(nr, from) || !_is_query_bus(nr, to)
-        return (NO_ARC_NOT_IN_NETWORK, 0)
+        return (BRANCH_REDUCTION_NOT_IN_NETWORK, 0)
     end
-    code = _bus_pair_reason(nr, arc_lookup, from, to)
-    if code == NO_ARC_RADIAL
+    code = _bus_pair_reduction(nr, arc_lookup, from, to)
+    if code == BRANCH_REDUCTION_RADIAL
         return (code, _bus_pair_surviving_bus(nr, from, to))
     end
     return (code, 0)

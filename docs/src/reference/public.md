@@ -25,9 +25,9 @@ Filter = t -> t in (
     PowerMatricesCore.get_outage_opens_arc,
     PowerMatricesCore.get_outage_member,
     PowerMatricesCore.BranchArcTable,
-    PowerMatricesCore.BranchReasonTable,
-    PowerMatricesCore.no_arc_reason,
-    PowerMatricesCore.no_arc_surviving_bus,
+    PowerMatricesCore.BranchReductionTable,
+    PowerMatricesCore.branch_reduction,
+    PowerMatricesCore.branch_surviving_bus,
     PowerMatricesCore.get_branch_kind,
     PowerMatricesCore.get_branch_id,
     PowerMatricesCore.get_branch_parent,
@@ -36,7 +36,19 @@ Filter = t -> t in (
     PowerMatricesCore.get_branch_alpha,
     PowerMatricesCore.get_branch_arc_count,
     PowerMatricesCore.branch_flows,
+    PowerMatricesCore.compute_woodbury_factors,
+    PowerMatricesCore.apply_woodbury_correction,
     PowerMatricesCore.worker_core,
     PowerMatricesCore.worker_network_data,
 )
+```
+
+## Core names that PowerNetworkMatrices does not export
+
+These names are documented here but not exported. Use them qualified, for example
+`PowerMatricesCore.Winding`.
+
+```@autodocs
+Modules = [PowerMatricesCore]
+Filter = t -> t in (PowerMatricesCore.Winding,)
 ```

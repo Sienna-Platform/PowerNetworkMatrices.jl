@@ -43,7 +43,7 @@ end
     ShuntModification
 
 A diagonal admittance change on a single bus (shunt outage or modification).
-Used to track shunt component outages (FixedAdmittance, SwitchedAdmittance, StandardLoad, InterruptibleStandardLoad)
+Used to track shunt component outages
 that affect the Ybus but not DC sensitivity factors.
 
 # Fields
@@ -125,7 +125,7 @@ end
 
 Canonical description of topology changes to a power network.
 Wraps arc susceptance changes, shunt admittance changes, and islanding status.
-No dependency on `PSY.System` after construction.
+No dependency on the system data after construction.
 
 # Fields
 - `label::String`: Human-readable identifier for the modification.
@@ -190,10 +190,10 @@ end
 
 A resolved, self-contained contingency specification backed by a
 [`NetworkModification`](@ref). The id links back to the source
-`PSY.Outage` supplemental attribute for caching purposes.
+outage for caching purposes.
 
 # Fields
-- `id::Int`: IS id matching the source Outage supplemental attribute.
+- `id::Int`: The integer id of the source outage.
 - `modification::NetworkModification`: The network topology change.
 """
 struct ContingencySpec

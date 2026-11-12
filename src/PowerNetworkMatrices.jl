@@ -64,20 +64,20 @@ export compute_woodbury_factors
 export factorize
 export get_post_modification_ptdf_row
 export BranchOutageTable
-export BranchReasonTable
+export BranchReductionTable
 export get_outage_rows
 export get_outage_ids
 export get_outage_opens_arc
 export get_outage_member
 export from_hdf5
 export get_reduction_codes
-export no_arc_reason
-export no_arc_surviving_bus
-export NO_ARC_HAS_ARC
-export NO_ARC_RADIAL
-export NO_ARC_ZERO_IMPEDANCE
-export NO_ARC_WARD
-export NO_ARC_NOT_IN_NETWORK
+export branch_reduction
+export branch_surviving_bus
+export BRANCH_REDUCTION_HAS_ARC
+export BRANCH_REDUCTION_RADIAL
+export BRANCH_REDUCTION_ZERO_IMPEDANCE
+export BRANCH_REDUCTION_WARD
+export BRANCH_REDUCTION_NOT_IN_NETWORK
 export get_system_uuid
 export is_factorized
 export populate_cache
@@ -207,12 +207,10 @@ import PowerMatricesCore:
     _charge!,
     _check_before_read,
     _read,
-    _check_hard_links,
     _write_strings!,
     _write_string_attribute!,
     _write_system_uuid!,
     _group,
-    _check_format_version,
     write_factor_core,
     read_factor_arrays,
     read_dist_slack,
@@ -229,16 +227,20 @@ import PowerMatricesCore:
     read_branch_map,
     _check_branch_map,
     _write_branch_map!,
-    BranchReasonTable,
-    no_arc_reason,
-    no_arc_surviving_bus,
-    NO_ARC_HAS_ARC,
-    NO_ARC_RADIAL,
-    NO_ARC_ZERO_IMPEDANCE,
-    NO_ARC_WARD,
-    NO_ARC_NOT_IN_NETWORK,
-    read_branch_reasons,
-    _write_branch_reason!,
+    Winding,
+    PRIMARY,
+    SECONDARY,
+    TERTIARY,
+    BranchReductionTable,
+    branch_reduction,
+    branch_surviving_bus,
+    BRANCH_REDUCTION_HAS_ARC,
+    BRANCH_REDUCTION_RADIAL,
+    BRANCH_REDUCTION_ZERO_IMPEDANCE,
+    BRANCH_REDUCTION_WARD,
+    BRANCH_REDUCTION_NOT_IN_NETWORK,
+    read_branch_reductions,
+    _write_branch_reduction!,
     BranchOutageTable,
     get_outage_rows,
     get_outage_ids,

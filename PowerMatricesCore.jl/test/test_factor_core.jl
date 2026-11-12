@@ -146,7 +146,7 @@ end
         tol = 0.0,
         verify_factorization = verify,
     )
-    @test_throws "singular" build(true)
+    @test_throws "arc susceptances" build(true)
     err = try
         build(false)
         nothing

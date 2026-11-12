@@ -1,4 +1,24 @@
 """
+    Winding
+
+The circuit of a three-winding transformer. `PRIMARY` (1) is the circuit from the primary
+terminal to the star bus, `SECONDARY` (2) from the secondary terminal, and `TERTIARY` (3)
+from the tertiary terminal. A branch with two terminals has no winding.
+"""
+@enum Winding PRIMARY = 1 SECONDARY = 2 TERTIARY = 3
+
+function _branch_key(rows::Dict{Tuple{Int, Int}, <:Any}, id::Int, missing_text::String)
+    haskey(rows, (id, 0)) && return (id, 0)
+    if any(w -> haskey(rows, (id, w)), 1:3)
+        error(
+            "The id $id is a three-winding transformer. Pass a Winding: " *
+            "PRIMARY, SECONDARY or TERTIARY.",
+        )
+    end
+    error(missing_text)
+end
+
+"""
     BranchArcTable
 
 Columns of the `branch_map` group of a factor file: one row per node of the reduction tree
@@ -130,7 +150,7 @@ end
     read_branch_map(path::AbstractString) -> BranchArcTable
 
 Read the group `branch_map` of a factor file. The function does not factorize the network.
-It throws an error if the format version is not 1, the group is missing, or a column breaks
+It throws an error if the format version is not 2, the group is missing, or a column breaks
 a rule of the table.
 """
 function read_branch_map(path::AbstractString)
