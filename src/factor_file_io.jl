@@ -465,7 +465,7 @@ end
     from_hdf5(::Type{BranchArcTable}, filename) -> BranchArcTable
 
 Read the `branch_map` group from a file that [`to_hdf5`](@ref) wrote. The function throws an
-error if the format version is not 2, the group is missing, or a column breaks a rule of
+error if the format version is not 1, the group is missing, or a column breaks a rule of
 the table.
 """
 function from_hdf5(::Type{BranchArcTable}, filename::AbstractString)
@@ -509,7 +509,7 @@ Read a `VirtualPTDF` from a file that [`to_hdf5`](@ref) wrote. The function does
 The restored matrix has no components and no reduction maps. `NetworkModification(mat, branch)`,
 `NetworkModification(mat, arc)` and `NetworkModification(mat, sys, outage)` throw an error.
 `get_branch_susceptances_by_arc` and `to_hdf5` throw an error. `mat[name, bus]` does not work.
-The function throws an error if the format version of the file is not 2.
+The function throws an error if the format version of the file is not 1.
 """
 function from_hdf5(
     ::Type{VirtualPTDF},
@@ -572,7 +572,7 @@ end
 
 Read the `branch_reduction` group that `to_hdf5(mat, filename, sys)` wrote. The function throws an
 error if the file has no such group, because a file written without a `System` cannot name
-its branches. It also throws an error if the format version is not 2 or a column breaks a
+its branches. It also throws an error if the format version is not 1 or a column breaks a
 rule of the table.
 """
 function from_hdf5(::Type{BranchReductionTable}, filename::AbstractString)

@@ -23,13 +23,13 @@ factorizes the ABA matrix again, so the solver can differ from the one that wrot
 Cached rows and cache settings are not stored. `from_hdf5(VirtualPTDF, filename)` also
 accepts `persistent_arcs`, as the `VirtualPTDF` constructor does.
 
-## File layout (format version 2)
+## File layout (format version 1)
 
 Root attributes:
 
 | Name                  | Type     | Meaning                                                                                                     |
 |:--------------------- |:-------- |:----------------------------------------------------------------------------------------------------------- |
-| `format_version`      | Int      | Layout version. The reader accepts 2 only.                                                                  |
+| `format_version`      | Int      | Layout version. The reader accepts 1 only.                                                                  |
 | `system_uuid`         | Int64[2] | High and low half of the source system UUID. Absent if unknown.                                             |
 | `tol_kind`            | String   | `"absolute"` for a `Float64` `tol`, `"auto"` for an `AutoTolerance`.                                        |
 | `tol_value`           | Float64  | The absolute cutoff. Present when `tol_kind` is `"absolute"`.                                               |

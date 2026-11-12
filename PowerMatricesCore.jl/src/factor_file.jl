@@ -1,4 +1,4 @@
-const FACTOR_FILE_FORMAT_VERSION = 2
+const FACTOR_FILE_FORMAT_VERSION = 1
 
 # Columns of one table must agree in length, or `zip` would drop rows in silence.
 function _check_same_length(table::String, columns::Pair{String, <:AbstractVector}...)

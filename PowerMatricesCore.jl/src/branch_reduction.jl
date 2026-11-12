@@ -143,7 +143,7 @@ end
 
 Read the `branch_reduction` group of a factor file. The function throws an error if the file has
 no such group, because a file written without a system cannot name its branches. It also
-throws an error if the format version is not 2 or a column breaks a rule of the table.
+throws an error if the format version is not 1 or a column breaks a rule of the table.
 """
 function read_branch_reductions(path::AbstractString)
     return HDF5.h5open(path, "r") do f

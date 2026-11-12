@@ -150,7 +150,7 @@ end
     read_branch_map(path::AbstractString) -> BranchArcTable
 
 Read the group `branch_map` of a factor file. The function does not factorize the network.
-It throws an error if the format version is not 2, the group is missing, or a column breaks
+It throws an error if the format version is not 1, the group is missing, or a column breaks
 a rule of the table.
 """
 function read_branch_map(path::AbstractString)
