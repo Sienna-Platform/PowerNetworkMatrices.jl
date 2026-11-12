@@ -1,59 +1,7 @@
 import HDF5
-import SparseArrays
-
-function _five_bus_core(
-    ref_key::Int = 1;
-    arc_live_members = ones(Int, 6),
-    b = [10.0, 5.0, 8.0, 4.0, 6.0, 7.0],
-    tol = 0.0,
-)
-    bus_ax = [1, 2, 3, 4, 5]
-    arc_ax = [(1, 2), (1, 3), (2, 3), (2, 4), (3, 5), (4, 5)]
-    n_bus = length(bus_ax)
-    n_arc = length(arc_ax)
-    A = SparseArrays.spzeros(Int8, n_arc, n_bus)
-    BA = SparseArrays.spzeros(Float64, n_bus, n_arc)
-    for (e, (f, t)) in enumerate(arc_ax)
-        A[e, f] = 1
-        A[e, t] = -1
-        BA[f, e] = b[e]
-        BA[t, e] = -b[e]
-    end
-    return PMC.FactorCore(
-        BA,
-        A,
-        Set([1]),
-        (arc_ax, bus_ax),
-        Dict(ref_key => (copy(arc_ax), copy(bus_ax))),
-        arc_live_members;
-        network_data = nothing,
-        linear_solver = "KLU",
-        tol = tol,
-    )
-end
 
 function _ptdf_rows(core)
     return [PMC.ptdf_row(core, e) for e in eachindex(PMC.get_arc_axis(core))]
-end
-
-function _write_five_bus(
-    path;
-    ref_key::Int = 1,
-    reverse_bus_map = Dict{Int, Int}(),
-    arc_live_members = ones(Int, 6),
-    tol = 0.0,
-)
-    core = _five_bus_core(ref_key; arc_live_members = arc_live_members, tol = tol)
-    HDF5.h5open(path, "w") do f
-        PMC.write_factor_core(
-            f,
-            core;
-            shift_injection = zeros(length(PMC.get_arc_axis(core))),
-            dist_slack = [0.0, 1.0, 1.0, 0.0, 2.0],
-            reverse_bus_map = reverse_bus_map,
-        )
-    end
-    return core
 end
 
 @testset "Factor file: core round trip on a 5-bus case" begin
@@ -87,28 +35,6 @@ end
             @test arrays.reverse_bus_map == Dict(99 => 1, 98 => 3)
         end
     end
-end
-
-# Each case writes a valid file, changes one entry, and expects an error that names it.
-function _hostile(change!, expected, reader = _read_core, writer = _write_five_bus)
-    mktempdir() do dir
-        path = joinpath(dir, "core.h5")
-        writer(path)
-        HDF5.h5open(change!, path, "r+")
-        @test_throws expected reader(path)
-    end
-    return
-end
-
-function _set_column!(g, name::String, row::Int, value)
-    column = read(g[name])
-    column[row] = value
-    _replace_entry!(g, name, column)
-    return
-end
-
-function _read_core(path)
-    return PMC.read_factor_core(path; linear_solver = "KLU")
 end
 
 @testset "Factor file: hostile core input" begin
@@ -166,12 +92,6 @@ end
 @testset "Factor file: dist_slack weights" begin
     _hostile_slack(zeros(5), r"the sum must be finite and positive")
     _hostile_slack([1.0, -1.0, 1.0, 1.0, 1.0], r"must not be negative")
-end
-
-function _replace_entry!(g, name::String, value)
-    HDF5.delete_object(g, name)
-    g[name] = value
-    return
 end
 
 function _fixed_type(width::Int)

@@ -4,6 +4,8 @@ import PowerMatricesCore as PMC
 
 const TEST_DIR = @__DIR__
 
+include(joinpath(TEST_DIR, "testing_data.jl"))
+
 @testset "PowerMatricesCore" begin
     for f in sort!(readdir(TEST_DIR))
         if startswith(f, "test_") && endswith(f, ".jl")

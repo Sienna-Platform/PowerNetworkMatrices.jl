@@ -1,50 +1,5 @@
 import HDF5
 
-# Arc 1 is a parallel group of two members: "a" and "b" each trip one member, and "ab" opens
-# the arc. "c" opens arc 4. "d" opens the arcs 4 and 5, which cuts the buses 4 and 5 from the
-# network.
-function _outage_mods(core)
-    b = PMC._get_arc_susceptances(core)
-    z = zero(PMC.YBUS_ELTYPE)
-    partial(arc, delta) = PMC.ArcModification(arc, delta, 0.0, z, z, z, z, 1)
-    opening(arc, n) = PMC.ArcModification(arc, -b[arc], 0.0, z, z, z, z, n)
-    none = PMC.ShuntModification[]
-    return [
-        PMC.NetworkModification("a", [partial(1, -4.0)], none, false),
-        PMC.NetworkModification("b", [partial(1, -6.0)], none, false),
-        PMC.NetworkModification("ab", [opening(1, 2)], none, false),
-        PMC.NetworkModification("c", [opening(4, 1)], none, false),
-        PMC.NetworkModification("d", [opening(4, 1), opening(5, 1)], none, true),
-    ]
-end
-
-const _OUTAGE_NAMES = ["a", "b", "ab", "c", "d"]
-const _OUTAGE_IDS = [11, 12, 13, 14, 15]
-
-function _write_outage_file(path; registered::Bool = true)
-    core = _write_five_bus(path; arc_live_members = [2, 1, 1, 1, 1, 1])
-    mods = _outage_mods(core)
-    n_arc = length(PMC.get_arc_axis(core))
-    HDF5.h5open(path, "r+") do f
-        g = HDF5.create_group(f, "branch_outages")
-        PMC._write_strings!(g, "type", fill("Line", length(mods)))
-        PMC._write_strings!(g, "name", _OUTAGE_NAMES)
-        g["id"] = _OUTAGE_IDS
-        g["is_islanding"] = [m.is_islanding for m in mods]
-        PMC._write_row_arrays(g, mods, n_arc)
-        g["opens_arc"] = [false, false, true, true, true, true]
-        g["member"] = [1, 2, 1, 0, 0, 0]
-        if registered
-            r = HDF5.create_group(f, "outages")
-            r["id"] = [21, 22]
-            PMC._write_strings!(r, "label", ["first", "second"])
-            r["is_islanding"] = [false, true]
-            PMC._write_row_arrays(r, mods[[4, 5]], n_arc)
-        end
-    end
-    return core, mods
-end
-
 function _post_outage_rows(core, mod)
     wf = PMC.compute_woodbury_factors(core, mod)
     return [

@@ -1,19 +1,5 @@
 import HDF5
 
-# Arc 1 holds a parallel group of two branches; the second one points against the arc. The
-# arcs 2 to 5 hold one branch each. Arc 6 holds a series chain of two segments.
-function _six_arc_table(; alpha3::Float64 = 0.0)
-    return PMC.BranchArcTable(
-        [9, 1, 1, 1, 2, 1, 1, 10, 1, 1],
-        [0, 101, 102, 103, 104, 105, 106, 0, 107, 108],
-        [-1, 1, 1, -2, -3, -4, -5, -6, 8, 8],
-        [1, 1, -1, 1, 1, 1, 1, 1, 1, -1],
-        [0.0, 4.0, 6.0, 5.0, 8.0, 4.0, 6.0, 0.0, 14.0, 14.0],
-        [0.0, 0.0, alpha3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        6,
-    )
-end
-
 const _SIX_ARC_FLOWS = [10.0, 3.0, 1.0, -1.0, 2.0, -2.0]
 
 @testset "Branch map: arc flows split into branch flows" begin
