@@ -43,6 +43,11 @@ jobs:
           DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
         run: julia --project=docs --color=yes docs/make.jl
 
+      - name: Build the PowerMatricesCore manual
+        run: |
+          julia --project=PowerMatricesCore.jl/docs -e 'using Pkg; Pkg.instantiate()'
+          julia --project=PowerMatricesCore.jl/docs --color=yes PowerMatricesCore.jl/docs/make.jl
+
       - name: Trigger Sienna docs aggregate refresh
         if: github.event_name != 'pull_request' && success()
         continue-on-error: true
