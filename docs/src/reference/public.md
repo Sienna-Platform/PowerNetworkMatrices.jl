@@ -38,8 +38,6 @@ Filter = t -> t in (
     PowerMatricesCore.branch_flows,
     PowerMatricesCore.compute_woodbury_factors,
     PowerMatricesCore.apply_woodbury_correction,
-    PowerMatricesCore.worker_core,
-    PowerMatricesCore.worker_network_data,
 )
 ```
 
@@ -50,5 +48,9 @@ These names are documented here but not exported. Use them qualified, for exampl
 
 ```@autodocs
 Modules = [PowerMatricesCore]
-Filter = t -> t in (PowerMatricesCore.Winding,)
+Filter = t -> t in (
+    PowerMatricesCore.Winding,
+    PowerMatricesCore.worker_core,
+    PowerMatricesCore.worker_network_data,
+)
 ```

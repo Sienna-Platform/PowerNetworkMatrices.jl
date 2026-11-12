@@ -273,6 +273,7 @@ code 2, as the branch with zero impedance that caused the merge.
 ## Query factors by branch id without PowerSystems
 
 ```julia
+import PowerMatricesCore as PMC
 x = PMC.read_branch_factors("factors.h5")
 core = PMC.get_core(x)                            # the FactorCore
 buses = PMC.get_bus_axis(x)                       # bus numbers of the columns
@@ -311,7 +312,7 @@ impedance sum.
 A bus that a Ward reduction removed has the column of one boundary bus, so its factor is an
 approximation. `has_bus_column` is `false` for a bus that is not in the file, for a bus
 inside a degree-two chain, and for a bus that a reduction dropped for another reason. `BranchFactors`
-does not tell these cases apart. The group `reduction` lists `removed_buses`, but that list also holds
+does not tell these cases apart. A reduced bus whose target a reduction removed (a bus in `removed_buses`) has no column. `read_branch_factors` checks every target. The group `reduction` lists `removed_buses`, but that list also holds
 available isolated buses and the buses of islands that a Ward reduction drops. Membership in it does
 not identify a degree-two bus. `PowerMatricesCore.read_reduction_records` reads that group as
 plain columns, and only `PowerNetworkMatrices` interprets them.
