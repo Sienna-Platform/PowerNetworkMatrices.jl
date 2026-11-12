@@ -1,9 +1,9 @@
 # Solves and the scratch slot go through `with_solver`, which holds the core's `solver_lock`.
 """
-    _compute_woodbury_factors(mat, modifications[, labeler]) -> WoodburyFactors
+    _compute_woodbury_factors(mat, modifications) -> WoodburyFactors
 
-Woodbury factors `Z[:,j] = B⁻¹ν_j` for each modified arc, on a `VirtualPTDF`, a `VirtualMODF`
-or a `VirtualFactorCore` (solving on that core's factorization).
+Woodbury factors `Z[:,j] = B⁻¹ν_j` for each modified arc. `mat` is a `VirtualPTDF` or a
+`VirtualMODF`. The method solves on the factorization of the core of `mat`.
 """
 _compute_woodbury_factors(
     mat::Union{VirtualPTDF, VirtualMODF},

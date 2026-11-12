@@ -57,6 +57,8 @@ function Base.getproperty(vptdf::VirtualPTDF, name::Symbol)
        name === :cache_lock
         return getfield(vptdf, name)
     end
+    name === :branch_susceptances_by_arc &&
+        return get_branch_susceptances_by_arc(get_core(vptdf))
     return _core_property(get_core(vptdf), name)
 end
 

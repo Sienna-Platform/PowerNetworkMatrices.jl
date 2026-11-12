@@ -1,5 +1,3 @@
-get_core(core::VirtualFactorCore) = core
-
 # A worker computes its own lazy branch susceptances, so it does not share the parent's.
 worker_network_data(nd::CoreNetworkData) = CoreNetworkData(nd.branch_catalog)
 

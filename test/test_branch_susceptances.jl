@@ -29,3 +29,18 @@ end
         end
     end
 end
+
+@testset "VirtualPTDF has branch susceptances by arc" begin
+    sys5 = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    vptdf = VirtualPTDF(sys5)
+
+    branch_susceptances = vptdf.branch_susceptances_by_arc
+    n_arcs = length(PNM.get_arc_axis(vptdf))
+    @test length(branch_susceptances) == n_arcs
+
+    for (j, bs) in enumerate(branch_susceptances)
+        if !isempty(bs)
+            @test isapprox(sum(bs), vptdf.arc_susceptances[j], atol = 1e-10)
+        end
+    end
+end
