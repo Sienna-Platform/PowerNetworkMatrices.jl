@@ -689,3 +689,91 @@ function read_branch_names(path::AbstractString)
         return _read_branch_names(f, collect(zip(arc_from, arc_to)), budget)
     end
 end
+
+"""
+    FactorFile
+
+The handle type of an open factor file. The functions that read or write a group of a factor
+file take a `FactorFile`.
+"""
+const FactorFile = HDF5.File
+
+"""
+    open_factor_file(body, filename::AbstractString)
+
+Open the factor file `filename` for reading, run `body(f)` with the handle `f`, and close the
+file. Return the value of `body`. The function does not check the content of the file.
+"""
+function open_factor_file(body, filename::AbstractString)
+    return HDF5.h5open(body, filename, "r")
+end
+
+function _write_factor_file_atomically(body, filename::AbstractString, force::Bool)
+    if ispath(filename) && !isfile(filename)
+        error("Cannot write $filename: the path exists and is not a regular file.")
+    end
+    if isfile(filename) && !force
+        error("File $filename exists. Pass `force = true` to overwrite it.")
+    end
+    tmp = tempname(dirname(abspath(filename)); cleanup = false)
+    try
+        HDF5.h5open(body, tmp, "w")
+        _publish_factor_file(tmp, filename, force)
+    finally
+        rm(tmp; force = true)
+    end
+    return filename
+end
+
+function _publish_factor_file(tmp::AbstractString, filename::AbstractString, force::Bool)
+    if force
+        Base.Filesystem.rename(tmp, filename)
+        return
+    end
+    try
+        hardlink(tmp, filename)
+    catch e
+        if _is_exists_error(e)
+            error("File $filename exists. Pass `force = true` to overwrite it.")
+        end
+        error(_hardlink_failure_message(filename, e))
+    end
+    return
+end
+
+function _hardlink_failure_message(filename::AbstractString, e::Exception)
+    return "Cannot publish $filename with a hard link: $(sprint(showerror, e)). " *
+           "The target file system may not support hard links. " *
+           "Pass `force = true` to write with a move."
+end
+
+_is_exists_error(e::Base.IOError) = e.code == Base.UV_EEXIST
+_is_exists_error(::Exception) = false
+
+"""
+    write_branch_names!(f::FactorFile, types, names, from, to)
+
+Write the group `names` of the factor file `f`. Row `i` maps the branch `(types[i], names[i])`
+to the arc `(from[i], to[i])`. The four vectors have the same length.
+"""
+function write_branch_names!(
+    f::FactorFile,
+    types::Vector{String},
+    names::Vector{String},
+    from::Vector{Int},
+    to::Vector{Int},
+)
+    _check_same_length(
+        "names",
+        "type" => types,
+        "name" => names,
+        "from" => from,
+        "to" => to,
+    )
+    g = HDF5.create_group(f, "names")
+    _write_strings!(g, "type", types)
+    _write_strings!(g, "name", names)
+    g["from"] = from
+    g["to"] = to
+    return
+end

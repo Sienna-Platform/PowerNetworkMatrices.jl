@@ -104,7 +104,6 @@ import PowerSystems: ACBusTypes
 import PowerMatricesCore as PMC
 import DataStructures
 import DataStructures: SortedDict
-import HDF5
 import SparseArrays
 import SparseArrays: rowvals, nzrange
 import LinearAlgebra
@@ -248,7 +247,19 @@ import PowerMatricesCore:
     get_outage_member,
     read_branch_outages,
     _read_registered_outages!,
-    _write_row_arrays,
+    write_branch_outages!,
+    write_registered_outages!,
+    FactorFile,
+    open_factor_file,
+    write_branch_names!,
+    write_reduction_records!,
+    read_reduction_records,
+    _write_factor_file_atomically,
+    _ReductionRecords,
+    REDUCTION_CODE_ZERO_IMPEDANCE,
+    REDUCTION_CODE_RADIAL,
+    REDUCTION_CODE_DEGREE_TWO,
+    REDUCTION_CODE_WARD,
     get_core,
     BridgeTree,
     is_bridge,
@@ -333,7 +344,7 @@ include("factor_file_io.jl")
 """
     to_hdf5(mat, filename; kwargs...)
 
-Write the factor data of a `VirtualPTDF` or `VirtualMODF` to an HDF5 file.
+Write the factor data of a `VirtualPTDF` or `VirtualMODF` to the factor file, an HDF5 file.
 """
 function to_hdf5 end
 

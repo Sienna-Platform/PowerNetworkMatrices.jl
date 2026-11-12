@@ -254,6 +254,71 @@ function _write_row_arrays(
     return
 end
 
+"""
+    write_branch_outages!(f::FactorFile, types, names, ids, mods, opens_arc, members, n_arc)
+
+Write the group `branch_outages` of the factor file `f`. Row `i` of `types`, `names`, `ids` and
+`mods` is one branch and its outage. `opens_arc` and `members` have one entry for each arc row
+of `mods`, in order. `n_arc` is the number of arcs of the network. The function throws an
+error if an arc row breaks a rule of the group.
+"""
+function write_branch_outages!(
+    f::FactorFile,
+    types::Vector{String},
+    names::Vector{String},
+    ids::Vector{Int},
+    mods::Vector{NetworkModification},
+    opens_arc::Vector{Bool},
+    members::Vector{Int},
+    n_arc::Int,
+)
+    _check_same_length(
+        "branch_outages",
+        "type" => types,
+        "name" => names,
+        "id" => ids,
+        "is_islanding" => mods,
+    )
+    _check_same_length(
+        "branch_outages arc rows",
+        "arc_modifications" =>
+            Base.OneTo(sum(m -> length(m.arc_modifications), mods; init = 0)),
+        "opens_arc" => opens_arc,
+        "member" => members,
+    )
+    g = HDF5.create_group(f, "branch_outages")
+    _write_strings!(g, "type", types)
+    _write_strings!(g, "name", names)
+    g["id"] = ids
+    g["is_islanding"] = [m.is_islanding for m in mods]
+    _write_row_arrays(g, mods, n_arc)
+    g["opens_arc"] = opens_arc
+    g["member"] = members
+    return
+end
+
+"""
+    write_registered_outages!(f::FactorFile, ids, mods, n_arc)
+
+Write the group `outages` of the factor file `f`. Row `i` of `ids` and `mods` is one
+registered contingency. `n_arc` is the number of arcs of the network. The function throws an
+error if an arc row breaks a rule of the group.
+"""
+function write_registered_outages!(
+    f::FactorFile,
+    ids::Vector{Int},
+    mods::Vector{NetworkModification},
+    n_arc::Int,
+)
+    _check_same_length("outages", "id" => ids, "label" => mods)
+    g = HDF5.create_group(f, "outages")
+    g["id"] = ids
+    _write_strings!(g, "label", String[m.label for m in mods])
+    g["is_islanding"] = [m.is_islanding for m in mods]
+    _write_row_arrays(g, mods, n_arc)
+    return
+end
+
 # `extra` holds the arc-row columns that only one group stores. They join the length check.
 function _read_row_arrays(
     g::HDF5.Group,

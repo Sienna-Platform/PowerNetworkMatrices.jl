@@ -25,32 +25,24 @@ function _branch_type_name(::Type{T}) where {T}
 end
 
 function _write_reduction!(
-    f::HDF5.File,
+    f::FactorFile,
     nr::NetworkReductionData,
     bus_ax::Vector{Int},
     arc_ax::Vector{Tuple{Int, Int}},
 )
     rec = _reduction_records(nr)
-    _check_reduction_records(rec, bus_ax, arc_ax, get_reverse_bus_search_map(nr))
-    g = HDF5.create_group(f, "reduction")
-    for name in _REDUCTION_COLUMNS
-        g[string(name)] = rec[name]
-    end
+    write_reduction_records!(f, rec, bus_ax, arc_ax, get_reverse_bus_search_map(nr))
     return
 end
 
 function _read_reduction(
-    f::HDF5.File,
+    f::FactorFile,
     bus_ax::Vector{Int},
     arc_ax::Vector{Tuple{Int, Int}},
     reduced::Dict{Int, Int},
     budget::ReadBudget,
 )
-    g = _group(f, "reduction")
-    rec = NamedTuple{_REDUCTION_COLUMNS}(
-        map(name -> _read(g, string(name), Vector{Int}, budget), _REDUCTION_COLUMNS),
-    )
-    _check_reduction_records(rec, bus_ax, arc_ax, reduced)
+    rec = read_reduction_records(f, bus_ax, arc_ax, reduced, budget)
     bus_reduction_map = Dict{Int, Set{Int}}(b => Set{Int}() for b in bus_ax)
     for (from, root) in reduced
         push!(get!(bus_reduction_map, root, Set{Int}()), from)
@@ -87,7 +79,7 @@ function _read_reduction(
 end
 
 function _write_factor_core(
-    f::HDF5.File,
+    f::FactorFile,
     core::VirtualFactorCore,
     dist_slack::Vector{Float64},
 )
@@ -118,11 +110,7 @@ function _write_factor_core(
             push!(to, arc[2])
         end
     end
-    g = HDF5.create_group(f, "names")
-    _write_strings!(g, "type", types)
-    _write_strings!(g, "name", names)
-    g["from"] = from
-    g["to"] = to
+    write_branch_names!(f, types, names, from, to)
 
     _write_branch_map!(f, _build_branch_arc_table(nr, arc_ax))
     _write_reduction!(f, nr, bus_ax, arc_ax)
@@ -132,52 +120,10 @@ end
 _dist_slack(mat::VirtualPTDF) = get_dist_slack(mat)
 _dist_slack(::VirtualMODF) = Float64[]
 
-function _write_factor_file_atomically(body, filename::AbstractString, force::Bool)
-    if ispath(filename) && !isfile(filename)
-        error("Cannot write $filename: the path exists and is not a regular file.")
-    end
-    if isfile(filename) && !force
-        error("File $filename exists. Pass `force = true` to overwrite it.")
-    end
-    tmp = tempname(dirname(abspath(filename)); cleanup = false)
-    try
-        HDF5.h5open(body, tmp, "w")
-        _publish_factor_file(tmp, filename, force)
-    finally
-        rm(tmp; force = true)
-    end
-    return filename
-end
-
-function _publish_factor_file(tmp::AbstractString, filename::AbstractString, force::Bool)
-    if force
-        Base.Filesystem.rename(tmp, filename)
-        return
-    end
-    try
-        hardlink(tmp, filename)
-    catch e
-        if _is_exists_error(e)
-            error("File $filename exists. Pass `force = true` to overwrite it.")
-        end
-        error(_hardlink_failure_message(filename, e))
-    end
-    return
-end
-
-function _hardlink_failure_message(filename::AbstractString, e::Exception)
-    return "Cannot publish $filename with a hard link: $(sprint(showerror, e)). " *
-           "The target file system may not support hard links. " *
-           "Pass `force = true` to write with a move."
-end
-
-_is_exists_error(e::Base.IOError) = e.code == Base.UV_EEXIST
-_is_exists_error(::Exception) = false
-
 """
     to_hdf5(mat::Union{VirtualPTDF, VirtualMODF}, filename; force = false)
 
-Write the factor data of `mat` to the HDF5 file `filename`. The file holds the arrays that
+Write the factor data of `mat` to the factor file `filename`, an HDF5 file. The file holds the arrays that
 [`from_hdf5`](@ref) needs to rebuild the matrix without a `System`. The function does not
 write cached rows. A `VirtualMODF` writes an empty `dist_slack` dataset. A `VirtualMODF` also
 writes its registered contingencies. The function writes a temporary file and moves it to
@@ -319,7 +265,7 @@ function _rejection_summary(rejected::Vector{Pair{String, String}})
 end
 
 function _write_branch_outages(
-    f::HDF5.File,
+    f::FactorFile,
     mat::Union{VirtualPTDF, VirtualMODF},
     sys::PSY.System,
 )
@@ -383,31 +329,29 @@ function _write_branch_outages(
     if !isempty(partial_zero)
         @warn "$(length(partial_zero)) branches have no row for their zero-susceptance arcs, which have no DC effect. The other arcs keep their rows: $(join(first(partial_zero, _MAX_REJECTION_LINES), ", "))"
     end
-    g = HDF5.create_group(f, "branch_outages")
-    _write_strings!(g, "type", first.(keys_))
-    _write_strings!(g, "name", last.(keys_))
-    g["id"] = ids
-    g["is_islanding"] = [m.is_islanding for m in mods]
-    _write_row_arrays(g, mods, length(first(get_core(mat).axes)))
-    g["opens_arc"] = opens_arc
-    g["member"] = members
+    write_branch_outages!(
+        f,
+        first.(keys_),
+        last.(keys_),
+        ids,
+        mods,
+        opens_arc,
+        members,
+        length(first(get_core(mat).axes)),
+    )
     return
 end
 
-_write_registered_outages(::HDF5.File, ::VirtualPTDF) = nothing
+_write_registered_outages(::FactorFile, ::VirtualPTDF) = nothing
 
-function _write_registered_outages(f::HDF5.File, mat::VirtualMODF)
+function _write_registered_outages(f::FactorFile, mat::VirtualMODF)
     registered = @lock get_core(mat).solver_lock copy(get_registered_contingencies(mat))
     if isempty(registered)
         return
     end
     ids = sort!(collect(keys(registered)))
     mods = NetworkModification[registered[id].modification for id in ids]
-    g = HDF5.create_group(f, "outages")
-    g["id"] = ids
-    _write_strings!(g, "label", String[m.label for m in mods])
-    g["is_islanding"] = [m.is_islanding for m in mods]
-    _write_row_arrays(g, mods, length(first(get_core(mat).axes)))
+    write_registered_outages!(f, ids, mods, length(first(get_core(mat).axes)))
     return
 end
 
@@ -472,7 +416,7 @@ function from_hdf5(::Type{BranchArcTable}, filename::AbstractString)
     return read_branch_map(filename)
 end
 
-function _read_factor_core(f::HDF5.File, budget::ReadBudget; linear_solver::String)
+function _read_factor_core(f::FactorFile, budget::ReadBudget; linear_solver::String)
     arrays = read_factor_arrays(f, budget)
     arc_ax, bus_ax = arrays.axes
     nrd = _read_reduction(f, bus_ax, arc_ax, arrays.reverse_bus_map, budget)
@@ -518,7 +462,7 @@ function from_hdf5(
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
     persistent_arcs::Vector{Tuple{Int, Int}} = Vector{Tuple{Int, Int}}(),
 )
-    return HDF5.h5open(filename, "r") do f
+    return open_factor_file(filename) do f
         budget = ReadBudget(filename)
         core = _read_factor_core(f, budget; linear_solver = linear_solver)
         bus_ax = core.axes[2]
@@ -551,7 +495,7 @@ function from_hdf5(
     linear_solver::String = _default_linear_solver(),
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
 )
-    return HDF5.h5open(filename, "r") do f
+    return open_factor_file(filename) do f
         budget = ReadBudget(filename)
         core = _read_factor_core(f, budget; linear_solver = linear_solver)
         vmodf = VirtualMODF(core; max_cache_size = max_cache_size)

@@ -884,7 +884,7 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         good = joinpath(mktempdir(), "good.h5")
         to_hdf5(vptdf, good)
         rec = HDF5.h5open(
-            f -> Dict(c => read(f["reduction"][string(c)]) for c in PNM._REDUCTION_COLUMNS),
+            f -> Dict(c => read(f["reduction"][string(c)]) for c in PMC._REDUCTION_COLUMNS),
             good, "r")
         bus_ax = PNM.get_bus_axis(vptdf)
         corrupt(edits...) = _corrupted_copy(good, "reduction", edits...)
@@ -2087,7 +2087,7 @@ end
         @test_throws "System UUID mismatch" to_hdf5(vptdf, path, other; force = true)
         _test_same_core(vptdf, from_hdf5(VirtualPTDF, path))
         @test readdir(dir) == listing
-        @test_throws "write failed" PNM._write_factor_file_atomically(path, true) do f
+        @test_throws "write failed" PMC._write_factor_file_atomically(path, true) do f
             f["partial"] = [1, 2, 3]
             error("write failed")
         end
@@ -2099,7 +2099,7 @@ end
     @testset "no overwrite when a file appears during the write" begin
         dir = mktempdir()
         path = joinpath(dir, "race.h5")
-        @test_throws "exists. Pass `force = true`" PNM._write_factor_file_atomically(
+        @test_throws "exists. Pass `force = true`" PMC._write_factor_file_atomically(
             path,
             false,
         ) do f
@@ -2685,7 +2685,7 @@ end
     end
 
     @testset "hard link failure message" begin
-        msg = PNM._hardlink_failure_message("a.h5", ErrorException("boom"))
+        msg = PMC._hardlink_failure_message("a.h5", ErrorException("boom"))
         @test occursin("boom", msg)
         @test occursin("hard links", msg)
         @test occursin("force = true", msg)

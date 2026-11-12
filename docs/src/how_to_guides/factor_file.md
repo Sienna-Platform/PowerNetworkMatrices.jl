@@ -90,7 +90,7 @@ Readers of each group, by package:
 | `dist_slack`                                                                                                                                                   | `from_hdf5(VirtualPTDF)`                           | `read_dist_slack`, `read_branch_factors`                        |
 | `shift_injection`                                                                                                                                              | none                                               | `read_shift_injection`                                          |
 | `names`                                                                                                                                                        | `from_hdf5(VirtualPTDF)`, `from_hdf5(VirtualMODF)` | `read_branch_names`                                             |
-| `reduction`                                                                                                                                                    | `from_hdf5(VirtualPTDF)`, `from_hdf5(VirtualMODF)` | none                                                            |
+| `reduction`                                                                                                                                                    | `from_hdf5(VirtualPTDF)`, `from_hdf5(VirtualMODF)` | `read_reduction_records`                                        |
 | `branch_map`                                                                                                                                                   | `from_hdf5(BranchArcTable)`                        | `read_branch_map`, `read_branch_factors`                        |
 | `branch_outages`                                                                                                                                               | `from_hdf5(BranchOutageTable)`                     | `read_branch_outages`, `read_branch_factors`                    |
 | `branch_reduction`                                                                                                                                             | `from_hdf5(BranchReductionTable)`                  | `read_branch_reductions`                                        |
@@ -146,6 +146,11 @@ id. Neither call factorizes the network.
 
 `to_hdf5` writes a temporary file in the target directory and moves it into place when the
 write succeeds. A failed write with `force = true` leaves the old file unchanged. With `force = true`, a symbolic link at `filename` is replaced by the new file; the writer does not write through the link. If the target file system does not support hard links, a write with `force = false` fails with an error that says so. Use `force = true` on such a file system, because it writes with a move.
+
+`PowerMatricesCore` writes every group of the file, through `write_branch_names!`,
+`write_reduction_records!`, `write_branch_outages!` and `write_registered_outages!`. `to_hdf5`
+builds only the tables that need a `System`, from the matrix and the `System`, and passes them to
+these writers.
 
 ## Split arc flows into branch flows
 
@@ -308,7 +313,8 @@ approximation. `has_bus_column` is `false` for a bus that is not in the file, fo
 inside a degree-two chain, and for a bus that a reduction dropped for another reason. `BranchFactors`
 does not tell these cases apart. The group `reduction` lists `removed_buses`, but that list also holds
 available isolated buses and the buses of islands that a Ward reduction drops. Membership in it does
-not identify a degree-two bus. Only `PowerNetworkMatrices` reads that group.
+not identify a degree-two bus. `PowerMatricesCore.read_reduction_records` reads that group as
+plain columns, and only `PowerNetworkMatrices` interprets them.
 
 ## Limits of a restored matrix
 
