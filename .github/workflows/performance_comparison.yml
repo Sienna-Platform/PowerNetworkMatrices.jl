@@ -21,7 +21,7 @@ jobs:
           julia --project=PowerNetworkMatrices.jl/test PowerNetworkMatrices.jl/test/performance/performance_test.jl "Main"
       - name: Run Performance Test Branch
         run: |
-          julia --project=PowerNetworkMatrices.jl/test -e 'using Pkg; Pkg.develop(PackageSpec(path="PowerNetworkMatrices.jl")); Pkg.instantiate()'
+          julia --project=PowerNetworkMatrices.jl/test -e 'using Pkg; Pkg.develop([PackageSpec(path="PowerMatricesCore.jl"), PackageSpec(path="PowerNetworkMatrices.jl")]); Pkg.instantiate()'
           julia --project=PowerNetworkMatrices.jl/test PowerNetworkMatrices.jl/test/performance/performance_test.jl "Branch"
       - name: Format results
         run: |

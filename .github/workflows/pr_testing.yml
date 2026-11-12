@@ -21,20 +21,21 @@ jobs:
         with:
           version: ${{ matrix.julia-version }}
           arch: ${{ matrix.julia-arch }}
-      - uses: julia-actions/julia-buildpkg@latest
-        with:
-          project: PowerNetworkMatrices.jl
+      - name: Instantiate the PNM test environment
+        shell: bash
         env:
           PYTHON: ""
-      - uses: julia-actions/julia-runtest@latest
-        with:
-          project: PowerNetworkMatrices.jl
+        run: julia --project=PowerNetworkMatrices.jl/test -e 'using Pkg; Pkg.instantiate()'
+      # julia-runtest tracks coverage of the PNM folder only. Coverage of all user code also
+      # records the core lines that only the PNM tests reach.
+      - name: Run the PNM tests
+        shell: bash
         env:
           PYTHON: ""
           JULIA_NUM_THREADS: "2"
+        run: julia --project=PowerNetworkMatrices.jl/test --code-coverage=user --check-bounds=yes PowerNetworkMatrices.jl/test/runtests.jl
       # Coverage is reported from one job of each matrix: the Windows reports carry
-      # backslash paths that Codecov cannot match against the repo tree. julia-runtest tracks
-      # coverage of the PNM folder only. The core coverage comes from the core job.
+      # backslash paths that Codecov cannot match against the repo tree.
       - uses: julia-actions/julia-processcoverage@v1
         if: matrix.os == 'ubuntu-latest' && matrix.julia-version == '1'
         with:
@@ -46,6 +47,21 @@ jobs:
           disable_search: true
           flags: pnm
           name: pnm
+          slug: ${{ github.repository }}
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+      # Codecov merges this upload with the core job's upload under the core flag.
+      - uses: julia-actions/julia-processcoverage@v1
+        if: matrix.os == 'ubuntu-latest' && matrix.julia-version == '1'
+        with:
+          directories: PowerMatricesCore.jl/src,PowerMatricesCore.jl/ext
+      - uses: codecov/codecov-action@v7
+        if: matrix.os == 'ubuntu-latest' && matrix.julia-version == '1'
+        with:
+          files: ./lcov.info
+          disable_search: true
+          flags: core
+          name: core-from-pnm
           slug: ${{ github.repository }}
           fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
