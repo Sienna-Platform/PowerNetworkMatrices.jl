@@ -1,11 +1,11 @@
 """
     _invert_woodbury_W(W_mat, M, signed_delta_b) -> (W_inv::Matrix{Float64}, is_islanding::Bool)
 
-Invert the M×M Woodbury W; closed form for M ≤ 2, LU otherwise.
+Invert the M×M Woodbury W through the LU factorization of `S = diag(signed_delta_b)·W`.
 
-Singularity is judged on `S = diag(signed_delta_b)·W`, whose diagonal is `1 + Δb·K`. `S` is
-independent of the arcs' impedance scale and exactly singular for a true island, whereas `W`
-itself shrinks like `x²` for very low-impedance arcs and would be mistaken for singular.
+The modification islands the network when a pivot of `S` is below `MODF_ISLANDING_TOLERANCE`.
+`S` has the diagonal `1 + Δb·K` and does not change with the impedance scale of the arcs. For
+an island, `W_inv` is a pseudo-inverse.
 """
 function _invert_woodbury_W(
     W_mat::Matrix{Float64},
@@ -13,34 +13,11 @@ function _invert_woodbury_W(
     signed_delta_b::Vector{Float64},
 )::Tuple{Matrix{Float64}, Bool}
     if iszero(M)
-        # M = 0 (no arc changes its susceptance): getri! rejects 0×0.
+        # getri! rejects a 0×0 matrix.
         return Matrix{Float64}(undef, 0, 0), false
-    elseif M == 1
-        w = W_mat[1, 1]
-        is_island = abs(w * signed_delta_b[1]) < MODF_ISLANDING_TOLERANCE
-        W_inv = Matrix{Float64}(undef, 1, 1)
-        if is_island
-            W_inv[1, 1] = 0.0
-        else
-            W_inv[1, 1] = 1.0 / w
-        end
-        return W_inv, is_island
-    elseif M == 2
-        a, b, c, d = W_mat[1, 1], W_mat[1, 2], W_mat[2, 1], W_mat[2, 2]
-        det_W = a * d - b * c
-        is_island =
-            abs(det_W * signed_delta_b[1] * signed_delta_b[2]) < MODF_ISLANDING_TOLERANCE
-        if is_island
-            return _island_pinv(W_mat, signed_delta_b), is_island
-        end
-        inv_det = 1.0 / det_W
-        W_inv = Matrix{Float64}(undef, 2, 2)
-        W_inv[1, 1] = d * inv_det
-        W_inv[1, 2] = -b * inv_det
-        W_inv[2, 1] = -c * inv_det
-        W_inv[2, 2] = a * inv_det
-        return W_inv, is_island
     end
+    # A test on a product of pivots, such as det(S), flags two low-impedance arcs that are not
+    # bridges as an island: each pivot is small, so the product is below the tolerance.
     scale = LinearAlgebra.Diagonal(signed_delta_b)
     S_lu = LinearAlgebra.lu(scale * W_mat; check = false)
     is_island = any(i -> abs(S_lu.factors[i, i]) < MODF_ISLANDING_TOLERANCE, 1:M)
@@ -188,20 +165,27 @@ function _zero_islanded_entries!(
 end
 
 """
-    _woodbury_factors_from_Z(Z, BA, signs, arc_sus, modifications, arc_out[, labeler]) -> WoodburyFactors
+    _changed_modifications(modifications) -> Vector{Int}
 
-Assemble the Woodbury factors from an already-resolved `Z`, whose column `j` is
-`B⁻¹ν_j` for the `j`-th modified arc in full-bus space. The callers differ only
-in how they obtain `Z`: one solve per arc in the kernel path, a lookup into the
-batched pre-contingency solves in `populate_cache`. `signs[e]` is the sign of arc `e`'s DC
-susceptance (`FactorCore.arc_susceptance_signs`). Islanding labels come from
-`labeler(BA, arc_sus, modifications, n_bus)`, e.g. a `BridgeLabels`.
+Positions in `modifications` of the arcs whose DC susceptance changes. Only these arcs enter
+the Woodbury factors. An arc with `delta_b == 0`, such as an arc with no susceptance, or a
+parallel group whose only remaining member has zero reactance when that member opens, leaves
+`B` unchanged, and its `1/Δb` term in `W` would be infinite.
+"""
+_changed_modifications(modifications::Vector{ArcModification}) =
+    [j for (j, mod) in enumerate(modifications) if !iszero(mod.delta_b)]
 
-Only arcs whose DC susceptance changes enter the factors. An arc with `delta_b == 0`, such as
-an arc with no susceptance, or a parallel group whose only remaining member has zero
-reactance when that member opens, leaves `B` unchanged, and its `1/Δb` term in `W` would be
-infinite. Its column of `Z` and its entry of `arc_out` are dropped; the labeler still sees
-every modification.
+"""
+    _woodbury_factors_from_Z(Z, BA, signs, arc_sus, modifications, kept, arc_out[, labeler]) -> WoodburyFactors
+
+Assemble the Woodbury factors from an already-resolved `Z`. `kept` is
+`_changed_modifications(modifications)`, and column `j` of `Z` is `B⁻¹ν` in full-bus
+space for the arc of `modifications[kept[j]]`. The callers differ only in how they obtain
+`Z`: one solve per arc in the kernel path, a lookup into the batched pre-contingency solves in
+`populate_cache`. `arc_out[j]` is for `modifications[kept[j]]` too. `signs[e]` is the sign of
+arc `e`'s DC susceptance (`FactorCore.arc_susceptance_signs`). Islanding labels come from
+`labeler(BA, arc_sus, modifications, n_bus)`, e.g. a `BridgeLabels`, which sees every
+modification.
 """
 function _woodbury_factors_from_Z(
     Z::Matrix{Float64},
@@ -209,16 +193,16 @@ function _woodbury_factors_from_Z(
     signs::Vector{Float64},
     arc_sus::Vector{Float64},
     modifications::Vector{ArcModification},
+    kept::Vector{Int},
     arc_out::Vector{Bool},
     labeler::F = _post_contingency_bus_labels,
 )::WoodburyFactors where {F}
     n_bus = size(Z, 1)
-    kept = [j for (j, mod) in enumerate(modifications) if !iszero(mod.delta_b)]
     M = length(kept)
-    if M < length(modifications)
-        Z = Z[:, kept]
-        arc_out = arc_out[kept]
-    end
+    size(Z, 2) == M ||
+        error("Z has $(size(Z, 2)) columns; expected $M, one per changed arc.")
+    length(arc_out) == M ||
+        error("arc_out has $(length(arc_out)) entries; expected $M, one per changed arc.")
 
     arc_indices = Vector{Int}(undef, M)
     delta_b_vec = Vector{Float64}(undef, M)
@@ -415,9 +399,10 @@ function _compute_woodbury_factors(
         core.temp_data,
         core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
-        Z = Matrix{Float64}(undef, length(temp_data), length(modifications))
-        for (j, mod) in enumerate(modifications)
-            e = mod.arc_index
+        kept = _changed_modifications(modifications)
+        Z = Matrix{Float64}(undef, length(temp_data), length(kept))
+        for (j, k) in enumerate(kept)
+            e = modifications[k].arc_index
             lin_solve =
                 _solve_ba_column!(K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, e)
             _gather_to_buses!(
@@ -433,7 +418,8 @@ function _compute_woodbury_factors(
             core.arc_susceptance_signs,
             core.arc_susceptances,
             modifications,
-            _arcs_fully_opened(core, modifications),
+            kept,
+            _arcs_fully_opened(core, modifications[kept]),
             labeler,
         )
     end

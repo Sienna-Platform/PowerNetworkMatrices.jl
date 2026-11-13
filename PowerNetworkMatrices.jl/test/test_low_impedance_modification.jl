@@ -185,3 +185,63 @@ end
 @testset "Islanding with a low-impedance arc keeps the arc's direction (M > 2)" begin
     _bridge_and_low_impedance_rows_match(["L12", "L25", "L34"])
 end
+
+# Ring 1-2-3-4. Bus 5 joins the ring through "X5" (reactance `x`, to bus 1) and a 0.1 line (to
+# bus 2); bus 6 the same through "X6" to bus 3 and a 0.1 line to bus 4. With `bridge`, bus 7
+# hangs off bus 1 on "B17".
+function _two_low_x_ring(x; bridge = false, with_bus7 = bridge, skip = String[])
+    sys, buses = _mk_bus_system(7)
+    lines =
+        [("R12", 1, 2, 0.1), ("R23", 2, 3, 0.1), ("R34", 3, 4, 0.1), ("R41", 4, 1, 0.1),
+            ("X5", 1, 5, x), ("S25", 2, 5, 0.1), ("X6", 3, 6, x), ("S46", 4, 6, 0.1)]
+    bridge && push!(lines, ("B17", 1, 7, 0.2))
+    for (name, i, j, xl) in lines
+        name in skip && continue
+        arc = PSY.Arc(buses[i], buses[j])
+        PSY.add_component!(sys, arc)
+        _add_test_line!(sys, name, arc, 1e-4, xl)
+    end
+    with_bus7 || PSY.remove_component!(sys, buses[7])
+    return sys
+end
+
+# Rows of `vptdf` after `opened` against a PTDF of the network rebuilt without them. A bus the
+# rebuild leaves out must have a zero entry.
+function _two_low_x_rows_error(vptdf, mod, ref)
+    ref_arcs = PNM.get_arc_lookup(ref)
+    ref_buses = PNM.get_bus_lookup(ref)
+    err = 0.0
+    for (arc, i) in ref_arcs
+        row = vptdf[arc, mod]
+        for (j, bus) in enumerate(PNM.get_bus_axis(vptdf))
+            if haskey(ref_buses, bus)
+                err = max(err, abs(row[j] - ref[i, ref_buses[bus]]))
+            else
+                err = max(err, abs(row[j]))
+            end
+        end
+    end
+    return err
+end
+
+@testset "Two low-impedance arcs that are not bridges do not island (M = 2)" begin
+    for x in (1e-4, 1e-6, 1e-8)
+        sys = _two_low_x_ring(x; with_bus7 = false)
+        vptdf = VirtualPTDF(sys)
+        opened = ["X5", "X6"]
+        mod = NetworkModification(vptdf, sys, [_transmission(sys, n) for n in opened])
+        @test !compute_woodbury_factors(vptdf, mod).is_islanding
+        ref = PTDF(_two_low_x_ring(x; with_bus7 = false, skip = opened))
+        @test _two_low_x_rows_error(vptdf, mod, ref) < 1e-8
+    end
+end
+
+@testset "A bridge and two low-impedance arcs island only at the bridge (M = 3)" begin
+    sys = _two_low_x_ring(1e-6; bridge = true)
+    vptdf = VirtualPTDF(sys)
+    opened = ["X5", "X6", "B17"]
+    mod = NetworkModification(vptdf, sys, [_transmission(sys, n) for n in opened])
+    @test compute_woodbury_factors(vptdf, mod).is_islanding
+    ref = PTDF(_two_low_x_ring(1e-6; skip = opened))
+    @test _two_low_x_rows_error(vptdf, mod, ref) < 1e-8
+end
