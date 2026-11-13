@@ -31,7 +31,7 @@ end
 
 """
 Convenience constructor for an unshifted arc with no Pi-model deltas and no members opened.
-It changes only the DC susceptance. [`apply_ybus_modification!`](@ref) leaves the Ybus
+It changes only the DC susceptance. `apply_ybus_modification!` leaves the Ybus
 admittances unchanged for it and never removes the arc, even when `delta_b = -b_arc`.
 """
 function ArcModification(arc_index::Int, delta_b::Float64)
@@ -43,7 +43,7 @@ end
     ShuntModification
 
 A diagonal admittance change on a single bus (shunt outage or modification).
-Used to track shunt component outages (FixedAdmittance, SwitchedAdmittance, StandardLoad, InterruptibleStandardLoad)
+Used to track shunt component outages
 that affect the Ybus but not DC sensitivity factors.
 
 # Fields
@@ -125,7 +125,7 @@ end
 
 Canonical description of topology changes to a power network.
 Wraps arc susceptance changes, shunt admittance changes, and islanding status.
-No dependency on `PSY.System` after construction.
+No dependency on the system data after construction.
 
 # Fields
 - `label::String`: Human-readable identifier for the modification.
@@ -175,20 +175,39 @@ Base.:(==)(a::NetworkModification, b::NetworkModification) =
     a.shunt_modifications == b.shunt_modifications &&
     a.is_islanding == b.is_islanding
 
+# The Woodbury kernel takes a `Vector`: a tuple of unknown length makes its calls dynamic.
+function _arc_modification_vector(mod::NetworkModification)
+    tup = mod.arc_modifications
+    mods = Vector{ArcModification}(undef, length(tup))
+    for i in eachindex(mods)
+        mods[i] = tup[i]
+    end
+    return mods
+end
+
 """
     ContingencySpec
 
 A resolved, self-contained contingency specification backed by a
 [`NetworkModification`](@ref). The id links back to the source
-`PSY.Outage` supplemental attribute for caching purposes.
+outage for caching purposes.
 
 # Fields
-- `id::Int`: IS id matching the source Outage supplemental attribute.
+- `id::Int`: The integer id of the source outage.
 - `modification::NetworkModification`: The network topology change.
 """
 struct ContingencySpec
     id::Int
     modification::NetworkModification
+end
+
+"""
+$(TYPEDSIGNATURES)
+
+Construct a `NetworkModification` from an existing [`ContingencySpec`](@ref).
+"""
+function NetworkModification(ctg::ContingencySpec)
+    return ctg.modification
 end
 
 """

@@ -22,23 +22,6 @@ function make_ax_ref(buses::AbstractVector{PSY.ACBus})
     return make_ax_ref(PSY.get_number.(buses))
 end
 
-"""
-Checks if repetitions are present in the dictionary mapping buses and branches.
-
-# Arguments
-- `ax::AbstractVector`:
-        generic abstract vector
-"""
-function make_ax_ref(ax::AbstractVector)
-    ref = Dict{eltype(ax), Int}()
-    for (ix, el) in enumerate(ax)
-        if haskey(ref, el)
-            @error("Repeated index element $el. Index sets must have unique elements.")
-        end
-        ref[el] = ix
-    end
-    return ref
-end
 stores_transpose(::PowerNetworkMatrix) = false
 
 # AbstractArray interface: overloading methods

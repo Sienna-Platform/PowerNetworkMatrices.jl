@@ -64,20 +64,20 @@ export compute_woodbury_factors
 export factorize
 export get_post_modification_ptdf_row
 export BranchOutageTable
-export BranchReasonTable
+export BranchReductionTable
 export get_outage_rows
 export get_outage_ids
 export get_outage_opens_arc
 export get_outage_member
 export from_hdf5
 export get_reduction_codes
-export no_arc_reason
-export no_arc_surviving_bus
-export NO_ARC_HAS_ARC
-export NO_ARC_RADIAL
-export NO_ARC_ZERO_IMPEDANCE
-export NO_ARC_WARD
-export NO_ARC_NOT_IN_NETWORK
+export branch_reduction
+export branch_surviving_bus
+export BRANCH_REDUCTION_HAS_ARC
+export BRANCH_REDUCTION_RADIAL
+export BRANCH_REDUCTION_ZERO_IMPEDANCE
+export BRANCH_REDUCTION_WARD
+export BRANCH_REDUCTION_NOT_IN_NETWORK
 export get_system_uuid
 export is_factorized
 export populate_cache
@@ -101,6 +101,7 @@ import PowerSystems as PSY
 using PowerSystems: @u_str, PerUnit
 import PowerSystems: ACBusTypes
 
+import PowerMatricesCore as PMC
 import DataStructures
 import DataStructures: SortedDict
 import SparseArrays
@@ -108,17 +109,11 @@ import SparseArrays: rowvals, nzrange
 import LinearAlgebra
 import LinearAlgebra: ldiv!, mul!, I, dot
 
-"""Supertype of the cached sparse-factorization backends (`KLULinSolveCache`,
-`AAFactorCache`, and `PardisoLinSolveCache`).
-Defined ahead of the wrapper submodules so their cache structs can subtype it."""
-abstract type LinearSolverCache end
-
-include("KLUWrapper/KLUWrapper.jl")
-import .KLUWrapper:
+import PowerMatricesCore:
+    LinearSolverCache,
     KLULinSolveCache,
     klu_factorize,
     symbolic_factor!,
-    symbolic_refactor!,
     numeric_refactor!,
     full_factor!,
     full_refactor!,
@@ -127,15 +122,170 @@ import .KLUWrapper:
     solve_sparse!,
     solve_sparse,
     condest!,
-    is_factored
+    is_factored,
+    AAFactorCache,
+    aa_factorize,
+    YBUS_ELTYPE,
+    AUTO_TOLERANCE_BUS_LIMIT,
+    LinearSolverType,
+    KLUSolver,
+    DenseSolver,
+    MKLPardisoSolver,
+    AppleAccelerateLUSolver,
+    resolve_linear_solver,
+    _has_mkl_pardiso_ext,
+    _mkl_pardiso_install_error,
+    _has_apple_accelerate_backend,
+    _apple_accelerate_unavailable_error,
+    _default_linear_solver,
+    PardisoLinSolveCache,
+    with_solver,
+    make_linear_solver_cache,
+    factorization_ok,
+    solve_w_refinement,
+    calculate_ABA_matrix,
+    _calculate_PTDF_matrix_MKLPardiso,
+    AutoTolerance,
+    discover_data_precision,
+    DEFAULT_AUTO_TOLERANCE,
+    AbsoluteCutoff,
+    apply_cutoff,
+    _condition_estimate,
+    _dense_tol,
+    RowCacheValue,
+    RowCache,
+    set_persistent_row!,
+    pin_row!,
+    _cached_row,
+    ArcModification,
+    ShuntModification,
+    NetworkModification,
+    ContingencySpec,
+    WoodburyFactors,
+    _merge_arc_modifications,
+    get_representative,
+    union_sets!,
+    _build_bus_to_valid_idx,
+    sparsify,
+    _create_factorization,
+    _solve_factorization,
+    _ba_column_susceptance,
+    _extract_arc_susceptances,
+    _get_PTDF_A_diag,
+    make_ax_ref,
+    _arc_susceptance_sign,
+    _gather_to_buses!,
+    get_axes,
+    get_lookup,
+    get_arc_lookup,
+    get_bus_lookup,
+    get_arc_axis,
+    get_bus_axis,
+    get_ref_bus,
+    get_system_uuid,
+    get_cutoff,
+    get_tol,
+    get_tol_spec,
+    get_network_data,
+    _get_BA,
+    _get_arc_susceptances,
+    _get_valid_ix,
+    _publish_once!,
+    get_PTDF_A_diag,
+    MAX_ARC_SUSCEPTANCE,
+    _singular_column_text,
+    ptdf_row!,
+    ptdf_row,
+    apply_dist_slack!,
+    _check_dist_slack_network,
+    _check_same_length,
+    _check_unique,
+    ReadBudget,
+    _check_stored_type,
+    MAX_FIXED_STRING_BYTES,
+    _charge!,
+    _check_before_read,
+    _read,
+    _write_strings!,
+    _write_string_attribute!,
+    _write_system_uuid!,
+    _group,
+    write_factor_core,
+    read_factor_arrays,
+    read_dist_slack,
+    _read_branch_names,
+    BranchArcTable,
+    get_branch_kind,
+    get_branch_id,
+    get_branch_parent,
+    get_branch_sign,
+    get_branch_susceptance,
+    get_branch_alpha,
+    get_branch_arc_count,
+    branch_flows,
+    read_branch_map,
+    _check_branch_map,
+    _write_branch_map!,
+    Winding,
+    PRIMARY,
+    SECONDARY,
+    TERTIARY,
+    BranchReductionTable,
+    branch_reduction,
+    branch_surviving_bus,
+    BRANCH_REDUCTION_HAS_ARC,
+    BRANCH_REDUCTION_RADIAL,
+    BRANCH_REDUCTION_ZERO_IMPEDANCE,
+    BRANCH_REDUCTION_WARD,
+    BRANCH_REDUCTION_NOT_IN_NETWORK,
+    read_branch_reductions,
+    _write_branch_reduction!,
+    BranchOutageTable,
+    get_outage_rows,
+    get_outage_ids,
+    get_outage_opens_arc,
+    get_outage_member,
+    read_branch_outages,
+    _read_registered_outages!,
+    write_branch_outages!,
+    write_registered_outages!,
+    FactorFile,
+    open_factor_file,
+    write_branch_names!,
+    write_reduction_records!,
+    read_reduction_records,
+    _write_factor_file_atomically,
+    _ReductionRecords,
+    REDUCTION_CODE_ZERO_IMPEDANCE,
+    REDUCTION_CODE_RADIAL,
+    REDUCTION_CODE_DEGREE_TWO,
+    REDUCTION_CODE_WARD,
+    get_core,
+    BridgeTree,
+    is_bridge,
+    bridge_far_side,
+    find_bridges,
+    BridgeLabels,
+    _woodbury_factors_from_Z,
+    _woodbury_rank,
+    _arcs_fully_opened,
+    _arc_modification_vector,
+    _post_modification_susceptance,
+    _monitored_arc_out,
+    _woodbury_correction!,
+    _compute_woodbury_factors,
+    _apply_woodbury_correction,
+    apply_woodbury_correction,
+    compute_woodbury_factors,
+    worker_core,
+    worker_network_data,
+    _check_worker_core,
+    solve_bus_angles!,
+    arc_flows!,
+    WoodburyFlowScratch
 
-include("AccelerateWrapper/AccelerateWrapper.jl")
-import .AccelerateWrapper: AAFactorCache, aa_factorize
-
-include("linalg_settings.jl")
-include("pardiso_cache.jl")
-include("solver_dispatch.jl")
-include("iterative_refinement.jl")
+const KLUWrapper = PMC.KLUWrapper
+const AccelerateWrapper = PMC.AccelerateWrapper
 
 @template DEFAULT = """
                     $(SIGNATURES)
@@ -146,7 +296,6 @@ include("iterative_refinement.jl")
 include("PowerNetworkMatrix.jl")
 include("ThreeWindingTransformerCircuit.jl")
 include("definitions.jl")
-include("linear_solver_generic.jl")
 include("EquivalentBranch.jl")
 include("BranchesSeries.jl")
 include("BranchesParallel.jl")
@@ -170,21 +319,17 @@ include("reduction_helpers.jl")
 include("irreducible_bus_selection.jl")
 include("AdjacencyMatrix.jl")
 include("connectivity_checks.jl")
-include("bridges.jl")
 include("subnetworks.jl")
 include("common.jl")
 include("BranchAdmittance.jl")
-include("auto_tolerance.jl")
 include("BA_ABA_matrices.jl")
 include("virtual_factor_helpers.jl")
 include("virtual_factor_core.jl")
 include("ptdf_calculations.jl")
-include("row_cache.jl")
 include("virtual_ptdf_calculations.jl")
 include("PowerflowMatrixTypes.jl")
 include("lodf_calculations.jl")
 include("virtual_lodf_calculations.jl")
-include("modf_definitions.jl")
 include("network_modification.jl")
 include("virtual_ptdf_modification.jl")
 include("modf_reduction_consistency.jl")
@@ -194,25 +339,19 @@ include("populate_cache.jl")
 include("virtual_workers.jl")
 include("system_utils.jl")
 include("serialization.jl")
-
-# Forward declarations for symbols still defined inside package extensions.
-# AppleAccelerate-related functions live in `src/` now (no extension needed)
-# and are not redeclared here.
-function _calculate_PTDF_matrix_MKLPardiso end
+include("factor_file_io.jl")
 
 """
     to_hdf5(mat, filename; kwargs...)
 
-Write the factor data of a `VirtualPTDF` or `VirtualMODF` to an HDF5 file. The methods are
-in a package extension. Run `using HDF5` (or `import HDF5`) to load them.
+Write the factor data of a `VirtualPTDF` or `VirtualMODF` to the factor file, an HDF5 file.
 """
 function to_hdf5 end
 
 """
     from_hdf5(T, filename; kwargs...)
 
-Read a matrix or a table from a factor file. The methods are in a package extension. Run
-`using HDF5` (or `import HDF5`) to load them.
+Read a matrix or a table from a factor file.
 """
 function from_hdf5 end
 

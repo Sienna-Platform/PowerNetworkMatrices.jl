@@ -1,3 +1,10 @@
+function _by_winding(f, w::Int, x, id::Int, tail...)
+    if iszero(w)
+        return f(x, id, tail...)
+    end
+    return f(x, id, PMC.Winding(w), tail...)
+end
+
 function _roundtrip_ptdf(sys; kwargs...)
     vptdf = VirtualPTDF(sys; kwargs...)
     path = joinpath(mktempdir(), "ptdf.h5")
@@ -88,7 +95,7 @@ function _add_outage!(sys, components...)
 end
 
 _store(g, name, value) = (g[name] = value)
-_store(g, name, value::Vector{String}) = HDF5Ext._write_strings!(g, name, value)
+_store(g, name, value::Vector{String}) = PNM._write_strings!(g, name, value)
 
 _flows_by_leaf_key(fref) = Dict(
     (PNM._branch_map_id(l), max(PNM._branch_map_kind(l) - 5, 0)) => f for (l, f) in fref
@@ -384,9 +391,12 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         cp(good, bad_version)
         HDF5.h5open(bad_version, "r+") do f
             HDF5.delete_attribute(f, "format_version")
-            HDF5.write_attribute(f, "format_version", 2)
+            HDF5.write_attribute(f, "format_version", PMC.FACTOR_FILE_FORMAT_VERSION + 1)
         end
-        @test_throws "reads version 1" from_hdf5(BranchArcTable, bad_version)
+        @test_throws "reads version $(PMC.FACTOR_FILE_FORMAT_VERSION)" from_hdf5(
+            BranchArcTable,
+            bad_version,
+        )
     end
 
     @testset "branch_flows" begin
@@ -546,7 +556,7 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         @testset "round trip" begin
             n_checked = 0
             for br in PSY.get_components(PSY.ACTransmission, sys)
-                key = HDF5Ext._outage_key(br)
+                key = PNM._outage_key(br)
                 haskey(PNM.get_outage_rows(table), key) || continue
                 @test PNM.get_outage_ids(table)[IS.get_id(br)] == key
                 @test NetworkModification(table, IS.get_id(br)) ==
@@ -735,14 +745,14 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
     end
 
     @testset "reduction records" begin
-        function reason_check(sys, reductions)
+        function reduction_check(sys, reductions)
             vptdf = VirtualPTDF(sys; network_reductions = reductions, tol = 0.0)
             path = joinpath(mktempdir(), "ptdf.h5")
             to_hdf5(vptdf, path, sys; outages = false)
             restored = from_hdf5(VirtualPTDF, path)
-            live_reasons = BranchReasonTable(vptdf, sys)
-            read_reasons = from_hdf5(BranchReasonTable, path)
-            @test read_reasons.rows == live_reasons.rows
+            live_reductions = BranchReductionTable(vptdf, sys)
+            read_reductions = from_hdf5(BranchReductionTable, path)
+            @test read_reductions.rows == live_reductions.rows
             table = from_hdf5(BranchArcTable, path)
             has_row = Set(
                 (PNM.get_branch_id(table)[r], max(PNM.get_branch_kind(table)[r] - 5, 0))
@@ -759,23 +769,28 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
             )
                 @test getfield(nr_restored, field) == getfield(nr, field)
             end
-            reasons = Dict{Int, Int}()
+            code_counts = Dict{Int, Int}()
             for key in keys(leaf_bus_pairs(sys))
-                live = no_arc_reason(read_reasons, key...)
+                live = _by_winding(branch_reduction, key[2], read_reductions, key[1])
                 @test iszero(live) == (key in has_row)
-                reasons[live] = get(reasons, live, 0) + 1
-                if live == NO_ARC_RADIAL
-                    @test no_arc_surviving_bus(read_reasons, key...) in
+                code_counts[live] = get(code_counts, live, 0) + 1
+                if live == BRANCH_REDUCTION_RADIAL
+                    @test _by_winding(
+                        branch_surviving_bus,
+                        key[2],
+                        read_reductions,
+                        key[1],
+                    ) in
                           union(PNM.get_bus_axis(restored), nr_restored.removed_buses)
                 end
             end
-            return reasons, path
+            return code_counts, path
         end
 
         radial_d2 = PNM.NetworkReduction[RadialReduction(), DegreeTwoReduction()]
-        reasons, _ = reason_check(build_branch_map_system(), radial_d2)
-        @test reasons[NO_ARC_RADIAL] > 0
-        @test reasons[NO_ARC_HAS_ARC] > 0
+        code_counts, _ = reduction_check(build_branch_map_system(), radial_d2)
+        @test code_counts[BRANCH_REDUCTION_RADIAL] > 0
+        @test code_counts[BRANCH_REDUCTION_HAS_ARC] > 0
         # A zero-impedance merge renames buses before the radial and degree-two steps.
         sys = build_branch_map_system()
         for line in PSY.get_components(PSY.Line, sys)
@@ -784,31 +799,31 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
                 PSY.set_x!(line, 0.0u"SU")
             end
         end
-        reasons, _ = reason_check(sys, radial_d2)
-        @test reasons[NO_ARC_ZERO_IMPEDANCE] == 1
-        @test reasons[NO_ARC_RADIAL] > 0
+        code_counts, _ = reduction_check(sys, radial_d2)
+        @test code_counts[BRANCH_REDUCTION_ZERO_IMPEDANCE] == 1
+        @test code_counts[BRANCH_REDUCTION_RADIAL] > 0
         @test PNM.get_reduction_codes(
             PNM.get_network_reduction_data(
                 VirtualPTDF(sys; network_reductions = radial_d2, tol = 0.0),
             ),
         ) == [1, 2, 3]
-        reasons, _ = reason_check(
+        code_counts, _ = reduction_check(
             PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions"),
             radial_d2,
         )
-        @test reasons[NO_ARC_RADIAL] > 0
+        @test code_counts[BRANCH_REDUCTION_RADIAL] > 0
 
         sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
         line = PSY.get_component(PSY.Line, sys, "Line3")
         PSY.set_r!(line, 0.0u"SU")
         PSY.set_x!(line, 0.0u"SU")
         PSY.set_available!(PSY.get_component(PSY.Line, sys, "Line10"), false)
-        reasons, path = reason_check(sys, PNM.NetworkReduction[])
-        @test reasons[NO_ARC_ZERO_IMPEDANCE] == 1
-        @test reasons[NO_ARC_NOT_IN_NETWORK] == 1
+        code_counts, path = reduction_check(sys, PNM.NetworkReduction[])
+        @test code_counts[BRANCH_REDUCTION_ZERO_IMPEDANCE] == 1
+        @test code_counts[BRANCH_REDUCTION_NOT_IN_NETWORK] == 1
         line10 = IS.get_id(PSY.get_component(PSY.Line, sys, "Line10"))
-        @test no_arc_reason(from_hdf5(BranchReasonTable, path), line10) ==
-              NO_ARC_NOT_IN_NETWORK
+        @test branch_reduction(from_hdf5(BranchReductionTable, path), line10) ==
+              BRANCH_REDUCTION_NOT_IN_NETWORK
         # Two zero-impedance sides of a triangle make the third side a self-loop.
         sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
         for line in PSY.get_components(PSY.Line, sys)
@@ -818,33 +833,33 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
                 PSY.set_x!(line, 0.0u"SU")
             end
         end
-        reasons, _ = reason_check(sys, PNM.NetworkReduction[])
-        @test reasons[NO_ARC_ZERO_IMPEDANCE] == 3
+        code_counts, _ = reduction_check(sys, PNM.NetworkReduction[])
+        @test code_counts[BRANCH_REDUCTION_ZERO_IMPEDANCE] == 3
 
         sys = PSB.build_system(
             PSB.PSSEParsingTestSystems,
             "psse_14_network_reduction_test_system",
         )
-        reasons, _ = reason_check(
+        code_counts, _ = reduction_check(
             sys,
             PNM.NetworkReduction[WardReduction([101, 114, 110, 111, 109])],
         )
-        @test reasons[NO_ARC_WARD] > 0
-        @test reasons[NO_ARC_HAS_ARC] > 0
+        @test code_counts[BRANCH_REDUCTION_WARD] > 0
+        @test code_counts[BRANCH_REDUCTION_HAS_ARC] > 0
         # Later reductions can remove the composite arc of a degree-two chain.
         ward = WardReduction([101, 114, 110, 111, 109])
         for reductions in (
             PNM.NetworkReduction[DegreeTwoReduction(), ward],
             PNM.NetworkReduction[RadialReduction(), DegreeTwoReduction(), ward],
         )
-            reasons, _ = reason_check(sys, reductions)
-            @test reasons[NO_ARC_WARD] > 0
+            code_counts, _ = reduction_check(sys, reductions)
+            @test code_counts[BRANCH_REDUCTION_WARD] > 0
         end
-        reasons, _ = reason_check(
+        code_counts, _ = reduction_check(
             PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions"),
             PNM.NetworkReduction[DegreeTwoReduction(), RadialReduction()],
         )
-        @test reasons[NO_ARC_RADIAL] > 0
+        @test code_counts[BRANCH_REDUCTION_RADIAL] > 0
         # An out-of-service branch beside a radial stub is not in the network.
         sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
         for line in PSY.get_components(PSY.Line, sys)
@@ -852,8 +867,8 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
                 PSY.set_available!(line, false)
             end
         end
-        reasons, _ = reason_check(sys, PNM.NetworkReduction[RadialReduction()])
-        @test reasons[NO_ARC_NOT_IN_NETWORK] == 1
+        code_counts, _ = reduction_check(sys, PNM.NetworkReduction[RadialReduction()])
+        @test code_counts[BRANCH_REDUCTION_NOT_IN_NETWORK] == 1
     end
 
     @testset "reduction group corrupt" begin
@@ -869,7 +884,7 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         good = joinpath(mktempdir(), "good.h5")
         to_hdf5(vptdf, good)
         rec = HDF5.h5open(
-            f -> Dict(c => read(f["reduction"][string(c)]) for c in PNM._REDUCTION_COLUMNS),
+            f -> Dict(c => read(f["reduction"][string(c)]) for c in PMC._REDUCTION_COLUMNS),
             good, "r")
         bus_ax = PNM.get_bus_axis(vptdf)
         corrupt(edits...) = _corrupted_copy(good, "reduction", edits...)
@@ -1029,7 +1044,7 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         radial_from[radial_row] = 5
         bad(:composite_from, radial_from, "not the degree-two code")
         bad(:composite_to, rec[:composite_to][1:(end - 1)], "unequal length")
-        # A composite arc that is a degree-two row would loop the reason lookup.
+        # A composite arc that is a degree-two row would loop the reduction lookup.
         d2_arc = (rec[:removed_arc_from][d2_row], rec[:removed_arc_to][d2_row])
         function with_composite(row, arc)
             from_col = copy(rec[:composite_from])
@@ -1065,7 +1080,7 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         @test_throws "No reduction removed" PNM._bus_pair_surviving_bus(nr, -1, -2)
         @test_throws "did not remove" PNM._bus_pair_surviving_bus(nr, d2_arc...)
         nr.removed_arc_composite[d2_arc] = (-1, -2)
-        @test_throws "no record explains" PNM._bus_pair_reason(
+        @test_throws "no record explains" PNM._bus_pair_reduction(
             nr,
             Dict{Tuple{Int, Int}, Int}(),
             d2_arc...,
@@ -1221,7 +1236,7 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         vptdf = VirtualPTDF(sys)
         arc = PNM.get_arc_axis(vptdf)[3]
         PNM.get_core(vptdf).arc_live_members[3] = 0
-        @test_throws "The arc $arc has arc_live_members 0, below 1. A factor file cannot hold an opened arc" to_hdf5(
+        @test_throws "The arc $arc has arc_live_members 0, below 1. A FactorCore cannot hold an opened arc" to_hdf5(
             vptdf, joinpath(mktempdir(), "open.h5"),
         )
     end
@@ -1245,10 +1260,16 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         @test_throws "Unknown tolerance kind" from_hdf5(VirtualPTDF, path)
         HDF5.h5open(path, "r+") do f
             HDF5.delete_attribute(f, "format_version")
-            HDF5.write_attribute(f, "format_version", 2)
+            HDF5.write_attribute(f, "format_version", PMC.FACTOR_FILE_FORMAT_VERSION + 1)
         end
-        @test_throws "reads version 1" from_hdf5(VirtualPTDF, path)
-        @test_throws "reads version 1" from_hdf5(VirtualMODF, path)
+        @test_throws "reads version $(PMC.FACTOR_FILE_FORMAT_VERSION)" from_hdf5(
+            VirtualPTDF,
+            path,
+        )
+        @test_throws "reads version $(PMC.FACTOR_FILE_FORMAT_VERSION)" from_hdf5(
+            VirtualMODF,
+            path,
+        )
 
         to_hdf5(vptdf, path; force = true)
         HDF5.h5open(path, "r+") do f
@@ -1283,9 +1304,350 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         n_names = HDF5.h5open(f -> length(read(f["names"]["name"])), path, "r")
         HDF5.h5open(path, "r+") do f
             HDF5.delete_object(f["names"], "type")
-            HDF5Ext._write_strings!(f["names"], "type", fill("eval", n_names))
+            PNM._write_strings!(f["names"], "type", fill("eval", n_names))
         end
         @test_throws "unknown branch type" from_hdf5(VirtualPTDF, path)
+    end
+end
+
+# Every monitored row of `mod` from the core functions equals the row of `expected` on `vmodf`.
+function _test_core_modf_rows(vmodf, core, mod, expected = mod)
+    wf = PMC.compute_woodbury_factors(core, mod)
+    @test wf.is_islanding == expected.is_islanding
+    cutoff = PMC.get_cutoff(core)
+    for monitored in 1:length(PMC.get_arc_axis(core))
+        row = PMC.apply_cutoff(cutoff, PMC.apply_woodbury_correction(core, monitored, wf))
+        @test isapprox(collect(vmodf[monitored, expected]), collect(row); atol = 1e-9)
+    end
+    return
+end
+
+# The reads and the rows below use PowerMatricesCore only: no System, no reduction data and
+# no PNM matrix.
+@testset "factor file read by PowerMatricesCore alone" begin
+    @testset "PTDF rows with distributed slack and a cutoff" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+        buses = sort!([PSY.get_number(b) for b in PSY.get_components(PSY.ACBus, sys)])
+        ds = Dict{Int, Float64}(buses[2] => 0.3, buses[5] => 0.7)
+        vptdf, _, path = _roundtrip_ptdf(sys; dist_slack = ds, tol = 1e-3)
+        core = PMC.read_factor_core(path)
+        @test isnothing(PMC.get_network_data(core))
+        @test PMC.get_arc_axis(core) == PNM.get_arc_axis(vptdf)
+        @test PMC.get_bus_axis(core) == PNM.get_bus_axis(vptdf)
+        cutoff = PMC.get_cutoff(core)
+        @test cutoff == PMC.AbsoluteCutoff(1e-3)
+        weights = HDF5.h5open(path, "r") do f
+            return PMC.read_dist_slack(f, core, PMC.ReadBudget(path))
+        end
+        @test weights == PNM.get_dist_slack(vptdf)
+        normalized = weights ./ sum(weights)
+        dropped = 0
+        for (e, arc) in enumerate(PMC.get_arc_axis(core))
+            row = PMC.apply_dist_slack!(PMC.ptdf_row(core, e), core, normalized)
+            stored = PMC.apply_cutoff(cutoff, row)
+            dropped += count(iszero, collect(stored)) - count(iszero, row)
+            @test isapprox(
+                collect(stored),
+                collect(PNM.get_ptdf_row(vptdf, arc));
+                atol = 1e-12,
+            )
+        end
+        @test dropped > 0
+    end
+
+    @testset "post-outage rows on RTS-GMLC with reductions" begin
+        path = joinpath(mktempdir(), "rts.h5")
+        to_hdf5(RTS_VMODF, path)
+        core = PMC.read_factor_core(path)
+        @test isnothing(PMC.get_network_data(core))
+        for map in (
+            RTS_NR.reverse_direct_branch_map,
+            RTS_NR.reverse_parallel_branch_map,
+            RTS_NR.reverse_series_branch_map,
+        )
+            mod = NetworkModification(RTS_VMODF, first(keys(map)))
+            _test_core_modf_rows(RTS_VMODF, core, mod)
+        end
+    end
+
+    @testset "branch reductions" begin
+        sys = PSB.build_system(
+            PSB.PSITestSystems,
+            "case10_radial_series_reductions",
+        )
+        vmodf =
+            VirtualMODF(sys; network_reductions = [RadialReduction(), DegreeTwoReduction()])
+        path = joinpath(mktempdir(), "reductions.h5")
+        to_hdf5(vmodf, path, sys)
+        read_reductions = PMC.read_branch_reductions(path)
+        @test read_reductions.rows == BranchReductionTable(vmodf, sys).rows
+        radial = [
+            k for (k, v) in read_reductions.rows if first(v) == PMC.BRANCH_REDUCTION_RADIAL
+        ]
+        @test !isempty(radial)
+        bus_ax = PNM.get_bus_axis(vmodf)
+        for (id, winding) in radial
+            @test _by_winding(PMC.branch_surviving_bus, winding, read_reductions, id) in
+                  bus_ax
+        end
+    end
+
+    @testset "branch outage table on RTS-GMLC with reductions" begin
+        path = joinpath(mktempdir(), "rts_outages.h5")
+        to_hdf5(RTS_VMODF, path, RTS_SYS)
+        core = PMC.read_factor_core(path)
+        table = PMC.read_branch_outages(path)
+        rows = PMC.get_outage_rows(table)
+        @test rows == PNM.get_outage_rows(RTS_TABLE)
+        @test !isempty(rows)
+        ids = Dict(key => id for (id, key) in PMC.get_outage_ids(table))
+        for (type, name) in keys(rows)
+            branch = PSY.get_component(PNM._branch_type(type, "type"), RTS_SYS, name)
+            mod = PMC.NetworkModification(table, type, name)
+            @test IS.get_id(branch) == ids[(type, name)]
+            @test mod == PMC.NetworkModification(table, ids[(type, name)])
+            _test_core_modf_rows(
+                RTS_VMODF,
+                core,
+                mod,
+                NetworkModification(RTS_VMODF, branch),
+            )
+        end
+        bare = joinpath(mktempdir(), "bare.h5")
+        to_hdf5(RTS_VMODF, bare)
+        @test_throws "no branch outage table" PMC.read_branch_outages(bare)
+    end
+
+    @testset "branch names on RTS-GMLC with reductions" begin
+        path = joinpath(mktempdir(), "rts_names.h5")
+        to_hdf5(RTS_VMODF, path)
+        core = PMC.read_factor_core(path)
+        names = PMC.read_branch_names(path)
+        catalog = PNM.get_name_to_arc_maps(PNM.get_branch_catalog(PNM.get_core(RTS_VMODF)))
+        expected = Dict(
+            (PNM._branch_type_name(T), name) => arc for (T, entries) in catalog for
+            (name, arc) in entries
+        )
+        @test !isempty(names)
+        @test names == expected
+        arc_ax = PMC.get_arc_axis(core)
+        lookup = PMC.get_arc_lookup(core)
+        @test all(arc -> arc_ax[lookup[arc]] == arc, values(names))
+        @test Set(values(names)) == Set(arc_ax)
+    end
+
+    @testset "branch flows from the branch map" begin
+        reds = PNM.NetworkReduction[RadialReduction(), DegreeTwoReduction()]
+        for sys in (
+            build_branch_map_system(),
+            PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions"),
+        )
+            vptdf = VirtualPTDF(sys; network_reductions = reds, tol = 0.0)
+            path = joinpath(mktempdir(), "ptdf.h5")
+            to_hdf5(vptdf, path)
+            core = PMC.read_factor_core(path)
+            table = PMC.read_branch_map(path)
+            shift = HDF5.h5open(f -> PMC.read_shift_injection(f, core), path, "r")
+            arc_ax = PMC.get_arc_axis(core)
+            bix = PMC.get_bus_lookup(core)
+            inj = randn(MersenneTwister(7), length(bix))
+            inj .-= sum(inj) / length(inj)
+            q = copy(inj)
+            for (k, a) in enumerate(arc_ax)
+                q[bix[a[1]]] += shift[k]
+                q[bix[a[2]]] -= shift[k]
+            end
+            arc_flows = Float64[
+                sum(PMC.ptdf_row(core, k) .* q) - shift[k] for k in eachindex(arc_ax)
+            ]
+            flows = PMC.branch_flows(table, arc_flows)
+            by_key = _flows_by_leaf_key(
+                leaf_dc_flows(sys, Dict{Int, Float64}(b => inj[i] for (b, i) in bix)),
+            )
+            kind = PMC.get_branch_kind(table)
+            id = PMC.get_branch_id(table)
+            leaves = findall(<=(8), kind)
+            @test !isempty(leaves)
+            for r in leaves
+                @test flows[r] ≈ by_key[(id[r], max(kind[r] - 5, 0))] atol = 1e-12
+            end
+        end
+    end
+
+    @testset "branch factors by id" begin
+        reds = PNM.NetworkReduction[RadialReduction(), DegreeTwoReduction()]
+        for (name, sys) in (
+            ("branch_map", build_branch_map_system()),
+            (
+                "case10",
+                PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions"),
+            ),
+        )
+            vptdf = VirtualPTDF(sys; network_reductions = reds, tol = 0.0)
+            path = joinpath(mktempdir(), "ptdf.h5")
+            to_hdf5(vptdf, path, sys)
+            x = PMC.read_branch_factors(path)
+            ref = only(PMC.get_ref_bus(PMC.get_core(x)))
+            buses = PMC.get_bus_axis(x)
+            # The flows for the unit injection at each bus, from the full network.
+            function reference_flows(system)
+                base = _flows_by_leaf_key(leaf_dc_flows(system, Dict{Int, Float64}()))
+                moved = Dict{Int, Dict{Tuple{Int, Int}, Float64}}()
+                for b in buses
+                    if b != ref
+                        moved[b] = _flows_by_leaf_key(
+                            leaf_dc_flows(system, Dict(b => 1.0, ref => -1.0)),
+                        )
+                    end
+                end
+                return base, moved
+            end
+            function compare_rows(row_of, base, moved, leaves)
+                compared = Tuple{Int, Int}[]
+                for key in leaves
+                    if haskey(base, key)
+                        row = row_of(key)
+                        for b in buses
+                            expected = 0.0
+                            if b != ref
+                                expected = moved[b][key] - base[key]
+                            end
+                            @test row[PMC.bus_column(x, b)] ≈ expected atol = 1e-9
+                        end
+                        push!(compared, key)
+                    end
+                end
+                return compared
+            end
+            base, moved = reference_flows(sys)
+            leaves = Tuple{Int, Int}[
+                key for key in keys(base) if _by_winding(PMC.has_branch, key[2], x, key[1])
+            ]
+            compared = compare_rows(
+                key -> _by_winding(PMC.branch_ptdf_row, key[2], x, key[1]),
+                base,
+                moved,
+                leaves,
+            )
+            @test length(compared) > 0
+            if name == "case10"
+                @test any(key -> key[2] > 0, compared)
+            end
+
+            table = PMC.read_branch_outages(path)
+            picked = Tuple{Int, String, String}[]
+            for id in sort!(collect(keys(PMC.get_outage_ids(table))))
+                type, branch_name = PMC.get_outage_ids(table)[id]
+                if isempty(picked) && PMC.has_branch(x, id) &&
+                   !PMC.NetworkModification(table, id).is_islanding
+                    push!(picked, (id, type, branch_name))
+                end
+            end
+            id, type, branch_name = only(picked)
+            ctg = PMC.branch_contingency(x, [id])
+            @test !PMC.is_islanding(ctg)
+            sys_out = deepcopy(sys)
+            PSY.set_available!(
+                PSY.get_component(PNM._branch_type(type, "type"), sys_out, branch_name),
+                false,
+            )
+            base_out, moved_out = reference_flows(sys_out)
+            @test iszero(PMC.branch_ptdf_row(x, id, ctg))
+            compared_out = compare_rows(
+                key -> _by_winding(PMC.branch_ptdf_row, key[2], x, key[1], ctg),
+                base_out,
+                moved_out,
+                leaves,
+            )
+            @test length(compared_out) > 0
+            if name == "case10"
+                @test any(key -> key[2] > 0, compared_out)
+            end
+        end
+    end
+
+    @testset "three-winding transformer contingency by id" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+        reds = PNM.NetworkReduction[RadialReduction(), DegreeTwoReduction()]
+        vmodf = VirtualMODF(sys; network_reductions = reds, tol = 0.0)
+        path = joinpath(mktempdir(), "modf.h5")
+        to_hdf5(vmodf, path, sys)
+        x = PMC.read_branch_factors(path)
+        table = PMC.read_branch_map(path)
+        trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
+        id = IS.get_id(trf)
+        mod = NetworkModification(vmodf, trf)
+        ctg = PMC.branch_contingency(x, [id])
+        @test PMC.is_islanding(ctg) == mod.is_islanding
+        outaged_rows = Int[
+            r for r in eachindex(PMC.get_branch_kind(table)) if
+            6 <= PMC.get_branch_kind(table)[r] <= 8 && PMC.get_branch_id(table)[r] == id
+        ]
+        @test !isempty(outaged_rows)
+        arc_count = length(PMC.get_arc_axis(PMC.get_core(x)))
+        rows = [collect(vmodf[k, mod]) for k in 1:arc_count]
+        buses = PMC.get_bus_axis(x)
+        zero_flows = PMC.branch_flows(table, zeros(arc_count), outaged_rows)
+        kind = PMC.get_branch_kind(table)
+        branch_id = PMC.get_branch_id(table)
+        compared = 0
+        for r in findall(<=(8), kind)
+            winding = max(kind[r] - 5, 0)
+            row = _by_winding(PMC.branch_ptdf_row, winding, x, branch_id[r], ctg)
+            if branch_id[r] == id
+                @test iszero(row)
+            end
+            for (j, b) in enumerate(buses)
+                arc_values = Float64[rows[k][j] for k in 1:arc_count]
+                flows = PMC.branch_flows(table, arc_values, outaged_rows)
+                expected = flows[r] - zero_flows[r]
+                @test row[PMC.bus_column(x, b)] ≈ expected atol = 1e-9
+            end
+            compared += 1
+        end
+        @test compared > 0
+    end
+
+    @testset "registered outages" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+        lines = collect(PSY.get_components(PSY.Line, sys))
+        _add_outage!(sys, lines[1])
+        _add_outage!(sys, lines[2])
+        vmodf = VirtualMODF(sys)
+        original = PNM.get_registered_contingencies(vmodf)
+        @test length(original) == 2
+        path = joinpath(mktempdir(), "registered.h5")
+        to_hdf5(vmodf, path)
+        core = PMC.read_factor_core(path)
+        specs = PMC.read_registered_outages(path)
+        @test sort!(collect(keys(specs))) == sort!(collect(keys(original)))
+        for (id, spec) in original
+            @test specs[id].modification.label == spec.modification.label
+            _test_core_modf_rows(vmodf, core, specs[id].modification, spec.modification)
+        end
+        _, _, ptdf_path = _roundtrip_ptdf(sys)
+        @test isempty(PMC.read_registered_outages(ptdf_path))
+    end
+
+    @testset "islanding outage" begin
+        sys = PSB.build_system(
+            PSB.PSSEParsingTestSystems,
+            "psse_14_network_reduction_test_system",
+        )
+        vmodf =
+            VirtualMODF(sys; linear_solver = "KLU", automatically_register_outages = false)
+        path = joinpath(mktempdir(), "island.h5")
+        to_hdf5(vmodf, path)
+        core = PMC.read_factor_core(path; linear_solver = "KLU")
+        diag = PMC.get_PTDF_A_diag(core)
+        e = first(i for i in eachindex(diag) if abs(diag[i] - 1.0) < 1e-6)
+        mod = NetworkModification(
+            "bridge",
+            [ArcModification(e, -vmodf.arc_susceptances[e])],
+            ShuntModification[],
+            true,
+        )
+        _test_core_modf_rows(vmodf, core, mod)
     end
 end
 
@@ -1313,13 +1675,13 @@ end
     for i in 1:12, j in 1:i
         push!(rejected, "b$i$j" => "msg$(lpad(i, 2, '0'))")
     end
-    lines = split(HDF5Ext._rejection_summary(rejected), "\n")
-    @test length(lines) == HDF5Ext._MAX_REJECTION_LINES + 1
+    lines = split(PNM._rejection_summary(rejected), "\n")
+    @test length(lines) == PNM._MAX_REJECTION_LINES + 1
     @test lines[1] == "12 x msg12"
     @test lines[2] == "11 x msg11"
     @test lines[end - 1] == "3 x msg03"
     @test lines[end] == "and 2 more"
-    tie = HDF5Ext._rejection_summary(["a" => "zeta", "b" => "alpha"])
+    tie = PNM._rejection_summary(["a" => "zeta", "b" => "alpha"])
     @test tie == "1 x alpha\n1 x zeta"
 end
 
@@ -1331,7 +1693,7 @@ end
             RTS_NR.reverse_parallel_branch_map,
         )
             branch = first(keys(map))
-            key = HDF5Ext._outage_key(branch)
+            key = PNM._outage_key(branch)
             @test NetworkModification(RTS_TABLE, key[1], key[2]) ==
                   NetworkModification(RTS_TABLE, [key])
             _test_modf_rows_equal(
@@ -1343,7 +1705,7 @@ end
         end
         checked = 0
         for branch in keys(RTS_NR.reverse_series_branch_map)
-            key = HDF5Ext._outage_key(branch)
+            key = PNM._outage_key(branch)
             haskey(PNM.get_outage_rows(RTS_TABLE), key) || continue
             @test all(
                 PNM.get_outage_opens_arc(RTS_TABLE)[PNM.get_outage_rows(RTS_TABLE)[key][2]],
@@ -1378,7 +1740,7 @@ end
         restored = from_hdf5(VirtualMODF, path)
         table = from_hdf5(BranchOutageTable, path)
         trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
-        key = HDF5Ext._outage_key(trf)
+        key = PNM._outage_key(trf)
         _test_modf_rows_equal(
             vmodf,
             restored,
@@ -1392,7 +1754,7 @@ end
         ]
         @test length(chain) == 2
         for branch in chain
-            @test !haskey(PNM.get_outage_rows(table), HDF5Ext._outage_key(branch))
+            @test !haskey(PNM.get_outage_rows(table), PNM._outage_key(branch))
         end
     end
 
@@ -1401,17 +1763,17 @@ end
         vmodf = VirtualMODF(sys; network_reductions = RTS_REDUCTIONS)
         nr = PNM.get_network_reduction_data(vmodf)
         trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
-        @test !HDF5Ext._is_absorbed(nr, trf)
+        @test !PNM._is_absorbed(nr, trf)
         PSY.set_available!(trf, false)
-        @test HDF5Ext._is_absorbed(nr, trf)
+        @test PNM._is_absorbed(nr, trf)
         path = joinpath(mktempdir(), "absorbed.h5")
         to_hdf5(vmodf, path, sys)
         table = from_hdf5(BranchOutageTable, path)
-        @test !haskey(PNM.get_outage_rows(table), HDF5Ext._outage_key(trf))
+        @test !haskey(PNM.get_outage_rows(table), PNM._outage_key(trf))
         # The warning gives the count, the first branch and each distinct message with a count.
         @test_logs (:warn, r"in no reduction map") (
             :warn,
-            r"2 branches have no outage row because NetworkModification rejected them\. First: .*\n2 x UnsupportedOutageError",
+            r"2 branches have no outage row because NetworkModification rejected them, or because the outage leaves a series chain partly in service\. First: .*\n2 x The branch outage table has no row for a branch that leaves its series chain partly in service\.",
         ) match_mode = :any to_hdf5(vmodf, joinpath(mktempdir(), "w.h5"), sys)
     end
 
@@ -1425,16 +1787,44 @@ end
         @test_logs (:warn, Regex("susceptance is zero.*$(PSY.get_name(line))")) match_mode =
             :any to_hdf5(vptdf, path, sys)
         table = from_hdf5(BranchOutageTable, path)
-        @test !haskey(PNM.get_outage_rows(table), HDF5Ext._outage_key(line))
+        @test !haskey(PNM.get_outage_rows(table), PNM._outage_key(line))
         for other in PSY.get_components(PSY.Line, sys)
             other === line && continue
-            key = HDF5Ext._outage_key(other)
+            key = PNM._outage_key(other)
             @test haskey(PNM.get_outage_rows(table), key)
             _test_arc_rows_equal(
                 NetworkModification(vptdf, other),
                 NetworkModification(table, [key]),
             )
         end
+    end
+
+    @testset "registered outage on a zero-susceptance arc keeps its id" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+        lines = collect(PSY.get_components(PSY.Line, sys))
+        line = first(lines)
+        PSY.set_r!(line, 0.01u"SU")
+        PSY.set_x!(line, 0.0u"SU")
+        _add_outage!(sys, line)
+        _add_outage!(sys, last(lines))
+        vmodf = VirtualMODF(sys)
+        original = PNM.get_registered_contingencies(vmodf)
+        @test length(original) == 2
+        path = joinpath(mktempdir(), "zero_b_registered.h5")
+        @test_logs (
+            :warn,
+            Regex("registered outages have no row.*$(PSY.get_name(line))"),
+        ) match_mode = :any to_hdf5(vmodf, path)
+        specs = PMC.read_registered_outages(path)
+        @test sort!(collect(keys(specs))) == sort!(collect(keys(original)))
+        for (id, spec) in original
+            @test specs[id].modification.label == spec.modification.label
+        end
+        zero_id = only(
+            id for (id, spec) in original if spec.modification.label == PSY.get_name(line)
+        )
+        @test isempty(specs[zero_id].modification.arc_modifications)
+        @test length(PNM.get_registered_contingencies(from_hdf5(VirtualMODF, path))) == 2
     end
 
     @testset "mixed zero-susceptance arcs drop only the zero arc rows" begin
@@ -1449,23 +1839,36 @@ end
                 ArcModification(3, -2.0, 0.0, z, z, z, z, 1),
             ],
         )
-        kept = HDF5Ext._drop_zero_susceptance_arcs(mixed)
+        kept = PNM._drop_zero_susceptance_arcs(mixed)
         @test [m.arc_index for m in kept.arc_modifications] == [1, 3]
-        @test HDF5Ext._drop_zero_susceptance_arcs(kept) === kept
+        @test PNM._drop_zero_susceptance_arcs(kept) === kept
         all_zero = NetworkModification("z", [ArcModification(2, 0.0, 0.0, z, z, z, z, 1)])
-        @test isempty(HDF5Ext._drop_zero_susceptance_arcs(all_zero).arc_modifications)
+        @test isempty(PNM._drop_zero_susceptance_arcs(all_zero).arc_modifications)
     end
 
-    @testset "VirtualMODF warns on a partial series outage" begin
+    @testset "VirtualMODF registers a partial series outage" begin
+        reductions = NetworkReduction[DegreeTwoReduction()]
         sys = build_antiparallel_chain_segment_system()
-        vmodf = VirtualMODF(
-            sys;
-            network_reductions = NetworkReduction[DegreeTwoReduction()],
-        )
+        vmodf = VirtualMODF(sys; network_reductions = reductions)
         # The outage comes after the reduction, so the reduction folded P1 into a chain.
-        _add_outage!(sys, PSY.get_component(PSY.Line, sys, "L_10_3"))
-        @test_logs (:warn, r"Could not register outage: Partial Ybus delta") match_mode =
-            :any PNM._register_all_outages!(vmodf, sys)
+        p1 = PSY.get_component(PSY.Line, sys, "L_10_3")
+        outage = _add_outage!(sys, p1)
+        @test_logs (:info, r"Registered 1 contingencies") PNM._register_all_outages!(
+            vmodf,
+            sys,
+        )
+        mod = NetworkModification(vmodf, sys, outage)
+        rebuilt_sys = build_antiparallel_chain_segment_system()
+        PSY.set_available!(PSY.get_component(PSY.Line, rebuilt_sys, "L_10_3"), false)
+        rebuilt = VirtualPTDF(rebuilt_sys; network_reductions = reductions)
+        arcs = PNM.get_arc_axis(vmodf)
+        @test arcs == PNM.get_arc_axis(rebuilt)
+        monitored = first(i for i in eachindex(arcs) if arcs[i] == (1, 3))
+        @test isapprox(
+            collect(vmodf[monitored, mod]),
+            collect(PNM.get_ptdf_row(rebuilt, arcs[monitored]));
+            atol = 1e-10,
+        )
     end
 
     # Disabled until the SeriesCompensator `bypassed` schema reaches PowerSystems psy6.
@@ -1481,7 +1884,7 @@ end
         line = get_component(Line, sys, COMPENSATED_LINE)
         compensator = first(PSY.get_components(PSY.SeriesCompensator, sys))
         for branch in (line, compensator)
-            key = HDF5Ext._outage_key(branch)
+            key = PNM._outage_key(branch)
             @test haskey(PNM.get_outage_rows(table), key)
             _test_modf_rows_equal(
                 vmodf,
@@ -1504,14 +1907,14 @@ end
         keys_ = collect(zip(types, names))
         trf = first(PSY.get_components(PSY.ThreeWindingTransformer, sys))
         @test allunique(keys_)
-        @test count(==(HDF5Ext._outage_key(trf)), keys_) == 1
+        @test count(==(PNM._outage_key(trf)), keys_) == 1
     end
 
     @testset "writer skips only UnsupportedOutageError" begin
-        @test HDF5Ext._skippable(PNM.UnsupportedOutageError("x"))
-        @test !HDF5Ext._skippable(ErrorException("x"))
-        @test !HDF5Ext._skippable(MethodError(sin, ()))
-        @test !HDF5Ext._skippable(InterruptException())
+        @test PNM._skippable(PNM.UnsupportedOutageError("x"))
+        @test !PNM._skippable(ErrorException("x"))
+        @test !PNM._skippable(MethodError(sin, ()))
+        @test !PNM._skippable(InterruptException())
     end
 
     @testset "wrong system" begin
@@ -1545,12 +1948,12 @@ end
         for pair in (chain[1:2], [chain[1], direct])
             sys_outage = _add_outage!(RTS_SYS, pair...)
             oracle = NetworkModification(RTS_VMODF, RTS_SYS, sys_outage)
-            actual = NetworkModification(RTS_TABLE, [HDF5Ext._outage_key(b) for b in pair])
+            actual = NetworkModification(RTS_TABLE, [PNM._outage_key(b) for b in pair])
             @test length(actual.arc_modifications) == length(oracle.arc_modifications)
             _test_modf_rows_equal(RTS_VMODF, RTS_RESTORED, oracle, actual)
         end
         chain_mod =
-            NetworkModification(RTS_TABLE, [HDF5Ext._outage_key(b) for b in chain[1:2]])
+            NetworkModification(RTS_TABLE, [PNM._outage_key(b) for b in chain[1:2]])
         @test length(chain_mod.arc_modifications) == 1
     end
 
@@ -1570,12 +1973,12 @@ end
         @test l1 in segments
         @test !(p1 in segments)
         @test !(p2 in segments)
-        # A partial series outage has no Ybus delta, so the writer stores no row for P1 or P2.
-        @test_throws PNM.UnsupportedOutageError NetworkModification(vmodf, p1)
-        @test_throws PNM.UnsupportedOutageError NetworkModification(vmodf, p2)
+        # A partial series outage keeps the arc in service, so the writer stores no row for P1 or P2.
+        @test iszero(only(NetworkModification(vmodf, p1).arc_modifications).opened)
+        @test iszero(only(NetworkModification(vmodf, p2).arc_modifications).opened)
 
         restored, table = _outage_roundtrip(vmodf, sys)
-        key = HDF5Ext._outage_key
+        key = PNM._outage_key
         @test !haskey(PNM.get_outage_rows(table), key(p1))
         @test !haskey(PNM.get_outage_rows(table), key(p2))
         @test PNM.get_outage_opens_arc(table)[only(PNM.get_outage_rows(table)[key(l1)][2])]
@@ -1607,8 +2010,10 @@ end
         )
         opened = NetworkModification(table, [("Line", "a1"), ("Line", "a2")])
         @test only(opened.arc_modifications).delta_b == -4.0
-        parallel = NetworkModification(table, [("Line", "p1"), ("Line", "p2")])
-        @test only(parallel.arc_modifications).delta_b == -3.0
+        @test_throws "Pass the factor core" NetworkModification(
+            table,
+            [("Line", "p1"), ("Line", "p2")],
+        )
         # Two rows of one group member remove that member one time.
         same_member = BranchOutageTable(
             Dict(("Line", "c1") => (false, 1:1), ("Line", "c2") => (false, 2:2)),
@@ -1643,7 +2048,7 @@ end
         @test oracle == NetworkModification(vmodf, a)
 
         restored, table = _outage_roundtrip(vmodf, sys)
-        actual = NetworkModification(table, HDF5Ext._outage_key.([a, b]))
+        actual = NetworkModification(table, PNM._outage_key.([a, b]))
         @test only(actual.arc_modifications).delta_b ≈ -b_chain
         _test_arc_rows_equal(oracle, actual)
         _test_post_outage_rows_equal(vmodf, restored, oracle, actual)
@@ -1662,7 +2067,7 @@ end
         @test line in collect(nr.series_branch_map[(110, 1001)])
         restored, table = _outage_roundtrip(vmodf, sys)
         oracle = NetworkModification(vmodf, sys, _add_outage!(sys, trf, line))
-        actual = NetworkModification(table, HDF5Ext._outage_key.([trf, line]))
+        actual = NetworkModification(table, PNM._outage_key.([trf, line]))
         _test_arc_rows_equal(oracle, actual)
         _test_post_outage_rows_equal(vmodf, restored, oracle, actual)
     end
@@ -1712,7 +2117,7 @@ end
         @test_throws "System UUID mismatch" to_hdf5(vptdf, path, other; force = true)
         _test_same_core(vptdf, from_hdf5(VirtualPTDF, path))
         @test readdir(dir) == listing
-        @test_throws "write failed" HDF5Ext._write_factor_file_atomically(path, true) do f
+        @test_throws "write failed" PMC._write_factor_file_atomically(path, true) do f
             f["partial"] = [1, 2, 3]
             error("write failed")
         end
@@ -1724,7 +2129,7 @@ end
     @testset "no overwrite when a file appears during the write" begin
         dir = mktempdir()
         path = joinpath(dir, "race.h5")
-        @test_throws "exists. Pass `force = true`" HDF5Ext._write_factor_file_atomically(
+        @test_throws "exists. Pass `force = true`" PMC._write_factor_file_atomically(
             path,
             false,
         ) do f
@@ -1740,7 +2145,7 @@ end
         vmodf = VirtualMODF(sys)
         restored, table = _outage_roundtrip(vmodf, sys)
         pst = PSY.get_component(PSY.TwoWindingTransformer, sys, "PST")
-        key = HDF5Ext._outage_key(pst)
+        key = PNM._outage_key(pst)
         @test any(!iszero, table.delta_shift[PNM.get_outage_rows(table)[key][2]])
         _test_modf_rows_equal(
             vmodf,
@@ -1856,8 +2261,8 @@ end
             nm[2] = nm[1]
             HDF5.delete_object(g, "type")
             HDF5.delete_object(g, "name")
-            HDF5Ext._write_strings!(g, "type", t)
-            HDF5Ext._write_strings!(g, "name", nm)
+            PNM._write_strings!(g, "type", t)
+            PNM._write_strings!(g, "name", nm)
         end
         @test_throws "more than once" from_hdf5(BranchOutageTable, path)
 
@@ -1889,7 +2294,7 @@ end
                 g["delta_shift"] = zeros(n)
                 g["opened"] = ones(Int, n)
                 g["id"] = id
-                HDF5Ext._write_strings!(g, "label", ["o$i" for i in 1:length(start)])
+                PNM._write_strings!(g, "label", ["o$i" for i in 1:length(start)])
                 g["is_islanding"] = fill(false, length(start))
             end
             return
@@ -1958,7 +2363,7 @@ end
         path = fresh_path()
         HDF5.h5open(path, "r+") do f
             HDF5.delete_attribute(f, "format_version")
-            HDF5.write_attribute(f, "format_version", 2)
+            HDF5.write_attribute(f, "format_version", PMC.FACTOR_FILE_FORMAT_VERSION + 1)
         end
         @test_throws "Unsupported factor file format version" from_hdf5(
             BranchOutageTable,
@@ -2092,11 +2497,11 @@ end
             H.create_dataset(f, "arc_from", Int, (2^40,); chunk = (1024,))
         end
         H.h5open(path, "r") do f
-            @test_throws "declares 1099511627776 elements" HDF5Ext._check_before_read(
+            @test_throws "declares 1099511627776 elements" PNM._check_before_read(
                 f["arc_from"],
                 "arc_from",
                 Vector{Int},
-                HDF5Ext.ReadBudget(filesize(path)),
+                PNM.ReadBudget(filesize(path)),
             )
         end
     end
@@ -2113,17 +2518,17 @@ end
             H.create_dataset(f, "wide", fixed_type(2^26), H.dataspace((16,)); chunk = (1,))
         end
         H.h5open(path, "r") do f
-            @test_throws "string of 67108864 bytes per element" HDF5Ext._check_before_read(
+            @test_throws "string of 67108864 bytes per element" PNM._check_before_read(
                 f["wide"],
                 "wide",
                 Vector{String},
-                HDF5Ext.ReadBudget(filesize(path)),
+                PNM.ReadBudget(filesize(path)),
             )
         end
     end
 
     @testset "string element beyond the string cap" begin
-        @test_throws "string of 1073741824 bytes" HDF5Ext._check_stored_type(
+        @test_throws "string of 1073741824 bytes" PNM._check_stored_type(
             String,
             "system_uuid",
             (Int(H.API.H5T_STRING), 2^30, false),
@@ -2143,11 +2548,11 @@ end
             )
         end
         H.h5open(path, "r") do f
-            @test_throws "bus_axis has the HDF5 class 3" HDF5Ext._check_before_read(
+            @test_throws "bus_axis has the HDF5 class 3" PNM._check_before_read(
                 f["bus_axis"],
                 "bus_axis",
                 Vector{Int},
-                HDF5Ext.ReadBudget(filesize(path)),
+                PNM.ReadBudget(filesize(path)),
             )
         end
     end
@@ -2187,7 +2592,7 @@ end
             H.create_dataset(
                 g,
                 "name",
-                fixed_type(HDF5Ext.MAX_FIXED_STRING_BYTES + 1),
+                fixed_type(PNM.MAX_FIXED_STRING_BYTES + 1),
                 H.dataspace((n,));
                 chunk = (1,),
             )
@@ -2198,17 +2603,17 @@ end
     @testset "writer rejects a string beyond the string cap" begin
         path = fresh_path()
         H.h5open(path, "w") do f
-            @test_throws "the limit is 65536" HDF5Ext._write_strings!(
+            @test_throws "the limit is 65536" PNM._write_strings!(
                 f,
                 "x",
-                [repeat("a", HDF5Ext.MAX_FIXED_STRING_BYTES + 1)],
+                [repeat("a", PNM.MAX_FIXED_STRING_BYTES + 1)],
             )
         end
     end
 
     @testset "writer rejects a string with a null byte" begin
         H.h5open(joinpath(mktempdir(), "nul.h5"), "w") do f
-            @test_throws "holds a string with a null byte" HDF5Ext._write_strings!(
+            @test_throws "holds a string with a null byte" PNM._write_strings!(
                 f,
                 "x",
                 ["a\0"],
@@ -2229,15 +2634,15 @@ end
         path = fresh_path()
         names = ["bus one", "héllo wörld ✓", "", "a"]
         H.h5open(path, "w") do f
-            HDF5Ext._write_strings!(f, "s", names)
-            HDF5Ext._write_string_attribute!(H.attributes(f), "a", "naïve uuid")
-            HDF5Ext._write_strings!(f, "empty", String[])
+            PNM._write_strings!(f, "s", names)
+            PNM._write_string_attribute!(H.attributes(f), "a", "naïve uuid")
+            PNM._write_strings!(f, "empty", String[])
         end
         H.h5open(path, "r") do f
-            budget = HDF5Ext.ReadBudget(filesize(path))
-            @test HDF5Ext._read(f, "s", Vector{String}, budget) == names
-            @test HDF5Ext._read(f, "empty", Vector{String}, budget) == String[]
-            @test HDF5Ext._read(H.attributes(f), "a", String, budget) == "naïve uuid"
+            budget = PNM.ReadBudget(filesize(path))
+            @test PNM._read(f, "s", Vector{String}, budget) == names
+            @test PNM._read(f, "empty", Vector{String}, budget) == String[]
+            @test PNM._read(H.attributes(f), "a", String, budget) == "naïve uuid"
             dt = H.datatype(f["s"])
             @test !H.API.h5t_is_variable_str(dt)
             close(dt)
@@ -2249,7 +2654,7 @@ end
         path = fresh_path()
         mutate!(path) do f
             H.delete_attribute(f, "system_uuid")
-            HDF5Ext._write_system_uuid!(H.attributes(f), uuid)
+            PNM._write_system_uuid!(H.attributes(f), uuid)
         end
         @test H.h5open(f -> H.read_attribute(f, "system_uuid"), path, "r") ==
               reinterpret(Int64, [0xffeeddccbbaa9988, 0x7766554433221100])
@@ -2273,7 +2678,7 @@ end
         @test_throws "system_uuid has 3 values; expected 2" from_hdf5(VirtualPTDF, path)
         mutate!(path) do f
             H.delete_attribute(f, "system_uuid")
-            HDF5Ext._write_string_attribute!(H.attributes(f), "system_uuid", "not-a-uuid")
+            PNM._write_string_attribute!(H.attributes(f), "system_uuid", "not-a-uuid")
         end
         @test_throws "system_uuid has the HDF5 class 3 and 10 bytes" from_hdf5(
             VirtualPTDF,
@@ -2290,18 +2695,18 @@ end
             end
         end
         H.h5open(path, "r") do f
-            budget = HDF5Ext.ReadBudget(filesize(path))
-            @test HDF5Ext._check_before_read(f["big1"], "big1", Vector{Int}, budget) == 8
-            @test_throws "remaining read budget" HDF5Ext._check_before_read(
+            budget = PNM.ReadBudget(filesize(path))
+            @test PNM._check_before_read(f["big1"], "big1", Vector{Int}, budget) == 8
+            @test_throws "remaining read budget" PNM._check_before_read(
                 f["big2"],
                 "big2",
                 Vector{Int},
                 budget,
             )
         end
-        budget = HDF5Ext.ReadBudget(100)
-        @test_throws "declares" HDF5Ext._charge!(budget, "x", typemax(Int) ÷ 2, 4)
-        @test_throws "declares 16 elements of 67108864 bytes" HDF5Ext._charge!(
+        budget = PNM.ReadBudget(100)
+        @test_throws "declares" PNM._charge!(budget, "x", typemax(Int) ÷ 2, 4)
+        @test_throws "declares 16 elements of 67108864 bytes" PNM._charge!(
             budget,
             "x",
             16,
@@ -2310,7 +2715,7 @@ end
     end
 
     @testset "hard link failure message" begin
-        msg = HDF5Ext._hardlink_failure_message("a.h5", ErrorException("boom"))
+        msg = PMC._hardlink_failure_message("a.h5", ErrorException("boom"))
         @test occursin("boom", msg)
         @test occursin("hard links", msg)
         @test occursin("force = true", msg)
@@ -2536,7 +2941,7 @@ end
                 @test isapprox(row[j], ptdf[a, bus]; atol = 1e-6)
             end
         end
-        rt = NetworkModification(table, HDF5Ext._outage_key(branch)...)
+        rt = NetworkModification(table, PNM._outage_key(branch)...)
         file_m = only(x for x in rt.arc_modifications if x.arc_index == arc_lookup[arc])
         @test file_m.delta_b ≈ m.delta_b
         @test file_m.delta_shift_injection ≈ m.delta_shift_injection
@@ -2598,12 +3003,12 @@ end
         tol = 0.0,
     )
     bus_ax = PNM.get_bus_axis(vptdf)
-    reasons = BranchReasonTable(vptdf, sys)
+    reductions = BranchReductionTable(vptdf, sys)
     n_radial = 0
     for line in PSY.get_components(PSY.Line, sys)
         id = IS.get_id(line)
-        if no_arc_reason(reasons, id) == NO_ARC_RADIAL
-            @test no_arc_surviving_bus(reasons, id) in bus_ax
+        if branch_reduction(reductions, id) == BRANCH_REDUCTION_RADIAL
+            @test branch_surviving_bus(reductions, id) in bus_ax
             n_radial += 1
         end
     end
@@ -2618,7 +3023,7 @@ end
     table = from_hdf5(BranchOutageTable, path)
     bmap = from_hdf5(BranchArcTable, path)
     trf = PSY.get_component(PSY.ThreeWindingTransformer, sys, "T3W_degenerate")
-    _, range = PNM.get_outage_rows(table)[HDF5Ext._outage_key(trf)]
+    _, range = PNM.get_outage_rows(table)[PNM._outage_key(trf)]
     kind = get_branch_kind(bmap)
     opens = PNM.get_outage_opens_arc(table)
     tops = [findall(==(-table.arc_index[i]), get_branch_parent(bmap)) for i in range]
@@ -2632,17 +3037,36 @@ end
     end
 end
 
-@testset "no_arc_reason by branch id" begin
+@testset "arc-susceptance VirtualFactorCore accepts verify_factorization" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
+    core = PNM.get_core(VirtualPTDF(sys; tol = 0.0))
+    for verify in (false, true)
+        rebuilt = PNM.VirtualFactorCore(
+            core.arc_susceptances .* core.arc_susceptance_signs,
+            Set(PNM.get_ref_bus_position(core)),
+            core.axes,
+            core.subnetwork_axes,
+            core.arc_live_members,
+            PNM.get_branch_catalog(core);
+            tol = 0.0,
+            verify_factorization = verify,
+        )
+        @test rebuilt.BA == core.BA
+        @test rebuilt.A == core.A
+    end
+end
+
+@testset "branch_reduction by branch id" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys5")
     vptdf = VirtualPTDF(sys; tol = 0.0)
-    reasons = BranchReasonTable(vptdf, sys)
+    reductions = BranchReductionTable(vptdf, sys)
     line = first(PSY.get_components(PSY.Line, sys))
-    @test no_arc_reason(reasons, IS.get_id(line)) == NO_ARC_HAS_ARC
-    @test_throws "no branch with id -1 and winding 0" no_arc_reason(reasons, -1)
-    @test_throws "did not remove" no_arc_surviving_bus(reasons, IS.get_id(line))
+    @test branch_reduction(reductions, IS.get_id(line)) == BRANCH_REDUCTION_HAS_ARC
+    @test_throws "has no branch with id -1." branch_reduction(reductions, -1)
+    @test_throws "did not remove" branch_surviving_bus(reductions, IS.get_id(line))
     path = joinpath(mktempdir(), "nosys.h5")
     to_hdf5(vptdf, path)
-    @test_throws "no group branch_reason" from_hdf5(BranchReasonTable, path)
+    @test_throws "no group branch_reduction" from_hdf5(BranchReductionTable, path)
 end
 
 @testset "out-of-service branch beside an in-service one" begin
@@ -2666,24 +3090,29 @@ end
     vptdf = VirtualPTDF(sys; tol = 0.0)
     path = joinpath(mktempdir(), "twin.h5")
     to_hdf5(vptdf, path, sys; outages = false)
-    reasons = from_hdf5(BranchReasonTable, path)
-    @test no_arc_reason(reasons, IS.get_id(twin)) == NO_ARC_HAS_ARC
-    @test no_arc_reason(reasons, IS.get_id(out)) == NO_ARC_NOT_IN_NETWORK
-    @test no_arc_reason(reasons, IS.get_id(breaker)) == NO_ARC_NOT_IN_NETWORK
+    reductions = from_hdf5(BranchReductionTable, path)
+    @test branch_reduction(reductions, IS.get_id(twin)) == BRANCH_REDUCTION_HAS_ARC
+    @test branch_reduction(reductions, IS.get_id(out)) == BRANCH_REDUCTION_NOT_IN_NETWORK
+    @test branch_reduction(reductions, IS.get_id(breaker)) ==
+          BRANCH_REDUCTION_NOT_IN_NETWORK
     @test !HDF5.h5open(f -> haskey(f, "branch_outages"), path, "r")
     @test_throws "no branch outage table" from_hdf5(BranchOutageTable, path)
 
     to_hdf5(vptdf, path, sys; force = true)
     @test HDF5.h5open(f -> haskey(f, "branch_outages"), path, "r")
-    @test from_hdf5(BranchReasonTable, path).rows == reasons.rows
+    @test from_hdf5(BranchReductionTable, path).rows == reductions.rows
 
     bad(column, value) = from_hdf5(
-        BranchReasonTable,
-        _corrupted_copy(path, "branch_reason", column => fill(value, length(reasons.rows))),
+        BranchReductionTable,
+        _corrupted_copy(
+            path,
+            "branch_reduction",
+            column => fill(value, length(reductions.rows)),
+        ),
     )
     @test_throws "winding 4 is not in 0:3" bad("winding", 4)
-    @test_throws "reason 7 is not in 0:4" bad("reason", 7)
-    @test_throws "surviving_bus is not positive" bad("reason", 1)
+    @test_throws "code 7 is not in 0:4" bad("code", 7)
+    @test_throws "surviving_bus is not positive" bad("code", 1)
     @test_throws "more than once" bad("id", 1)
 end
 

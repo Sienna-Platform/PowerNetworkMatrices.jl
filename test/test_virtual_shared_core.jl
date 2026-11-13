@@ -89,12 +89,13 @@ end
 
     for i in 1:n_tasks
         @test diags[i] === core.PTDF_A_diag
-        @test susceptances[i] === core.branch_susceptances_by_arc
+        @test susceptances[i] === PNM.get_network_data(core).branch_susceptances_by_arc
         @test isapprox(diags[i], reference_diag; atol = 1e-12)
         @test all(w -> all(isfinite, w), susceptances[i])
     end
     @test length(core.PTDF_A_diag) == length(PNM.get_arc_axis(core))
-    @test length(core.branch_susceptances_by_arc) == length(PNM.get_arc_axis(core))
+    @test length(PNM.get_network_data(core).branch_susceptances_by_arc) ==
+          length(PNM.get_arc_axis(core))
 end
 
 @testset "VirtualFactorCore from arrays" begin
@@ -274,7 +275,10 @@ end
             # Zero-impedance substitute (b = 1e6) beside normal arcs: the limit scales with |ABA||x|.
             @test chain([1.0, 1e6, 1.0]; solver) isa PNM.VirtualFactorCore
             # 1 + 1e-17 rounds to 1: the two buses behind the weak arc form a singular block.
-            @test_throws "ABA matrix of the factor file" chain([1.0, 1e-17, 1.0]; solver)
+            @test_throws "ABA matrix built from the arc susceptances" chain(
+                [1.0, 1e-17, 1.0];
+                solver,
+            )
             # Non-integer values and a meshed island: a rounding-level pivot, no exact zero.
             mesh_axes = (
                 [(1, 2), (2, 3), (3, 4), (4, 5), (3, 5)],
@@ -286,7 +290,7 @@ end
                 linear_solver = solver,
             )
             @test mesh([10.3, 37.7, 21.9, 14.1, 55.3]) isa PNM.VirtualFactorCore
-            @test_throws "ABA matrix of the factor file" mesh([
+            @test_throws "ABA matrix built from the arc susceptances" mesh([
                 10.3,
                 1e-17,
                 37.7,

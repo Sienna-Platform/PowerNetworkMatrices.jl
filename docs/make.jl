@@ -1,4 +1,5 @@
 using Documenter, PowerNetworkMatrices
+import PowerMatricesCore
 using HDF5
 import DataStructures: OrderedDict
 using Literate
@@ -39,12 +40,11 @@ pages = OrderedDict(
     "Reference" => Any[
         "Matrix Overview" => "reference/network_matrices_overview.md",
         "Public API" => "reference/public.md",
-        "Internals" => "reference/internals.md",
     ],
 )
 
 makedocs(;
-    modules = [PowerNetworkMatrices, Base.get_extension(PowerNetworkMatrices, :HDF5Ext)],
+    modules = [PowerNetworkMatrices],
     format = Documenter.HTML(;
         mathengine = Documenter.MathJax(),
         prettyurls = haskey(ENV, "GITHUB_ACTIONS"),

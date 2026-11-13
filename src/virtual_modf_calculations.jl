@@ -63,7 +63,7 @@ function Base.getproperty(vmodf::VirtualMODF, name::Symbol)
     name === :PTDF_A_diag && return get_PTDF_A_diag(get_core(vmodf))
     name === :branch_susceptances_by_arc &&
         return get_branch_susceptances_by_arc(get_core(vmodf))
-    return getproperty(get_core(vmodf), name)
+    return _core_property(get_core(vmodf), name)
 end
 
 # --- Accessors ---
@@ -391,7 +391,7 @@ function _get_woodbury_factors(vmodf::VirtualMODF, mod::NetworkModification)
     # function arguments eagerly, so the 3-arg form would run the M KLU solves
     # on every call (cache hit included), defeating the cache.
     return get!(get_woodbury_cache(vmodf), mod) do
-        _compute_woodbury_factors(vmodf, mod.arc_modifications)
+        _compute_woodbury_factors(vmodf, _arc_modification_vector(mod))
     end
 end
 

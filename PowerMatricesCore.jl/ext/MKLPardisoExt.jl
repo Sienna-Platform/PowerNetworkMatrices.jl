@@ -1,6 +1,6 @@
 module MKLPardisoExt
 
-import PowerNetworkMatrices as PNM
+import PowerMatricesCore as PMC
 using Pardiso
 import SparseArrays
 import SparseArrays: SparseMatrixCSC, getcolptr, rowvals
@@ -21,7 +21,7 @@ Computes the PTDF matrix by means of the MKL Pardiso for dense matrices.
 - `dist_slack::Vector{Float64}`:
         vector containing the weights for the distributed slacks.
 """
-function PNM._calculate_PTDF_matrix_MKLPardiso(
+function PMC._calculate_PTDF_matrix_MKLPardiso(
     A::SparseArrays.SparseMatrixCSC{Int8, Int},
     BA::SparseArrays.SparseMatrixCSC{Float64, Int},
     ref_bus_positions::Set{Int},
@@ -29,7 +29,7 @@ function PNM._calculate_PTDF_matrix_MKLPardiso(
     linecount = size(BA, 2)
     buscount = size(BA, 1)
 
-    ABA = PNM.calculate_ABA_matrix(A, BA, ref_bus_positions)
+    ABA = PMC.calculate_ABA_matrix(A, BA, ref_bus_positions)
     @assert LinearAlgebra.issymmetric(ABA)
     ps = Pardiso.MKLPardisoSolver()
     Pardiso.set_matrixtype!(ps, Pardiso.REAL_SYM)
@@ -81,7 +81,7 @@ end
 _pardiso_matrix_type(::Type{Float64}) = Pardiso.REAL_NONSYM
 _pardiso_matrix_type(::Type{ComplexF64}) = Pardiso.COMPLEX_NONSYM
 
-function PNM._make_pardiso_cache(
+function PMC._make_pardiso_cache(
     A::SparseMatrixCSC{T},
 ) where {T <: Union{Float64, ComplexF64}}
     if !Pardiso.mkl_is_available()
@@ -101,7 +101,7 @@ function PNM._make_pardiso_cache(
     # iparm[12] = 2, a plain transpose (not conjugate), so Pardiso solves A·x = b for
     # real and complex A.
     Pardiso.fix_iparm!(ps, :N)
-    cache = PNM.PardisoLinSolveCache{T}(
+    cache = PMC.PardisoLinSolveCache{T}(
         ps, A, Int[], Int[], false, T[], Matrix{T}(undef, 0, 0),
     )
     return cache
@@ -109,14 +109,14 @@ end
 
 # The Pardiso.jl solver object frees the MKL handle in its own finalizer.
 
-function _same_pattern(cache::PNM.PardisoLinSolveCache, A::SparseMatrixCSC)
+function _same_pattern(cache::PMC.PardisoLinSolveCache, A::SparseMatrixCSC)
     return size(A, 1) == length(cache.colptr) - 1 &&
            getcolptr(A) == cache.colptr &&
            rowvals(A) == cache.rowval
 end
 
-function PNM.symbolic_factor!(
-    cache::PNM.PardisoLinSolveCache{T},
+function PMC.symbolic_factor!(
+    cache::PMC.PardisoLinSolveCache{T},
     A::SparseMatrixCSC{T},
 ) where {T}
     cache.is_factored = false
@@ -130,8 +130,8 @@ function PNM.symbolic_factor!(
     return cache
 end
 
-function PNM.numeric_refactor!(
-    cache::PNM.PardisoLinSolveCache{T},
+function PMC.numeric_refactor!(
+    cache::PMC.PardisoLinSolveCache{T},
     A::SparseMatrixCSC{T},
 ) where {T}
     if !_same_pattern(cache, A)
@@ -150,17 +150,17 @@ function PNM.numeric_refactor!(
     return cache
 end
 
-function PNM.full_factor!(
-    cache::PNM.PardisoLinSolveCache{T},
+function PMC.full_factor!(
+    cache::PMC.PardisoLinSolveCache{T},
     A::SparseMatrixCSC{T},
 ) where {T}
-    PNM.symbolic_factor!(cache, A)
-    return PNM.numeric_refactor!(cache, A)
+    PMC.symbolic_factor!(cache, A)
+    return PMC.numeric_refactor!(cache, A)
 end
 
 # Pardiso solves out of place. The scratch buffers only avoid an allocation of the
 # output. Pardiso.jl converts the index arrays on each call.
-function PNM.solve!(cache::PNM.PardisoLinSolveCache{T}, b::StridedVector{T}) where {T}
+function PMC.solve!(cache::PMC.PardisoLinSolveCache{T}, b::StridedVector{T}) where {T}
     cache.is_factored || error("PardisoLinSolveCache: call full_factor! before solve!.")
     Pardiso.set_phase!(cache.ps, Pardiso.SOLVE_ITERATIVE_REFINE)
     if length(cache.scratch) != length(b)
@@ -171,7 +171,7 @@ function PNM.solve!(cache::PNM.PardisoLinSolveCache{T}, b::StridedVector{T}) whe
     return b
 end
 
-function PNM.solve!(cache::PNM.PardisoLinSolveCache{T}, B::StridedMatrix{T}) where {T}
+function PMC.solve!(cache::PMC.PardisoLinSolveCache{T}, B::StridedMatrix{T}) where {T}
     cache.is_factored || error("PardisoLinSolveCache: call full_factor! before solve!.")
     Pardiso.set_phase!(cache.ps, Pardiso.SOLVE_ITERATIVE_REFINE)
     if size(cache.scratch_mat) != size(B)
@@ -183,15 +183,15 @@ function PNM.solve!(cache::PNM.PardisoLinSolveCache{T}, B::StridedMatrix{T}) whe
 end
 
 # `SOLVE_ITERATIVE_REFINE` refines in the solve phase, so `A`, `tol` and `max_iters` are unused.
-function PNM.solve_w_refinement(
-    cache::PNM.PardisoLinSolveCache{T},
+function PMC.solve_w_refinement(
+    cache::PMC.PardisoLinSolveCache{T},
     ::SparseMatrixCSC{T},
     b::StridedVecOrMat{T};
     tol::Real = 0.0,
     max_iters::Int = 0,
 ) where {T}
     x = copy(b)
-    PNM.solve!(cache, x)
+    PMC.solve!(cache, x)
     return x
 end
 

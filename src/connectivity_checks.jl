@@ -20,25 +20,6 @@ function find_connected_components(
     return Set(values(_union_find_components(M, bus_numbers)))
 end
 
-"""Find part of the union-find disjoint set data structure. Vector because nodes are 1:n."""
-function get_representative(uf::Vector{Int}, x::Int)
-    while uf[x] != x
-        uf[x] = uf[uf[x]] # path compression
-        x = uf[x]
-    end
-    return x
-end
-
-"""Union part of the union-find disjoint set data structure. Vector because nodes are 1:n."""
-function union_sets!(uf::Vector{Int}, x::Int, y::Int)
-    x == y && return
-    rootX = get_representative(uf, x)
-    rootY = get_representative(uf, y)
-    if rootX != rootY
-        uf[rootY] = rootX
-    end
-end
-
 # An edge is a stored entry holding a nonzero value; every routine in this file reads it
 # that way. In-place outage edits write exact zeros instead of deleting entries, and a
 # reduced Ybus can store a cancelled (zero) admittance: neither couples its buses. Topology

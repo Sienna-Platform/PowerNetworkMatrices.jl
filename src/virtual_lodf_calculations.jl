@@ -73,7 +73,7 @@ function Base.getproperty(vlodf::VirtualLODF, name::Symbol)
     name === :PTDF_A_diag && return get_PTDF_A_diag(get_core(vlodf))
     name === :branch_susceptances_by_arc &&
         return get_branch_susceptances_by_arc(get_core(vlodf))
-    return getproperty(get_core(vlodf), name)
+    return _core_property(get_core(vlodf), name)
 end
 
 # Field getters. `getfield` is confined to these (and the `getproperty` hook
@@ -255,10 +255,7 @@ function _compute_lodf_row(vlodf::VirtualLODF, row::Int)::Vector{Float64}
     return with_solver(
         core.K, core.work_ba_col, core.temp_data, core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
-        lin_solve =
-            _solve_ba_column!(K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, row)
-
-        _gather_to_buses!(temp_data, core.valid_ix, lin_solve)
+        ptdf_row!(temp_data, K_solver, work_ba_col, core, row)
 
         lodf_row = core.A * temp_data
         lodf_row .*= inv_PTDF_A_diag
@@ -375,13 +372,8 @@ function get_partial_lodf_row(
     return with_solver(
         core.K, core.work_ba_col, core.temp_data, core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
-        # Steps 1-2: Compute B⁻¹(b_e · ν_e).
-        lin_solve = _solve_ba_column!(
-            K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, arc_idx,
-        )
-
-        # Step 3: Map solution back to full bus space.
-        _gather_to_buses!(temp_data, core.valid_ix, lin_solve)
+        # Steps 1-3: Compute B⁻¹(b_e · ν_e) and map it back to full bus space.
+        ptdf_row!(temp_data, K_solver, work_ba_col, core, arc_idx)
 
         # Step 4: H_col[ℓ] = b_e · C[e,ℓ] for all monitoring arcs ℓ.
         H_col = core.A * temp_data

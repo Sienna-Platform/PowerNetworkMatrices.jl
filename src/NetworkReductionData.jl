@@ -63,11 +63,6 @@ network reduction algorithms.
     reduction_codes::Vector{Int} = Int[]
 end
 
-const REDUCTION_CODE_ZERO_IMPEDANCE = 1
-const REDUCTION_CODE_RADIAL = 2
-const REDUCTION_CODE_DEGREE_TWO = 3
-const REDUCTION_CODE_WARD = 4
-
 """
     get_reduction_codes(nr::NetworkReductionData) -> Vector{Int}
 

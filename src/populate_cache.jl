@@ -121,7 +121,7 @@ function populate_cache(vptdf::VirtualPTDF, components)
             full =
                 _gather_to_buses!(zeros(size(core.BA, 1)), core.valid_ix, view(sol, :, j))
             if use_dist_slack
-                full .-= dot(full, dist_slack_normalized)
+                apply_dist_slack!(full, core, dist_slack_normalized)
             end
             stored_rows[j] = apply_cutoff(cutoff, full)
         end
@@ -209,7 +209,7 @@ function _woodbury_factors_from_base(
     BA::SparseArrays.SparseMatrixCSC{Float64, Int},
     signs::Vector{Float64},
     arc_sus::Vector{Float64},
-    modifications::Tuple{Vararg{ArcModification}},
+    modifications::Vector{ArcModification},
     arc_out::Vector{Bool},
     n_bus::Int,
 )::WoodburyFactors
@@ -313,13 +313,14 @@ function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
 
         for mod in mods
             wf = get!(woodbury_cache, mod) do
+                arc_mods = _arc_modification_vector(mod)
                 _woodbury_factors_from_base(
                     base_full,
                     BA,
                     core.arc_susceptance_signs,
                     arc_sus,
-                    mod.arc_modifications,
-                    _arcs_fully_opened(core, mod.arc_modifications),
+                    arc_mods,
+                    _arcs_fully_opened(core, arc_mods),
                     n_bus,
                 )
             end

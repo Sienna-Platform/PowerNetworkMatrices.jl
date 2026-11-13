@@ -11,7 +11,6 @@ import Aqua
     Aqua.test_stale_deps(
         PowerNetworkMatrices;
         ignore = [
-            :Pardiso,
             :InfrastructureCoreOpenAPIModels,
             :InfrastructureTimeSeriesOpenAPIModels,
             :PowerCoreOpenAPIModels,

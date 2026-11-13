@@ -57,7 +57,9 @@ function Base.getproperty(vptdf::VirtualPTDF, name::Symbol)
        name === :cache_lock
         return getfield(vptdf, name)
     end
-    return getproperty(get_core(vptdf), name)
+    name === :branch_susceptances_by_arc &&
+        return get_branch_susceptances_by_arc(get_core(vptdf))
+    return _core_property(get_core(vptdf), name)
 end
 
 # Field getters. `getfield` is confined to these (and the `getproperty` hook
@@ -250,11 +252,7 @@ function _use_dist_slack(vptdf::VirtualPTDF)::Bool
     dist_slack = get_dist_slack(vptdf)
     isempty(dist_slack) && return false
     core = get_core(vptdf)
-    if length(core.subnetwork_axes) != 1
-        error(
-            "Distributed slack is not supported for systems with multiple reference buses.",
-        )
-    end
+    _check_dist_slack_network(core)
     if length(dist_slack) != size(core.BA, 1)
         error("Distributed bus specification doesn't match the number of buses.")
     end
@@ -267,21 +265,12 @@ function _compute_ptdf_row(
     row::Int,
     core::VirtualFactorCore = get_core(vptdf),
 )::Vector{Float64}
-    dist_slack_normalized = get_dist_slack_normalized(vptdf)
     use_dist_slack = _use_dist_slack(vptdf)
-
-    return with_solver(
-        core.K, core.work_ba_col, core.temp_data, core.solver_lock,
-    ) do K_solver, work_ba_col, temp_data
-        lin_solve =
-            _solve_ba_column!(K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, row)
-        _gather_to_buses!(temp_data, core.valid_ix, lin_solve)
-        if use_dist_slack
-            adjustment = dot(temp_data, dist_slack_normalized)
-            return temp_data .- adjustment
-        end
-        return copy(temp_data)
+    ptdf = ptdf_row(core, row)
+    if use_dist_slack
+        apply_dist_slack!(ptdf, core, get_dist_slack_normalized(vptdf))
     end
+    return ptdf
 end
 
 function _getindex(
