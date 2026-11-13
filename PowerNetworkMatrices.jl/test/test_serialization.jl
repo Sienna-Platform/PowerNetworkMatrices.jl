@@ -22,6 +22,21 @@ end
 _table_arc_susceptance(table::BranchArcTable, k::Int) =
     sum(r -> _table_node_susceptance(table, r), findall(==(-k), get_branch_parent(table)))
 
+# Write the branch arc table of `sys` and compare the susceptance of each arc with `BA_Matrix`.
+function _test_table_matches_ba(sys, reductions)
+    vptdf = VirtualPTDF(sys; network_reductions = reductions, tol = 0.0)
+    path = joinpath(mktempdir(), "table.h5")
+    to_hdf5(vptdf, path)
+    table = from_hdf5(BranchArcTable, path)
+    ba = BA_Matrix(sys; network_reductions = reductions)
+    ba_b = PNM._get_arc_susceptances(ba)
+    ba_lookup = PNM.get_arc_lookup(ba)
+    for (k, arc) in enumerate(PNM.get_arc_axis(vptdf))
+        @test _table_arc_susceptance(table, k) ≈ ba_b[ba_lookup[arc]]
+    end
+    return vptdf, table
+end
+
 function _roundtrip_ptdf(sys; kwargs...)
     vptdf = VirtualPTDF(sys; kwargs...)
     path = joinpath(mktempdir(), "ptdf.h5")
@@ -325,18 +340,9 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
     @testset "branch_map node susceptance matches BA" begin
         sys = build_corrected_transformer_chain_system()
         reductions = PNM.NetworkReduction[RadialReduction(), DegreeTwoReduction()]
-        vptdf = VirtualPTDF(sys; network_reductions = reductions, tol = 0.0)
+        vptdf, table = _test_table_matches_ba(sys, reductions)
         nr = PNM.get_network_reduction_data(vptdf)
         @test !isempty(nr.series_branch_map)
-        path = joinpath(mktempdir(), "corrected_chain.h5")
-        to_hdf5(vptdf, path)
-        table = from_hdf5(BranchArcTable, path)
-        ba = BA_Matrix(sys; network_reductions = reductions)
-        ba_b = PNM._get_arc_susceptances(ba)
-        ba_lookup = PNM.get_arc_lookup(ba)
-        for (k, arc) in enumerate(PNM.get_arc_axis(vptdf))
-            @test _table_arc_susceptance(table, k) ≈ ba_b[ba_lookup[arc]]
-        end
         b = get_branch_susceptance(table)
         row_of(br) = only(findall(==(IS.get_id(br)), get_branch_id(table)))
         in_chain = PSY.get_component(PSY.TwoWindingTransformer, sys, "T_3_10")
@@ -345,6 +351,16 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         @test !(b[row_of(in_chain)] ≈ PNM._ba_arc_susceptance(in_chain, nr))
         @test b[row_of(own_arc)] ≈ PNM._ba_arc_susceptance(own_arc, nr)
         @test !(b[row_of(own_arc)] ≈ PNM._finite_series_susceptance(own_arc, nr))
+    end
+
+    @testset "branch_map matches BA on a lossy parallel group and a Ward arc" begin
+        sys = build_lossy_parallel_ward_system()
+        vptdf, _ =
+            _test_table_matches_ba(sys, PNM.NetworkReduction[WardReduction([1, 2, 3, 4])])
+        nr = PNM.get_network_reduction_data(vptdf)
+        @test haskey(nr.parallel_branch_map, (1, 2))
+        @test haskey(PNM.get_added_arc_impedance_map(nr), (1, 3))
+        @test haskey(nr.direct_branch_map, (1, 3))
     end
 
     @testset "branch_map reader" begin
