@@ -11,10 +11,41 @@ Most users load `PowerNetworkMatrices.jl`, which builds the network matrices fro
 
 ## Installation
 
+`PowerMatricesCore.jl` is not registered yet. Add both packages in one `Pkg.add` call.
+Until this layout reaches `main`, pass `rev` in each `PackageSpec` with the name of a branch that has this layout.
+
 ```julia
 using Pkg
-Pkg.add("PowerMatricesCore")
+Pkg.add([
+    PackageSpec(;
+        url = "https://github.com/Sienna-Platform/PowerNetworkMatrices.jl",
+        subdir = "PowerMatricesCore.jl",
+    ),
+    PackageSpec(;
+        url = "https://github.com/Sienna-Platform/PowerNetworkMatrices.jl",
+        subdir = "PowerNetworkMatrices.jl",
+    ),
+])
 ```
+
+## Tests and manual
+
+From this folder, run the tests with:
+
+```sh
+julia --project=test -e 'using Pkg; Pkg.instantiate()'
+julia --project=test test/runtests.jl
+```
+
+Build the manual with:
+
+```sh
+julia --project=docs -e 'using Pkg; Pkg.instantiate()'
+julia --project=docs docs/make.jl
+```
+
+This package lives in the same repository as `PowerNetworkMatrices.jl`. See the
+[repository README](../README.md).
 
 ## License
 

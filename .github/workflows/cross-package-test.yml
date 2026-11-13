@@ -1,9 +1,6 @@
 name: CrossPackageTest
 
 on:
-  push:
-    branches: [master]
-    tags: [v*]
   pull_request:
 
 jobs:
@@ -23,6 +20,8 @@ jobs:
           version: ${{ matrix.julia-version }}
           arch: x64
       - uses: julia-actions/julia-buildpkg@latest
+        with:
+          project: PowerNetworkMatrices.jl
       - name: Clone ${{matrix.package_name}}
         uses: actions/checkout@v2
         with:
@@ -34,7 +33,7 @@ jobs:
           using Pkg
           try
             # Force it to use this PR's version of the package
-            Pkg.develop(PackageSpec(path="."))  # resolver may fail with main deps
+            Pkg.develop([PackageSpec(path="PowerMatricesCore.jl"), PackageSpec(path="PowerNetworkMatrices.jl")])  # resolver may fail with main deps
             Pkg.update()
             Pkg.test()  # resolver may fail with test time deps
           catch err

@@ -19,14 +19,3 @@ makedocs(;
     pages = pages,
     clean = true,
 )
-
-deploydocs(;
-    repo = "github.com/Sienna-Platform/PowerNetworkMatrices.jl.git",
-    target = "build",
-    branch = "gh-pages",
-    dirname = "PowerMatricesCore",
-    tag_prefix = "PowerMatricesCore-",
-    devurl = "dev",
-    push_preview = true,
-    versions = ["stable" => "v^", "v#.#"],
-)
