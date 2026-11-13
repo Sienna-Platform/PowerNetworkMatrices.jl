@@ -11,7 +11,7 @@ Most users load `PowerNetworkMatrices.jl`, which builds the network matrices fro
 
 ## Installation
 
-`PowerMatricesCore.jl` is not registered yet. Add both packages in one `Pkg.add` call, core first.
+`PowerMatricesCore.jl` is not registered yet. Add both packages in one `Pkg.add` call.
 Until this layout reaches `main`, pass `rev` in each `PackageSpec` with the name of a branch that has this layout.
 
 ```julia

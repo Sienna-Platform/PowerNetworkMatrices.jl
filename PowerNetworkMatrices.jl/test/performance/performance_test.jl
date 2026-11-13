@@ -48,6 +48,16 @@ function sample_times(f; setup = () -> nothing)
     return times
 end
 
+# The contingency with the smallest key, so each sample solves the same contingency on a new
+# object.
+function first_contingency(vmodf)
+    ctgs = get_registered_contingencies(vmodf)
+    isempty(ctgs) && error(
+        "VirtualMODF has no registered contingency: the query metric needs at least one.",
+    )
+    return ctgs[minimum(keys(ctgs))]
+end
+
 function record_samples(label, times)
     open("execute_time_$(ARGS[1]).csv", "a") do io
         write(io, "$(label),$(join(times, ";"))\n")
@@ -92,6 +102,11 @@ for (group, name) in systems
                 "$(name)-Build VirtualPTDF",
                 sample_times(_ -> VirtualPTDF(sys)),
             )
+        catch e
+            @error exception = (e, catch_backtrace())
+            record_failure("$(name)-Build VirtualPTDF")
+        end
+        try
             record_samples(
                 "$(name)-VirtualPTDF Query $(N_QUERY_ROWS) rows",
                 sample_times(
@@ -103,34 +118,36 @@ for (group, name) in systems
             )
         catch e
             @error exception = (e, catch_backtrace())
-            record_failure("$(name)-Build VirtualPTDF")
+            record_failure("$(name)-VirtualPTDF Query $(N_QUERY_ROWS) rows")
         end
     end
 
+    # Register one full-outage contingency per eligible branch (capped on large
+    # systems). FixedForcedOutage with outage_status = 1.0 marks the branch outaged.
+    modf_sys = deepcopy(sys)
+    max_ctgs = is_large ? MAX_LARGE_SYSTEM_CONTINGENCIES : typemax(Int)
+    added = 0
+    for branch in get_components(ACTransmission, modf_sys)
+        added >= max_ctgs && break
+        outage = FixedForcedOutage(; outage_status = 1.0)
+        add_supplemental_attribute!(modf_sys, branch, outage)
+        added += 1
+    end
     try
-        # Register one full-outage contingency per eligible branch (capped on large
-        # systems). FixedForcedOutage with outage_status = 1.0 marks the branch outaged.
-        modf_sys = deepcopy(sys)
-        max_ctgs = is_large ? MAX_LARGE_SYSTEM_CONTINGENCIES : typemax(Int)
-        added = 0
-        for branch in get_components(ACTransmission, modf_sys)
-            added >= max_ctgs && break
-            outage = FixedForcedOutage(; outage_status = 1.0)
-            add_supplemental_attribute!(modf_sys, branch, outage)
-            added += 1
-        end
         record_samples(
             "$(name)-Build VirtualMODF",
             sample_times(_ -> VirtualMODF(modf_sys)),
         )
-        # Query the contingency with the smallest key, so each sample solves the same
-        # contingency on a new object.
+    catch e
+        @error exception = (e, catch_backtrace())
+        record_failure("$(name)-Build VirtualMODF")
+    end
+    try
         record_samples(
             "$(name)-VirtualMODF Query $(N_QUERY_ROWS) rows",
             sample_times(
                 function (vmodf)
-                    ctgs = get_registered_contingencies(vmodf)
-                    ctg = ctgs[minimum(keys(ctgs))]
+                    ctg = first_contingency(vmodf)
                     for m in 1:N_QUERY_ROWS
                         vmodf[m, ctg]
                     end
@@ -140,7 +157,7 @@ for (group, name) in systems
         )
     catch e
         @error exception = (e, catch_backtrace())
-        record_failure("$(name)-Build VirtualMODF")
+        record_failure("$(name)-VirtualMODF Query $(N_QUERY_ROWS) rows")
     end
 
     try

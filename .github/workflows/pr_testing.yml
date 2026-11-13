@@ -29,12 +29,14 @@ jobs:
       # julia-runtest tracks coverage of the PNM folder only. Coverage of the repository folder
       # (`@`, from the repository root) also records the core lines that only the PNM tests
       # reach, and it skips the dependencies.
+      # Only the job that uploads tracks coverage: coverage makes each test worker compile PNM
+      # and the core again.
       - name: Run the PNM tests
         shell: bash
         env:
           PYTHON: ""
           JULIA_NUM_THREADS: "2"
-        run: julia --project=PowerNetworkMatrices.jl/test --code-coverage=@ --check-bounds=yes PowerNetworkMatrices.jl/test/runtests.jl
+        run: julia --project=PowerNetworkMatrices.jl/test --code-coverage=${{ (matrix.os == 'ubuntu-latest' && matrix.julia-version == '1') && '@' || 'none' }} --check-bounds=yes PowerNetworkMatrices.jl/test/runtests.jl
       # Coverage is reported from one job of each matrix: the Windows reports carry
       # backslash paths that Codecov cannot match against the repo tree.
       - uses: julia-actions/julia-processcoverage@v1
@@ -90,7 +92,7 @@ jobs:
         shell: bash
         env:
           JULIA_NUM_THREADS: "2"
-        run: julia --project=PowerMatricesCore.jl/test --code-coverage=@ PowerMatricesCore.jl/test/runtests.jl
+        run: julia --project=PowerMatricesCore.jl/test --code-coverage=${{ (matrix.os == 'ubuntu-latest' && matrix.julia-version == '1') && '@' || 'none' }} PowerMatricesCore.jl/test/runtests.jl
       - uses: julia-actions/julia-processcoverage@v1
         if: matrix.os == 'ubuntu-latest' && matrix.julia-version == '1'
         with:
