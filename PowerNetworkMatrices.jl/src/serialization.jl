@@ -35,20 +35,18 @@ function _push_row!(
     return length(rows.kind)
 end
 
-# `b_of` gives the susceptance that `BA_Matrix` uses for the node: the two-port value of the
-# node itself, or the component value inside a series chain, because BA sums the components
-# of a chain (`_ba_arc_susceptance(::BranchesSeries, nr)`).
+# `ctx` is a `_TwoPortNode` or a `_ChainNode`. It selects the susceptance that `BA_Matrix` uses.
 function _push_node!(
     rows::BranchArcTable,
     leaf::PSY.ACTransmission,
     parent::Int,
     sign::Int,
     nr::NetworkReductionData,
-    b_of::F,
-) where {F <: Function}
+    ctx::Union{_TwoPortNode, _ChainNode},
+)
     _push_row!(
         rows, _branch_map_kind(leaf), _branch_map_id(leaf), parent, sign,
-        b_of(leaf, nr), _segment_phase_shift(leaf, nr),
+        _ba_node_susceptance(ctx, leaf, nr), _segment_phase_shift(leaf, nr),
     )
     return
 end
@@ -59,13 +57,13 @@ function _push_node!(
     parent::Int,
     sign::Int,
     nr::NetworkReductionData,
-    b_of::F,
-) where {F <: Function}
+    ctx::Union{_TwoPortNode, _ChainNode},
+)
     row = _push_row!(rows, 9, 0, parent, sign, 0.0, 0.0)
     frame = get_arc_tuple(bp, nr)
     for member in bp
         _push_node!(
-            rows, member, row, _frame_sign(frame, get_arc_tuple(member, nr)), nr, b_of,
+            rows, member, row, _frame_sign(frame, get_arc_tuple(member, nr)), nr, ctx,
         )
     end
     return
@@ -77,8 +75,8 @@ function _push_node!(
     parent::Int,
     sign::Int,
     nr::NetworkReductionData,
-    ::F,
-) where {F <: Function}
+    ::Union{_TwoPortNode, _ChainNode},
+)
     row = _push_row!(rows, 10, 0, parent, sign, 0.0, 0.0)
     orientations = get_segment_orientations(bs)
     length(orientations) == length(bs) || error(
@@ -95,7 +93,7 @@ function _push_node!(
                 "Series chain segment orientation $orientation is not :FromTo or :ToFrom.",
             )
         end
-        _push_node!(rows, segment, row, seg_sign, nr, _finite_series_susceptance)
+        _push_node!(rows, segment, row, seg_sign, nr, _ChainNode())
     end
     return
 end
@@ -106,7 +104,7 @@ function _push_ward!(
     parent::Int,
     nr::NetworkReductionData,
 )
-    _push_row!(rows, 11, 0, parent, 1, _ba_arc_susceptance(ward, nr), 0.0)
+    _push_row!(rows, 11, 0, parent, 1, _ba_node_susceptance(_TwoPortNode(), ward, nr), 0.0)
     return
 end
 
@@ -121,7 +119,7 @@ function _build_branch_arc_table(nr::NetworkReductionData, arc_ax::Vector{Tuple{
         else
             _push_node!(
                 table, entry, -k, _frame_sign(arc, get_arc_tuple(entry, nr)), nr,
-                _ba_arc_susceptance,
+                _TwoPortNode(),
             )
             has_ward && _push_ward!(table, added[arc], -k, nr)
         end

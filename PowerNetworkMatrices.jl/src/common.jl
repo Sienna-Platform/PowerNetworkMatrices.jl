@@ -310,10 +310,27 @@ _ba_arc_susceptance(
     ::NTuple{4, <:Complex},
     segment::BranchesSeries,
     nr::NetworkReductionData,
-) = _finite_series_susceptance(segment, nr)
+) = _ba_node_susceptance(_ChainNode(), segment, nr)
 
 _ba_arc_susceptance(segment::BranchesSeries, nr::NetworkReductionData) =
-    _finite_series_susceptance(segment, nr)
+    _ba_node_susceptance(_ChainNode(), segment, nr)
+
+# A node with its own arc, or a member of a parallel group on that arc.
+struct _TwoPortNode end
+# A segment of a series chain, or any node below it.
+struct _ChainNode end
+
+_ba_node_susceptance(
+    ::_TwoPortNode,
+    node::PSY.ACTransmission,
+    nr::NetworkReductionData,
+)::Float64 = _ba_arc_susceptance(node, nr)
+
+_ba_node_susceptance(
+    ::_ChainNode,
+    node::PSY.ACTransmission,
+    nr::NetworkReductionData,
+)::Float64 = _finite_series_susceptance(node, nr)
 
 # Ward may file its equivalent on an arc that already has a physical two-port; sum both, as
 # Ybus does.
