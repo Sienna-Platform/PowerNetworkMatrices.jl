@@ -267,6 +267,7 @@ import PowerMatricesCore:
     find_bridges,
     BridgeLabels,
     _woodbury_factors_from_Z,
+    _changed_modifications,
     _woodbury_rank,
     _arcs_fully_opened,
     _arc_modification_vector,

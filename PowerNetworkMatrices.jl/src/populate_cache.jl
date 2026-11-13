@@ -214,15 +214,25 @@ function _woodbury_factors_from_base(
     n_bus::Int,
 )::WoodburyFactors
     # Z[:, j] = B⁻¹ ν_j = (B⁻¹ BA[:, e_j]) / b_{e_j}
-    Z = Matrix{Float64}(undef, n_bus, length(modifications))
-    for (j, mod) in enumerate(modifications)
-        b_e = arc_sus[mod.arc_index]
-        col = base_full[mod.arc_index]
+    kept = _changed_modifications(modifications)
+    Z = Matrix{Float64}(undef, n_bus, length(kept))
+    for (j, k) in enumerate(kept)
+        e = modifications[k].arc_index
+        b_e = arc_sus[e]
+        col = base_full[e]
         @inbounds for i in 1:n_bus
             Z[i, j] = col[i] / b_e
         end
     end
-    return _woodbury_factors_from_Z(Z, BA, signs, arc_sus, modifications, arc_out)
+    return _woodbury_factors_from_Z(
+        Z,
+        BA,
+        signs,
+        arc_sus,
+        modifications,
+        kept,
+        arc_out[kept],
+    )
 end
 
 """
@@ -293,11 +303,11 @@ function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
         (isempty(mods) || isempty(mon_idx)) && return nothing
 
         # Union of all arcs needing a pre-contingency solve: monitored arcs and
-        # every contingency's modified arcs.
+        # every contingency's arcs whose susceptance changes.
         arc_set = Set{Int}(mon_idx)
         for mod in mods
             for am in mod.arc_modifications
-                push!(arc_set, am.arc_index)
+                iszero(am.delta_b) || push!(arc_set, am.arc_index)
             end
         end
         all_arcs = collect(arc_set)
