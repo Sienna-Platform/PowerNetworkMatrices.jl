@@ -786,8 +786,22 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         end
     end
 
+    @testset "BranchReductionTable on a restored matrix" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys14"; add_forecasts = false)
+        vptdf = VirtualPTDF(sys)
+        path = joinpath(mktempdir(), "ptdf.h5")
+        to_hdf5(vptdf, path, sys; outages = false)
+        restored = from_hdf5(VirtualPTDF, path)
+        @test_throws "restored from a factor file" BranchReductionTable(restored, sys)
+    end
+
     @testset "reduction records" begin
-        function reduction_check(sys, reductions)
+        function reduction_check(
+            sys,
+            reductions;
+            not_in_network::Int = 0,
+            later_removal::Bool = false,
+        )
             vptdf = VirtualPTDF(sys; network_reductions = reductions, tol = 0.0)
             path = joinpath(mktempdir(), "ptdf.h5")
             to_hdf5(vptdf, path, sys; outages = false)
@@ -817,20 +831,30 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
                 @test iszero(live) == (key in has_row)
                 code_counts[live] = get(code_counts, live, 0) + 1
                 if live == BRANCH_REDUCTION_RADIAL
-                    @test _by_winding(
+                    survivor = _by_winding(
                         branch_surviving_bus,
                         key[2],
                         read_reductions,
                         key[1],
-                    ) in
-                          union(PNM.get_bus_axis(restored), nr_restored.removed_buses)
+                    )
+                    if later_removal
+                        @test survivor in
+                              union(PNM.get_bus_axis(restored), nr_restored.removed_buses)
+                    else
+                        @test survivor in PNM.get_bus_axis(restored)
+                    end
                 end
             end
+            @test get(code_counts, BRANCH_REDUCTION_NOT_IN_NETWORK, 0) == not_in_network
             return code_counts, path
         end
 
         radial_d2 = PNM.NetworkReduction[RadialReduction(), DegreeTwoReduction()]
-        code_counts, _ = reduction_check(build_branch_map_system(), radial_d2)
+        code_counts, _ = reduction_check(
+            build_branch_map_system(),
+            radial_d2;
+            later_removal = true,
+        )
         @test code_counts[BRANCH_REDUCTION_RADIAL] > 0
         @test code_counts[BRANCH_REDUCTION_HAS_ARC] > 0
         # A zero-impedance merge renames buses before the radial and degree-two steps.
@@ -841,7 +865,7 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
                 PSY.set_x!(line, 0.0u"SU")
             end
         end
-        code_counts, _ = reduction_check(sys, radial_d2)
+        code_counts, _ = reduction_check(sys, radial_d2; later_removal = true)
         @test code_counts[BRANCH_REDUCTION_ZERO_IMPEDANCE] == 1
         @test code_counts[BRANCH_REDUCTION_RADIAL] > 0
         @test PNM.get_reduction_codes(
@@ -851,7 +875,8 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         ) == [1, 2, 3]
         code_counts, _ = reduction_check(
             PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions"),
-            radial_d2,
+            radial_d2;
+            later_removal = true,
         )
         @test code_counts[BRANCH_REDUCTION_RADIAL] > 0
 
@@ -860,9 +885,9 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         PSY.set_r!(line, 0.0u"SU")
         PSY.set_x!(line, 0.0u"SU")
         PSY.set_available!(PSY.get_component(PSY.Line, sys, "Line10"), false)
-        code_counts, path = reduction_check(sys, PNM.NetworkReduction[])
+        code_counts, path =
+            reduction_check(sys, PNM.NetworkReduction[]; not_in_network = 1)
         @test code_counts[BRANCH_REDUCTION_ZERO_IMPEDANCE] == 1
-        @test code_counts[BRANCH_REDUCTION_NOT_IN_NETWORK] == 1
         line10 = IS.get_id(PSY.get_component(PSY.Line, sys, "Line10"))
         @test branch_reduction(from_hdf5(BranchReductionTable, path), line10) ==
               BRANCH_REDUCTION_NOT_IN_NETWORK
@@ -884,7 +909,8 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         )
         code_counts, _ = reduction_check(
             sys,
-            PNM.NetworkReduction[WardReduction([101, 114, 110, 111, 109])],
+            PNM.NetworkReduction[WardReduction([101, 114, 110, 111, 109])];
+            later_removal = true,
         )
         @test code_counts[BRANCH_REDUCTION_WARD] > 0
         @test code_counts[BRANCH_REDUCTION_HAS_ARC] > 0
@@ -894,7 +920,7 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
             PNM.NetworkReduction[DegreeTwoReduction(), ward],
             PNM.NetworkReduction[RadialReduction(), DegreeTwoReduction(), ward],
         )
-            code_counts, _ = reduction_check(sys, reductions)
+            code_counts, _ = reduction_check(sys, reductions; later_removal = true)
             @test code_counts[BRANCH_REDUCTION_WARD] > 0
         end
         code_counts, _ = reduction_check(
@@ -909,8 +935,11 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
                 PSY.set_available!(line, false)
             end
         end
-        code_counts, _ = reduction_check(sys, PNM.NetworkReduction[RadialReduction()])
-        @test code_counts[BRANCH_REDUCTION_NOT_IN_NETWORK] == 1
+        code_counts, _ = reduction_check(
+            sys,
+            PNM.NetworkReduction[RadialReduction()];
+            not_in_network = 1,
+        )
     end
 
     @testset "reduction group corrupt" begin
@@ -1116,16 +1145,6 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         @test_throws "neither on the arc axis nor a removed arc" from_hdf5(
             VirtualPTDF,
             corrupt(with_composite(d2_row, unknown)...),
-        )
-        # Error paths of the no-arc queries.
-        nr = PNM.get_network_reduction_data(from_hdf5(VirtualPTDF, good))
-        @test_throws "No reduction removed" PNM._bus_pair_surviving_bus(nr, -1, -2)
-        @test_throws "did not remove" PNM._bus_pair_surviving_bus(nr, d2_arc...)
-        nr.removed_arc_composite[d2_arc] = (-1, -2)
-        @test_throws "no record explains" PNM._bus_pair_reduction(
-            nr,
-            Dict{Tuple{Int, Int}, Int}(),
-            d2_arc...,
         )
         reduced_to = HDF5.h5open(f -> read(f["reduced_bus_to"]), good, "r")
         root_path = joinpath(mktempdir(), "root.h5")

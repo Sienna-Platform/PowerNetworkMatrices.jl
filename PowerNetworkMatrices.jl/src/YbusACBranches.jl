@@ -14,8 +14,7 @@ function Base.length(b::YbusACBranches)::Int
            length(b.series_compensators)
 end
 
-# Ybus stamps a branch or a circuit only when this is true. `BranchReductionTable` uses the
-# same rule, so a branch that Ybus skips gets `BRANCH_REDUCTION_NOT_IN_NETWORK`.
+# Ybus stamps a branch or a circuit only when this is true.
 _in_ybus(br::PSY.ACTransmission) = PSY.get_available(br)
 _in_ybus(circuit::PSY.TransformerCircuit) = PSY.get_available(circuit)
 

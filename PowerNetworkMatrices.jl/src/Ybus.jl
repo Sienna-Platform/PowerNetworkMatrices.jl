@@ -1541,7 +1541,7 @@ function _apply_reduction(ybus::Ybus, nr_new::NetworkReductionData)
     end
     merge!(nr.removed_arc_to_surviving_bus, nr_new.removed_arc_to_surviving_bus)
     merge!(nr.removed_arc_composite, nr_new.removed_arc_composite)
-    _remove_arcs_from_branch_maps!(nr, nr_new)
+    _remove_arcs_from_branch_maps!(nr, nr_new, code)
     if !isempty(nr_new.merged_bus_pairs)
         _remap_merged_bus_in_branch_maps!(nr, nr_new.merged_bus_pairs)
     end
@@ -1646,6 +1646,7 @@ function _collect_remapped_entries!(
     merged_bus_pairs::Dict{Int, Int},
 ) where {V}
     collected = Pair{Tuple{Int, Int}, V}[]
+    dropped = V[]
     for arc in collect(keys(branch_map))
         new_from = get(merged_bus_pairs, arc[1], arc[1])
         new_to = get(merged_bus_pairs, arc[2], arc[2])
@@ -1653,11 +1654,12 @@ function _collect_remapped_entries!(
         val = pop!(branch_map, arc)
         if new_from == new_to
             @debug "Bus merge collapsed $(_dropped_entry_label(val)) (arc $arc) into a self-loop; dropping."
+            push!(dropped, val)
             continue
         end
         push!(collected, (new_from, new_to) => val)
     end
-    return collected
+    return collected, dropped
 end
 
 function _remap_merged_bus_in_branch_maps!(
@@ -1665,7 +1667,11 @@ function _remap_merged_bus_in_branch_maps!(
     merged_bus_pairs::Dict{Int, Int},
 )
     # --- direct_branch_map: collision → parallel-group promotion ---
-    arcs_to_insert = _collect_remapped_entries!(nr.direct_branch_map, merged_bus_pairs)
+    arcs_to_insert, dropped_direct =
+        _collect_remapped_entries!(nr.direct_branch_map, merged_bus_pairs)
+    for val in dropped_direct
+        _record_removed_branch!(nr, val, BRANCH_REDUCTION_ZERO_IMPEDANCE, 0)
+    end
     for (new_arc, val) in arcs_to_insert
         reverse_new_arc = (new_arc[2], new_arc[1])
         if haskey(nr.direct_branch_map, new_arc)
@@ -1695,8 +1701,11 @@ function _remap_merged_bus_in_branch_maps!(
     end
 
     # --- parallel_branch_map: collision → merge both groups into one ---
-    parallel_to_insert =
+    parallel_to_insert, dropped_parallel =
         _collect_remapped_entries!(nr.parallel_branch_map, merged_bus_pairs)
+    for val in dropped_parallel
+        _record_removed_branch!(nr, val, BRANCH_REDUCTION_ZERO_IMPEDANCE, 0)
+    end
     for (new_arc, val) in parallel_to_insert
         # A re-keyed group keeps its `arc_key`, but `get_arc_tuple(bp, nr)` resolves that through
         # the bus map this remap just changed — so any cached two-port is now in a stale frame.
@@ -1753,6 +1762,7 @@ end
 function _remove_arcs_from_branch_maps!(
     nr::NetworkReductionData,
     nr_new::NetworkReductionData,
+    code::Int,
 )
     remake_reverse_direct_branch_map = false
     remake_reverse_parallel_branch_map = false
@@ -1761,12 +1771,15 @@ function _remove_arcs_from_branch_maps!(
         push!(nr.removed_arcs, x)
         if haskey(nr.direct_branch_map, x)
             remake_reverse_direct_branch_map = true
+            _record_arc_removal!(nr, nr_new, nr.direct_branch_map[x], x, code)
             delete!(nr.direct_branch_map, x)
         elseif haskey(nr.parallel_branch_map, x)
             remake_reverse_parallel_branch_map = true
+            _record_arc_removal!(nr, nr_new, nr.parallel_branch_map[x], x, code)
             delete!(nr.parallel_branch_map, x)
         elseif haskey(nr.series_branch_map, x)
             remake_reverse_series_branch_map = true
+            _record_arc_removal!(nr, nr_new, nr.series_branch_map[x], x, code)
             delete!(nr.series_branch_map, x)
         end
     end
@@ -1779,6 +1792,44 @@ function _remove_arcs_from_branch_maps!(
         nr.reverse_series_branch_map =
             _remake_reverse_composite_branch_map(nr.series_branch_map)
     end
+    return
+end
+
+const _BRANCH_REDUCTION_OF_CODE = Dict{Int, Int}(
+    REDUCTION_CODE_ZERO_IMPEDANCE => BRANCH_REDUCTION_ZERO_IMPEDANCE,
+    REDUCTION_CODE_RADIAL => BRANCH_REDUCTION_RADIAL,
+    REDUCTION_CODE_WARD => BRANCH_REDUCTION_WARD,
+)
+
+_branch_reduction_key(br::PSY.ACTransmission) = (IS.get_id(br), 0)
+_branch_reduction_key(w::ThreeWindingTransformerCircuit) =
+    (IS.get_id(get_transformer(w)), get_winding_number(w))
+
+function _record_removed_branch!(
+    nr::NetworkReductionData,
+    node::PSY.ACTransmission,
+    code::Int,
+    survivor::Int,
+)
+    for leaf in leaf_components(node)
+        nr.removed_branch_reduction[_branch_reduction_key(leaf)] = (code, survivor)
+    end
+    return
+end
+
+function _record_arc_removal!(
+    nr::NetworkReductionData,
+    nr_new::NetworkReductionData,
+    node::PSY.ACTransmission,
+    arc::Tuple{Int, Int},
+    code::Int,
+)
+    code == REDUCTION_CODE_DEGREE_TWO && return
+    survivor = 0
+    if code == REDUCTION_CODE_RADIAL
+        survivor = get(nr_new.removed_arc_to_surviving_bus, arc, first(arc))
+    end
+    _record_removed_branch!(nr, node, _BRANCH_REDUCTION_OF_CODE[code], survivor)
     return
 end
 
