@@ -795,6 +795,21 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         @test_throws "restored from a factor file" BranchReductionTable(restored, sys)
     end
 
+    @testset "BranchReductionTable rejects a branch with no record" begin
+        sys = build_transformer_twin_chain_system()
+        vptdf = VirtualPTDF(
+            sys;
+            network_reductions = PNM.NetworkReduction[DegreeTwoReduction()],
+        )
+        @test all(
+            ==(BRANCH_REDUCTION_HAS_ARC),
+            first.(values(BranchReductionTable(vptdf, sys).rows)),
+        )
+        nr = PNM.get_network_reduction_data(vptdf)
+        delete!(nr.series_branch_map, only(keys(nr.series_branch_map)))
+        @test_throws "PNM bug" BranchReductionTable(vptdf, sys)
+    end
+
     @testset "reduction records" begin
         function reduction_check(
             sys,

@@ -185,8 +185,8 @@ end
 Give each AC branch of `sys` its code in `mat`. A branch or circuit that the Ybus build skips
 (not available, or an open breaker), or that touches a bus the matrix excluded, has the code
 `BRANCH_REDUCTION_NOT_IN_NETWORK`. The function
-throws an error if `mat` was built from another system, or if `mat` was restored from a
-factor file. A restored matrix has no branch record: read the table with
+throws an error if `mat` was built from another system, if `mat` was restored from a
+factor file, or if a branch in the network has no branch map entry and no reduction record. A restored matrix has no branch record: read the table with
 `from_hdf5(BranchReductionTable, filename)`.
 """
 function BranchReductionTable(mat::Union{VirtualPTDF, VirtualMODF}, sys::PSY.System)
@@ -194,15 +194,42 @@ function BranchReductionTable(mat::Union{VirtualPTDF, VirtualMODF}, sys::PSY.Sys
     holds_components(get_core(mat)) || error(
         "Cannot build a BranchReductionTable from a matrix that was restored from a factor file: it has no branch record. Read the table with from_hdf5(BranchReductionTable, filename).",
     )
-    rec = _branch_reduction_rows(get_network_reduction_data(mat))
+    nr = get_network_reduction_data(mat)
+    rec = _branch_reduction_rows(nr)
     rows = Dict{Tuple{Int, Int}, Tuple{Int, Int}}()
     for branch in PSY.get_components(PSY.ACTransmission, sys)
-        for (w, _) in _windings(branch)
+        for (w, part) in _windings(branch)
             key = (IS.get_id(branch), w)
-            rows[key] = get(rec, key, (BRANCH_REDUCTION_NOT_IN_NETWORK, 0))
+            rows[key] = _branch_reduction_row(rec, nr, key, branch, part)
         end
     end
     return BranchReductionTable(rows)
+end
+
+# A branch with no record must be one that the Ybus build skipped. Any other branch left the
+# branch maps without a record, which the reductions must not do.
+function _branch_reduction_row(
+    rec::Dict{Tuple{Int, Int}, Tuple{Int, Int}},
+    nr::NetworkReductionData,
+    key::Tuple{Int, Int},
+    branch::PSY.ACTransmission,
+    part::Union{PSY.ACTransmission, PSY.TransformerCircuit},
+)
+    haskey(rec, key) && return rec[key]
+    from, to = get_arc_tuple(PSY.get_arc(part))
+    if !_in_ybus(part) || !_is_query_bus(nr, from) || !_is_query_bus(nr, to)
+        return (BRANCH_REDUCTION_NOT_IN_NETWORK, 0)
+    end
+    error(
+        "PNM bug: the in-service branch $(PSY.get_name(branch)) (winding $(key[2]), buses " *
+        "($from, $to)) is in the network but has no branch map entry and no reduction record.",
+    )
+end
+
+# Ybus also skips every branch at a bus that it excluded.
+function _is_query_bus(nr::NetworkReductionData, bus::Int)
+    return haskey(nr.bus_reduction_map, bus) || haskey(nr.reverse_bus_search_map, bus) ||
+           bus in nr.removed_buses || haskey(nr.merged_bus_pairs, bus)
 end
 
 # Each (winding, part) of a branch: winding 0 for a branch, 1 to 3 for a circuit.
