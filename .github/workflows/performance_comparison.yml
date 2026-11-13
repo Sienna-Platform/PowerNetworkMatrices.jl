@@ -9,27 +9,35 @@ jobs:
     steps:
       - uses: julia-actions/setup-julia@latest
       - uses: actions/checkout@v1
-      - name: Run Performance Test Main
+      - name: Install Main and Branch
         run: |
+          # Main and the branch each get an environment, so the runs can alternate. The Main
+          # environment sits next to `test`, so the relative `[sources]` paths still resolve.
+          mkdir PowerNetworkMatrices.jl/perf_main
+          cp PowerNetworkMatrices.jl/test/Project.toml PowerNetworkMatrices.jl/perf_main/
           # Main may still hold the old layout (package at the root) or the new one.
           url="https://github.com/${{ github.repository }}"
           if curl -fsI "https://raw.githubusercontent.com/${{ github.repository }}/main/PowerNetworkMatrices.jl/Project.toml" > /dev/null; then
-            julia --project=PowerNetworkMatrices.jl/test -e 'using Pkg; Pkg.add([PackageSpec(url=ARGS[1], rev="main", subdir="PowerMatricesCore.jl"), PackageSpec(url=ARGS[1], rev="main", subdir="PowerNetworkMatrices.jl")]); Pkg.instantiate()' "$url"
+            julia --project=PowerNetworkMatrices.jl/perf_main -e 'using Pkg; Pkg.add([PackageSpec(url=ARGS[1], rev="main", subdir="PowerMatricesCore.jl"), PackageSpec(url=ARGS[1], rev="main", subdir="PowerNetworkMatrices.jl")]); Pkg.instantiate()' "$url"
           else
-            julia --project=PowerNetworkMatrices.jl/test -e 'using Pkg; Pkg.add(PackageSpec(url=ARGS[1], rev="main")); Pkg.instantiate()' "$url"
+            julia --project=PowerNetworkMatrices.jl/perf_main -e 'using Pkg; Pkg.add(PackageSpec(url=ARGS[1], rev="main")); Pkg.instantiate()' "$url"
           fi
-          julia --project=PowerNetworkMatrices.jl/test PowerNetworkMatrices.jl/test/performance/performance_test.jl "Main"
-      - name: Run Performance Test Branch
-        run: |
           julia --project=PowerNetworkMatrices.jl/test -e 'using Pkg; Pkg.develop([PackageSpec(path="PowerMatricesCore.jl"), PackageSpec(path="PowerNetworkMatrices.jl")]); Pkg.instantiate()'
-          julia --project=PowerNetworkMatrices.jl/test PowerNetworkMatrices.jl/test/performance/performance_test.jl "Branch"
+      - name: Run Performance Tests
+        run: |
+          # Alternate the versions, so a change of runner speed during the job shows as
+          # noise between the two Main rounds and not as a delta.
+          for round in 1 2; do
+            julia --threads=1 --project=PowerNetworkMatrices.jl/perf_main PowerNetworkMatrices.jl/test/performance/performance_test.jl "Main$round"
+            julia --threads=1 --project=PowerNetworkMatrices.jl/test PowerNetworkMatrices.jl/test/performance/performance_test.jl "Branch$round"
+          done
       - name: Format results
         run: |
           julia PowerNetworkMatrices.jl/test/performance/format_results.jl \
-            execute_time_Main.csv \
-            execute_time_Branch.csv \
-            precompile_time_Main.txt \
-            precompile_time_Branch.txt \
+            execute_time_Main1.csv \
+            execute_time_Main2.csv \
+            execute_time_Branch1.csv \
+            execute_time_Branch2.csv \
             performance_results.md
       - name: Read results
         id: results

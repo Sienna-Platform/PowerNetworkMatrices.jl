@@ -1,19 +1,20 @@
-precompile = @timed using PowerNetworkMatrices
-
-open("precompile_time_$(ARGS[1]).txt", "w") do io
-    write(io, string(precompile.time))
-end
-
+using PowerNetworkMatrices
 using PowerSystems
 using PowerSystemCaseBuilder
 using Logging
+import LinearAlgebra
 
 configure_logging(; console_level = Logging.Error)
+# The thread count of a CI runner can change between runs. One BLAS thread keeps the timings
+# comparable; the workflow also starts Julia with one thread.
+LinearAlgebra.BLAS.set_num_threads(1)
 
-# Number of timing samples collected per metric (after a warm-up). Reporting the median and
-# range over several samples makes the comparison robust to one-off noise on shared CI
-# runners, which a single timing is very sensitive to.
-const N_SAMPLES = 5
+# Each metric takes samples until it has at least MIN_SAMPLES samples and MIN_TOTAL_TIME
+# seconds of timed work, to a maximum of MAX_SAMPLES samples. Short metrics thus get more
+# samples than long metrics.
+const MIN_SAMPLES = 5
+const MAX_SAMPLES = 30
+const MIN_TOTAL_TIME = 2.0
 
 # Dense PTDF/LODF become infeasible past this many buses; large systems exercise the
 # on-demand Virtual variants (VirtualPTDF/VirtualMODF) instead.
@@ -23,18 +24,26 @@ const DENSE_MATRIX_BUS_LIMIT = 2000
 # within reasonable CI time and memory (one contingency per eligible branch otherwise).
 const MAX_LARGE_SYSTEM_CONTINGENCIES = 500
 
+# Rows in one query sample. A query sample must be long compared to the timer and GC noise.
+const N_QUERY_ROWS = 50
+
 systems = [
     (MatpowerTestSystems, "matpower_ACTIVSg2000_sys"),
     (PSSEParsingTestSystems, "Base_Eastern_Interconnect_515GW"),
 ]
 
-# Warm up once (compilation), then collect `n` warm samples of `f()`.
-function sample_times(f; n = N_SAMPLES)
-    f()
-    times = Vector{Float64}(undef, n)
-    for i in 1:n
+# Time `f(setup())`; `setup` is not timed. Run once to compile, then take samples. A query
+# needs a new object from `setup` for each sample: the query time changes from one build to
+# the next by more than it changes inside one build, and a second query of one object reads
+# the row cache.
+function sample_times(f; setup = () -> nothing)
+    f(setup())
+    times = Float64[]
+    while length(times) < MAX_SAMPLES &&
+        (length(times) < MIN_SAMPLES || sum(times) < MIN_TOTAL_TIME)
+        obj = setup()
         GC.gc()
-        times[i] = @elapsed f()
+        push!(times, @elapsed f(obj))
     end
     return times
 end
@@ -58,7 +67,7 @@ for (group, name) in systems
     is_large = length(get_components(ACBus, sys)) > DENSE_MATRIX_BUS_LIMIT
 
     try
-        record_samples("$(name)-Build Ybus", sample_times(() -> Ybus(sys)))
+        record_samples("$(name)-Build Ybus", sample_times(_ -> Ybus(sys)))
     catch e
         @error exception = (e, catch_backtrace())
         record_failure("$(name)-Build Ybus")
@@ -66,13 +75,13 @@ for (group, name) in systems
 
     if !is_large
         try
-            record_samples("$(name)-Build PTDF", sample_times(() -> PTDF(sys)))
+            record_samples("$(name)-Build PTDF", sample_times(_ -> PTDF(sys)))
         catch e
             @error exception = (e, catch_backtrace())
             record_failure("$(name)-Build PTDF")
         end
         try
-            record_samples("$(name)-Build LODF", sample_times(() -> LODF(sys)))
+            record_samples("$(name)-Build LODF", sample_times(_ -> LODF(sys)))
         catch e
             @error exception = (e, catch_backtrace())
             record_failure("$(name)-Build LODF")
@@ -81,29 +90,17 @@ for (group, name) in systems
         try
             record_samples(
                 "$(name)-Build VirtualPTDF",
-                sample_times(() -> VirtualPTDF(sys)),
+                sample_times(_ -> VirtualPTDF(sys)),
             )
-            vptdf = VirtualPTDF(sys)
-            n_arcs = length(vptdf.axes[1])
-            n_query = min(10, n_arcs)
-            query = start -> begin
-                for m in start:(start + n_query - 1)
-                    vptdf[m, 1]
-                end
-            end
-            query(1)  # warm up (compilation)
-            qtimes = Float64[]
-            # Query a distinct block of rows per sample so each timing is a fresh row
-            # computation rather than a row-cache hit.
-            for s in 1:N_SAMPLES
-                start = s * n_query + 1
-                start + n_query - 1 > n_arcs && break
-                GC.gc()
-                push!(qtimes, @elapsed query(start))
-            end
-            if !isempty(qtimes)
-                record_samples("$(name)-VirtualPTDF Query $(n_query) rows", qtimes)
-            end
+            record_samples(
+                "$(name)-VirtualPTDF Query $(N_QUERY_ROWS) rows",
+                sample_times(
+                    vptdf -> for m in 1:N_QUERY_ROWS
+                        vptdf[m, 1]
+                    end;
+                    setup = () -> VirtualPTDF(sys),
+                ),
+            )
         catch e
             @error exception = (e, catch_backtrace())
             record_failure("$(name)-Build VirtualPTDF")
@@ -124,30 +121,23 @@ for (group, name) in systems
         end
         record_samples(
             "$(name)-Build VirtualMODF",
-            sample_times(() -> VirtualMODF(modf_sys)),
+            sample_times(_ -> VirtualMODF(modf_sys)),
         )
-        vmodf = VirtualMODF(modf_sys)
-        ctgs = collect(values(get_registered_contingencies(vmodf)))
-        if !isempty(ctgs)
-            n_query = min(10, length(vmodf.axes[1]))
-            query = ctg -> begin
-                for m in 1:n_query
-                    vmodf[m, ctg]
-                end
-            end
-            # Sample distinct contingencies so each timing is a fresh Woodbury solve
-            # rather than a row-cache hit on the same contingency.
-            query_ctgs = collect(Iterators.take(ctgs, N_SAMPLES + 1))
-            if length(query_ctgs) >= 2
-                query(first(query_ctgs))  # warm up (compilation)
-                qtimes = Float64[]
-                for ctg in query_ctgs[2:end]
-                    GC.gc()
-                    push!(qtimes, @elapsed query(ctg))
-                end
-                record_samples("$(name)-VirtualMODF Query $(n_query) rows", qtimes)
-            end
-        end
+        # Query the contingency with the smallest key, so each sample solves the same
+        # contingency on a new object.
+        record_samples(
+            "$(name)-VirtualMODF Query $(N_QUERY_ROWS) rows",
+            sample_times(
+                function (vmodf)
+                    ctgs = get_registered_contingencies(vmodf)
+                    ctg = ctgs[minimum(keys(ctgs))]
+                    for m in 1:N_QUERY_ROWS
+                        vmodf[m, ctg]
+                    end
+                end;
+                setup = () -> VirtualMODF(modf_sys),
+            ),
+        )
     catch e
         @error exception = (e, catch_backtrace())
         record_failure("$(name)-Build VirtualMODF")
@@ -158,7 +148,7 @@ for (group, name) in systems
         record_samples(
             "$(name)-Radial network reduction",
             sample_times(
-                () -> PowerNetworkMatrices.get_reduction(A, sys, RadialReduction()),
+                _ -> PowerNetworkMatrices.get_reduction(A, sys, RadialReduction()),
             ),
         )
     catch e
@@ -170,7 +160,7 @@ for (group, name) in systems
         record_samples(
             "$(name)-Degree two network reduction",
             sample_times(
-                () -> PowerNetworkMatrices.get_reduction(A, sys, DegreeTwoReduction()),
+                _ -> PowerNetworkMatrices.get_reduction(A, sys, DegreeTwoReduction()),
             ),
         )
     catch e
