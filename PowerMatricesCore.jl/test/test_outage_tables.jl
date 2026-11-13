@@ -34,14 +34,36 @@ end
 @testset "Outage tables: several branches in one outage" begin
     mktempdir() do dir
         path = joinpath(dir, "outages.h5")
-        _, mods = _write_outage_file(path)
+        core, mods = _write_outage_file(path)
         table = PMC.read_branch_outages(path)
         key(name) = ("Line", name)
-        # Partial outages of different members add.
-        both = PMC.NetworkModification(table, [key("a"), key("b")])
+        # The members of a group do not add without the core.
+        @test_throws "trips 2 members of the parallel group on arc 1. Pass the factor core" PMC.NetworkModification(
+            table,
+            [key("a"), key("b")],
+        )
+        both = PMC.NetworkModification(table, [key("a"), key("b")], core)
         @test both.label == "a+b"
         @test only(both.arc_modifications).delta_b == -10.0
         @test only(both.arc_modifications).opened == 2
+        # A lossy group: the member rows sum to -10.0, but the arc holds 12.0. Opening the
+        # arc removes the arc susceptance, not the sum.
+        lossy = _five_bus_core(;
+            arc_live_members = [2, 1, 1, 1, 1, 1],
+            b = [12.0, 5.0, 8.0, 4.0, 6.0, 7.0],
+        )
+        @test only(
+            PMC.NetworkModification(table, [key("a"), key("b")], lossy).arc_modifications,
+        ).delta_b == -12.0
+        # Two of three members do not open the arc, and the rows cannot combine.
+        three = _five_bus_core(; arc_live_members = [3, 1, 1, 1, 1, 1])
+        @test_throws "trips 2 of the 3 members of the parallel group on arc 1 and does not open the arc" PMC.NetworkModification(
+            table,
+            [key("a"), key("b")],
+            three,
+        )
+        # One member with the core gives the row of the table.
+        @test PMC.NetworkModification(table, [key("a")], three) == mods[1]
         # A row that opens the arc replaces the partial rows of that arc.
         @test PMC.NetworkModification(table, [key("a"), key("ab")]) == mods[3]
         # Two rows that open one arc count one time. The islanding flags combine.
@@ -80,6 +102,41 @@ end
         _write_five_bus(bare)
         @test isempty(PMC.read_registered_outages(bare))
         @test_throws "no branch outage table" PMC.read_branch_outages(bare)
+    end
+end
+
+@testset "Outage tables: writers apply the rules of the readers" begin
+    mods = _outage_mods(_five_bus_core())
+    partial = mods[1:2]
+    lines = ["Line", "Line"]
+    mktempdir() do dir
+        HDF5.h5open(joinpath(dir, "bad.h5"), "w") do f
+            @test_throws "branch_outages/(type, name)" PMC.write_branch_outages!(
+                f, lines, ["a", "a"], [1, 2], partial, [false, false], [1, 2], 6,
+            )
+            @test_throws "branch_outages/id" PMC.write_branch_outages!(
+                f, lines, ["a", "b"], [1, 1], partial, [false, false], [1, 2], 6,
+            )
+            @test_throws "a partial row; expected 1 or more" PMC.write_branch_outages!(
+                f, lines, ["a", "b"], [1, 2], partial, [false, false], [1, 0], 6,
+            )
+            @test_throws "outages/id" PMC.write_registered_outages!(f, [1, 1], partial, 6)
+            @test_throws "names/(type, name)" PMC.write_branch_names!(
+                f, lines, ["x", "x"], [1, 1], [2, 2],
+            )
+            good = _six_arc_table()
+            bad = PMC.BranchArcTable(
+                [12; good.kind[2:end]],
+                good.id,
+                good.parent,
+                good.sign,
+                good.b,
+                good.alpha,
+                good.n_arc,
+            )
+            @test_throws "kind is not in 1:11" PMC._write_branch_map!(f, bad)
+            @test isempty(keys(f))
+        end
     end
 end
 

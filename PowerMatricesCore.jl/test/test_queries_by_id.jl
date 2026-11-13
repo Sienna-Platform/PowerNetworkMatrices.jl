@@ -129,7 +129,11 @@ end
         c2 = PMC.branch_contingency(x, [101, 102])
         wf = PMC.compute_woodbury_factors(
             core,
-            PMC.NetworkModification(x.outages, [101, 102]),
+            PMC.NetworkModification(
+                x.outages,
+                PMC._outage_keys(x.outages, [101, 102]),
+                core,
+            ),
         )
         expected = PMC.apply_dist_slack!(
             PMC.apply_woodbury_correction(core, 2, wf),

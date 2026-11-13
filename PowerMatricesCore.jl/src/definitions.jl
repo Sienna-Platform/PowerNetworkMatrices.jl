@@ -1,3 +1,4 @@
+"The element type of the stored Ybus entries and of the Ybus deltas of an `ArcModification`."
 const YBUS_ELTYPE = ComplexF32
 
 const MODF_ISLANDING_TOLERANCE = 1e-10

@@ -38,6 +38,12 @@ Filter = t -> t in (
     PowerMatricesCore.branch_flows,
     PowerMatricesCore.compute_woodbury_factors,
     PowerMatricesCore.apply_woodbury_correction,
+    PowerMatricesCore.YBUS_ELTYPE,
+    PowerMatricesCore.BRANCH_REDUCTION_HAS_ARC,
+    PowerMatricesCore.BRANCH_REDUCTION_RADIAL,
+    PowerMatricesCore.BRANCH_REDUCTION_ZERO_IMPEDANCE,
+    PowerMatricesCore.BRANCH_REDUCTION_WARD,
+    PowerMatricesCore.BRANCH_REDUCTION_NOT_IN_NETWORK,
 )
 ```
 

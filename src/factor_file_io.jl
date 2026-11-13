@@ -350,7 +350,19 @@ function _write_registered_outages(f::FactorFile, mat::VirtualMODF)
         return
     end
     ids = sort!(collect(keys(registered)))
-    mods = NetworkModification[registered[id].modification for id in ids]
+    mods = NetworkModification[]
+    dropped = String[]
+    for id in ids
+        full_mod = registered[id].modification
+        mod = _drop_zero_susceptance_arcs(full_mod)
+        if length(mod.arc_modifications) < length(full_mod.arc_modifications)
+            push!(dropped, full_mod.label)
+        end
+        push!(mods, mod)
+    end
+    if !isempty(dropped)
+        @warn "$(length(dropped)) registered outages have no row for their zero-susceptance arcs, which have no DC effect. Each outage keeps its id and label: $(join(first(dropped, _MAX_REJECTION_LINES), ", "))"
+    end
     write_registered_outages!(f, ids, mods, length(first(get_core(mat).axes)))
     return
 end

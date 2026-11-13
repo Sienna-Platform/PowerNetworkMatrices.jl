@@ -1799,6 +1799,34 @@ end
         end
     end
 
+    @testset "registered outage on a zero-susceptance arc keeps its id" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+        lines = collect(PSY.get_components(PSY.Line, sys))
+        line = first(lines)
+        PSY.set_r!(line, 0.01u"SU")
+        PSY.set_x!(line, 0.0u"SU")
+        _add_outage!(sys, line)
+        _add_outage!(sys, last(lines))
+        vmodf = VirtualMODF(sys)
+        original = PNM.get_registered_contingencies(vmodf)
+        @test length(original) == 2
+        path = joinpath(mktempdir(), "zero_b_registered.h5")
+        @test_logs (
+            :warn,
+            Regex("registered outages have no row.*$(PSY.get_name(line))"),
+        ) match_mode = :any to_hdf5(vmodf, path)
+        specs = PMC.read_registered_outages(path)
+        @test sort!(collect(keys(specs))) == sort!(collect(keys(original)))
+        for (id, spec) in original
+            @test specs[id].modification.label == spec.modification.label
+        end
+        zero_id = only(
+            id for (id, spec) in original if spec.modification.label == PSY.get_name(line)
+        )
+        @test isempty(specs[zero_id].modification.arc_modifications)
+        @test length(PNM.get_registered_contingencies(from_hdf5(VirtualMODF, path))) == 2
+    end
+
     @testset "mixed zero-susceptance arcs drop only the zero arc rows" begin
         # A matrix with a zero-susceptance 3WT winding fails the core validation (the star
         # bus is cut off), so the mixed case is tested on the helper the writer calls.
@@ -1982,8 +2010,10 @@ end
         )
         opened = NetworkModification(table, [("Line", "a1"), ("Line", "a2")])
         @test only(opened.arc_modifications).delta_b == -4.0
-        parallel = NetworkModification(table, [("Line", "p1"), ("Line", "p2")])
-        @test only(parallel.arc_modifications).delta_b == -3.0
+        @test_throws "Pass the factor core" NetworkModification(
+            table,
+            [("Line", "p1"), ("Line", "p2")],
+        )
         # Two rows of one group member remove that member one time.
         same_member = BranchOutageTable(
             Dict(("Line", "c1") => (false, 1:1), ("Line", "c2") => (false, 2:2)),

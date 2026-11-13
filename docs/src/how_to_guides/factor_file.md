@@ -131,9 +131,14 @@ rejected branches (either cause) also lists the first branch and each distinct m
   - If a row opens the arc, the arc gets the first such row only. Two members of one series
     chain, or a three-winding transformer circuit and a line on one chain, give one outage of
     the whole arc.
-  - Otherwise the arc keeps the first row of each tripped member, so partial outages of
-    different parallel members add. Two lines of one chain that sits in a parallel group
-    remove that chain once.
+  - Otherwise the arc keeps the first row of each tripped member. Two lines of one chain that
+    sits in a parallel group remove that chain once.
+  - The rows of different parallel members do not add, because the susceptance of a group is
+    not the sum of its members' susceptances. Combining them needs the factor core:
+    `NetworkModification(table, keys, core)` gives an outage that opens the whole arc the
+    arc's susceptance, and throws an error for one that leaves part of the group in service.
+    Without `core`, any outage of more than one member of a group throws an error.
+    `branch_contingency` passes the core.
 
 For a `VirtualMODF`, the file also holds the registered contingencies, with or without `sys`.
 `from_hdf5(VirtualMODF, filename)` restores them. Restored modifications have no shunt

@@ -1,7 +1,12 @@
+"Code of [`BranchReductionTable`](@ref): the branch has an arc, alone or inside a group."
 const BRANCH_REDUCTION_HAS_ARC = 0
+"Code of [`BranchReductionTable`](@ref): the radial reduction absorbed the branch."
 const BRANCH_REDUCTION_RADIAL = 1
+"Code of [`BranchReductionTable`](@ref): the zero-impedance reduction merged both ends."
 const BRANCH_REDUCTION_ZERO_IMPEDANCE = 2
+"Code of [`BranchReductionTable`](@ref): the Ward reduction eliminated the branch."
 const BRANCH_REDUCTION_WARD = 3
+"Code of [`BranchReductionTable`](@ref): the branch is out of service or off the bus axis."
 const BRANCH_REDUCTION_NOT_IN_NETWORK = 4
 
 """

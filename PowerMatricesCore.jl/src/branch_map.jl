@@ -136,6 +136,7 @@ function _check_branch_map(t::BranchArcTable)
 end
 
 function _write_branch_map!(f::HDF5.File, table::BranchArcTable)
+    _check_branch_map(table)
     g = HDF5.create_group(f, "branch_map")
     g["kind"] = table.kind
     g["id"] = table.id

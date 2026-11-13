@@ -72,8 +72,9 @@ end
     worker_network_data(network_data) -> Any
 
 Return the network data that a [`worker_core`](@ref) copy holds. The default shares
-`network_data` with the parent core. Add a method for a network data type that keeps lazy
-per-core state.
+`network_data` with the parent core. A network data type that keeps lazy per-core state must
+add a method that returns a new copy. Without it, workers that solve concurrently race on
+that state.
 """
 worker_network_data(network_data) = network_data
 

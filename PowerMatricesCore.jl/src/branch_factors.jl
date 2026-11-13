@@ -335,14 +335,15 @@ end
 
 Build the outage of the branches `ids`. The function throws an error if the file has no
 branch outage table, an id has no row in the outage table, or an id has no row in the
-branch map. The vector `ids` must not be empty and must not repeat an id. The function throws an error
-if the outage gives a series chain a zero impedance sum.
+branch map. The vector `ids` must not be empty and must not repeat an id. The function
+throws an error if the outage gives a series chain a zero impedance sum, or if it trips more
+than one member of a parallel group and does not open the arc.
 """
 function branch_contingency(x::BranchFactors, ids::Vector{Int})
     x.has_outages || error(
         "The factor file has no branch outage table, so a contingency by branch id is not available. The writer of the file did not add it.",
     )
-    modification = NetworkModification(x.outages, ids)
+    modification = NetworkModification(x.outages, _outage_keys(x.outages, ids), x.core)
     woodbury = compute_woodbury_factors(x.core, modification)
     outaged_rows = Int[]
     for id in ids

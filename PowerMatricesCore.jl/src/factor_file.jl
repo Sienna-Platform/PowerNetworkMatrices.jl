@@ -765,7 +765,8 @@ _is_exists_error(::Exception) = false
     write_branch_names!(f::FactorFile, types, names, from, to)
 
 Write the group `names` of the factor file `f`. Row `i` maps the branch `(types[i], names[i])`
-to the arc `(from[i], to[i])`. The four vectors have the same length.
+to the arc `(from[i], to[i])`. The four vectors have the same length. The function throws an
+error if a key `(type, name)` repeats.
 """
 function write_branch_names!(
     f::FactorFile,
@@ -781,6 +782,7 @@ function write_branch_names!(
         "from" => from,
         "to" => to,
     )
+    _check_unique("names/(type, name)", collect(zip(types, names)))
     g = HDF5.create_group(f, "names")
     _write_strings!(g, "type", types)
     _write_strings!(g, "name", names)

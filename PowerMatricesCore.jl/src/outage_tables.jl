@@ -133,27 +133,99 @@ end
 """
     NetworkModification(table::BranchOutageTable, type, name)
     NetworkModification(table::BranchOutageTable, keys::Vector{Tuple{String, String}})
+    NetworkModification(table::BranchOutageTable, keys::Vector{Tuple{String, String}}, core::FactorCore)
 
 Build the outage of one branch, or of several branches at once, from a
 [`BranchOutageTable`](@ref). `type` is a `String`, for example
 `"Line"`. The function groups the arc rows of all keys by arc:
 
   - If a row opens the whole arc, the arc gets the first such row only.
-  - Otherwise the arc gets the first row of each tripped group member. Partial outages of
-    different members add. Two lines of one chain in a parallel group remove that chain one
-    time.
+  - Two lines of one chain in a parallel group remove that chain one time.
+  - The outage of more than one member of a parallel group needs `core`. The susceptance
+    of a group is not the sum of the susceptances of its members, so the rows of the
+    members do not add. If the members open the whole arc, the arc gets `-b`, where `b` is
+    the arc susceptance in `core`. The function throws an error for the outage of more
+    than one member that does not open the arc, and for any outage of more than one member
+    without `core`.
 
 The modification has no Ybus deltas and no shunt modifications. It serves the DC row
 kernels only.
 """
 function NetworkModification(table::BranchOutageTable, keys::Vector{Tuple{String, String}})
+    arcs, by_arc, islanding = _rows_by_arc(table, keys)
+    mods = ArcModification[]
+    for arc in arcs
+        rows = _combined_rows(table, by_arc[arc])
+        length(rows) == 1 || error(
+            "The outage $(_outage_label(keys)) trips $(length(rows)) members of the " *
+            "parallel group on arc $arc. Pass the factor core to combine them.",
+        )
+        append!(mods, _table_arc_modifications(table, rows))
+    end
+    return NetworkModification(_outage_label(keys), mods, ShuntModification[], islanding)
+end
+
+function NetworkModification(
+    table::BranchOutageTable,
+    keys::Vector{Tuple{String, String}},
+    core::FactorCore,
+)
+    arcs, by_arc, islanding = _rows_by_arc(table, keys)
+    mods = ArcModification[]
+    for arc in arcs
+        rows = _combined_rows(table, by_arc[arc])
+        if length(rows) == 1
+            append!(mods, _table_arc_modifications(table, rows))
+        else
+            push!(mods, _group_outage(table, rows, core, keys))
+        end
+    end
+    return NetworkModification(_outage_label(keys), mods, ShuntModification[], islanding)
+end
+
+_outage_label(keys::Vector{Tuple{String, String}}) = join((key[2] for key in keys), "+")
+
+function _table_arc_modifications(table::BranchOutageTable, rows::Vector{Int})
+    return _arc_modifications(
+        table.arc_index, table.delta_b, table.delta_shift, table.opened, rows,
+    )
+end
+
+# The shift injections of the members add, but their susceptance changes do not. Only the
+# outage that opens the whole arc has a known susceptance change: the arc susceptance.
+function _group_outage(
+    table::BranchOutageTable,
+    rows::Vector{Int},
+    core::FactorCore,
+    keys::Vector{Tuple{String, String}},
+)
+    arc = table.arc_index[first(rows)]
+    opened = sum(table.opened[i] for i in rows)
+    live = core.arc_live_members[arc]
+    opened >= live || error(
+        "The outage $(_outage_label(keys)) trips $opened of the $live members of the " *
+        "parallel group on arc $arc and does not open the arc. The outage table cannot " *
+        "combine these members, because the susceptance of a group is not the sum of " *
+        "the susceptances of its members. Build the outage from the System instead.",
+    )
+    z = zero(YBUS_ELTYPE)
+    return ArcModification(
+        arc,
+        -core.arc_susceptances[arc],
+        sum(table.delta_shift[i] for i in rows),
+        z, z, z, z,
+        opened,
+    )
+end
+
+# The arcs in the order of their first row, the rows of each arc, and the islanding flag.
+function _rows_by_arc(table::BranchOutageTable, keys::Vector{Tuple{String, String}})
     if isempty(keys)
         error("An outage needs at least one branch key.")
     end
     allunique(keys) || error(
         "Duplicate branch key in outage: $(collect(Set(k for k in keys if count(==(k), keys) > 1))).",
     )
-    # `arcs` holds the arcs in the order of their first row.
     by_arc = Dict{Int, Vector{Int}}()
     arcs = Int[]
     islanding = false
@@ -169,18 +241,7 @@ function NetworkModification(table::BranchOutageTable, keys::Vector{Tuple{String
             push!(get!(by_arc, arc, Int[]), i)
         end
     end
-    picked = Int[]
-    for arc in arcs
-        append!(picked, _combined_rows(table, by_arc[arc]))
-    end
-    return NetworkModification(
-        join((key[2] for key in keys), "+"),
-        _arc_modifications(
-            table.arc_index, table.delta_b, table.delta_shift, table.opened, picked,
-        ),
-        ShuntModification[],
-        islanding,
-    )
+    return arcs, by_arc, islanding
 end
 
 # `rows` holds the rows of one arc.
@@ -215,12 +276,16 @@ Build the outage of the branches with the ids `ids`. The function throws an erro
 table has no row for an id.
 """
 function NetworkModification(table::BranchOutageTable, ids::Vector{Int})
+    return NetworkModification(table, _outage_keys(table, ids))
+end
+
+function _outage_keys(table::BranchOutageTable, ids::Vector{Int})
     branch_keys = Tuple{String, String}[]
     for id in ids
         haskey(table.ids, id) || error("Branch with id $id has no row in the outage table.")
         push!(branch_keys, table.ids[id])
     end
-    return NetworkModification(table, branch_keys)
+    return branch_keys
 end
 
 function _write_row_arrays(
@@ -260,7 +325,8 @@ end
 Write the group `branch_outages` of the factor file `f`. Row `i` of `types`, `names`, `ids` and
 `mods` is one branch and its outage. `opens_arc` and `members` have one entry for each arc row
 of `mods`, in order. `n_arc` is the number of arcs of the network. The function throws an
-error if an arc row breaks a rule of the group.
+error if an arc row breaks a rule of the group, if an id or a key `(type, name)` repeats, or
+if a row that does not open its arc has a member below 1.
 """
 function write_branch_outages!(
     f::FactorFile,
@@ -286,6 +352,9 @@ function write_branch_outages!(
         "opens_arc" => opens_arc,
         "member" => members,
     )
+    _check_unique("branch_outages/id", ids)
+    _check_unique("branch_outages/(type, name)", collect(zip(types, names)))
+    _check_partial_members(opens_arc, members)
     g = HDF5.create_group(f, "branch_outages")
     _write_strings!(g, "type", types)
     _write_strings!(g, "name", names)
@@ -302,7 +371,7 @@ end
 
 Write the group `outages` of the factor file `f`. Row `i` of `ids` and `mods` is one
 registered contingency. `n_arc` is the number of arcs of the network. The function throws an
-error if an arc row breaks a rule of the group.
+error if an arc row breaks a rule of the group or if an id repeats.
 """
 function write_registered_outages!(
     f::FactorFile,
@@ -311,6 +380,7 @@ function write_registered_outages!(
     n_arc::Int,
 )
     _check_same_length("outages", "id" => ids, "label" => mods)
+    _check_unique("outages/id", ids)
     g = HDF5.create_group(f, "outages")
     g["id"] = ids
     _write_strings!(g, "label", String[m.label for m in mods])
@@ -404,6 +474,19 @@ function read_branch_outages(path::AbstractString)
     end
 end
 
+# A row that does not open its arc removes one group member, and the reader keys it by that
+# member.
+function _check_partial_members(opens_arc::Vector{Bool}, member::Vector{Int})
+    for (row, m) in enumerate(member)
+        opens_arc[row] || m >= 1 ||
+            error(
+                "Factor file entry branch_outages/member has the value $m at row $row, " *
+                "a partial row; expected 1 or more.",
+            )
+    end
+    return
+end
+
 function _check_has_outage_table(f::HDF5.File)
     haskey(f, "branch_outages") || error(
         "File $(HDF5.filename(f)) has no branch outage table. " *
@@ -430,15 +513,7 @@ function read_branch_outages(
         "member" => member,
     )
     _check_outage_arcs(arrays.arc_index, arc_susceptances)
-    # A row that does not open its arc removes one group member, and the reader keys it
-    # by that member.
-    for (row, m) in enumerate(member)
-        opens_arc[row] || m >= 1 ||
-            error(
-                "Factor file entry branch_outages/member has the value $m at row $row, " *
-                "a partial row; expected 1 or more.",
-            )
-    end
+    _check_partial_members(opens_arc, member)
     types = _read(g, "type", Vector{String}, budget)
     names = _read(g, "name", Vector{String}, budget)
     ids = _read(g, "id", Vector{Int}, budget)
