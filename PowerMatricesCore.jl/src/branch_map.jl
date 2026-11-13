@@ -34,6 +34,11 @@ of each arc, in depth-first preorder. `n_arc` is the number of arcs. Read it wit
   row is a top node of arc `-parent`.
 - `sign`: +1 or -1, the orientation of the row against its parent.
 - `b`: the DC susceptance of a leaf or Ward row, in system base. It is 0.0 for kinds 9 and 10.
+  The rows of an arc give the susceptance of `BA_Matrix` for that arc: the top rows and the
+  members of a group add, and the segments of a chain add as reciprocals. One exception: a
+  chain segment with zero reactance stores the reciprocal of the minimum retained impedance,
+  where `BA_Matrix` adds no reactance, so that arc differs from `BA_Matrix` by about that
+  impedance relative to the chain reactance.
 - `alpha`: the phase shift of a leaf row, in radians. It is 0.0 for kinds 9 to 11.
 """
 struct BranchArcTable

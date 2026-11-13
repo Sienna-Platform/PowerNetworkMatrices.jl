@@ -1043,6 +1043,30 @@ function build_corrected_transformer_chain_system()
     return sys
 end
 
+"""
+Ring core with a lossy parallel pair on `1-2` whose members have different r/x ratios, and a
+lossy line `1-3`. Lossy external buses 30-32 hang between buses 1 and 3, so
+`WardReduction([1, 2, 3, 4])` files its equivalent on the arc of the line `1-3`. On both arcs
+the two-port of the arc gives a different susceptance than the sum of its parts.
+"""
+function build_lossy_parallel_ward_system()
+    ward_edges = [
+        (1, 30, 0.05, 0.20, 0.0, 0.0), (3, 31, 0.05, 0.25, 0.0, 0.0),
+        (30, 31, 0.05, 0.30, 0.0, 0.0), (30, 32, 0.05, 0.35, 0.0, 0.0),
+        (31, 32, 0.05, 0.40, 0.0, 0.0), (32, 1, 0.05, 0.45, 0.0, 0.0),
+    ]
+    sys = _build_degree_two_chain_system(
+        vcat(_CHAIN_CORE_EDGES, [(1, 3, 0.02, 0.10, 0.0, 0.0)], ward_edges),
+    )
+    arc = PSY.get_arc(PSY.get_component(Line, sys, "L_1_2"))
+    PSY.add_component!(
+        sys,
+        Line("L_1_2_lossy", true, 0.0, 0.0, arc, 0.2, 0.06, (from = 0.0, to = 0.0), 2.0,
+            (-1.6, 1.6)),
+    )
+    return sys
+end
+
 ##############################################################################
 ###################### Branch index fingerprinting ###########################
 ##############################################################################

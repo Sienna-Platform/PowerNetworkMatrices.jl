@@ -25,6 +25,7 @@ network reduction algorithms.
 - `reductions::ReductionContainer`: Container tracking applied reduction algorithms
 - `removed_arc_reduction::Dict{Tuple{Int, Int}, Int}`: Maps each removed arc to the code of the reduction that removed it (see `REDUCTION_CODE_ZERO_IMPEDANCE`, `REDUCTION_CODE_RADIAL`, `REDUCTION_CODE_DEGREE_TWO`, `REDUCTION_CODE_WARD`). The arc key is in the bus numbering of that step
 - `removed_arc_composite::Dict{Tuple{Int, Int}, Tuple{Int, Int}}`: Maps each arc that the degree-two reduction removed to the composite arc of its chain
+- `removed_branch_reduction::Dict{Tuple{Int, Int}, Tuple{Int, Int}}`: Maps each branch that a reduction removed from the branch maps to `(branch reduction code, survivor)`. The key is `(branch id, winding)`: the winding is 0 for a branch and 1 to 3 for a circuit of a three-winding transformer. The code is a `BRANCH_REDUCTION_*` value, not a `REDUCTION_CODE_*` value. The survivor is the bus number of the step that removed the branch for `BRANCH_REDUCTION_RADIAL`, and 0 for any other code
 - `reduction_codes::Vector{Int}`: Codes of the reductions that changed the network, in application order
 - `impedance_correction_factors::Dict{Tuple{Int, Int}, Float64}`: Series-impedance multipliers from `PSY.ImpedanceCorrectionData`, keyed by `(transformer id, winding)` where the winding is the `PSY.WindingCategory` code (`0` for a two-winding transformer). Built once by [`build_impedance_correction_factors!`](@ref); empty when the system defines no correction tables
 """
@@ -59,6 +60,8 @@ network reduction algorithms.
         Dict{Tuple{Int, Int}, Float64}()
     removed_arc_reduction::Dict{Tuple{Int, Int}, Int} = Dict{Tuple{Int, Int}, Int}()
     removed_arc_composite::Dict{Tuple{Int, Int}, Tuple{Int, Int}} =
+        Dict{Tuple{Int, Int}, Tuple{Int, Int}}()
+    removed_branch_reduction::Dict{Tuple{Int, Int}, Tuple{Int, Int}} =
         Dict{Tuple{Int, Int}, Tuple{Int, Int}}()
     reduction_codes::Vector{Int} = Int[]
 end

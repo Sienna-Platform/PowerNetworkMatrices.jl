@@ -315,6 +315,18 @@ _ba_arc_susceptance(
 _ba_arc_susceptance(segment::BranchesSeries, nr::NetworkReductionData) =
     _ba_node_susceptance(_ChainNode(), segment, nr)
 
+# A parallel group takes the sum of its members' own susceptances, as the DC model sums 1/x
+# over parallel branches. The two-port of the whole group mixes the members' r/x ratios, so its
+# reactance is not that sum.
+_ba_arc_susceptance(
+    ::NTuple{4, <:Complex},
+    bp::AbstractBranchesParallel,
+    nr::NetworkReductionData,
+) = _ba_arc_susceptance(bp, nr)
+
+_ba_arc_susceptance(bp::AbstractBranchesParallel, nr::NetworkReductionData)::Float64 =
+    sum(member -> _ba_arc_susceptance(member, nr), bp)
+
 # A node with its own arc, or a member of a parallel group on that arc.
 struct _TwoPortNode end
 # A segment of a series chain, or any node below it.
@@ -332,24 +344,13 @@ _ba_node_susceptance(
     nr::NetworkReductionData,
 )::Float64 = _finite_series_susceptance(node, nr)
 
-# Ward may file its equivalent on an arc that already has a physical two-port; sum both, as
-# Ybus does.
-function _ba_arc_susceptance(
+# Ward may file its equivalent on an arc that already has a physical two-port. BA adds the two
+# susceptances, as it does for the members of a parallel group.
+_ba_arc_susceptance(
     entry::PSY.ACTransmission,
     added::PSY.GenericArcImpedance,
     nr::NetworkReductionData,
-)
-    entries = ybus_branch_entries(entry, nr) .+ ybus_branch_entries(added, nr)
-    fallback = _finite_series_susceptance(entry, nr) + _finite_series_susceptance(added, nr)
-    return _ba_arc_susceptance(entries, fallback)
-end
-
-_ba_arc_susceptance(
-    segment::BranchesSeries,
-    added::PSY.GenericArcImpedance,
-    nr::NetworkReductionData,
-) =
-    _finite_series_susceptance(segment, nr) + _finite_series_susceptance(added, nr)
+) = _ba_arc_susceptance(entry, nr) + _ba_arc_susceptance(added, nr)
 
 function _ba_arc_susceptance(nr::NetworkReductionData, arc::Tuple{Int, Int})
     entry, _ = _resolve_arc_entry(nr, arc)

@@ -146,16 +146,31 @@ end
         "case10_radial" => PSB.build_system(
             PSB.PSITestSystems, "case10_radial_series_reductions"),
         "zi_parallel" => _mk_zi_parallel_sys([(0.0, 0.0), (0.0, 0.1)]),
+        "lossy_parallel" => build_lossy_parallel_ward_system(),
     )
     # Every arc can `continue`, so without this the sweep could pass with no assertions run.
     checked = 0
+    checked_groups = 0
     for (label, sys) in systems
         pins = label == "zi_parallel" ? [2, 3] : Int[]
         ybus = Ybus(sys; irreducible_buses = bus_number_selector(pins))
         nr = get_network_reduction_data(ybus)
         bus_lookup = PNM.get_bus_lookup(ybus)
         direct_map = PNM.get_direct_branch_map(nr)
+        parallel_map = PNM.get_parallel_branch_map(nr)
+        ba = BA_Matrix(ybus)
+        ba_b = PNM._get_arc_susceptances(ba)
+        ba_lookup = PNM.get_arc_lookup(ba)
         for arc in PNM.get_arc_axis(nr)
+            # A parallel group's DC susceptance sums its members' 1/x and ignores resistance,
+            # as the DC model does for parallel branches. The two-port of the group differs
+            # when the members' r/x ratios differ.
+            if haskey(parallel_map, arc)
+                @test ba_b[ba_lookup[arc]] ≈
+                      sum(m -> PNM._finite_series_susceptance(m, nr), parallel_map[arc])
+                checked_groups += 1
+                continue
+            end
             entry = first(PNM._resolve_arc_entry(nr, arc))
             b_component = PNM._finite_series_susceptance(entry, nr)
             @test isfinite(b_component)
@@ -165,9 +180,8 @@ end
             Y_tf = -1 * ybus.data[j, i]
             Y_ft != Y_tf && continue                # phase shifter: b is angle-independent
             iszero(Y_ft) && continue                # cancelling parallel reactances
-            # A parallel group's DC susceptance sums `1/x` and ignores resistance, so it
-            # matches the AC value only when lossless. The identity is guaranteed only for a
-            # single direct branch, where `imag(1/Y_ft) == x` regardless of `r`.
+            # The two-port identity holds for a single direct branch, where
+            # `imag(1/Y_ft) == x` regardless of `r`.
             haskey(direct_map, arc) || continue
             x_eq = imag(1 / Y_ft)
             iszero(x_eq) && continue
@@ -176,6 +190,7 @@ end
         end
     end
     @test checked > 0
+    @test checked_groups > 0
 end
 
 @testset "Test show for A, BA and ABA matrix" begin

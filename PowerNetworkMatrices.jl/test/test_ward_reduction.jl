@@ -349,9 +349,10 @@ end
     end
 end
 
-@testset "Ward: BA combines both two-ports on an arc shared with the equivalent" begin
+@testset "Ward: BA adds the line and the equivalent on an arc shared with the equivalent" begin
     # 101-102 carries an existing line and gets a Ward equivalent filed under the same key
-    # (`ward_reduction.jl`); BA must reflect both two-ports, not just the co-keyed entry.
+    # (`ward_reduction.jl`). BA adds the susceptances of both, as for a parallel group, and
+    # does not take only the co-keyed entry.
     sys = PSB.build_system(PSB.PSIDSystems, "3 Bus Inverter Base")
     ybus = @test_logs (
         :warn,
@@ -373,8 +374,8 @@ end
     ix_arc = findfirst(==(arc), PNM.get_arc_axis(nr))
     b_BA = BA_Matrix(ybus).data[ix_from, ix_arc]
 
-    Y_ft = -ybus.data[bus_lookup[101], bus_lookup[102]]
-    b_expected = PNM._symmetric_arc_dc_susceptance(Complex{Float64}(Y_ft))
+    ward = PNM.get_added_arc_impedance_map(nr)[arc]
+    b_expected = b_direct_only + PNM.get_effective_series_susceptance(ward, nr)
 
     @test b_BA ≈ b_expected rtol = 1e-5
     @test !isapprox(b_BA, b_direct_only; rtol = 1e-3)
