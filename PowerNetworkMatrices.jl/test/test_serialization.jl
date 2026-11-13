@@ -305,6 +305,32 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
         end
     end
 
+    @testset "branch_map node susceptance matches BA" begin
+        sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+        vptdf = VirtualPTDF(
+            sys;
+            network_reductions = PNM.NetworkReduction[
+                RadialReduction(),
+                DegreeTwoReduction(),
+            ],
+            tol = 0.0,
+        )
+        nr = PNM.get_network_reduction_data(vptdf)
+        @test !isempty(nr.series_branch_map)
+        for (arc, bs) in nr.series_branch_map
+            @test PNM._ba_arc_susceptance(nr, arc) ==
+                  PNM._ba_node_susceptance(PNM._ChainNode(), bs, nr)
+            for seg in bs
+                @test PNM._ba_node_susceptance(PNM._ChainNode(), seg, nr) ==
+                      PNM._finite_series_susceptance(seg, nr)
+            end
+        end
+        for (arc, br) in nr.direct_branch_map
+            @test PNM._ba_node_susceptance(PNM._TwoPortNode(), br, nr) ==
+                  PNM._ba_arc_susceptance(br, nr)
+        end
+    end
+
     @testset "branch_map reader" begin
         sys = build_branch_map_system()
         vptdf = VirtualPTDF(
@@ -726,7 +752,7 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
                 -1,
                 1,
                 nr,
-                PNM._ba_arc_susceptance,
+                PNM._TwoPortNode(),
             )
             bs.segment_orientations[1] = :Sideways
             pop!(bs.segment_orientations)
@@ -736,7 +762,7 @@ const RTS_NR = PNM.get_network_reduction_data(RTS_VMODF)
                 -1,
                 1,
                 nr,
-                PNM._ba_arc_susceptance,
+                PNM._TwoPortNode(),
             )
         finally
             empty!(bs.segment_orientations)
