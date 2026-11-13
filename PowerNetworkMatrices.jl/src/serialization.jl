@@ -104,7 +104,7 @@ function _push_ward!(
     parent::Int,
     nr::NetworkReductionData,
 )
-    _push_row!(rows, 11, 0, parent, 1, _ba_arc_susceptance(ward, nr), 0.0)
+    _push_row!(rows, 11, 0, parent, 1, _ba_node_susceptance(_TwoPortNode(), ward, nr), 0.0)
     return
 end
 

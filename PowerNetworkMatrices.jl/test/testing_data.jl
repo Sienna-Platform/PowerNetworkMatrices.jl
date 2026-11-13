@@ -991,6 +991,58 @@ function build_transformer_twin_chain_system()
     return sys
 end
 
+function _add_corrected_transformer!(sys::PSY.System, name::String, from::Int, to::Int)
+    arc = Arc(;
+        from = PSY.get_component(ACBus, sys, "Bus $from"),
+        to = PSY.get_component(ACBus, sys, "Bus $to"),
+    )
+    PSY.add_component!(sys, arc)
+    transformer = PSY.TwoWindingTransformer(; input_basis = u"CU",
+        name = name,
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
+            arc = arc, tap = 1.05, α = 0.0, available = true,
+            active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
+            base_power = 100.0, base_voltage_primary = 230.0,
+            r = 0.008, x = 0.17,
+        ),
+        magnetizing_shunt = Complex(0.001, -0.02),
+    )
+    PSY.add_component!(sys, transformer)
+    PSY.add_supplemental_attribute!(
+        sys,
+        transformer,
+        PSY.ImpedanceCorrectionData(;
+            table_number = 1,
+            tap_ratio_correction_curve = IS.PiecewiseLinearData([
+                (x = 0.5, y = 1.5),
+                (x = 1.5, y = 1.5),
+            ]),
+            transformer_winding = PSY.WindingCategory.TR2W_WINDING,
+            transformer_control_mode =
+            PSY.ImpedanceCorrectionTransformerControlMode.TAP_RATIO,
+        ),
+    )
+    return transformer
+end
+
+"""
+Ring core plus one chain `1-10-3`, with two transformers that carry an impedance correction:
+`T_3_10` is a member of segment 2 of the chain, and `T_2_4` replaces the `2-4` tie on its own
+arc. The correction is in the Ybus entries but not in the component reactance, so the two
+susceptance contexts of the branch arc table give different values for each transformer.
+"""
+function build_corrected_transformer_chain_system()
+    sys = _build_degree_two_chain_system(
+        vcat(
+            _CHAIN_CORE_EDGES[1:4],
+            [(1, 10, 0.010, 0.10, 0.02, 0.03), (10, 3, 0.012, 0.11, 0.03, 0.01)],
+        ),
+    )
+    _add_corrected_transformer!(sys, "T_3_10", 3, 10)
+    _add_corrected_transformer!(sys, "T_2_4", 2, 4)
+    return sys
+end
+
 ##############################################################################
 ###################### Branch index fingerprinting ###########################
 ##############################################################################
