@@ -3,7 +3,8 @@ Reads the per-round CSV results and writes a Markdown comparison table.
 
 The workflow runs two rounds of each version, in the order Main, Branch, Main, Branch. Each
 cell gives the median and the (min–max) range of the samples of both rounds. The noise floor
-of a test is the delta between the two Main rounds. A delta is a change only when it is
+of a test is the larger of two deltas: Main round 1 against Main round 2, and Branch round 1
+against Branch round 2. A delta is a change only when it is
 larger than `MIN_CHANGE` and larger than `NOISE_FACTOR` times the noise floor.
 
 Usage:
@@ -76,7 +77,7 @@ end
 
 function verdict(delta::Float64, floor::Float64)
     (isnan(delta) || isnan(floor)) && return "N/A"
-    if abs(delta) > max(MIN_CHANGE, NOISE_FACTOR * abs(floor))
+    if abs(delta) > max(MIN_CHANGE, NOISE_FACTOR * floor)
         if delta > 0
             return "**slower**"
         end
@@ -99,15 +100,29 @@ function main()
         write(
             io,
             "Two rounds per version, run as Main, Branch, Main, Branch. Cells show the median " *
-            "(min–max) of the samples of both rounds. Noise is the delta between the two Main " *
-            "rounds. A delta is a change only when it is larger than " *
+            "(min–max) of the samples of both rounds. Noise is the larger delta between the two " *
+            "rounds of one version. A delta is a change only when it is larger than " *
             "$(round(Int, MIN_CHANGE * 100))% and larger than $(NOISE_FACTOR) times the noise.\n\n",
         )
         write(io, "| Test | Main | This Branch | Delta | Noise | Result |\n")
         write(io, "| :--- | :---: | :---: | :---: | :---: | :---: |\n")
         for name in order
             delta = relative_delta(main_all[name], branch_all[name])
-            floor = relative_delta(get(main1, name, Float64[]), get(main2, name, Float64[]))
+            # A slower runner during one round of one version shows in that version's pair.
+            floor = max(
+                abs(
+                    relative_delta(
+                        get(main1, name, Float64[]),
+                        get(main2, name, Float64[]),
+                    ),
+                ),
+                abs(
+                    relative_delta(
+                        get(branch1, name, Float64[]),
+                        get(branch2, name, Float64[]),
+                    ),
+                ),
+            )
             write(
                 io,
                 "| $(name) | $(format_cell(main_all[name])) | " *
