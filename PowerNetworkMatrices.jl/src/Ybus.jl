@@ -736,6 +736,62 @@ function _resolve_antiparallel_adjacency!(
     return
 end
 
+# Closed switches are recorded and matched by name, and scheduled branches protect the bus
+# numbers of their arcs, so a component from another system would silently act on whichever
+# component or buses of `sys` share its name or numbers.
+function _validate_system_components(
+    sys::PSY.System,
+    components::AbstractVector{<:PSY.ACTransmission},
+    description::String,
+)
+    for component in components
+        name = PSY.get_name(component)
+        if PSY.get_component(typeof(component), sys, name) !== component
+            throw(
+                IS.ConflictingInputsError(
+                    "$(description) $(name) is not a component of the system.",
+                ),
+            )
+        end
+    end
+    return
+end
+
+_validate_closed_switches(
+    sys::PSY.System,
+    closed_switches::AbstractVector{<:PSY.DiscreteControlledACBranch},
+) = _validate_system_components(sys, closed_switches, "Closed switch")
+
+_validate_scheduled_branches(
+    sys::PSY.System,
+    scheduled_branches::AbstractVector{<:PSY.ACTransmission},
+) = _validate_system_components(sys, scheduled_branches, "Scheduled branch")
+
+# A scheduled topology change opens the branch at some steps, so the reductions must keep it
+# as an arc: its buses are protected like an outaged branch's.
+function _pin_scheduled_component!(buses::Set{Int}, branch::PSY.ACTransmission)
+    PSY.get_available(branch) || return
+    _accumulate_protected_buses!(buses, branch)
+    return
+end
+
+# The buses every reduction keeps for the schedule: those of each available scheduled branch
+# and of each switch forced closed. A closed switch protects its buses even when it is not
+# listed as scheduled, so the reductions never remove a switch the build closed.
+function _schedule_protected_buses(
+    scheduled_branches::AbstractVector{<:PSY.ACTransmission},
+    closed_switches::AbstractVector{<:PSY.DiscreteControlledACBranch},
+)
+    buses = Set{Int}()
+    for branch in scheduled_branches
+        _pin_scheduled_component!(buses, branch)
+    end
+    for switch in closed_switches
+        _pin_scheduled_component!(buses, switch)
+    end
+    return buses
+end
+
 """
     Ybus(
         sys::PSY.System;
@@ -762,6 +818,16 @@ and network reductions while maintaining connectivity analysis.
 - `irreducible_buses::IS.ComponentSelector=IS.make_selector()`: Components whose buses the network
   reductions must keep. See [`get_irreducible_bus_numbers`](@ref) for the buses that each selected
   component type keeps.
+- `scheduled_branches::AbstractVector{<:PSY.ACTransmission}`: branches that a scheduled
+  topology change opens at some steps. The reductions keep the buses of each available one,
+  so the branch stays an arc. Each must be a component of `sys`.
+- `closed_switches::AbstractVector{<:PSY.DiscreteControlledACBranch}`: switches included as
+  closed regardless of `branch_status`, provided they are available; their names are
+  recorded in the reduction container (`get_closed_switches`). The reductions keep their
+  buses too. Each must be a component of `sys`.
+
+The buses kept for `scheduled_branches` and `closed_switches` are recorded apart from
+`irreducible_buses` (`get_schedule_pinned_buses`).
 
 # Returns
 - `Ybus`: Constructed Y-bus matrix with network topology and electrical parameters
@@ -787,18 +853,31 @@ function _build_ybus(
     make_arc_admittance_matrices::Bool = false,
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
     include_constant_impedance_loads = true,
+    scheduled_branches::AbstractVector{<:PSY.ACTransmission} = PSY.ACTransmission[],
+    closed_switches::AbstractVector{<:PSY.DiscreteControlledACBranch} = PSY.DiscreteControlledACBranch[],
 )
     network_reductions, zero_impedance_reduction =
         _split_zero_impedance_reduction(network_reductions)
+    _validate_scheduled_branches(sys, scheduled_branches)
+    _validate_closed_switches(sys, closed_switches)
+    forced_closed = Set{String}()
+    for switch in closed_switches
+        PSY.get_available(switch) && push!(forced_closed, PSY.get_name(switch))
+    end
     ref_bus_numbers = Set{Int}()
     # Stored angles of the swing (REF) buses, used to pick the smallest-angle swing as the
     # representative when an island holds more than one (see `assign_reference_buses!`).
     ref_bus_angles = Dict{Int, Float64}()
-    # Seed the user set and ZIBR spec into the container so every reduction step and
-    # the assembly path can read them.
+    # Seed the build configuration and ZIBR spec into the container so every reduction
+    # step and the assembly path can read them.
     nr = NetworkReductionData(;
         reductions = ReductionContainer(;
             user_irreducible_buses = user_irreducible,
+            schedule_pinned_buses = _schedule_protected_buses(
+                scheduled_branches,
+                closed_switches,
+            ),
+            closed_switches = forced_closed,
             zero_impedance_reduction = zero_impedance_reduction,
         ),
     )
@@ -829,7 +908,7 @@ function _build_ybus(
         bus_lookup[b] = ix
     end
     build_impedance_correction_factors!(nr, sys)
-    branches = _get_ybus_two_terminal_ac_branches(sys)
+    branches = _get_ybus_two_terminal_ac_branches(sys, forced_closed)
     transformer_3W =
         _get_filtered_components(PSY.ThreeWindingTransformer, sys, PSY.get_available)
     fixed_admittances =

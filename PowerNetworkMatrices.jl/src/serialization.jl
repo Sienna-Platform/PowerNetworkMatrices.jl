@@ -183,8 +183,8 @@ end
     BranchReductionTable(mat::Union{VirtualPTDF, VirtualMODF}, sys::PSY.System) -> BranchReductionTable
 
 Give each AC branch of `sys` its code in `mat`. A branch or circuit that the Ybus build skips
-(not available, or an open breaker), or that touches a bus the matrix excluded, has the code
-`BRANCH_REDUCTION_NOT_IN_NETWORK`. The function
+(not available, or an open breaker not passed as `Ybus(sys; closed_switches)`), or that
+touches a bus the matrix excluded, has the code `BRANCH_REDUCTION_NOT_IN_NETWORK`. The function
 throws an error if `mat` was built from another system, if `mat` was restored from a
 factor file, or if a branch in the network has no branch map entry and no reduction record. A restored matrix has no branch record: read the table with
 `from_hdf5(BranchReductionTable, filename)`.
@@ -217,7 +217,8 @@ function _branch_reduction_row(
 )
     haskey(rec, key) && return rec[key]
     from, to = get_arc_tuple(PSY.get_arc(part))
-    if !_in_ybus(part) || !_is_query_bus(nr, from) || !_is_query_bus(nr, to)
+    in_ybus = _in_ybus(part, get_closed_switches(get_reductions(nr)))
+    if !in_ybus || !_is_query_bus(nr, from) || !_is_query_bus(nr, to)
         return (BRANCH_REDUCTION_NOT_IN_NETWORK, 0)
     end
     error(

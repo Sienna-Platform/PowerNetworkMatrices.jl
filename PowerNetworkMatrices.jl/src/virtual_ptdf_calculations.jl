@@ -129,6 +129,9 @@ struct with an empty cache.
         arcs to be evaluated as soon as the VirtualPTDF is created.
 - `network_reductions::Vector{NetworkReduction}`:
         Network reductions applied when computing the matrix.
+- `scheduled_branches`, `closed_switches`:
+        passed to [`Ybus`](@ref), which keeps the buses of both lists out of the reductions
+        and includes the closed switches as closed.
 """
 function VirtualPTDF(
     sys::PSY.System;
