@@ -1635,6 +1635,8 @@ _arc_numbers(b) = (
     PSY.get_number(PSY.get_to(PSY.get_arc(b))),
 )
 
+_bitwise_equal(a, b) = typeof(a) == typeof(b) && isequal(a, b)
+
 # A lossless phase-shifting transformer named "shifter" on `arc`, with reactance `x` in
 # system base.
 function _add_shifter!(sys, arc, x; alpha)

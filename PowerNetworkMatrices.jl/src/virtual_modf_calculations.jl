@@ -408,8 +408,16 @@ function _compute_modf_entry(
     monitored_idx::Int,
     mod::NetworkModification,
 )::Vector{Float64}
-    wf = _get_woodbury_factors(vmodf, mod)
-    return _apply_woodbury_correction(vmodf, monitored_idx, wf)
+    plan = _modf_row_plan(vmodf, monitored_idx, mod)
+    return only(_rows_from_plans(get_core(vmodf), monitored_idx, (plan,)))
+end
+
+# Plan of monitored arc `m`'s row under `mod`, from the base network. The modification's
+# factors are cached even when this row is the zero row, since its other rows need them. The
+# base network needs no correction, so it has no factors.
+function _modf_row_plan(vmodf::VirtualMODF, m::Int, mod::NetworkModification)::_RowPlan
+    wf = mod == _BASE_NETWORK ? nothing : _get_woodbury_factors(vmodf, mod)
+    return _base_topology_row_plan(get_core(vmodf), m, _arc_modification_vector(mod), wf)
 end
 
 # Per-modification row cache: one n_bus-long row per monitored arc.
@@ -472,6 +480,69 @@ function Base.getindex(
 )
     m_idx = _monitored_arc_index(vmodf, monitored)
     return vmodf[m_idx, mod]
+end
+
+"""
+    get_post_modification_ptdf_rows(vmodf::VirtualMODF, monitored, mods) -> Vector{Union{Vector{Float64}, SparseVector{Float64, Int}}}
+
+The PTDF rows of one monitored arc (an index or a bus pair) under each modification in
+`mods`, from a single solve of the arc's base column: `rows[i] == vmodf[monitored, mods[i]]`,
+bit for bit. An empty modification gives the base-network row, as in
+[`get_ptdf_row`](@ref); a modification taking the monitored arc out of service gives the
+zero row. Each modification's Woodbury factors are cached as for `getindex`.
+
+Rows are read from and written to the per-modification row caches exactly as
+`vmodf[monitored, mods[i]]` would, so mixing this function with `getindex` sees one cache
+state. A modification whose row is cached needs no correction; when every row is cached no
+solve runs. The core's `solver_lock` is held for the whole call. The caller owns the
+returned copies.
+"""
+function get_post_modification_ptdf_rows(
+    vmodf::VirtualMODF,
+    monitored::Union{Int, Tuple{Int, Int}},
+    mods::AbstractVector{NetworkModification},
+)
+    core = get_core(vmodf)
+    m = _resolve_monitored_index(vmodf, monitored)
+    row_caches = get_row_caches(vmodf)
+    cutoff = get_cutoff(vmodf)
+    return @lock core.solver_lock begin
+        stored = Dict{NetworkModification, RowCacheValue}()
+        pending = NetworkModification[]
+        seen = Set{NetworkModification}()
+        for mod in mods
+            mod in seen && continue
+            push!(seen, mod)
+            rc = get!(() -> _new_modf_row_cache(vmodf), row_caches, mod)
+            if haskey(rc, m)
+                stored[mod] = rc[m]
+            else
+                push!(pending, mod)
+            end
+        end
+        if !isempty(pending)
+            plans = [_modf_row_plan(vmodf, m, mod) for mod in pending]
+            for (mod, row) in zip(pending, _rows_from_plans(core, m, plans))
+                value = apply_cutoff(cutoff, row)
+                row_caches[mod][m] = value
+                stored[mod] = value
+            end
+        end
+        RowCacheValue[copy(stored[mod]) for mod in mods]
+    end
+end
+
+"""
+    get_ptdf_row(vmodf::VirtualMODF, arc::Tuple{Int, Int}) -> Union{Vector{Float64}, SparseVector{Float64, Int}}
+
+The base-network PTDF row of `arc`, solved on the factorization `vmodf` shares with its
+[`VirtualPTDF`](@ref) and referenced to the reference buses, with no distributed slack.
+Rows are cached in `vmodf` under the empty [`NetworkModification`](@ref); the caller owns
+the returned copy. The row is dense unless `vmodf`'s cutoff sparsified it, in which case it
+is a `SparseVector`.
+"""
+function get_ptdf_row(vmodf::VirtualMODF, arc::Tuple{Int, Int})
+    return vmodf[_monitored_arc_index(vmodf, arc), _BASE_NETWORK]
 end
 
 # --- getindex: by ContingencySpec (delegates to NetworkModification) ---

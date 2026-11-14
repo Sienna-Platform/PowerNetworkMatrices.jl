@@ -249,3 +249,22 @@ end
         monitored = PNM.get_arc_axis(vptdf),
     )
 end
+
+@testset "a contingency whose every arc has no susceptance leaves the base rows" begin
+    sys = _c_sys14_resistive_line()
+    outage = PSY.FixedForcedOutage(; outage_status = 1.0)
+    PSY.add_supplemental_attribute!(sys, _transmission(sys, "Line13"), outage)
+    vmodf = VirtualMODF(VirtualPTDF(sys), sys)
+    mod = get_registered_contingencies(vmodf)[IS.get_id(outage)].modification
+    line13 = _arc_numbers(_transmission(sys, "Line13"))
+    @test iszero(PNM._get_arc_susceptances(vmodf)[PNM.get_arc_lookup(vmodf)[line13]])
+    arcs = PNM.get_arc_axis(vmodf)
+    rows = Dict(a => vmodf[a, outage] for a in arcs)
+    @test isempty(PNM.get_woodbury_cache(vmodf)[mod].arc_indices)
+    @test all(row -> all(isfinite, row), values(rows))
+    @test all(iszero, rows[line13])
+    for a in arcs
+        a == line13 && continue
+        @test maximum(abs.(rows[a] .- get_ptdf_row(vmodf, a))) < 1e-12
+    end
+end

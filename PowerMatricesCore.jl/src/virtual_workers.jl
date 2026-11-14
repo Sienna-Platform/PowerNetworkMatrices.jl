@@ -304,7 +304,7 @@ function arc_flows!(
     LinearAlgebra.mul!(c, transpose(wf.W_inv), u)
     zm_Z = view(scratch.zm_Z, 1:M)
     for (q, m) in enumerate(arcs)
-        if _monitored_arc_out(arc_sus, m, wf)
+        if _post_modification_arc_out(arc_sus, core, m, wf)
             for t in 1:T
                 flows[q, t] = 0.0
             end

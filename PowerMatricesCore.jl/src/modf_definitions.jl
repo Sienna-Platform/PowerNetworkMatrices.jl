@@ -175,6 +175,9 @@ Base.:(==)(a::NetworkModification, b::NetworkModification) =
     a.shunt_modifications == b.shunt_modifications &&
     a.is_islanding == b.is_islanding
 
+# The empty modification: VirtualMODF caches base-network rows under this key.
+const _BASE_NETWORK = NetworkModification("base", ArcModification[])
+
 # The Woodbury kernel takes a `Vector`: a tuple of unknown length makes its calls dynamic.
 function _arc_modification_vector(mod::NetworkModification)
     tup = mod.arc_modifications
