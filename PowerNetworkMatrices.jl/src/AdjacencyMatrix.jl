@@ -58,9 +58,9 @@ get_bus_lookup(M::AdjacencyMatrix) = M.lookup[1]
 
 function get_reduction(A::AdjacencyMatrix, sys::PSY.System, reduction::DegreeTwoReduction)
     network_reduction_data = get_network_reduction_data(A)
-    user_irreducible = get_user_irreducible_buses(get_reductions(network_reduction_data))
-    validate_buses(A, user_irreducible)
-    working_set = Set{Int}(user_irreducible)
+    exempt = get_reduction_exempt_buses(get_reductions(network_reduction_data))
+    validate_buses(A, exempt)
+    working_set = Set{Int}(exempt)
     union!(
         working_set,
         _system_derived_irreducible_buses(

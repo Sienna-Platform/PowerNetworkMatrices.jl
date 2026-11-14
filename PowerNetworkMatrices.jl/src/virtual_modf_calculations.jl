@@ -171,6 +171,8 @@ auto-applied during `Ybus` construction.
 - `irreducible_buses::IS.ComponentSelector`: Components whose buses the network reductions must
         keep (see [`get_irreducible_bus_numbers`](@ref)). Default: `IS.make_selector()`
 - `automatically_register_outages::Bool`: Register all system `PSY.UnplannedOutage` attributes (default: true)
+- `scheduled_branches`, `closed_switches`: passed to [`Ybus`](@ref), which keeps the buses of
+        both lists out of the reductions and includes the closed switches as closed
 """
 function VirtualMODF(
     sys::PSY.System;
