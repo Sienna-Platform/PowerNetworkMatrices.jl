@@ -288,18 +288,19 @@ function VirtualMODF(vptdf::VirtualPTDF, sys::PSY.System; kwargs...)
 end
 
 """
-    _validate_transmission_survived(sys, outage, mod)
+    _validate_transmission_survived(sys, outage, mod, closed_switches)
 
 For an outage whose ACTransmission components resolved to no arc modifications: throw when
 any is in service (a reduction eliminated it, so every query would return the base-case row);
 warn when all are out of service (a legitimate no-op). A component is in service when it is
-available and, for a switch, closed. This is the only survive-check possible on a core that
-was reduced before outages were known.
+available and, for a switch, closed by its status or named in `closed_switches`. This is the
+only survive-check possible on a core that was reduced before outages were known.
 """
 function _validate_transmission_survived(
     sys::PSY.System,
     outage::PSY.Outage,
     mod::NetworkModification,
+    closed_switches::Set{String},
 )
     isempty(mod.arc_modifications) || return
     transmission =
@@ -307,7 +308,7 @@ function _validate_transmission_survived(
             PSY.get_associated_components(sys, outage; component_type = PSY.ACTransmission),
         )
     isempty(transmission) && return
-    in_service = filter(_in_service, transmission)
+    in_service = filter(c -> _in_service(c, closed_switches), transmission)
     if isempty(in_service)
         @warn "Outage (label=$(mod.label)) references only out-of-service transmission " *
               "component(s) $(join(sort!([PSY.get_name(c) for c in transmission]), ", ")); " *
@@ -374,7 +375,8 @@ function _register_outage!(vmodf::VirtualMODF, sys::PSY.System, outage::PSY.Outa
         return
     end
     mod = NetworkModification(vmodf, sys, outage)
-    _validate_transmission_survived(sys, outage, mod)
+    _validate_transmission_survived(sys, outage, mod,
+        get_closed_switches(get_reductions(get_network_reduction_data(vmodf))))
     contingency_cache[outage_id] = ContingencySpec(outage_id, mod)
     return
 end
