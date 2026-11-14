@@ -135,6 +135,14 @@ contingency registrations, so subsequent queries will simply recompute. Use
 `clear_all_caches!(vmodf)` to also drop the registrations (after which the
 `VirtualMODF` can no longer be queried).
 
+Each modification's row cache is bounded, but every new modification queried adds one.
+A caller that keeps querying new modifications on one `VirtualMODF`, such as a
+`TopologySequence` rebuilt for each window of a simulation, calls
+`retain_modifications!(vmodf, keep)` once per build.
+It keeps the Woodbury factors of the base network and of the modifications in `keep`, and the base-network rows.
+It empties every other row cache, those of retained modifications included, so rows live for one build.
+Contingency registrations are not affected, so an evicted contingency is recomputed on its next query.
+
 ## Relationship to other matrix types
 
 | Matrix type           | Role in post-contingency analysis                                               |

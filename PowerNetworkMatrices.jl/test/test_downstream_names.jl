@@ -45,6 +45,7 @@ const POM_PNM_NAMES = Symbol[
     :NetworkReduction,
     :NetworkReductionData,
     :PTDF,
+    :retain_modifications!,
     :RowCacheValue,
     :ThreeWindingTransformerCircuit,
     :TopologySequence,
