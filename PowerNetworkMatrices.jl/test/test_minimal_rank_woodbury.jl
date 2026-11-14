@@ -144,11 +144,11 @@ end
     for (names, rank, _) in _CORRIDOR_RANKS
         sys = _node_breaker_corridor()
         vmodf = VirtualMODF(VirtualPTDF(sys), sys)
-        islands, n_islands = _rebuilt_reference_islands(_node_breaker_corridor, names)
-        mod = NetworkModification(vmodf, sys, _out_set(sys, names))
+        islands, n_islands = _reference_islands(vmodf, sys, names)
+        ts = TopologySchedule(vmodf, sys, [_out_set(sys, names)])
         arcs = PNM.get_arc_axis(vmodf)
-        rows = Dict(a => vmodf[a, mod] for a in arcs)
-        wf = PNM.get_woodbury_cache(vmodf)[mod]
+        rows = Dict(a => get_topology_ptdf_rows(ts, a, [1])[1] for a in arcs)
+        wf = PNM.get_woodbury_cache(vmodf)[PNM._topology_modification(ts, 1)]
         @test PNM._woodbury_rank(wf) == rank
         err =
             _max_error_against_rebuild(a -> rows[a], arcs, PNM.get_bus_axis(vmodf), names;
@@ -179,9 +179,10 @@ end
 @testset "a monitored arc outside the reference islands has the zero row" begin
     sys = _node_breaker_corridor()
     vmodf = VirtualMODF(VirtualPTDF(sys), sys)
-    mod = NetworkModification(vmodf, sys, _out_set(sys, ["s15", "s83", "s92"]))
+    ts = TopologySchedule(vmodf, sys, [_out_set(sys, ["s15", "s83", "s92"])])
     for name in ("L56", "s67", "L78", "L79")
-        @test all(iszero, vmodf[_arc_numbers(_transmission(sys, name)), mod])
+        @test all(iszero,
+            get_topology_ptdf_rows(ts, _arc_numbers(_transmission(sys, name)), [1])[1])
     end
 end
 
@@ -241,13 +242,13 @@ _compensated_corridor() = _node_breaker_corridor(; reactances = Dict("L78" => -0
     c = ["L78", "s83"]
     sys = _compensated_corridor()
     vmodf = VirtualMODF(VirtualPTDF(sys), sys)
-    mod = NetworkModification(vmodf, sys, _out_set(sys, c))
+    ts = TopologySchedule(vmodf, sys, [_out_set(sys, c)])
     arcs = PNM.get_arc_axis(vmodf)
-    rows = Dict(a => vmodf[a, mod] for a in arcs)
-    wf = PNM.get_woodbury_cache(vmodf)[mod]
+    rows = Dict(a => get_topology_ptdf_rows(ts, a, [1])[1] for a in arcs)
+    wf = PNM.get_woodbury_cache(vmodf)[PNM._topology_modification(ts, 1)]
     @test wf.basis.arc_form
     @test PNM._woodbury_rank(wf) == 2
-    islands, _ = _rebuilt_reference_islands(_compensated_corridor, c)
+    islands, _ = _reference_islands(vmodf, sys, c)
     @test _max_error_against_rebuild(a -> rows[a], arcs, PNM.get_bus_axis(vmodf), c;
         builder = _compensated_corridor, islands = islands) < 1e-10
 end
@@ -294,7 +295,7 @@ end
     rows = Dict(
         a => PNM.apply_woodbury_correction(core, i, wf) for (i, a) in enumerate(arcs)
     )
-    islands, _ = _rebuilt_reference_islands(_node_breaker_corridor, names)
+    islands, _ = _reference_islands(vmodf, sys, names)
     @test _max_error_against_rebuild(a -> rows[a], arcs, PNM.get_bus_axis(vmodf), names;
         builder = _node_breaker_corridor, islands = islands) < 1e-10
 end
@@ -327,13 +328,13 @@ end
     c = ["s1013", "s1412"]
     sys = _two_subnetwork_corridor()
     vmodf = VirtualMODF(VirtualPTDF(sys), sys)
-    mod = NetworkModification(vmodf, sys, _out_set(sys, c))
+    ts = TopologySchedule(vmodf, sys, [_out_set(sys, c)])
     arcs = PNM.get_arc_axis(vmodf)
-    rows = Dict(a => vmodf[a, mod] for a in arcs)
-    wf = PNM.get_woodbury_cache(vmodf)[mod]
+    rows = Dict(a => get_topology_ptdf_rows(ts, a, [1])[1] for a in arcs)
+    wf = PNM.get_woodbury_cache(vmodf)[PNM._topology_modification(ts, 1)]
     @test PNM._woodbury_rank(wf) == 1
     @test !wf.basis.arc_form
-    islands, _ = _rebuilt_reference_islands(_two_subnetwork_corridor, c)
+    islands, _ = _reference_islands(vmodf, sys, c)
     @test length(islands) == 2
     @test _max_error_against_rebuild(a -> rows[a], arcs, PNM.get_bus_axis(vmodf), c;
         builder = _two_subnetwork_corridor, islands = islands) < 1e-10

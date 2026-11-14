@@ -95,6 +95,15 @@ export get_registered_contingencies
 export get_reductions
 export iterative_union_find
 export validate_connectivity
+export TopologySchedule
+export get_topology_index
+export get_topology_ptdf_rows
+export get_network_modification
+export get_islands
+export is_arc_out
+export get_in_service_members
+export get_in_service_entry
+export get_arc_shift_injection
 
 using DocStringExtensions
 import InfrastructureSystems as IS
@@ -347,6 +356,7 @@ include("virtual_modf_calculations.jl")
 include("woodbury_kernel.jl")
 include("populate_cache.jl")
 include("virtual_workers.jl")
+include("topology_schedule.jl")
 include("system_utils.jl")
 include("serialization.jl")
 include("factor_file_io.jl")
