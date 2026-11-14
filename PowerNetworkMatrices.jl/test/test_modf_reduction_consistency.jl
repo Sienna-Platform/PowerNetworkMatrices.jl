@@ -269,14 +269,17 @@ end
         sys,
         line_outage,
         empty_mod,
+        Set{String}(),
     )
 
     # A generator-only outage with an empty modification is benign.
-    @test PNM._validate_transmission_survived(sys, gen_outage, empty_mod) === nothing
+    @test PNM._validate_transmission_survived(sys, gen_outage, empty_mod, Set{String}()) ===
+          nothing
 
     # A transmission outage that DID resolve to an arc modification is fine.
     real_mod = NetworkModification("real_line", [ArcModification(1, -1.0)])
-    @test PNM._validate_transmission_survived(sys, line_outage, real_mod) === nothing
+    @test PNM._validate_transmission_survived(sys, line_outage, real_mod, Set{String}()) ===
+          nothing
 end
 
 # First branch the reduction leaves on no map; series-map membership counts as surviving.
@@ -318,6 +321,7 @@ end
         sys,
         live_outage,
         NetworkModification("dropped", ArcModification[]),
+        Set{String}(),
     )
 end
 
