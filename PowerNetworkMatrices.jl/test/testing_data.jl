@@ -1726,6 +1726,39 @@ end
 
 _transmission(sys, name) = PSY.get_component(PSY.ACTransmission, sys, name)
 
+_out_set(sys, names) = Set{PSY.Component}(_transmission(sys, n) for n in names)
+
+# `builder()` with one registered outage per distinct entry of `contingencies` (component
+# names). Returns the system, a VirtualMODF on it and the outage id of each entry.
+function _two_tier_fixture(builder, contingencies)
+    sys = builder()
+    ids = Dict{Vector{String}, Int}()
+    for names in contingencies
+        haskey(ids, names) && continue
+        outage = PSY.FixedForcedOutage(; outage_status = 1.0)
+        for name in names
+            PSY.add_supplemental_attribute!(sys, _transmission(sys, name), outage)
+        end
+        ids[names] = IS.get_id(outage)
+    end
+    return sys, VirtualMODF(VirtualPTDF(sys), sys), ids
+end
+
+# Bus-number sets of the islands holding a reference bus in `builder()` rebuilt with the
+# `names` components out, and the total number of islands.
+function _rebuilt_reference_islands(builder, names)
+    sys = builder()
+    for n in names
+        PSY.set_available!(_transmission(sys, n), false)
+    end
+    islands = collect(values(PNM.find_subnetworks(PNM.Ybus(sys))))
+    refs = Set{Int}(
+        PSY.get_number(b) for
+        b in PSY.get_components(PSY.ACBus, sys) if PSY.get_bustype(b) == ACBusTypes.REF
+    )
+    return [Set(island) for island in islands if !isdisjoint(island, refs)], length(islands)
+end
+
 # Lines `(name, from, to, x)` with r = 0.01 and closed switches `(name, from, to)` with
 # x = 0.01 between `buses`; `reactances` overrides the x of the named branches.
 function _add_node_breaker_branches!(sys, buses, lines, switches, reactances)
@@ -1760,4 +1793,15 @@ function _node_breaker_corridor(; reactances = Dict{String, Float64}())
     sys, buses = _mk_bus_system(9)
     return _add_node_breaker_branches!(
         sys, buses, _CORRIDOR_LINES, _CORRIDOR_SWITCHES, reactances)
+end
+
+# The corridor plus a second subnetwork with its own reference bus 10: triangle 10-11-12 and
+# a tap section 10 =s1013= 13 -L1314- 14 =s1412= 12.
+function _two_subnetwork_corridor()
+    sys, buses = _mk_bus_system(14)
+    PSY.set_bustype!(buses[10], ACBusTypes.REF)
+    lines = (_CORRIDOR_LINES..., ("L1011", 10, 11, 0.10), ("L1112", 11, 12, 0.12),
+        ("L1012", 10, 12, 0.15), ("L1314", 13, 14, 0.05))
+    switches = (_CORRIDOR_SWITCHES..., ("s1013", 10, 13), ("s1412", 14, 12))
+    return _add_node_breaker_branches!(sys, buses, lines, switches, Dict{String, Float64}())
 end

@@ -436,6 +436,7 @@ end
 """
 Get the post-modification PTDF row for monitored arc `monitored_idx` under `mod`.
 Uses per-modification RowCache for LRU-eviction caching.
+An arc in an island that holds no base reference bus gets the all-zero row.
 
 $(TYPEDSIGNATURES)
 """
@@ -489,7 +490,8 @@ The PTDF rows of one monitored arc (an index or a bus pair) under each modificat
 `mods`, from a single solve of the arc's base column: `rows[i] == vmodf[monitored, mods[i]]`,
 bit for bit. An empty modification gives the base-network row, as in
 [`get_ptdf_row`](@ref); a modification taking the monitored arc out of service gives the
-zero row. Each modification's Woodbury factors are cached as for `getindex`.
+zero row. An arc in an island that holds no base reference bus gets the all-zero row. Each
+modification's Woodbury factors are cached as for `getindex`.
 
 Rows are read from and written to the per-modification row caches exactly as
 `vmodf[monitored, mods[i]]` would, so mixing this function with `getindex` sees one cache

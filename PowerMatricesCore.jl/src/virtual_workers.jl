@@ -218,10 +218,11 @@ Flows on the arc indices `arcs` from angles `θ` (from [`solve_bus_angles!`](@re
 a matrix with one column per case, `flows[q, t]` for arc `arcs[q]`). Without `wf`,
 `flows = BA[:, arcs]ᵀ θ`. With `wf` the flows are post-modification by Woodbury:
 `flows[q, t] = b_post * (ν_mᵀ θ_t - (ν_mᵀ Z) ⋅ W⁻ᵀ Uᵀ θ_t)`, which for `θ = B⁻¹ p` equals
-`vmodf[arcs[q], mod] ⋅ p` before its islanding zero-out (an arc the modification removes reads
-exactly 0.0). Under islanding, entries of other islands are not zeroed: pass `θ = B⁻¹ p_I` with
-`p` restricted to the arc's island `I` (see `wf.bus_island_labels`). Pure algebra on `BA` and
-`wf`, O(length(arcs) · M) per column; no solve, no lock, safe from any number of tasks.
+`vmodf[arcs[q], mod] ⋅ p` before its islanding zero-out (an arc the modification removes, or
+an arc outside the islands holding a reference bus, reads exactly 0.0). Under islanding,
+entries of other islands are not zeroed: pass `θ = B⁻¹ p_I` with `p` restricted to the arc's
+island `I` (see `wf.bus_island_labels`). Pure algebra on `BA` and `wf`, O(length(arcs) · r)
+per column for an update of rank r; no solve, no lock, safe from any number of tasks.
 """
 function arc_flows!(
     flows::AbstractVecOrMat{Float64},
@@ -267,6 +268,24 @@ WoodburyFlowScratch(max_rank::Int, max_columns::Int = 1) = WoodburyFlowScratch(
     Vector{Float64}(undef, max_rank),
 )
 
+# (Uᵀ θ)_j for column `j` of `wf`'s basis: `ν_eᵀ θ = BA[:, e]ᵀ θ / b_e` for the `j`-th modified
+# arc in arc form, `scale_j (θ[p_j] − θ[q_j])` otherwise.
+function _basis_dot(
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    arc_sus::Vector{Float64},
+    wf::WoodburyFactors,
+    j::Int,
+    θ::AbstractVecOrMat{Float64},
+    t::Int,
+)::Float64
+    basis = wf.basis
+    if basis.arc_form
+        e = wf.arc_indices[j]
+        return _ba_dot(BA, e, θ, t) / arc_sus[e]
+    end
+    return basis.scale[j] * (θ[basis.p[j], t] - θ[basis.q[j], t])
+end
+
 """
     arc_flows!(flows, mat, θ, arcs, wf::WoodburyFactors, scratch::WoodburyFlowScratch) -> flows
 
@@ -293,18 +312,18 @@ function arc_flows!(
             "$(size(scratch.u, 2)) columns; this call needs $M and $T.",
         ),
     )
-    # c[:, t] = W⁻ᵀ Uᵀ θ_t, with (Uᵀ θ)_j = ν_jᵀ θ = BA[:, e_j]ᵀ θ / b_{e_j}. Transposed so the
-    # result matches the row form `z_m - Z W⁻¹ (Zᵀ ν_m)` dotted with p in floating point too.
+    # c[:, t] = W⁻ᵀ Uᵀ θ_t. Transposed so the result matches the row form
+    # `z_m - Z W⁻¹ (Zᵀ ν_m)` dotted with p in floating point too.
     u = view(scratch.u, 1:M, 1:T)
     for t in 1:T, j in 1:M
-        e = wf.arc_indices[j]
-        u[j, t] = _ba_dot(BA, e, θ, t) / arc_sus[e]
+        u[j, t] = _basis_dot(BA, arc_sus, wf, j, θ, t)
     end
     c = view(scratch.c, 1:M, 1:T)
     LinearAlgebra.mul!(c, transpose(wf.W_inv), u)
     zm_Z = view(scratch.zm_Z, 1:M)
     for (q, m) in enumerate(arcs)
-        if _post_modification_arc_out(arc_sus, core, m, wf)
+        if _post_modification_arc_out(arc_sus, core, m, wf) ||
+           _outside_reference_islands(core, wf, m)
             for t in 1:T
                 flows[q, t] = 0.0
             end

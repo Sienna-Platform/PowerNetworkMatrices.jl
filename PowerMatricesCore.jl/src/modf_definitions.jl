@@ -214,27 +214,56 @@ function NetworkModification(ctg::ContingencySpec)
 end
 
 """
+    WoodburyBasis
+
+Low-rank form `B_post = B̃ + U D Uᵀ` of a network change, on the buses live after it, where
+`B̃` is the Schur complement of the starting network's Laplacian on its live buses onto the
+buses live after the change (`B_start` itself when the change kills no bus). Column `j` of
+`U` is `scale[j] * (e_{p[j]} − e_{q[j]})` in bus positions.
+
+In arc form every column is one changed arc `e`, in the change's order: `(p, q)` are the
+arc's from and to positions, `scale = arc_susceptance_signs[e]` and `D` is the diagonal of
+signed susceptance changes. Otherwise the columns are node differences `e_{t_j} − e_{t_1}` over
+the live terminals of each connected component of the changed subgraph, and `D` is block
+diagonal with the negated Kron reduction of each component.
+"""
+struct WoodburyBasis
+    p::Vector{Int}
+    q::Vector{Int}
+    scale::Vector{Float64}
+    D::Matrix{Float64}
+    arc_form::Bool
+end
+
+Base.length(b::WoodburyBasis) = length(b.p)
+
+"""
     WoodburyFactors
 
 Cached Woodbury intermediates shared across monitored arcs for one contingency.
 Computed from van Dijk et al. Eq. 29:
     B_m⁻¹ = B_r⁻¹ - B_r⁻¹ U (A⁻¹ + U⊤ B_r⁻¹ U)⁻¹ U⊤ B_r⁻¹
 
+The columns of `U` are those of `basis`; their number `r` is the rank of the update.
+
 # Fields
-- `Z::Matrix{Float64}`: B⁻¹U matrix (n_bus × M), one column per changed arc. A changed arc is
-  a modified arc with a nonzero `delta_b`, and M is the number of changed arcs.
-- `W_inv::Matrix{Float64}`: Pre-inverted W = (A⁻¹ + U⊤B⁻¹U)⁻¹ (M × M). For M ≤ 2, a closed
-  form gives it; for M > 2, the LU of `S = diag(signed Δb)·W` gives it. For an island, it is
-  a pseudo-inverse.
-- `arc_indices::Vector{Int}`: Arc indices of the changed arcs
+- `Z::Matrix{Float64}`: B⁻¹U matrix (n_bus × r), one column per column of `basis`
+- `W_inv::Matrix{Float64}`: Pre-inverted W = (D⁻¹ + U⊤B⁻¹U)⁻¹ (r × r). In arc form, a closed
+  form gives it for r ≤ 2 and the LU of `S = diag(signed Δb)·W` otherwise; in node-pair form,
+  `S⁻¹D` with `S = I + D U⊤B⁻¹U` factorized by LU. For an island in arc form, it is a
+  pseudo-inverse.
+- `arc_indices::Vector{Int}`: Arc indices of the changed arcs. A changed arc is a modified arc
+  with a nonzero `delta_b`.
 - `delta_b::Vector{Float64}`: Susceptance change per changed arc
 - `arc_out::Vector{Bool}`: Per changed arc, whether the modification opens every member of
   the arc. Set from member counts, because the summed `delta_b` of a lossy parallel group
   does not cancel the arc susceptance exactly.
-- `is_islanding::Bool`: Whether this contingency islands the network
+- `is_islanding::Bool`: Whether the modified network has buses outside the islands holding a
+  reference bus
 - `bus_island_labels::Vector{Int}`: Post-contingency connected-component label per
   bus position, used to force entries of buses disconnected from the monitored arc
   to exactly zero. Empty unless `is_islanding`.
+- `basis::WoodburyBasis`: The columns of `U` and the matrix `D`
 """
 struct WoodburyFactors
     Z::Matrix{Float64}
@@ -244,4 +273,5 @@ struct WoodburyFactors
     arc_out::Vector{Bool}
     is_islanding::Bool
     bus_island_labels::Vector{Int}
+    basis::WoodburyBasis
 end

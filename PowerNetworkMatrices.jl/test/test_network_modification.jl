@@ -719,12 +719,33 @@ end
     @test am.delta_b ≈ -540.5405405405405
     @test am.opened == 1
 
-    # The winding opens the chain and isolates buses 106 to 108: rows agree with a rebuild.
+    # The winding opens the chain and isolates buses 106 to 108 from the reference bus: rows
+    # on the reference island agree with a rebuild, and arcs of the isolated island read zero.
     sys2 = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
     trf2 = first(PSY.get_components(PSY.ThreeWindingTransformer, sys2))
     PSY.set_available!(PSY.get_circuits(trf2)[3], false)
     ptdf2 = PTDF(sys2; network_reductions = reductions)
-    dc_err, _, _ = _max_ptdf_error(vptdf, mod, ptdf2)
+    base_refs = keys(PNM.get_core(vptdf).subnetwork_axes)
+    islands = [Set(buses) for (buses, _) in values(ptdf2.subnetwork_axes)]
+    reference = only(i for i in islands if !isdisjoint(i, base_refs))
+    isolated = only(i for i in islands if isdisjoint(i, base_refs))
+    @test issubset(Set([106, 107, 108]), isolated)
+    arc_lookup2 = PNM.get_arc_lookup(ptdf2)
+    bus_lookup2 = PNM.get_bus_lookup(ptdf2)
+    dc_err = 0.0
+    for (i, arc) in enumerate(PNM.get_arc_axis(vptdf))
+        row = vptdf[i, mod]
+        if arc[1] in isolated
+            @test all(iszero, row)
+        elseif haskey(arc_lookup2, arc)
+            for (bus, j) in PNM.get_bus_lookup(vptdf)
+                haskey(bus_lookup2, bus) || continue
+                expected =
+                    bus in reference ? ptdf2[arc_lookup2[arc], bus_lookup2[bus]] : 0.0
+                dc_err = max(dc_err, abs(row[j] - expected))
+            end
+        end
+    end
     @test dc_err < 1e-12
 end
 
@@ -974,7 +995,11 @@ end
             z = copy(z0)
             PNM._woodbury_correction!(z, buf_zm, buf_coeff, core.BA, b_pre, b_post, m, wf)
             @test z == expected
-            @test z ≈ apply_woodbury_correction(vptdf, m, wf) atol = 1e-12
+            if PMC._outside_reference_islands(core, wf, m)
+                @test all(iszero, apply_woodbury_correction(vptdf, m, wf))
+            else
+                @test z ≈ apply_woodbury_correction(vptdf, m, wf) atol = 1e-12
+            end
             copyto!(z, z0)
             @test (@allocated PNM._woodbury_correction!(
                 z, buf_zm, buf_coeff, core.BA, b_pre, b_post, m, wf,
