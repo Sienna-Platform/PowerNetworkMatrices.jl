@@ -21,6 +21,8 @@ struct TopologySequence{M <: VirtualMODF}
     arcs_out::Vector{Set{Tuple{Int, Int}}}
     islands::Vector{Vector{Vector{Int}}}
     reference_islands::Vector{Set{Int}}
+    contingency_components::Dict{Int, Vector{PSY.Component}}
+    contingency_lock::ReentrantLock
 end
 
 function TopologySequence(
@@ -69,6 +71,8 @@ function TopologySequence(
         arcs_out,
         islands,
         reference_islands,
+        Dict{Int, Vector{PSY.Component}}(),
+        ReentrantLock(),
     )
 end
 
@@ -412,4 +416,86 @@ function get_topology_ptdf_rows(
 )
     mods = NetworkModification[_topology_modification(ts, k) for k in topologies]
     return get_post_modification_ptdf_rows(ts.vmodf, arc, mods)
+end
+
+function _post_contingency_modification(ts::TopologySequence, k::Int, ctg_components)
+    already_out = IdDict{PSY.Component, Nothing}()
+    if k != 0
+        for c in ts.removed[k]
+            already_out[c] = nothing
+        end
+    end
+    remaining = [c for c in ctg_components if !haskey(already_out, c)]
+    isempty(remaining) && return nothing
+    return NetworkModification(
+        ts.vmodf,
+        ts.sys,
+        vcat(collect(keys(already_out)), remaining),
+    )
+end
+
+"""
+    get_post_contingency_network(ts::TopologySequence, t::Int, contingency_id::Int) -> Union{PostContingencyNetwork, Nothing}
+
+The [`PostContingencyNetwork`](@ref) of the `PSY.Outage` with IS id
+`contingency_id` on the topology in effect at step `t`. The outage's available associated
+components are resolved through the sequence's system on the sequence's first query for
+the outage and reused for every later step, and those already out at `t` are dropped.
+Returns `nothing` when none remain, since the contingency then changes nothing.
+Steps on the same topology return equal networks.
+"""
+function get_post_contingency_network(ts::TopologySequence, t::Int, contingency_id::Int)
+    k = get_topology_index(ts, t)
+    post =
+        _post_contingency_modification(ts, k, _contingency_components(ts, contingency_id))
+    isnothing(post) && return nothing
+    topology = _topology_modification(ts, k)
+    return PostContingencyNetwork(
+        _Tier2Derived(),
+        topology,
+        post,
+        _tier2_modification(post, topology),
+        contingency_id,
+    )
+end
+
+function _contingency_components(ts::TopologySequence, contingency_id::Int)
+    return lock(ts.contingency_lock) do
+        get!(ts.contingency_components, contingency_id) do
+            closed_switches =
+                get_closed_switches(get_reductions(get_network_reduction_data(ts.vmodf)))
+            _available_contingency_components(ts.sys, contingency_id, closed_switches)
+        end
+    end
+end
+
+function _available_contingency_components(
+    sys::PSY.System,
+    contingency_id::Int,
+    closed_switches::Set{String},
+)
+    outage = PSY.get_supplemental_attribute(sys, contingency_id)
+    outage isa PSY.Outage || throw(
+        ArgumentError(
+            "Supplemental attribute $contingency_id is a $(typeof(outage)), not a \
+            PSY.Outage.",
+        ),
+    )
+    return PSY.Component[
+        c for c in PSY.get_associated_components(sys, outage) if
+        _in_network_candidate(c, closed_switches)
+    ]
+end
+
+"""
+    PostContingencyNetwork(vmodf::VirtualMODF, contingency_id::Int)
+
+The [`PostContingencyNetwork`](@ref) of the contingency registered in `vmodf` under
+`contingency_id`, on the base topology: `topology` is the empty modification, and
+`post_contingency` and `tier2` are the registered modification. Throws when no contingency
+is registered under `contingency_id`.
+"""
+function PostContingencyNetwork(vmodf::VirtualMODF, contingency_id::Int)
+    mod = @lock get_core(vmodf).solver_lock _resolve_modification(vmodf, contingency_id)
+    return _base_topology_network(mod, contingency_id)
 end

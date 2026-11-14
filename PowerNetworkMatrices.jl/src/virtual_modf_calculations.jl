@@ -538,6 +538,13 @@ function get_post_modification_ptdf_rows(
     end
 end
 
+# --- Post-contingency networks on scheduled topologies ---
+
+# The network `mod` takes the base network to, as a post-contingency network on the base
+# topology. `contingency_id` only labels it: hashing and equality ignore it.
+_base_topology_network(mod::NetworkModification, contingency_id::Int = 0) =
+    PostContingencyNetwork(_Tier2Derived(), _BASE_NETWORK, mod, mod, contingency_id)
+
 """
     get_ptdf_row(vmodf::VirtualMODF, arc::Tuple{Int, Int}) -> Union{Vector{Float64}, SparseVector{Float64, Int}}
 

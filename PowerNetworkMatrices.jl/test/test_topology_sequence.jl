@@ -160,6 +160,10 @@ end
         @test _max_row_error(
             a -> ts[a, 3], builder, ["dup", PSY.get_name(base)], vptdf; skip_arc = arc,
         ) < 1e-9
+
+        # a planned set and a contingency still resolve jointly
+        ctg = PNM._post_contingency_modification(ts, get_topology_index(ts, 2), [base])
+        @test ctg == full
     end
 end
 
