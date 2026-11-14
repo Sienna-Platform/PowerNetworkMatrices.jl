@@ -60,6 +60,7 @@ export branch_flow_limits
 export apply_woodbury_correction
 export clear_all_caches!
 export clear_caches!
+export retain_modifications!
 export compute_woodbury_factors
 export factorize
 export get_post_modification_ptdf_row

@@ -698,3 +698,40 @@ end
     @test PNM.get_series_susceptance(get_in_service_entry(ts, arc, 2), u"SU") ≈
           PNM.get_series_susceptance(PNM.get_direct_branch_map(ref_nr)[arc], u"SU")
 end
+
+@testset "retain_modifications! keeps factors of retained modifications and drops other rows" begin
+    sys = _c_sys14_for_row_batches()
+    line7 = _row_batch_component(sys, "Line7")
+    outage = PSY.FixedForcedOutage(; outage_status = 1.0)
+    PSY.add_supplemental_attribute!(sys, line7, outage)
+    vmodf = VirtualMODF(VirtualPTDF(sys), sys)
+    contingency = only(values(get_registered_contingencies(vmodf))).modification
+    mods = [
+        NetworkModification(vmodf, sys, [_row_batch_component(sys, n) for n in names])
+        for names in (["dup"], ["shifter"], ["Line1", "dup"])
+    ]
+    arc = (1, 2)
+    for mod in [PNM._BASE_NETWORK, contingency, mods...]
+        vmodf[arc, mod]
+    end
+    @test length(PNM.get_row_caches(vmodf)) == 5
+    @test length(PNM.get_woodbury_cache(vmodf)) == 4
+
+    # A modification rebuilt from the same components is the one retained.
+    kept = NetworkModification(vmodf, sys, [_row_batch_component(sys, "dup")])
+    retain_modifications!(vmodf, [kept])
+    @test Set(keys(PNM.get_row_caches(vmodf))) == Set([PNM._BASE_NETWORK])
+    @test Set(keys(PNM.get_woodbury_cache(vmodf))) == Set([mods[1]])
+    @test haskey(get_registered_contingencies(vmodf), IS.get_id(outage))
+
+    # Evicted modifications, the contingency among them, recompute the same rows.
+    fresh = VirtualMODF(VirtualPTDF(sys), sys)
+    @test vmodf[arc, mods[3]] ≈ fresh[arc, mods[3]]
+    @test vmodf[arc, outage] ≈ fresh[arc, outage]
+    retain_modifications!(vmodf, [contingency])
+    @test Set(keys(PNM.get_row_caches(vmodf))) == Set([PNM._BASE_NETWORK])
+    @test Set(keys(PNM.get_woodbury_cache(vmodf))) == Set([contingency])
+    retain_modifications!(vmodf, NetworkModification[])
+    @test Set(keys(PNM.get_row_caches(vmodf))) == Set([PNM._BASE_NETWORK])
+    @test isempty(PNM.get_woodbury_cache(vmodf))
+end

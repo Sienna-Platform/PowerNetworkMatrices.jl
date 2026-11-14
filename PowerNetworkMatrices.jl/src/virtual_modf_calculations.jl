@@ -611,6 +611,39 @@ function clear_caches!(vmodf::VirtualMODF)
 end
 
 """
+    retain_modifications!(vmodf::VirtualMODF, keep)
+
+End a build: evict the cached rows, and the Woodbury factors of every modification not
+named in `keep`.
+
+Kept are the Woodbury factors of the base network and of every modification in `keep`,
+matched by value, so a modification rebuilt from the same components is retained. The
+base-network rows are also kept.
+
+Every other row cache is emptied, those of retained modifications included. Rows therefore
+live for one build, while the factors of the modifications still in use serve the next one.
+The set of modifications is not bounded by `vmodf`, so a caller that queries new
+modifications over its life, such as a schedule of topologies rebuilt for each simulation
+window, calls this once per build. The registrations are kept, so an evicted contingency is
+recomputed on its next query.
+"""
+function retain_modifications!(vmodf::VirtualMODF, keep)
+    core = get_core(vmodf)
+    @lock core.solver_lock begin
+        retained = Set{NetworkModification}([_BASE_NETWORK])
+        for entry in keep
+            _retain!(retained, entry)
+        end
+        filter!(entry -> first(entry) in retained, get_woodbury_cache(vmodf))
+        filter!(entry -> first(entry) == _BASE_NETWORK, get_row_caches(vmodf))
+    end
+    return
+end
+
+_retain!(retained::Set{NetworkModification}, mod::NetworkModification) =
+    push!(retained, mod)
+
+"""
     clear_all_caches!(vmodf::VirtualMODF)
 
 Clear all caches including contingency registrations. After calling this function,
