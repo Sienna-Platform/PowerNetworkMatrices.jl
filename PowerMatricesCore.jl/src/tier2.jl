@@ -61,6 +61,31 @@ Base.:(==)(a::PostContingencyNetwork, b::PostContingencyNetwork) =
 # tier-2 modification from the base network.
 _on_base_topology(net::PostContingencyNetwork) = net.topology == _BASE_NETWORK
 
+# Susceptance of arc `m` on K ∪ c. The tier-2 modification alone would miss the change K
+# already made to a partly out arc.
+_post_contingency_susceptance(
+    arc_sus::Vector{Float64},
+    m::Int,
+    net::PostContingencyNetwork,
+) = _post_modification_susceptance(
+    arc_sus,
+    m,
+    _arc_modification_vector(net.post_contingency),
+)
+
+# Whether arc `m` is out of service on K ∪ c.
+_post_contingency_arc_out(
+    arc_sus::Vector{Float64},
+    core::FactorCore,
+    m::Int,
+    net::PostContingencyNetwork,
+) = _post_modification_arc_out(
+    arc_sus,
+    core,
+    m,
+    _arc_modification_vector(net.post_contingency),
+)
+
 """
     _tier2_modification(post::NetworkModification, topology::NetworkModification) -> NetworkModification
 
