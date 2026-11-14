@@ -1,49 +1,5 @@
 import LinearAlgebra
 
-const _FIVE_BUS_B = [10.0, 5.0, 8.0, 4.0, 6.0, 7.0]
-
-# Arc modifications opening every arc in `arcs` of the five-bus core.
-function _five_bus_outage(arcs)
-    z = zero(ComplexF32)
-    return PMC.ArcModification[
-        PMC.ArcModification(e, -_FIVE_BUS_B[e], 0.0, z, z, z, z, 1) for e in sort(arcs)
-    ]
-end
-
-function _five_bus_laplacian(core, out)
-    n_bus = size(core.BA, 1)
-    B = zeros(n_bus, n_bus)
-    for e in 1:size(core.BA, 2)
-        e in out && continue
-        f, t = PMC._arc_ends(core, e)
-        b = _FIVE_BUS_B[e]
-        B[f, f] += b
-        B[t, t] += b
-        B[f, t] -= b
-        B[t, f] -= b
-    end
-    return B
-end
-
-# Dense post-outage PTDF of the five-bus core with arcs `out` open, on the buses `live` of the
-# island holding reference bus 1; every other entry, and every row of an open arc or of an arc
-# outside that island, is zero.
-function _five_bus_dense_ptdf(core, out, live)
-    n_bus, n_arc = size(core.BA)
-    solve_buses = [b for b in live if b != 1]
-    B = _five_bus_laplacian(core, out)
-    X = zeros(n_bus, n_bus)
-    X[solve_buses, solve_buses] = inv(B[solve_buses, solve_buses])
-    ptdf = zeros(n_arc, n_bus)
-    for e in 1:n_arc
-        e in out && continue
-        f, t = PMC._arc_ends(core, e)
-        (f in live && t in live) || continue
-        ptdf[e, :] = _FIVE_BUS_B[e] .* (X[f, :] .- X[t, :])
-    end
-    return ptdf
-end
-
 # Largest entry of `B̃ + U D Uᵀ − B_post` on the live buses, with `B̃` the Schur complement of the
 # base Laplacian onto them.
 function _five_bus_identity_error(core, basis, out, live)

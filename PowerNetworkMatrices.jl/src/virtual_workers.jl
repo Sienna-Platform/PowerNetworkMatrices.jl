@@ -28,8 +28,8 @@ end
 """
     VirtualMODF(vmodf::VirtualMODF, core::VirtualFactorCore) -> VirtualMODF
 
-`vmodf` (a copy of its registered contingencies, same cache bound) on `core`, a
-[`worker_core`](@ref) of it, with empty Woodbury and row caches.
+`vmodf` (a copy of its registered contingencies, same cache bounds) on `core`, a
+[`worker_core`](@ref) of it, with empty Woodbury, tier-2, row and column caches.
 """
 function VirtualMODF(vmodf::VirtualMODF, core::VirtualFactorCore)
     parent = get_core(vmodf)
@@ -38,9 +38,8 @@ function VirtualMODF(vmodf::VirtualMODF, core::VirtualFactorCore)
     return VirtualMODF(
         core,
         registered,
-        Dict{NetworkModification, WoodburyFactors}(),
-        Dict{NetworkModification, RowCache{RowCacheValue}}(),
         get_max_cache_size_bytes(vmodf),
+        get_max_column_cache_bytes(vmodf),
     )
 end
 

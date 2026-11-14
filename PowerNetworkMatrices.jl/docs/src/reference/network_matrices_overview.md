@@ -121,6 +121,28 @@ The rule holds for every modification, whether it is a contingency, a planned to
 A [`PTDF`](@ref) of the rebuilt network instead gives such an island a reference bus of its own, chosen arbitrarily, and its rows on that island depend on that choice.
 `VirtualMODF` does not reproduce those rows.
 
+#### Post-contingency networks on scheduled topologies
+
+A [`TopologySequence`](@ref) assigns each time step a topology K, the base network with the components out at that step removed.
+[`get_post_contingency_network`](@ref) returns the [`PostContingencyNetwork`](@ref) of a registered contingency c on the topology of a step, the network K ∪ c.
+Steps on the same topology return equal networks, so they share every cached factor and row.
+`PostContingencyNetwork(vmodf, contingency_id)` returns the network of a registered contingency on the base topology.
+
+[`get_post_contingency_ptdf_rows`](@ref) returns one monitored arc's rows on several post-contingency networks from a single solve of its base column.
+On a topology other than the base network, the row is a second Woodbury update from K to K ∪ c of the arc's row on K, so K's factors are computed once and reused by every contingency on it.
+On the base topology, the row equals the registered contingency's row bit for bit.
+Rows on K and on K ∪ c follow the rule for islands without a reference bus: an island that the topology, the contingency, or both cut off from every reference bus has zero rows.
+Indexing a [`VirtualMODF`](@ref) with a hand-built [`NetworkModification`](@ref) for K ∪ c gives the same row, but computes the full combined update from the base network instead of reusing K's factors.
+
+Each post-contingency network on a topology other than the base network has its own tier-2 Woodbury factors and its own row cache, held in the `PowerMatricesCore.Tier2Cache` of the [`VirtualMODF`](@ref).
+Tier-2 factors are built from base solves `B⁻¹(e_p − e_q)` held in a column cache shared by every network, so a column common to several topologies is solved once.
+The column cache is bounded by the `max_column_cache_bytes` keyword of the [`VirtualMODF`](@ref) constructors (1 GiB by default) and evicts its least recently used columns.
+[`cache_statistics`](@ref) reports the entries and bytes of each cache, and the hits and misses of the column cache.
+[`clear_caches!`](@ref) empties these caches together with the Woodbury and row caches of every modification.
+[`retain_modifications!`](@ref) ends a build and accepts post-contingency networks: a retained network keeps its topology's Woodbury factors (on the base topology, those of its registered contingency).
+Every row cache except the base network's is emptied, retained networks included, and so is the tier-2 factor cache, so rows and tier-2 factors live for one build.
+The column cache is kept, so the next build reuses its base solves.
+
 ## Arc-Based Indexing
 
 All matrices that involve branches use **arc tuples** as identifiers instead of branch name strings. An arc tuple is a `Tuple{Int, Int}` of the form `(from_bus_number, to_bus_number)`, representing the directed connection between two buses.

@@ -172,6 +172,20 @@ function (bl::BridgeLabels)(
     return labels
 end
 
+# Force entries of buses whose label differs from `label` to exactly zero.
+function _zero_outside_island!(
+    column::AbstractVector{Float64},
+    labels::Vector{Int},
+    label::Int,
+)
+    @inbounds for j in eachindex(column)
+        if labels[j] != label
+            column[j] = 0.0
+        end
+    end
+    return column
+end
+
 # Force entries of buses disconnected from the monitored arc to exactly zero.
 # `labels` is empty for connected contingencies, making this a no-op.
 function _zero_islanded_entries!(
@@ -185,13 +199,7 @@ function _zero_islanded_entries!(
     rv = SparseArrays.rowvals(BA)
     rng = SparseArrays.nzrange(BA, monitored_idx)
     isempty(rng) && return row
-    monitored_label = labels[rv[first(rng)]]
-    @inbounds for j in eachindex(row)
-        if labels[j] != monitored_label
-            row[j] = 0.0
-        end
-    end
-    return row
+    return _zero_outside_island!(row, labels, labels[rv[first(rng)]])
 end
 
 """
@@ -471,8 +479,9 @@ function _arc_modification_at(
     return nothing
 end
 
-# The modification a row is judged on: the one taking the base network to the row's network,
-# as its arc modifications or as the Woodbury factors assembled for it on the base network.
+# The modification a row is judged on: the one taking the base network to the row's network
+# (K ∪ c for a post-contingency row), as its arc modifications or as the Woodbury factors
+# assembled for it on the base network.
 const _PostModification = Union{Vector{ArcModification}, WoodburyFactors}
 
 # Susceptance change of arc `m` under `post`, or `nothing` when `post` leaves it unchanged.
@@ -755,6 +764,140 @@ function _compute_woodbury_factors(
     end
 end
 
+# zm_Z = uᵀ Z[:, eachindex(zm_Z)] for the node pair u = scale · (e_p − e_q).
+function _pair_Z!(
+    zm_Z::AbstractVector{Float64},
+    p::Int,
+    q::Int,
+    scale::Float64,
+    Z::Matrix{Float64},
+)
+    @inbounds for j in eachindex(zm_Z)
+        zm_Z[j] = scale * (Z[p, j] - Z[q, j])
+    end
+    return zm_Z
+end
+
+"""
+    _tier2_columns(column, topology_wf, basis, change) -> Matrix{Float64}
+
+`B_K⁻¹U` for the columns `U` of `basis`, on the topology K whose base-network factors are
+`topology_wf`. `column(p, q)` returns the base solve `B⁻¹(e_a − e_b)` for
+`(a, b) = (min(p, q), max(p, q))`, which this function does not mutate. Each column is
+`scale · B⁻¹(e_p − e_q)` from it, corrected by `topology_wf` and zeroed outside the island of
+`p` on K. An arc-form basis of `change` gives one column per arc of
+`_changed_modifications(change)`, as `_woodbury_factors_from_Z` expects.
+"""
+function _tier2_columns(
+    column::F,
+    topology_wf::WoodburyFactors,
+    basis::WoodburyBasis,
+    change::Vector{ArcModification},
+)::Matrix{Float64} where {F}
+    n_bus = size(topology_wf.Z, 1)
+    rank_k = _woodbury_rank(topology_wf)
+    zm_Z = Vector{Float64}(undef, rank_k)
+    coeff = Vector{Float64}(undef, rank_k)
+    labels = topology_wf.bus_island_labels
+    Z = Matrix{Float64}(undef, n_bus, length(basis))
+    for j in 1:length(basis)
+        p, q, scale = basis.p[j], basis.q[j], basis.scale[j]
+        z = view(Z, :, j)
+        z .= (p < q ? scale : -scale) .* column(p, q)
+        _pair_Z!(zm_Z, p, q, scale, topology_wf.Z)
+        LinearAlgebra.mul!(coeff, topology_wf.W_inv, zm_Z)
+        LinearAlgebra.mul!(z, topology_wf.Z, coeff, -1.0, 1.0)
+        isempty(labels) || _zero_outside_island!(z, labels, labels[p])
+    end
+    return Z
+end
+
+"""
+    _tier2_arc_form_factors(column, core, topology_wf, change, arc_out, post_labels) -> WoodburyFactors
+
+Arc-form `WoodburyFactors` of the tier-2 modification `change` on the topology K whose
+base-network factors are `topology_wf`, with columns from [`_tier2_columns`](@ref) over the
+base solves `column(p, q)`. `arc_out` says per modification of `change` whether K ∪ c opens
+every member of its arc, and `post_labels` are the island labels on K ∪ c.
+"""
+function _tier2_arc_form_factors(
+    column::F,
+    core::FactorCore,
+    topology_wf::WoodburyFactors,
+    change::Vector{ArcModification},
+    arc_out::Vector{Bool},
+    post_labels::Vector{Int},
+)::WoodburyFactors where {F}
+    basis = _arc_form_basis(core, change)
+    return _arc_form_factors(
+        _tier2_columns(column, topology_wf, basis, change),
+        basis,
+        core.BA,
+        core.arc_susceptance_signs,
+        core.arc_susceptances,
+        change,
+        arc_out,
+        post_labels,
+        _ref_bus_positions(core),
+    )
+end
+
+"""
+    _tier2_factors(column, core, topology_wf, topology, tier2, post) -> WoodburyFactors
+
+Woodbury factors of the tier-2 modification `tier2` on a topology K other than the base
+network, over its minimal-rank basis on K. `topology` takes the base network to K, whose
+base-network factors are `topology_wf`, and `post` takes it to K ∪ c. The island labels after
+the change and whether each arc is out are taken on K ∪ c, from `post`. Columns come from
+[`_tier2_columns`](@ref) over the base solves `column(p, q)`, so a base solve shared by
+several networks runs once when `column` caches it. Modifications of arcs with both ends dead
+on K are left out. When the node-pair basis is singular, the factors fall back to the arc
+form of the tier-2 modification.
+"""
+function _tier2_factors(
+    column::F,
+    core::FactorCore,
+    topology_wf::WoodburyFactors,
+    topology::NetworkModification,
+    tier2::NetworkModification,
+    post::NetworkModification,
+)::WoodburyFactors where {F}
+    BA = core.BA
+    signs = core.arc_susceptance_signs
+    arc_sus = core.arc_susceptances
+    n_bus = size(BA, 1)
+    ref_positions = _ref_bus_positions(core)
+    start_labels = topology_wf.bus_island_labels
+    live_start = _live_buses(start_labels, ref_positions, n_bus)
+    change = _start_live_change(core, live_start, _arc_modification_vector(tier2))
+    post_modifications = _arc_modification_vector(post)
+    post_labels = _post_contingency_bus_labels(BA, arc_sus, post_modifications, n_bus)
+    basis = _woodbury_basis(
+        core,
+        _arc_modification_vector(topology),
+        start_labels,
+        change,
+        post_labels,
+    )
+    arc_out =
+        Bool[_opens_every_member_at(core, post_modifications, m.arc_index) for m in change]
+    arc_fallback =
+        () ->
+            _tier2_arc_form_factors(column, core, topology_wf, change, arc_out, post_labels)
+    return _woodbury_factors_from_basis(
+        _tier2_columns(column, topology_wf, basis, change),
+        basis,
+        BA,
+        signs,
+        arc_sus,
+        change,
+        arc_out,
+        post_labels,
+        ref_positions,
+        arc_fallback,
+    )
+end
+
 # The row of the monitored arc on the network whose base-network factors are `wf`, judged on
 # the modification `wf` was assembled for.
 function _apply_woodbury_correction(
@@ -813,15 +956,22 @@ end
 
 How one row is computed from the monitored arc's base solve. `_ZERO_ROW` is all zeros and
 `_BASE_ROW` the base solve itself. `_CORRECTED_ROW` is the base solve corrected by the
-Woodbury factors `correction` and scaled by `b_post`.
+Woodbury factors `start_factors` when there are any, then by `correction`, and scaled by
+`b_post`. `start_factors` take the base network to the network `correction` starts from: they
+are `nothing` for a row from the base network, and a topology K's factors for a tier-2 row on
+K ∪ c, whose `correction` is the tier-2 factors on K.
 """
 struct _RowPlan
     kind::_RowKind
+    start_factors::Union{Nothing, WoodburyFactors}
     correction::Union{Nothing, WoodburyFactors}
     b_post::Float64
 end
 
-_RowPlan(kind::_RowKind) = _RowPlan(kind, nothing, 0.0)
+_RowPlan(kind::_RowKind) = _RowPlan(kind, nothing, nothing, 0.0)
+
+_RowPlan(kind::_RowKind, correction::WoodburyFactors, b_post::Float64) =
+    _RowPlan(kind, nothing, correction, b_post)
 
 """
     _base_topology_row_plan(core, m, post, wf) -> _RowPlan
@@ -913,9 +1063,8 @@ function _evaluate_row_plans(
     z_base::Vector{Float64},
 )::Vector{Vector{Float64}}
     max_modified = 0
-    for p in plans
-        isnothing(p.correction) ||
-            (max_modified = max(max_modified, _woodbury_rank(p.correction)))
+    for p in plans, wf in (p.start_factors, p.correction)
+        isnothing(wf) || (max_modified = max(max_modified, _woodbury_rank(wf)))
     end
     zm_Z_buf = Vector{Float64}(undef, max_modified)
     coeff_buf = Vector{Float64}(undef, max_modified)
@@ -924,6 +1073,8 @@ function _evaluate_row_plans(
     correct(z, b_post, wf) = _woodbury_correction!(
         copy(z), zm_Z_buf, coeff_buf, core.BA, b_mon_pre, b_post, m, wf,
     )
+    # B_K⁻¹ν_m per distinct starting network; equal topologies share one factors object.
+    z_start = IdDict{WoodburyFactors, Vector{Float64}}()
     rows = Vector{Vector{Float64}}(undef, length(plans))
     base_used = false
     for (i, plan) in enumerate(plans)
@@ -933,7 +1084,13 @@ function _evaluate_row_plans(
             rows[i] = base_used ? copy(base_row) : base_row
             base_used = true
         else
-            rows[i] = correct(z_base, plan.b_post, plan.correction)
+            start_wf = plan.start_factors
+            z = if isnothing(start_wf)
+                z_base
+            else
+                get!(() -> correct(z_base, 1.0, start_wf), z_start, start_wf)
+            end
+            rows[i] = correct(z, plan.b_post, plan.correction)
         end
     end
     return rows

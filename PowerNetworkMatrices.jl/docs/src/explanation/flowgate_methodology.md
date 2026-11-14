@@ -139,8 +139,8 @@ Each modification's row cache is bounded, but every new modification queried add
 A caller that keeps querying new modifications on one `VirtualMODF`, such as a
 `TopologySequence` rebuilt for each window of a simulation, calls
 `retain_modifications!(vmodf, keep)` once per build.
-It keeps the Woodbury factors of the base network and of the modifications in `keep`, and the base-network rows.
-It empties every other row cache, those of retained modifications included, so rows live for one build.
+It keeps the Woodbury factors of the base network and of the modifications and post-contingency networks in `keep`, the base-network rows and the column cache.
+It empties every other row cache, those of retained modifications included, and the tier-2 factor cache, so rows and tier-2 factors live for one build.
 Contingency registrations are not affected, so an evicted contingency is recomputed on its next query.
 
 ## Relationship to other matrix types

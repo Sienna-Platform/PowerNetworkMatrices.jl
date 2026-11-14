@@ -842,3 +842,72 @@ end
     @test Set(keys(PNM.get_row_caches(vmodf))) == Set([PNM._BASE_NETWORK])
     @test isempty(PNM.get_woodbury_cache(vmodf))
 end
+
+# The topologies and post-contingency networks a window of `removed` resolves rows on.
+function _window_in_use(vmodf, sys, removed, contingency_id)
+    ts = TopologySequence(vmodf, sys, removed)
+    in_use = Set{Union{NetworkModification, PostContingencyNetwork}}()
+    for t in eachindex(removed)
+        mod = get_network_modification(ts, t)
+        isnothing(mod) || push!(in_use, mod)
+        net = get_post_contingency_network(ts, t, contingency_id)
+        isnothing(net) || push!(in_use, net)
+    end
+    return ts, in_use
+end
+
+function _query_window!(vmodf, ts, contingency_id, arcs, n_steps)
+    for t in 1:n_steps, arc in arcs
+        ts[arc, t]
+        net = get_post_contingency_network(ts, t, contingency_id)
+        isnothing(net) || get_post_contingency_ptdf_rows(vmodf, arc, [net])
+    end
+    return
+end
+
+@testset "A window with an outage at every step evicts the contingency-only caches" begin
+    sys = _c_sys14_for_row_batches()
+    line(name) = PSY.get_component(PSY.Line, sys, name)
+    line7 = line("Line7")
+    outage = PSY.FixedForcedOutage(; outage_status = 1.0)
+    PSY.add_supplemental_attribute!(sys, line7, outage)
+    contingency_id = IS.get_id(outage)
+    vmodf = VirtualMODF(VirtualPTDF(sys), sys)
+    contingency = only(values(get_registered_contingencies(vmodf))).modification
+    arcs = [(1, 2), (2, 3), (4, 5)]
+    windows = [
+        [Set{PSY.Component}(), Set{PSY.Component}([line("Line1")])],
+        [Set{PSY.Component}([line("Line1")]), Set{PSY.Component}([line("dup")])],
+        [Set{PSY.Component}(), Set{PSY.Component}([line("dup")])],
+    ]
+    has_contingency = Bool[]
+    for removed in windows
+        ts, in_use = _window_in_use(vmodf, sys, removed, contingency_id)
+        retain_modifications!(vmodf, in_use)
+        _query_window!(vmodf, ts, contingency_id, arcs, length(removed))
+        topologies = Set(
+            get_network_modification(ts, t) for t in eachindex(removed) if
+            !isnothing(get_network_modification(ts, t))
+        )
+        networks = Set(n for n in in_use if n isa PostContingencyNetwork)
+        base_tier2 = Set(n.tier2 for n in networks if PNM._on_base_topology(n))
+        others = Set(n for n in networks if !PNM._on_base_topology(n))
+        @test Set(keys(PNM.get_row_caches(vmodf))) ==
+              union(topologies, base_tier2, [PNM._BASE_NETWORK])
+        @test Set(keys(PNM.get_woodbury_cache(vmodf))) == union(topologies, base_tier2)
+        @test Set(keys(PNM.get_tier2_row_caches(vmodf))) == others
+        push!(has_contingency, haskey(PNM.get_row_caches(vmodf), contingency))
+
+        # Rows resolved after the eviction equal those of a matrix that never evicted.
+        fresh = VirtualMODF(VirtualPTDF(sys), sys)
+        fresh_ts = TopologySequence(fresh, sys, removed)
+        for t in eachindex(removed), arc in arcs
+            @test ts[arc, t] ≈ fresh_ts[arc, t]
+            net = get_post_contingency_network(ts, t, contingency_id)
+            fresh_net = get_post_contingency_network(fresh_ts, t, contingency_id)
+            @test only(get_post_contingency_ptdf_rows(vmodf, arc, [net])) ≈
+                  only(get_post_contingency_ptdf_rows(fresh, arc, [fresh_net]))
+        end
+    end
+    @test has_contingency == [true, false, true]
+end
