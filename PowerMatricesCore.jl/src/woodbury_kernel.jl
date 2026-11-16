@@ -1,9 +1,10 @@
 """
     _invert_woodbury_W(W_mat, M, signed_delta_b) -> (W_inv::Matrix{Float64}, is_islanding::Bool)
 
-Invert the M×M Woodbury W through the LU factorization of `S = diag(signed_delta_b)·W`.
+Invert the M×M Woodbury W; closed form for M = 2, LU of `S = diag(signed_delta_b)·W` otherwise.
 
-The modification islands the network when a pivot of `S` is below `MODF_ISLANDING_TOLERANCE`.
+The modification islands the network when a pivot of the partially pivoted LU of `S` is below
+`MODF_ISLANDING_TOLERANCE`.
 `S` has the diagonal `1 + Δb·K` and does not change with the impedance scale of the arcs. For
 an island, `W_inv` is a pseudo-inverse.
 """
@@ -15,9 +16,27 @@ function _invert_woodbury_W(
     if iszero(M)
         # getri! rejects a 0×0 matrix.
         return Matrix{Float64}(undef, 0, 0), false
+    elseif M == 2
+        a, b, c, d = W_mat[1, 1], W_mat[1, 2], W_mat[2, 1], W_mat[2, 2]
+        det_W = a * d - b * c
+        # The pivots of the LU are p1 = max(|S11|, |S21|) and p2 = |det(S)| / p1. A test on
+        # det(S) alone flags two low-impedance arcs that are not bridges as an island: each
+        # pivot is small, so the product is below the tolerance.
+        p1 = max(abs(signed_delta_b[1] * a), abs(signed_delta_b[2] * c))
+        abs_det_S = abs(det_W * signed_delta_b[1] * signed_delta_b[2])
+        is_island =
+            p1 < MODF_ISLANDING_TOLERANCE || abs_det_S < MODF_ISLANDING_TOLERANCE * p1
+        if is_island
+            return _island_pinv(W_mat, signed_delta_b), is_island
+        end
+        inv_det = 1.0 / det_W
+        W_inv = Matrix{Float64}(undef, 2, 2)
+        W_inv[1, 1] = d * inv_det
+        W_inv[1, 2] = -b * inv_det
+        W_inv[2, 1] = -c * inv_det
+        W_inv[2, 2] = a * inv_det
+        return W_inv, is_island
     end
-    # A test on a product of pivots, such as det(S), flags two low-impedance arcs that are not
-    # bridges as an island: each pivot is small, so the product is below the tolerance.
     scale = LinearAlgebra.Diagonal(signed_delta_b)
     S_lu = LinearAlgebra.lu(scale * W_mat; check = false)
     is_island = any(i -> abs(S_lu.factors[i, i]) < MODF_ISLANDING_TOLERANCE, 1:M)
