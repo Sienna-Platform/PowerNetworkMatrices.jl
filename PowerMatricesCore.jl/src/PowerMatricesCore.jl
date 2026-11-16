@@ -5,7 +5,6 @@ arrays. The package has no dependency on PowerSystems.
 module PowerMatricesCore
 
 using DocStringExtensions
-import DataStructures
 import SparseArrays
 import SparseArrays: rowvals, nzrange
 import HDF5
