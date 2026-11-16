@@ -22,8 +22,10 @@ Every function on a `Tier2Cache` requires the caller to hold the `solver_lock` o
 - `column_cache::Dict{Tuple{Int, Int}, Vector{Float64}}`:
         Base solves `B⁻¹(e_p − e_q)` keyed by the bus-position pair `(p, q)`, `p < q`,
         shared by every network's tier-2 factors.
-- `column_cache_order::DataStructures.OrderedSet{Tuple{Int, Int}}`:
-        Keys of `column_cache`, least recently used first.
+- `column_last_use::Dict{Tuple{Int, Int}, Int}`:
+        For each key of `column_cache`, the value of `column_clock` at its last lookup.
+- `column_clock::Base.RefValue{Int}`:
+        Count of column cache lookups and insertions; it orders `column_last_use`.
 - `column_cache_bytes::Base.RefValue{Int}`:
         Bytes held by `column_cache`.
 - `max_column_cache_bytes::Int`:
@@ -37,7 +39,8 @@ struct Tier2Cache
     tier2_factor_cache::Dict{PostContingencyNetwork, WoodburyFactors}
     tier2_row_caches::Dict{PostContingencyNetwork, RowCache{RowCacheValue}}
     column_cache::Dict{Tuple{Int, Int}, Vector{Float64}}
-    column_cache_order::DataStructures.OrderedSet{Tuple{Int, Int}}
+    column_last_use::Dict{Tuple{Int, Int}, Int}
+    column_clock::Base.RefValue{Int}
     column_cache_bytes::Base.RefValue{Int}
     max_column_cache_bytes::Int
     column_hits::Base.RefValue{Int}
@@ -53,7 +56,8 @@ Tier2Cache(max_column_cache_bytes::Int) = Tier2Cache(
     Dict{PostContingencyNetwork, WoodburyFactors}(),
     Dict{PostContingencyNetwork, RowCache{RowCacheValue}}(),
     Dict{Tuple{Int, Int}, Vector{Float64}}(),
-    DataStructures.OrderedSet{Tuple{Int, Int}}(),
+    Dict{Tuple{Int, Int}, Int}(),
+    Ref(0),
     Ref(0),
     max_column_cache_bytes,
     Ref(0),
@@ -63,7 +67,8 @@ Tier2Cache(max_column_cache_bytes::Int) = Tier2Cache(
 get_tier2_factor_cache(c::Tier2Cache) = c.tier2_factor_cache
 get_tier2_row_caches(c::Tier2Cache) = c.tier2_row_caches
 get_column_cache(c::Tier2Cache) = c.column_cache
-get_column_cache_order(c::Tier2Cache) = c.column_cache_order
+get_column_last_use(c::Tier2Cache) = c.column_last_use
+get_column_clock(c::Tier2Cache) = c.column_clock
 get_column_cache_bytes(c::Tier2Cache) = c.column_cache_bytes
 get_max_column_cache_bytes(c::Tier2Cache) = c.max_column_cache_bytes
 get_column_hits(c::Tier2Cache) = c.column_hits
@@ -83,12 +88,10 @@ The caller holds `core.solver_lock`.
 """
 function _cached_column!(cache::Tier2Cache, core::FactorCore, p::Int, q::Int)
     key = (min(p, q), max(p, q))
-    order = get_column_cache_order(cache)
     column = get(get_column_cache(cache), key, nothing)
     if !isnothing(column)
         get_column_hits(cache)[] += 1
-        delete!(order, key)
-        push!(order, key)
+        _touch_column!(cache, key)
         return column
     end
     get_column_misses(cache)[] += 1
@@ -118,20 +121,40 @@ end
 
 function _insert_column!(cache::Tier2Cache, key::Tuple{Int, Int}, column::Vector{Float64})
     columns = get_column_cache(cache)
-    order = get_column_cache_order(cache)
+    last_use = get_column_last_use(cache)
     bytes = get_column_cache_bytes(cache)
     limit = get_max_column_cache_bytes(cache)
     column_bytes = sizeof(column)
     column_bytes > limit && return
     while bytes[] + column_bytes > limit
-        oldest = first(order)
-        delete!(order, oldest)
+        oldest = _least_recently_used(last_use)
+        delete!(last_use, oldest)
         bytes[] -= sizeof(pop!(columns, oldest))
     end
     columns[key] = column
-    push!(order, key)
+    _touch_column!(cache, key)
     bytes[] += column_bytes
     return
+end
+
+function _touch_column!(cache::Tier2Cache, key::Tuple{Int, Int})
+    clock = get_column_clock(cache)
+    clock[] += 1
+    get_column_last_use(cache)[key] = clock[]
+    return
+end
+
+# Eviction follows a miss, so this linear scan costs far less than the sparse solve before it.
+function _least_recently_used(last_use::Dict{Tuple{Int, Int}, Int})
+    oldest = (0, 0)
+    oldest_use = typemax(Int)
+    for (key, use) in last_use
+        if use < oldest_use
+            oldest = key
+            oldest_use = use
+        end
+    end
+    return oldest
 end
 
 # --- Tier-1 factors and rows ---
@@ -459,7 +482,8 @@ function clear_caches!(cache::Tier2Cache)
     empty!(get_tier2_factor_cache(cache))
     empty!(get_tier2_row_caches(cache))
     empty!(get_column_cache(cache))
-    empty!(get_column_cache_order(cache))
+    empty!(get_column_last_use(cache))
+    get_column_clock(cache)[] = 0
     get_column_cache_bytes(cache)[] = 0
     get_column_hits(cache)[] = 0
     get_column_misses(cache)[] = 0

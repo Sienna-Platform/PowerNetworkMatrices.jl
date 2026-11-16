@@ -156,7 +156,9 @@ end
         @test column ≈ X[:, a] .- X[:, b] atol = 1e-12
     end
     @test Set(keys(PMC.get_column_cache(cache))) == Set([(2, 3), (3, 5)])
-    @test collect(PMC.get_column_cache_order(cache)) == [(2, 3), (3, 5)]
+    last_use = PMC.get_column_last_use(cache)
+    @test Set(keys(last_use)) == Set([(2, 3), (3, 5)])
+    @test last_use[(2, 3)] < last_use[(3, 5)]
     stats =
         PMC.cache_statistics(cache, Dict{PMC.NetworkModification, PMC.WoodburyFactors}(),
             Dict{PMC.NetworkModification, PMC.RowCache{PMC.RowCacheValue}}())
@@ -196,5 +198,6 @@ end
     @test PMC.cache_statistics(cache, woodbury, row_caches).columns ==
           (; entries = 0, bytes = 0, hits = 0, misses = 0)
     @test isempty(PMC.get_tier2_factor_cache(cache))
-    @test isempty(PMC.get_column_cache_order(cache))
+    @test isempty(PMC.get_column_last_use(cache))
+    @test PMC.get_column_clock(cache)[] == 0
 end
