@@ -227,7 +227,7 @@ end
     @test isapprox(mod_pst.arc_modifications[1].delta_b, -b_pst)
     @test isapprox(
         mod_pst.arc_modifications[1].delta_shift_injection,
-        -b_pst * PSY.get_α(PSY.get_circuit(pst)),
+        -b_pst * PSY.get_alpha(PSY.get_circuit(pst)),
     )
 end
 
@@ -259,7 +259,7 @@ end
         circuit = PSY.TransformerCircuit(; input_basis = u"CU",
             arc = arc,
             tap = 1.0,
-            α = 0.15,
+            alpha = 0.15,
             available = true,
             active_power_flow = 0.0,
             reactive_power_flow = 0.0,
@@ -405,7 +405,7 @@ end
             circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = arc,
                 tap = 1.05,
-                α = 0.0,
+                alpha = 0.0,
                 available = true,
                 active_power_flow = 0.0,
                 reactive_power_flow = 0.0,
@@ -454,7 +454,7 @@ end
         PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "ZI_T",
             circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-                arc = zi_arc, tap = 1.0, α = 0.0, available = true,
+                arc = zi_arc, tap = 1.0, alpha = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
             ),
@@ -508,7 +508,7 @@ end
         PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "ZI_T",
             circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-                arc = zi_arc, tap = 1.0, α = 0.0, available = true,
+                arc = zi_arc, tap = 1.0, alpha = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
             ),

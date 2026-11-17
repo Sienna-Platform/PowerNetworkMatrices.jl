@@ -108,7 +108,7 @@ end
                 available = true,
                 arc = arc23,
                 tap = 1.05,
-                α = α,
+                alpha = α,
                 r = 0.01,
                 x = 0.2,
                 active_power_flow = 0.0,

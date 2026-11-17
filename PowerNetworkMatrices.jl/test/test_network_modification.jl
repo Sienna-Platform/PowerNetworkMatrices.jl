@@ -752,7 +752,7 @@ function _mk_antiparallel_identical_pst_system(; alpha = 0.15, x = 0.2, tap = 1.
             PSY.TwoWindingTransformer(; input_basis = u"CU",
                 name = name,
                 circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-                    arc = arc, tap = tap, α = alpha, available = true,
+                    arc = arc, tap = tap, alpha = alpha, available = true,
                     active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                     base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = x,
                 ),
@@ -908,7 +908,7 @@ function _mk_shifted_grouped_chain_system(; alpha = 0.15, pst_x = 0.2)
         PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "PST_10_3",
             circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-                arc = arc, tap = 1.0, α = alpha, available = true,
+                arc = arc, tap = 1.0, alpha = alpha, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = pst_x,
             ),
@@ -1047,11 +1047,11 @@ end
 end
 
 # A lossless phase shifter named `name` on `arc`, with reactance `x` in system base.
-function _add_test_shifter!(sys, name, arc; α, x)
+function _add_test_shifter!(sys, name, arc; alpha, x)
     shifter = PSY.TwoWindingTransformer(; input_basis = u"CU",
         name = name,
         circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-            arc = arc, tap = 1.0, α = α, available = true,
+            arc = arc, tap = 1.0, alpha = alpha, available = true,
             active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 10.0,
             base_power = PSY.get_base_power(sys),
             base_voltage_primary = PSY.get_base_voltage(PSY.get_from(arc)),
@@ -1069,7 +1069,7 @@ end
     arc = PSY.get_arc(line)
     # These angles make the members' shift injections sum differently by order.
     shifters = PSY.ACTransmission[
-        _add_test_shifter!(sys, "shifter_$k", arc; α = α, x = 0.1) for
+        _add_test_shifter!(sys, "shifter_$k", arc; alpha = α, x = 0.1) for
         (k, α) in enumerate((0.01, 0.02, 0.03))
     ]
     vptdf = VirtualPTDF(sys)
@@ -1096,7 +1096,8 @@ end
 @testset "NetworkModification: entry after outage of every parallel member throws" begin
     sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
     line = first(sort!(collect(PSY.get_components(Line, sys)); by = PSY.get_name))
-    shifter = _add_test_shifter!(sys, "shifter_all", PSY.get_arc(line); α = 0.01, x = 0.1)
+    shifter =
+        _add_test_shifter!(sys, "shifter_all", PSY.get_arc(line); alpha = 0.01, x = 0.1)
     vptdf = VirtualPTDF(sys)
     nr = PNM.get_network_reduction_data(vptdf)
     arc_tuple = PNM.get_arc_tuple(line, nr)

@@ -53,7 +53,7 @@ function _mk_pst_triangle_system(; alpha = 0.15)
         PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "PST",
             circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-                arc = pst_arc, tap = 1.0, α = alpha, available = true,
+                arc = pst_arc, tap = 1.0, alpha = alpha, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0,
                 r = 0.0, x = 0.2,
@@ -78,7 +78,7 @@ function _mk_pst_series_system(; parallel_segment::Bool = false)
             PSY.TwoWindingTransformer(; input_basis = u"CU",
                 name = name,
                 circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-                    arc = arc, tap = 1.0, α = α, available = true,
+                    arc = arc, tap = 1.0, alpha = α, available = true,
                     active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                     base_power = 100.0, base_voltage_primary = 230.0,
                     r = 0.0, x = x,
@@ -197,8 +197,8 @@ end
     b_t1 = PNM.get_series_susceptance(t1, u"SU")
     b_t3 = PNM.get_series_susceptance(t3, u"SU")
     b_l23 = PNM.get_series_susceptance(l23, u"SU")
-    α_t1 = PSY.get_α(PSY.get_circuit(t1))
-    α_t3 = PSY.get_α(PSY.get_circuit(t3))
+    α_t1 = PSY.get_alpha(PSY.get_circuit(t1))
+    α_t3 = PSY.get_alpha(PSY.get_circuit(t3))
 
     b_seg_old = b_t3 + b_l23
     b_eq_old = 1 / (1 / b_t1 + 1 / b_seg_old)

@@ -1963,8 +1963,6 @@ end
         )
     end
 
-    # Disabled until the SeriesCompensator `bypassed` schema reaches PowerSystems psy6.
-    #=
     @testset "SeriesCompensator system round trip" begin
         sys, _ = compensated_sys5(-0.01)
         vptdf, restored, _ = _roundtrip_ptdf(sys)
@@ -1986,7 +1984,6 @@ end
             )
         end
     end
-    =#
 
     @testset "case10 branch outage keys are unique" begin
         sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")

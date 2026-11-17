@@ -218,7 +218,7 @@ end
     nrd = PNM.NetworkReductionData()
     lines = collect(get_components(Line, sys))
     pst = first(get_components(PSY.TwoWindingTransformer, sys))
-    PSY.set_α!(PSY.get_circuit(pst), 0.15)
+    PSY.set_alpha!(PSY.get_circuit(pst), 0.15)
 
     # One chain carries the shifter, the other is purely lossless line segments.
     shifted = PNM.BranchesSeries((1, 4))
@@ -461,7 +461,7 @@ end
         PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "ZI_T",
             circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-                arc = zi_arc, tap = 1.05, α = 0.0, available = true,
+                arc = zi_arc, tap = 1.05, alpha = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
             ),
@@ -496,7 +496,7 @@ end
         PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "TAP_T",
             circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-                arc = tap_arc, tap = 1.05, α = 0.0, available = true,
+                arc = tap_arc, tap = 1.05, alpha = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.2,
             ),
