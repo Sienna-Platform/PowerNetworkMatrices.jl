@@ -15,12 +15,14 @@ jobs:
           # environment sits next to `test`, so the relative `[sources]` paths still resolve.
           mkdir PowerNetworkMatrices.jl/perf_main
           cp PowerNetworkMatrices.jl/test/Project.toml PowerNetworkMatrices.jl/perf_main/
-          # Main may still hold the old layout (package at the root) or the new one.
+          # "Main" is the PR's base branch: main and psy6 pin incompatible PowerSystems lines.
+          # The base may still hold the old layout (package at the root) or the new one.
           url="https://github.com/${{ github.repository }}"
-          if curl -fsI "https://raw.githubusercontent.com/${{ github.repository }}/main/PowerNetworkMatrices.jl/Project.toml" > /dev/null; then
-            julia --project=PowerNetworkMatrices.jl/perf_main -e 'using Pkg; Pkg.add([PackageSpec(url=ARGS[1], rev="main", subdir="PowerMatricesCore.jl"), PackageSpec(url=ARGS[1], rev="main", subdir="PowerNetworkMatrices.jl")]); Pkg.instantiate()' "$url"
+          base="${{ github.base_ref }}"
+          if curl -fsI "https://raw.githubusercontent.com/${{ github.repository }}/$base/PowerNetworkMatrices.jl/Project.toml" > /dev/null; then
+            julia --project=PowerNetworkMatrices.jl/perf_main -e 'using Pkg; Pkg.add([PackageSpec(url=ARGS[1], rev=ARGS[2], subdir="PowerMatricesCore.jl"), PackageSpec(url=ARGS[1], rev=ARGS[2], subdir="PowerNetworkMatrices.jl")]); Pkg.instantiate()' "$url" "$base"
           else
-            julia --project=PowerNetworkMatrices.jl/perf_main -e 'using Pkg; Pkg.add(PackageSpec(url=ARGS[1], rev="main")); Pkg.instantiate()' "$url"
+            julia --project=PowerNetworkMatrices.jl/perf_main -e 'using Pkg; Pkg.add(PackageSpec(url=ARGS[1], rev=ARGS[2])); Pkg.instantiate()' "$url" "$base"
           fi
           julia --project=PowerNetworkMatrices.jl/test -e 'using Pkg; Pkg.develop([PackageSpec(path="PowerMatricesCore.jl"), PackageSpec(path="PowerNetworkMatrices.jl")]); Pkg.instantiate()'
       - name: Run Performance Tests
