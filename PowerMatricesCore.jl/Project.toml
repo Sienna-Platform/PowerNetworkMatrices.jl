@@ -1,6 +1,6 @@
 name = "PowerMatricesCore"
 uuid = "d468fdeb-a9d8-47d1-a5e6-1c14dd2e267b"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["SIENNA TEAM"]
 
 [deps]
