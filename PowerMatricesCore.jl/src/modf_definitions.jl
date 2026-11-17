@@ -218,11 +218,14 @@ Computed from van Dijk et al. Eq. 29:
     B_m⁻¹ = B_r⁻¹ - B_r⁻¹ U (A⁻¹ + U⊤ B_r⁻¹ U)⁻¹ U⊤ B_r⁻¹
 
 # Fields
-- `Z::Matrix{Float64}`: B⁻¹U matrix (n_bus × M), one column per modified arc
-- `W_inv::Matrix{Float64}`: Pre-inverted W = (A⁻¹ + U⊤B⁻¹U)⁻¹ (M × M). For M ≤ 2, computed analytically; for M > 2, computed via LU factorization.
-- `arc_indices::Vector{Int}`: Arc indices of modified arcs
-- `delta_b::Vector{Float64}`: Susceptance changes per modified arc
-- `arc_out::Vector{Bool}`: Per modified arc, whether the modification opens every member of
+- `Z::Matrix{Float64}`: B⁻¹U matrix (n_bus × M), one column per changed arc. A changed arc is
+  a modified arc with a nonzero `delta_b`, and M is the number of changed arcs.
+- `W_inv::Matrix{Float64}`: Pre-inverted W = (A⁻¹ + U⊤B⁻¹U)⁻¹ (M × M). For M ≤ 2, a closed
+  form gives it; for M > 2, the LU of `S = diag(signed Δb)·W` gives it. For an island, it is
+  a pseudo-inverse.
+- `arc_indices::Vector{Int}`: Arc indices of the changed arcs
+- `delta_b::Vector{Float64}`: Susceptance change per changed arc
+- `arc_out::Vector{Bool}`: Per changed arc, whether the modification opens every member of
   the arc. Set from member counts, because the summed `delta_b` of a lossy parallel group
   does not cancel the arc susceptance exactly.
 - `is_islanding::Bool`: Whether this contingency islands the network

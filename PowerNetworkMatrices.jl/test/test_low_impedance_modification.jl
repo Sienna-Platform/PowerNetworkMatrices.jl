@@ -154,60 +154,9 @@ function _bridge_mesh(; with_bridge = true, skip = String[])
     return sys
 end
 
-# An island and a low-impedance arc in one modification: the pseudo-inverse must not drop the
-# low-impedance direction, so rows inside the surviving mesh match a rebuild of the mesh.
-function _bridge_and_low_impedance_rows_match(opened::Vector{String})
-    sys = _bridge_mesh()
-    vptdf = VirtualPTDF(sys)
-    mod = NetworkModification(vptdf, sys, [_transmission(sys, n) for n in opened])
-    @test compute_woodbury_factors(vptdf, mod).is_islanding
-    ref = PTDF(_bridge_mesh(; with_bridge = false, skip = opened))
-    ref_arcs = PNM.get_arc_lookup(ref)
-    ref_buses = PNM.get_bus_lookup(ref)
-    bus_axis = PNM.get_bus_axis(vptdf)
-    for (arc, _) in ref_arcs
-        row = vptdf[arc, mod]
-        for (j, bus) in enumerate(bus_axis)
-            if bus == 4
-                @test isapprox(row[j], 0.0; atol = 1e-8)
-            else
-                @test isapprox(row[j], ref[ref_arcs[arc], ref_buses[bus]]; atol = 1e-8)
-            end
-        end
-    end
-    return
-end
-
-@testset "Islanding with a low-impedance arc keeps the arc's direction (M = 2)" begin
-    _bridge_and_low_impedance_rows_match(["L12", "L34"])
-end
-
-@testset "Islanding with a low-impedance arc keeps the arc's direction (M > 2)" begin
-    _bridge_and_low_impedance_rows_match(["L12", "L25", "L34"])
-end
-
-# Ring 1-2-3-4. Bus 5 joins the ring through "X5" (reactance `x`, to bus 1) and a 0.1 line (to
-# bus 2); bus 6 the same through "X6" to bus 3 and a 0.1 line to bus 4. With `bridge`, bus 7
-# hangs off bus 1 on "B17".
-function _two_low_x_ring(x; bridge = false, with_bus7 = bridge, skip = String[])
-    sys, buses = _mk_bus_system(7)
-    lines =
-        [("R12", 1, 2, 0.1), ("R23", 2, 3, 0.1), ("R34", 3, 4, 0.1), ("R41", 4, 1, 0.1),
-            ("X5", 1, 5, x), ("S25", 2, 5, 0.1), ("X6", 3, 6, x), ("S46", 4, 6, 0.1)]
-    bridge && push!(lines, ("B17", 1, 7, 0.2))
-    for (name, i, j, xl) in lines
-        name in skip && continue
-        arc = PSY.Arc(buses[i], buses[j])
-        PSY.add_component!(sys, arc)
-        _add_test_line!(sys, name, arc, 1e-4, xl)
-    end
-    with_bus7 || PSY.remove_component!(sys, buses[7])
-    return sys
-end
-
-# Rows of `vptdf` after `opened` against a PTDF of the network rebuilt without them. A bus the
-# rebuild leaves out must have a zero entry.
-function _two_low_x_rows_error(vptdf, mod, ref)
+# Rows of `vptdf` after `mod` against `ref`, a PTDF of the network rebuilt without the opened
+# lines. A bus the rebuild leaves out must have a zero entry.
+function _rows_error(vptdf, mod, ref)
     ref_arcs = PNM.get_arc_lookup(ref)
     ref_buses = PNM.get_bus_lookup(ref)
     err = 0.0
@@ -224,15 +173,54 @@ function _two_low_x_rows_error(vptdf, mod, ref)
     return err
 end
 
+# An island and a low-impedance arc in one modification: the pseudo-inverse must not drop the
+# low-impedance direction, so rows inside the surviving mesh match a rebuild of the mesh.
+function _bridge_and_low_impedance_rows_match(opened::Vector{String})
+    sys = _bridge_mesh()
+    vptdf = VirtualPTDF(sys)
+    mod = NetworkModification(vptdf, sys, [_transmission(sys, n) for n in opened])
+    @test compute_woodbury_factors(vptdf, mod).is_islanding
+    ref = PTDF(_bridge_mesh(; with_bridge = false, skip = opened))
+    @test _rows_error(vptdf, mod, ref) < 1e-8
+    return
+end
+
+@testset "Islanding with a low-impedance arc keeps the arc's direction (M = 2)" begin
+    _bridge_and_low_impedance_rows_match(["L12", "L34"])
+end
+
+@testset "Islanding with a low-impedance arc keeps the arc's direction (M > 2)" begin
+    _bridge_and_low_impedance_rows_match(["L12", "L25", "L34"])
+end
+
+# Ring 1-2-3-4. Bus 5 joins the ring through "X5" (reactance `x`, to bus 1) and a 0.1 line (to
+# bus 2); bus 6 the same through "X6" to bus 3 and a 0.1 line to bus 4. With `bridge`, bus 7
+# hangs off bus 1 on "B17".
+function _two_low_x_ring(x; bridge = false, skip = String[])
+    sys, buses = _mk_bus_system(7)
+    lines =
+        [("R12", 1, 2, 0.1), ("R23", 2, 3, 0.1), ("R34", 3, 4, 0.1), ("R41", 4, 1, 0.1),
+            ("X5", 1, 5, x), ("S25", 2, 5, 0.1), ("X6", 3, 6, x), ("S46", 4, 6, 0.1)]
+    bridge && push!(lines, ("B17", 1, 7, 0.2))
+    for (name, i, j, xl) in lines
+        name in skip && continue
+        arc = PSY.Arc(buses[i], buses[j])
+        PSY.add_component!(sys, arc)
+        _add_test_line!(sys, name, arc, 1e-4, xl)
+    end
+    bridge || PSY.remove_component!(sys, buses[7])
+    return sys
+end
+
 @testset "Two low-impedance arcs that are not bridges do not island (M = 2)" begin
     for x in (1e-4, 1e-6, 1e-8)
-        sys = _two_low_x_ring(x; with_bus7 = false)
+        sys = _two_low_x_ring(x)
         vptdf = VirtualPTDF(sys)
         opened = ["X5", "X6"]
         mod = NetworkModification(vptdf, sys, [_transmission(sys, n) for n in opened])
         @test !compute_woodbury_factors(vptdf, mod).is_islanding
-        ref = PTDF(_two_low_x_ring(x; with_bus7 = false, skip = opened))
-        @test _two_low_x_rows_error(vptdf, mod, ref) < 1e-8
+        ref = PTDF(_two_low_x_ring(x; skip = opened))
+        @test _rows_error(vptdf, mod, ref) < 1e-8
     end
 end
 
@@ -243,5 +231,21 @@ end
     mod = NetworkModification(vptdf, sys, [_transmission(sys, n) for n in opened])
     @test compute_woodbury_factors(vptdf, mod).is_islanding
     ref = PTDF(_two_low_x_ring(1e-6; skip = opened))
-    @test _two_low_x_rows_error(vptdf, mod, ref) < 1e-8
+    @test _rows_error(vptdf, mod, ref) < 1e-8
+end
+
+@testset "A susceptance change on an arc with no susceptance raises an error" begin
+    # "ZI2" (x = -0.1) in parallel with "ZI1" (x = 0.1): the arc 2-3 has no DC susceptance,
+    # and the outage of "ZI2" alone gives it a nonzero delta_b.
+    sys = _mk_zi_parallel_sys([(1e-4, 0.1), (1e-4, -0.1)])
+    vptdf = VirtualPTDF(sys)
+    mod = NetworkModification(vptdf, sys, [_transmission(sys, "ZI2")])
+    @test !iszero(only(mod.arc_modifications).delta_b)
+    @test_throws r"zero DC susceptance" compute_woodbury_factors(vptdf, mod)
+    vmodf = VirtualMODF(sys)
+    @test_throws r"zero DC susceptance" populate_cache(
+        vmodf,
+        [ContingencySpec(1, mod)];
+        monitored = PNM.get_arc_axis(vptdf),
+    )
 end

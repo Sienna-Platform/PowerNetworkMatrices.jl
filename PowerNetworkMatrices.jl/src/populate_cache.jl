@@ -218,21 +218,9 @@ function _woodbury_factors_from_base(
     Z = Matrix{Float64}(undef, n_bus, length(kept))
     for (j, k) in enumerate(kept)
         e = modifications[k].arc_index
-        b_e = arc_sus[e]
-        col = base_full[e]
-        @inbounds for i in 1:n_bus
-            Z[i, j] = col[i] / b_e
-        end
+        Z[:, j] .= base_full[e] ./ arc_sus[e]
     end
-    return _woodbury_factors_from_Z(
-        Z,
-        BA,
-        signs,
-        arc_sus,
-        modifications,
-        kept,
-        arc_out[kept],
-    )
+    return _woodbury_factors_from_Z(Z, BA, signs, arc_sus, modifications, kept, arc_out)
 end
 
 """
