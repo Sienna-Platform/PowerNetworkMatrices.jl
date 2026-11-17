@@ -10,6 +10,7 @@ import SparseArrays: rowvals, nzrange
 import HDF5
 import LinearAlgebra
 import LinearAlgebra: ldiv!, mul!, I, dot
+using PrecompileTools: @setup_workload, @compile_workload
 
 """Supertype of the cached sparse-factorization backends (`KLULinSolveCache`,
 `AAFactorCache`, and `PardisoLinSolveCache`).
@@ -67,5 +68,7 @@ include("virtual_workers.jl")
 
 # Forward declaration for the function that `MKLPardisoExt` defines.
 function _calculate_PTDF_matrix_MKLPardiso end
+
+include("precompile.jl")
 
 end
