@@ -53,8 +53,8 @@ function TopologySchedule(
     end
     islands = Vector{Vector{Int}}[]
     reference_islands = Set{Int}[]
-    for out in vcat([Set{Tuple{Int, Int}}()], arcs_out)
-        labeled, refs = _label_islands(vmodf, out)
+    for mod in vcat([_BASE_NETWORK], modifications)
+        labeled, refs = _label_islands(vmodf, mod)
         push!(islands, labeled)
         push!(reference_islands, refs)
     end
@@ -101,24 +101,27 @@ function _fully_out_arcs(vmodf::VirtualMODF, mod::NetworkModification)
     )
 end
 
-function _label_islands(vmodf::VirtualMODF, arcs_out::Set{Tuple{Int, Int}})
+# The island labels are the Woodbury kernel's, so a bus is outside the reference islands here
+# exactly when the kernel zeroes its entries.
+function _label_islands(vmodf::VirtualMODF, mod::NetworkModification)
+    core = get_core(vmodf)
     bus_ax = get_bus_axis(vmodf)
-    bus_lookup = get_bus_lookup(vmodf)
-    uf = collect(1:length(bus_ax))
-    for arc in get_arc_axis(vmodf)
-        arc in arcs_out && continue
-        union_sets!(uf, bus_lookup[arc[1]], bus_lookup[arc[2]])
-    end
+    labels = _post_contingency_bus_labels(
+        core.BA,
+        core.arc_susceptances,
+        _arc_modification_vector(mod),
+        length(bus_ax),
+    )
     members = Dict{Int, Vector{Int}}()
     for (i, bus) in enumerate(bus_ax)
-        push!(get!(Vector{Int}, members, get_representative(uf, i)), bus)
+        push!(get!(Vector{Int}, members, labels[i]), bus)
     end
     islands = sort!(collect(values(members)); by = first)
     island_of_bus = Dict{Int, Int}(
         bus => k for (k, island) in enumerate(islands) for bus in island
     )
     reference_islands = Set{Int}(
-        island_of_bus[bus_ax[position]] for position in get_ref_bus_position(vmodf)
+        island_of_bus[bus_ax[position]] for position in PMC._ref_bus_positions(core)
     )
     return islands, reference_islands
 end
