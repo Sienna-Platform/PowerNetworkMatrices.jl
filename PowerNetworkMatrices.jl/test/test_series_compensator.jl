@@ -1,5 +1,3 @@
-# Disabled until the SeriesCompensator `bypassed` schema reaches PowerSystems psy6.
-#=
 # A series capacitor inserted into one line of the 5-bus case: line `from -> mid`, then the
 # series compensator `mid -> to`. DC flows must match the line with the capacitor folded into it.
 
@@ -64,4 +62,3 @@ end
         PTDF(compensated), PTDF(reference), reference, PNM.get_arc_tuple(ref_line),
     )
 end
-=#

@@ -980,7 +980,7 @@ function build_transformer_twin_chain_system()
         PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "T_3_10",
             circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-                arc = arc, tap = 1.05, α = 0.0, available = true,
+                arc = arc, tap = 1.05, alpha = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0,
                 r = 0.008, x = 0.17,
@@ -1000,7 +1000,7 @@ function _add_corrected_transformer!(sys::PSY.System, name::String, from::Int, t
     transformer = PSY.TwoWindingTransformer(; input_basis = u"CU",
         name = name,
         circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-            arc = arc, tap = 1.05, α = 0.0, available = true,
+            arc = arc, tap = 1.05, alpha = 0.0, available = true,
             active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
             base_power = 100.0, base_voltage_primary = 230.0,
             r = 0.008, x = 0.17,
@@ -1206,7 +1206,7 @@ function _mk_detached_pst_fixture()
         return PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = name,
             circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-                arc = Arc(; from = b1, to = b2), tap = 1.0, α = α,
+                arc = Arc(; from = b1, to = b2), tap = 1.0, alpha = α,
                 available = true, active_power_flow = 0.0, reactive_power_flow = 0.0,
                 rating = 1.0, base_power = 100.0, base_voltage_primary = 230.0,
                 r = 0.0, x = 0.2,
@@ -1284,7 +1284,7 @@ function _mk_line_pst_parallel_system(; pst_r = 0.0, pst_x = 0.2)
         PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "PST",
             circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-                arc = pst_arc, tap = 1.0, α = 0.15, available = true,
+                arc = pst_arc, tap = 1.0, alpha = 0.15, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0,
                 r = pst_r, x = pst_x,
@@ -1441,7 +1441,7 @@ function _bm_add_pst!(sys, name, arc, x, α)
     PSY.add_component!(sys,
         PSY.TwoWindingTransformer(; input_basis = u"CU", name = name,
             circuit = PSY.TransformerCircuit(; input_basis = u"CU", arc = arc, tap = 1.0,
-                α = α, available = true, active_power_flow = 0.0,
+                alpha = α, available = true, active_power_flow = 0.0,
                 reactive_power_flow = 0.0, rating = 1.0, base_power = 100.0,
                 base_voltage_primary = 230.0, r = 0.0, x = x),
             magnetizing_shunt = Complex(0.0, 0.0)))
@@ -1637,11 +1637,11 @@ _arc_numbers(b) = (
 
 # A lossless phase-shifting transformer named "shifter" on `arc`, with reactance `x` in
 # system base.
-function _add_shifter!(sys, arc, x; α)
+function _add_shifter!(sys, arc, x; alpha)
     shifter = PSY.TwoWindingTransformer(; input_basis = u"CU",
         name = "shifter",
         circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-            arc = arc, tap = 1.0, α = α, available = true,
+            arc = arc, tap = 1.0, alpha = alpha, available = true,
             active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 10.0,
             base_power = PSY.get_base_power(sys),
             base_voltage_primary = PSY.get_base_voltage(PSY.get_from(arc)),
@@ -1666,7 +1666,7 @@ function _c_sys14_for_row_batches()
         to = only(b for b in PSY.get_components(PSY.ACBus, sys) if PSY.get_number(b) == 3),
     )
     PSY.add_component!(sys, shifter_arc)
-    _add_shifter!(sys, shifter_arc, 0.2; α = 0.1)
+    _add_shifter!(sys, shifter_arc, 0.2; alpha = 0.1)
     return sys
 end
 

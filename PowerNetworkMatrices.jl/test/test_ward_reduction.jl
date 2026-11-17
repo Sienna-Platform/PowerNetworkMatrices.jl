@@ -400,7 +400,7 @@ end
             circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = arc,
                 tap = 1.0,
-                α = 0.2,
+                alpha = 0.2,
                 available = true,
                 active_power_flow = 0.0,
                 reactive_power_flow = 0.0,

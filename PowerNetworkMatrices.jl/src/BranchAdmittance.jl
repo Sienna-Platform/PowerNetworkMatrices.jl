@@ -123,7 +123,7 @@ end
 
 # A circuit's series shift is its stored α. Internal: a circuit reaches the public accessor
 # through its transformer, or through `ThreeWindingTransformerCircuit` at three windings.
-_circuit_phase_shift(c::PSY.TransformerCircuit) = PSY.get_α(c)
+_circuit_phase_shift(c::PSY.TransformerCircuit) = PSY.get_alpha(c)
 
 function get_series_phase_shift(t::PSY.TwoWindingTransformer)
     return _circuit_phase_shift(PSY.get_circuit(t))
@@ -275,7 +275,7 @@ function _circuit_equivalent_branch(
     return EquivalentBranch(
         r, x,
         sh.g_fr, sh.b_fr, sh.g_to, sh.b_to,
-        PSY.get_tap(circuit), PSY.get_α(circuit),
+        PSY.get_tap(circuit), PSY.get_alpha(circuit),
     )
 end
 
@@ -341,7 +341,7 @@ function _evaluate_correction_table(
         x = abs(PSY.get_tap(circuit))
         curve = PSY.get_tap_ratio_correction_curve(ict)
     else
-        x = PSY.get_α(circuit)
+        x = PSY.get_alpha(circuit)
         curve = PSY.get_phase_angle_correction_curve(ict)
     end
     return _interpolate_correction_factor(curve, x)

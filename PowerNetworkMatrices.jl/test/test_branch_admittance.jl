@@ -224,10 +224,10 @@ end
     )
     @test PSY.is_phase_shifting(t)
     windings = PSY.get_circuits(t)
-    winding_number = findfirst(w -> !iszero(PSY.get_α(w)), windings)
+    winding_number = findfirst(w -> !iszero(PSY.get_alpha(w)), windings)
     @test winding_number !== nothing
     tw = PNM.ThreeWindingTransformerCircuit(t, winding_number)
-    @test !iszero(PSY.get_α(PSY.get_circuits(t)[winding_number]))
+    @test !iszero(PSY.get_alpha(PSY.get_circuits(t)[winding_number]))
 
     # (a) Pinned model: reactance-only `1/x` of the winding's star leg, divided by the
     # winding tap, read back through the wrapper.
@@ -603,7 +603,7 @@ end
     t = PSY.TwoWindingTransformer(; input_basis = u"CU",
         name = "T13",
         circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-            arc = arc2, tap = 1.05, α = 0.0, available = true,
+            arc = arc2, tap = 1.05, alpha = 0.0, available = true,
             active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
             base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.2,
         ),
@@ -658,7 +658,7 @@ end
         PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "ZI_TAP",
             circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-                arc = zi_arc, tap = tap, α = 0.0, available = true,
+                arc = zi_arc, tap = tap, alpha = 0.0, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
             ),

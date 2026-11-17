@@ -29,16 +29,16 @@ end
 
     t = first(shifters)
     windings = PSY.get_circuits(t)
-    winding_number = findfirst(w -> !iszero(PSY.get_α(w)), windings)
+    winding_number = findfirst(w -> !iszero(PSY.get_alpha(w)), windings)
     @test !isnothing(winding_number)
     tw = PNM.ThreeWindingTransformerCircuit(t, winding_number)
-    @test PNM.get_series_phase_shift(tw) ≈ PSY.get_α(windings[winding_number])
+    @test PNM.get_series_phase_shift(tw) ≈ PSY.get_alpha(windings[winding_number])
 
     # Not every phase-shifting transformer has an idle winding, so search across all of
     # them for a genuine zero-α winding rather than assuming one on `t`.
     zero_tw = nothing
     for candidate in shifters
-        zero_ix = findfirst(w -> iszero(PSY.get_α(w)), PSY.get_circuits(candidate))
+        zero_ix = findfirst(w -> iszero(PSY.get_alpha(w)), PSY.get_circuits(candidate))
         if !isnothing(zero_ix)
             zero_tw = PNM.ThreeWindingTransformerCircuit(candidate, zero_ix)
             break
@@ -132,7 +132,7 @@ end
             circuit = PSY.TransformerCircuit(; input_basis = u"CU",
                 arc = arc,
                 tap = 1.05,
-                α = 0.15,
+                alpha = 0.15,
                 available = true,
                 active_power_flow = 0.0,
                 reactive_power_flow = 0.0,
@@ -185,7 +185,7 @@ end
         circuit = PSY.TransformerCircuit(; input_basis = u"CU",
             arc = PSY.Arc(nothing),
             tap = 1.0,
-            α = 0.2,
+            alpha = 0.2,
             available = true,
             active_power_flow = 0.0,
             reactive_power_flow = 0.0,
@@ -313,7 +313,7 @@ end
     pst = PSY.TwoWindingTransformer(; input_basis = u"CU",
         name = "PST_ZI",
         circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-            arc = PSY.get_arc(zi_arc), tap = 1.0, α = 0.15, available = true,
+            arc = PSY.get_arc(zi_arc), tap = 1.0, alpha = 0.15, available = true,
             active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
             base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.2,
         ),
@@ -343,7 +343,7 @@ end
         PSY.TwoWindingTransformer(; input_basis = u"CU",
             name = "PST_ZI",
             circuit = PSY.TransformerCircuit(; input_basis = u"CU",
-                arc = pst_arc, tap = 1.0, α = 0.15, available = true,
+                arc = pst_arc, tap = 1.0, alpha = 0.15, available = true,
                 active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 1.0,
                 base_power = 100.0, base_voltage_primary = 230.0, r = 0.0, x = 0.0,
             ),
