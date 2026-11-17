@@ -1,6 +1,11 @@
 # PowerNetworkMatrices.jl (PNM) — psy6 branch
 
-The linear-algebra layer of the psy6 stack: Ybus, Incidence/Adjacency, BA/ABA, PTDF, LODF, lazy Virtual{PTDF,LODF,MODF}, contingency machinery (`ContingencySpec`, Woodbury updates), and **network reductions, which PNM owns exclusively**. Purely computational — the data model is PSY's. Layer 2; consumed by PowerFlows and PowerOperationsModels. Platform conventions: the `sienna-psy6` skill; workspace architecture: the psy6 workspace root `CLAUDE.md`.
+The linear-algebra layer of the psy6 stack: Ybus, Incidence/Adjacency, BA/ABA, PTDF, LODF, lazy Virtual{PTDF,LODF,MODF}, contingency machinery (`ContingencySpec`, Woodbury updates), and **network reductions, which PNM owns exclusively**. Purely computational — the data model is PSY's. Layer 2; consumed by PowerFlows and PowerOperationsModels.
+
+The shared Sienna rules load from the import below; the `sienna-dev` skill holds the cross-package
+context; the `sienna-dev` and `sienna-reviewer` subagents implement and review.
+
+@Sienna.md
 
 ## The ownership contract (defining psy6 fact)
 
@@ -8,7 +13,7 @@ The linear-algebra layer of the psy6 stack: Ybus, Incidence/Adjacency, BA/ABA, P
 
   - `get_network_reduction_data(ybus)` → `NetworkReductionData`
   - map getters: `get_direct_branch_map`, `get_series_branch_map`, `get_bus_reduction_map`, …
-  - reduced arcs source equivalent admittance/ratings from the `BranchesSeries`/`BranchesParallel`/`EquivalentBranch` aggregators; **aggregators return system base** (consumers need no extra `PSY.SU`).
+  - reduced arcs source equivalent admittance/ratings from the `BranchesSeries`/`BranchesParallel`/`EquivalentBranch` aggregators; **aggregators return per-unit values on the system base** (`u"SU"`); consumers do not convert them.
 
 **Aggregates dispatch on `AbstractReductionAggregate`** (`definitions.jl`), whose only subtypes are `AbstractBranchesParallel` (→ `BranchesParallel{T}`, `MixedBranchesParallel`) and `BranchesSeries`. It exists because aggregates subtype `PSY.ACTransmission`: without the intermediate layer they match blanket `::PSY.ACTransmission` methods written for a single physical branch — silently, whenever the blanket method returns a value instead of erroring (`common.jl` `_segment_has_single_pi` answering `true` unconditionally was exactly this). Rules:
 
@@ -20,7 +25,7 @@ The linear-algebra layer of the psy6 stack: Ybus, Incidence/Adjacency, BA/ABA, P
 Degree-two chains are ordinary aggregates, not a separate structure:
 
   - Chains that resolve to the same *unordered* endpoint pair combine into one `BranchesParallel{BranchesSeries}` routed to `parallel_branch_map`, so traversal direction cannot split a sibling group across two arcs.
-    A chain's endpoint pair is an ordered tuple and which way it is traversed depends on interior bus numbering, so siblings can present as `(A,B)` and `(B,A)`; keying them by the ordered pair either overwrote one sibling or let both reach the branch maps, and `_apply_d2_chain_ybus!` assigned off-diagonals with `=` while accumulating diagonals with `+=`, so the second sibling silently replaced the first's `Y12`.
+    A chain's endpoint pair is an ordered tuple and which way it is traversed depends on interior bus numbering, so siblings can present as `(A,B)` and `(B,A)`; keying them by the ordered pair either overwrote one sibling or let both reach the branch maps, and the old chain Ybus code assigned off-diagonals with `=` while accumulating diagonals with `+=`, so the second sibling silently replaced the first's `Y12`.
   - `BranchesSeries` carries its own `arc_key`, giving it an arc identity so it can either stand alone in `series_branch_map` or sit as a member of a `BranchesParallel`.
     Every method that reads that identity dispatches on `AbstractReductionAggregate`, and `_subset_two_port` resolves members with `nr`. `ybus_branch_entries` takes `nr` in every signature — the `nr`-less single-branch overload was deleted because it returned an impedance-correction-free π-model, silently disagreeing with the stamped Ybus.
   - A grouped chain is **not** in `series_branch_map`, so a series-map membership test is false for it and `BA_Matrix` takes its susceptance from the general `Y_ft`/`Y_tf` path rather than from components. Downstream code keyed on series-map membership misses these chains.
@@ -38,12 +43,12 @@ A parent whose degree drops to one as its stubs are removed is re-enqueued and p
 Two consequences: `final_arc_map` is built in a pass *after* the peel, keyed off `removed`, because under cascade a hub can absorb a stub and then be eliminated itself — and an arc losing both endpoints correctly gets no diagonal correction at all.
 `_surviving_root!` resolves each removed bus to its surviving root with path compression; the per-step reduction-set merge it replaced was O(chain²) in time *and* memory (3.6 GB on a 20k path).
 
-Known weak spots (2026-07-02 audit) — don't extend them:
+Known weak spots — do not extend them:
 
   - Reduction invariants (forward/reverse map sync) are never checked; islanding during radial reduction only `@warn`s (`radial_reduction.jl`, the `iszero(parent)` arm). New reduction code should validate loudly.
   - PF and POM currently iterate `NetworkReductionData` internal maps directly; prefer adding accessor API here over widening that reach.
 
-## Transformers are circuits, not types (PSY `d19f3244f`, PR #1714)
+## Transformers are circuits, not types
 
 PSY replaced five concrete transformer types with two, and moved all series electrical data one level down. `Transformer2W`, `TapTransformer`, `PhaseShiftingTransformer` → **`TwoWindingTransformer`**; `Transformer3W`, `PhaseShiftingTransformer3W` → **`ThreeWindingTransformer`**. Those two names used to be abstract supertypes and are now concrete structs — old `<: TwoWindingTransformer` dispatch silently changes meaning rather than erroring.
 
@@ -55,26 +60,26 @@ Series data lives on **`PSY.TransformerCircuit <: DeviceParameter`** (not a `Com
   - `get_arc` exists for `TwoWindingTransformer` (delegating to its circuit) but **not** for `ThreeWindingTransformer` — it has three arcs. `get_from_bus`/`get_to_bus` inherit that limitation.
   - No `nothing`-sentinel confusion: 3W pairwise PSS/E fields (`r_12`,`x_12`,`r_23`,`x_23`,`r_31`,`x_31`,`base_power_12/23/31`) are legitimately `Union{Nothing,Float64}` and validated **all-or-none**. `base_power_13` was renamed `base_power_31`.
 
-**PNM now owns the series-impedance API PSY deleted.** `get_series_susceptance` moved here as two public methods: the blanket `ACTransmission` one (which also covers `TwoWindingTransformer`, `BranchesParallel`, and `BranchesSeries`) and the `ThreeWindingTransformerCircuit` arm. The per-type arithmetic lives in `_series_susceptance_raw` (`BranchAdmittance.jl`): the `ACTransmission` `1/x`, the tap-dividing `TransformerCircuit` leaf, delegating arms (`TwoWindingTransformer`, `ThreeWindingTransformerCircuit`), and the two aggregate reductions (`BranchesParallel.jl` sums, `BranchesSeries.jl` reciprocal-sums). There is no PSY fallback to defer to; a missing method is PNM's bug. The winding-group `get_α` derivations also went away — `get_α(circuit)` is now a plain stored field.
+**PNM owns the series-impedance API; PSY has none.** `get_series_susceptance` has two public methods here: the blanket `ACTransmission` one (which also covers `TwoWindingTransformer`, `BranchesParallel`, and `BranchesSeries`) and the `ThreeWindingTransformerCircuit` arm. The per-type arithmetic lives in `_series_susceptance_raw` (`BranchAdmittance.jl`): the `ACTransmission` `1/x`, the tap-dividing `TransformerCircuit` leaf, delegating arms (`TwoWindingTransformer`, `ThreeWindingTransformerCircuit`), and the two aggregate reductions (`BranchesParallel.jl` sums, `BranchesSeries.jl` reciprocal-sums). There is no PSY fallback to defer to; a missing method is PNM's bug. The winding-group `get_α` derivations also went away — `get_α(circuit)` is now a plain stored field.
 
 The `ThreeWindingTransformerCircuit` arm is load-bearing: the wrapper subtypes `PSY.ACTransmission`, not `PSY.TransformerCircuit`, so deleting it silently falls through to the **tap-free** blanket method rather than erroring.
 
 `TransformerCircuit` carries its own units anchor in `base_value` (populated on `add_component!` via `set_units_setting!`, never serialized) and has hand-written `IS.serialize`/`IS.deserialize` that encode `arc` as a UUID. A circuit obtained from a detached transformer has `base_value === nothing` and its explicit-units getters will misbehave — build systems through `add_component!` before reading impedances.
 
-**Orientation:** arc tuples are (from, to); anti-parallel members are sign-flipped during Ybus assembly (`Ybus.jl:~487-513`); POM applies `get_ptdf_orientation_sign` only in area_interchange. Orientation knowledge is scattered (audit candidate 6: normalize at construction under one PNM-owned convention) — when touching signs, check all three sites.
+**Orientation:** arc tuples are (from, to); `_subset_two_port` (`src/common.jl`) swaps the two-port of a member whose arc disagrees with the group frame. POM applies `get_ptdf_orientation_sign` in `area_interchange.jl` and `security_constrained_injectors.jl`. Orientation knowledge is scattered; when you change signs, check all three sites.
 
-**Units in assembly:** Ybus assembly deliberately mixes bases — `GenericArcImpedance` reads `PSY.DU` (`Ybus.jl:~438-474`, correct because impedances are per-unitized on device base before conversion), while shunts/admittances elsewhere read `PSY.SU`. This is intentional but subtle; never change a unit argument here without a numeric regression test.
+**Units in assembly:** Ybus assembly reads `u"SU"`. One exception: `get_equivalent_rating(::PSY.GenericArcImpedance)` (`src/BranchesSeries.jl`) reads `u"CU"`, because a detached Ward equivalent has no system base. Never change a unit argument here without a numeric regression test.
 
 ## Source layout
 
 The PNM files below are in `PowerNetworkMatrices.jl/src/`, its tests in `PowerNetworkMatrices.jl/test/`, its manual in `PowerNetworkMatrices.jl/docs/`.
 
-  - Core: `PowerNetworkMatrix.jl` (abstract `PowerNetworkMatrix{T} <: AbstractArray{T,2}`), `definitions.jl` (`AUTO_TOLERANCE_BUS_LIMIT = 2000`, `ZERO_IMPEDANCE_X_EPSILON = 1e-6`, `abstract type AbstractReductionAggregate`)
+  - Core: `PowerNetworkMatrix.jl` (abstract `PowerNetworkMatrix{T} <: AbstractArray{T,2}`), `definitions.jl` (`ZERO_IMPEDANCE_X_EPSILON = 1e-6`, `MAX_CACHE_SIZE_MiB = 100`, `abstract type AbstractReductionAggregate`)
   - Matrices: `Ybus.jl`, `YbusACBranches.jl`, `ArcAdmittanceMatrix.jl`, `IncidenceMatrix.jl`, `AdjacencyMatrix.jl`, `BA_ABA_matrices.jl`, `ptdf_calculations.jl` (N_arcs×N_buses, transposed storage), `lodf_calculations.jl` (diagonal = −1.0), `virtual_{ptdf,lodf,modf}_calculations.jl`
   - Modification/contingency: `network_modification.jl`, `woodbury_kernel.jl` — **mainline in psy6**; POM's branch-side N-1 builds on `VirtualMODF`/`ContingencySpec`
   - Reductions: `NetworkReduction.jl`, `NetworkReductionData.jl`, `ReductionContainer.jl`, `reduction_helpers.jl`, `radial_reduction.jl`, `degree_two_reduction.jl`, `ward_reduction.jl`, `zero_impedance_branch_reduction.jl` (the spec) + `apply_zero_impedance_reduction.jl` (the merge), `BranchesParallel.jl`, `BranchesSeries.jl`, `ThreeWindingTransformerCircuit.jl`, `EquivalentBranch.jl`
   - Connectivity: `connectivity_checks.jl`, `subnetworks.jl`
-  - PowerMatricesCore (`PowerMatricesCore.jl/src/`): `linalg_settings.jl`, `row_cache.jl` (LRU, default 100 MiB), `modf_definitions.jl` (`ArcModification`, `ShuntModification`, `ContingencySpec`, `WoodburyFactors`), `factor_core.jl`, `factor_file.jl`, `branch_map.jl`, `branch_reduction.jl`, `outage_tables.jl`, `woodbury_kernel.jl`, `virtual_workers.jl`, `KLUWrapper/` (internal), `AccelerateWrapper/` (macOS built-in), `../ext/MKLPardisoExt.jl` (x86_64 weakdep)
+  - PowerMatricesCore (`PowerMatricesCore.jl/src/`): `definitions.jl` (`AUTO_TOLERANCE_BUS_LIMIT = 2000`), `linalg_settings.jl`, `row_cache.jl` (LRU), `modf_definitions.jl` (`ArcModification`, `ShuntModification`, `ContingencySpec`, `WoodburyFactors`), `factor_core.jl`, `factor_file.jl`, `branch_map.jl`, `branch_reduction.jl`, `outage_tables.jl`, `woodbury_kernel.jl`, `virtual_workers.jl`, `KLUWrapper/` (internal), `AccelerateWrapper/` (macOS built-in), `../ext/MKLPardisoExt.jl` (x86_64 weakdep)
 
 Exports live only in the main module file.
 
@@ -82,11 +87,11 @@ Exports live only in the main module file.
 
   - **Never export or re-export any `KLUWrapper` symbol** (`KLULinSolveCache`, `solve!`, `klu_factorize`, …). Downstream reaches them qualified: `PowerNetworkMatrices.KLUWrapper.foo`.
   - **Per-arc PTDF/MODF KLU solve cost is inherent** — do not propose RHS batching; Sienna queries rows incrementally.
-  - **Parallel KLU solves need one factorization per thread.** `worker_core` (`src/virtual_workers.jl`) gives each worker its own KLU factorization, scratch and lock, so workers solve concurrently and match the parent bit for bit. One shared KLU cache is not safe for concurrent solves: its `solver_lock` serializes them. Apple Accelerate workers share the parent's factorization and lock and serialize, because concurrent AA calls have segfaulted.
+  - **Parallel KLU solves need one factorization per thread.** `worker_core` (`PowerMatricesCore.jl/src/virtual_workers.jl`) gives each worker its own KLU factorization, scratch and lock, so workers solve concurrently and match the parent bit for bit. One shared KLU cache is not safe for concurrent solves: its `solver_lock` serializes them. Apple Accelerate workers share the parent's factorization and lock and serialize, because concurrent AA calls have segfaulted.
   - Only Int64 KLU caches are built internally; the Int32 variants exist solely for PowerFlows' `J_INDEX_TYPE`. Any downstream cache-type Union must list both.
   - Contingency fixtures: to make a contingency merely *exist*, use `PSY.FixedForcedOutage(; outage_status=1.0)` + `add_supplemental_attribute!` — never fabricate `GeometricDistributionForcedOutage` stochastic parameters.
 
-## Numerics gotchas (hard-won; keep the regression tests green)
+## Numerics gotchas (keep the regression tests green)
 
   - **AutoTolerance:** relative per-row drop `|x| < α·max|row|` with `α = clamp(safety·δ, 1e-6, 1e-2)`; the condition number κ is diagnostic only — never multiplied into the cutoff (κ-as-absolute-droptol was a real densification bug). The bus-count gate (`AUTO_TOLERANCE_BUS_LIMIT`) keeps small PSB cases exact; the dense path never sparsifies under AutoTolerance (an explicit Float64 `tol` still does).
   - **`min_x_eps` applies to every branch type, transformers included.** `equivalent_branch` substitutes it for `x` when `r == x == 0`; the value comes from `ZeroImpedanceBranchReduction`'s `minimum_retained_impedance` (`Ybus.jl` `_minimum_retained_impedance`), falling back to `ZERO_IMPEDANCE_X_EPSILON`. The transformer arms used to accept the kwarg and drop it, which mattered because `PSY.TransformerCircuit` **defaults `r = x = 0.0`** and validates zero silently (range `(-2, 4)`, action `warn`): the result was `1/(0+0im)` → NaN admittance, surfacing as Ybus assembly's `isfinite` guard throwing "non-finite Ybus entry". Do not reintroduce that by adding a transformer path that bypasses `_circuit_equivalent_branch`. ZIR **excludes transformer arcs**, so unlike a line — whose endpoints get merged — a transformer keeps the substituted reactance permanently; the warning text is dispatched on `_is_transformer` for that reason.
@@ -120,9 +125,9 @@ julia --project=scripts/formatter -e 'include("scripts/formatter/formatter_code.
 
 Compile-check, from `PowerNetworkMatrices.jl/`: `julia --project=test -e 'using PowerNetworkMatrices'`.
 
-**Never `Pkg.develop` into an environment carrying `[sources]` git pins.** It re-resolves and pulls a mismatched PSY/IS pair — the psy6 envs pin `PowerSystems#psy6` (5.10.0) and `InfrastructureSystems#IS4`, and `develop` will happily swap in registry PSY 5.12.0, which fails to precompile with `UndefVarError: SystemUnitsSettings`. `test/Project.toml` already pins what it needs; plain `Pkg.instantiate()` is the whole setup step.
+**Never `Pkg.develop` into an environment carrying `[sources]` git pins.** It re-resolves and pulls a mismatched PSY/IS pair — the psy6 envs pin `PowerSystems#psy6` (5.10.0) and `InfrastructureSystems#IS4`, and `develop` swaps in a registry PSY that fails to precompile against IS4. `test/Project.toml` already pins what it needs; plain `Pkg.instantiate()` is the whole setup step.
 
-**The docs build is a required gate — `docs/make.jl` must pass.** Treat a docs failure like a test failure, and fix `missing_docs` by registering the docstring in `@autodocs`/`@docs`, never by silencing with `warnonly`.
+**Run `docs/make.jl` before you finish.** Treat a docs failure like a test failure, and fix `missing_docs` by registering the docstring in `@autodocs`/`@docs`, never by silencing with `warnonly`.
 
 `docs/Project.toml` carries its own `[sources]`, mirroring `test/Project.toml`. It must: the CI workflow runs `Pkg.develop(PackageSpec(path="PowerNetworkMatrices.jl"))`, and **`[sources]` is not inherited from a dev'd dependency**, so the root pins never reach the docs environment. Without them it resolves registry PowerSystems against `InfrastructureSystems#IS4` and dies precompiling with `UndefVarError: SystemUnitsSettings`. `[sources]` entries also require a matching `[deps]` entry, which is why IS and PowerFlowFileParser are listed there despite not being imported by the docs.
 

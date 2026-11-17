@@ -136,3 +136,7 @@ $RECYCLE.BIN/
 .claude/plans/
 .claude/drafts/
 .superpowers/
+
+# Local agent files (never committed)
+.claude/worktrees/
+.claude/settings.local.json
