@@ -78,6 +78,7 @@ export BRANCH_REDUCTION_RADIAL
 export BRANCH_REDUCTION_ZERO_IMPEDANCE
 export BRANCH_REDUCTION_WARD
 export BRANCH_REDUCTION_NOT_IN_NETWORK
+export get_post_modification_ptdf_rows
 export get_system_uuid
 export is_factorized
 export populate_cache
@@ -272,7 +273,11 @@ import PowerMatricesCore:
     _arcs_fully_opened,
     _arc_modification_vector,
     _post_modification_susceptance,
-    _monitored_arc_out,
+    _BASE_NETWORK,
+    _RowPlan,
+    _base_topology_row_plan,
+    _rows_from_plans,
+    _evaluate_row_plans,
     _woodbury_correction!,
     _compute_woodbury_factors,
     _apply_woodbury_correction,

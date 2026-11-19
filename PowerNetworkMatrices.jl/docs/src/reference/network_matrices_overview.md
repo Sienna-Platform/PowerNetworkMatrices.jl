@@ -104,6 +104,7 @@ The MODF answers: "Under a registered contingency or network modification (one o
   - Auto-registers `PSY.UnplannedOutage` supplemental attributes attached to the source system.
     `PSY.PlannedOutage`s are not contingencies and are not registered.
   - Rows are indexed by monitored arc tuples or arc indices; the second index is a [`ContingencySpec`](@ref), a [`NetworkModification`](@ref), or a `PSY.Outage`.
+  - [`get_post_modification_ptdf_rows`](@ref) returns one monitored arc's rows under several modifications from a single solve of its base column.
 
 **Use it when:** you need post-contingency or post-modification flow sensitivities for one or a few contingencies on a large system, and constructing the full LODF or recomputing PTDF per contingency is too expensive.
 

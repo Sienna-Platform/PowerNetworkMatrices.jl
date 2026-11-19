@@ -122,8 +122,10 @@ function get_post_modification_ptdf_row(
         haskey(rc, m) && return copy(rc[m])
         resolved
     end
-    wf = get_woodbury_factors(vmodf, mod, solver)
-    stored = apply_cutoff(get_cutoff(core), _apply_woodbury_correction(solver, m, wf))
+    # The base network needs no correction, so it has no factors.
+    wf = mod == _BASE_NETWORK ? nothing : get_woodbury_factors(vmodf, mod, solver)
+    plan = _base_topology_row_plan(solver, m, _arc_modification_vector(mod), wf)
+    stored = apply_cutoff(get_cutoff(core), only(_rows_from_plans(solver, m, (plan,))))
     @lock core.solver_lock begin
         _, rc = _modf_row_cache!(vmodf, mod)
         haskey(rc, m) && return copy(rc[m])
