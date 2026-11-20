@@ -1781,12 +1781,36 @@ function _two_tier_fixture(builder, contingencies)
     return sys, VirtualMODF(VirtualPTDF(sys), sys), ids
 end
 
-# Bus sets of the islands holding a reference bus once the `names` components are out, and
-# the total number of islands.
-function _reference_islands(vmodf, sys, names)
+# Bus-number sets of the islands holding a reference bus in `builder()` rebuilt with the
+# `names` components out, and the bus-number sets of all its islands.
+function _rebuilt_reference_islands(builder, names)
+    sys = builder()
+    for n in names
+        PSY.set_available!(_transmission(sys, n), false)
+    end
+    islands = Set(Set(island) for island in values(PNM.find_subnetworks(PNM.Ybus(sys))))
+    refs = Set{Int}(
+        PSY.get_number(b) for
+        b in PSY.get_components(PSY.ACBus, sys) if PSY.get_bustype(b) == ACBusTypes.REF
+    )
+    return Set(island for island in islands if !isdisjoint(island, refs)), islands
+end
+
+# Bus-number sets of the islands `get_islands` gives holding a reference bus once the
+# `names` components of `sys` are out, and the bus-number sets of all its islands.
+function _topology_reference_islands(vmodf, sys, names)
     ts = TopologySequence(vmodf, sys, [_out_set(sys, names)])
     islands, refs = get_islands(ts, 1)
-    return [Set(islands[r]) for r in refs], length(islands)
+    return Set(Set(islands[r]) for r in refs), Set(Set(island) for island in islands)
+end
+
+# The reference islands of `builder()` rebuilt with the `names` components out, to mask a
+# comparison against that rebuild, and the number of its islands. Tests that `get_islands`
+# on `sys` gives the same islands and reference islands.
+function _checked_reference_islands(vmodf, sys, builder, names)
+    refs, islands = _rebuilt_reference_islands(builder, names)
+    @test _topology_reference_islands(vmodf, sys, names) == (refs, islands)
+    return refs, length(islands)
 end
 
 # Lines `(name, from, to, x)` with r = 0.01 and closed switches `(name, from, to)` with

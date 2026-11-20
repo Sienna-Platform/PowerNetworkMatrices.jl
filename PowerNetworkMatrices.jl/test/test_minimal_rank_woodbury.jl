@@ -144,7 +144,8 @@ end
     for (names, rank, _) in _CORRIDOR_RANKS
         sys = _node_breaker_corridor()
         vmodf = VirtualMODF(VirtualPTDF(sys), sys)
-        islands, n_islands = _reference_islands(vmodf, sys, names)
+        islands, n_islands =
+            _checked_reference_islands(vmodf, sys, _node_breaker_corridor, names)
         ts = TopologySequence(vmodf, sys, [_out_set(sys, names)])
         arcs = PNM.get_arc_axis(vmodf)
         rows = Dict(a => get_topology_ptdf_rows(ts, a, [1])[1] for a in arcs)
@@ -248,7 +249,7 @@ _compensated_corridor() = _node_breaker_corridor(; reactances = Dict("L78" => -0
     wf = PNM.get_woodbury_cache(vmodf)[PNM._topology_modification(ts, 1)]
     @test wf.basis.arc_form
     @test PNM._woodbury_rank(wf) == 2
-    islands, _ = _reference_islands(vmodf, sys, c)
+    islands, _ = _checked_reference_islands(vmodf, sys, _compensated_corridor, c)
     @test _max_error_against_rebuild(a -> rows[a], arcs, PNM.get_bus_axis(vmodf), c;
         builder = _compensated_corridor, islands = islands) < 1e-10
 end
@@ -295,7 +296,7 @@ end
     rows = Dict(
         a => PNM.apply_woodbury_correction(core, i, wf) for (i, a) in enumerate(arcs)
     )
-    islands, _ = _reference_islands(vmodf, sys, names)
+    islands, _ = _checked_reference_islands(vmodf, sys, _node_breaker_corridor, names)
     @test _max_error_against_rebuild(a -> rows[a], arcs, PNM.get_bus_axis(vmodf), names;
         builder = _node_breaker_corridor, islands = islands) < 1e-10
 end
@@ -334,7 +335,7 @@ end
     wf = PNM.get_woodbury_cache(vmodf)[PNM._topology_modification(ts, 1)]
     @test PNM._woodbury_rank(wf) == 1
     @test !wf.basis.arc_form
-    islands, _ = _reference_islands(vmodf, sys, c)
+    islands, _ = _checked_reference_islands(vmodf, sys, _two_subnetwork_corridor, c)
     @test length(islands) == 2
     @test _max_error_against_rebuild(a -> rows[a], arcs, PNM.get_bus_axis(vmodf), c;
         builder = _two_subnetwork_corridor, islands = islands) < 1e-10
