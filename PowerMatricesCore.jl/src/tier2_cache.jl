@@ -189,8 +189,12 @@ function _modification_row_plan(
     m::Int,
     mod::NetworkModification,
 )::_RowPlan
-    wf = mod == _BASE_NETWORK ? nothing : _tier1_factors!(woodbury_cache, core, mod)
-    return _base_topology_row_plan(core, m, _arc_modification_vector(mod), wf)
+    arc_mods = _arc_modification_vector(mod)
+    if mod == _BASE_NETWORK
+        return _base_topology_row_plan(core, m, arc_mods, nothing)
+    end
+    wf = _tier1_factors!(woodbury_cache, core, mod)
+    return _base_topology_row_plan(core, m, arc_mods, wf)
 end
 
 # A row cache for one network's rows: one bus-long row per monitored arc.
@@ -356,7 +360,8 @@ function _post_contingency_row_plan(
         end
     end
     # The tier-2 factors come before the zero row of an arc K cuts off: building them throws
-    # when the contingency reconnects a bus K cuts off, so every row of the network throws.
+    # when the contingency reconnects a bus K cuts off, so every row of an in-service arc
+    # throws.
     tier2_wf = get!(get_tier2_factor_cache(cache), live) do
         _tier2_factors(
             (p, q) -> _cached_column!(cache, core, p, q),
