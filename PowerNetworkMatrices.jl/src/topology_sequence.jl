@@ -209,33 +209,47 @@ _in_service_members(
 The branch entry conducting on `arc` at step `t`. Returns `nothing` when the arc is out,
 and the arc's reduction entry when none of its members is out. Otherwise returns the member
 still in service, a parallel group of the members still in service framed on the original
-group's arc, or the Ward equivalent filed on the arc when it is all that remains.
+group's arc, or the Ward equivalent filed on the arc when it is all that remains. A query on
+the reverse of a series or parallel arc resolves to the arc's stored key.
 """
 function get_in_service_entry(ts::TopologySequence, arc::Tuple{Int, Int}, t::Int)
-    is_arc_out(ts, arc, t) && return nothing
     nr = get_network_reduction_data(ts.vmodf)
-    entry = _base_arc_entry(nr, arc)
+    key = _stored_arc_key(nr, arc)
+    is_arc_out(ts, key, t) && return nothing
+    entry = _base_arc_entry(nr, key)
     k = get_topology_index(ts, t)
     k == 0 && return entry
-    touched = ts.touched_arcs[k]
-    (arc in touched || (arc[2], arc[1]) in touched) || return entry
-    return _in_service_entry(entry, nr, arc, ts.removed_branches[k])
+    key in ts.touched_arcs[k] || return entry
+    return _in_service_entry(entry, nr, key, ts.removed_branches[k])
 end
 
-# The reduction entry of `arc`, probed in the order of `_probe_arc_entry`.
-function _base_arc_entry(nr::NetworkReductionData, arc::Tuple{Int, Int})
-    direct_map = get_direct_branch_map(nr)
-    haskey(direct_map, arc) && return direct_map[arc]
+# The key the reduction maps file `arc`'s entry under, probed in the order of
+# `_probe_arc_entry`: a reverse-key query of a series chain or parallel group resolves to
+# the chain's or group's own key, and a direct arc keeps its own key even beside an
+# anti-parallel twin.
+function _stored_arc_key(nr::NetworkReductionData, arc::Tuple{Int, Int})
+    haskey(get_direct_branch_map(nr), arc) && return arc
     rev = (arc[2], arc[1])
     series_map = get_series_branch_map(nr)
-    haskey(series_map, arc) && return series_map[arc]
-    haskey(series_map, rev) && return series_map[rev]
+    haskey(series_map, arc) && return arc
+    haskey(series_map, rev) && return rev
     parallel_map = get_parallel_branch_map(nr)
-    haskey(parallel_map, arc) && return parallel_map[arc]
-    haskey(parallel_map, rev) && return parallel_map[rev]
+    haskey(parallel_map, arc) && return arc
+    haskey(parallel_map, rev) && return rev
+    return arc
+end
+
+# The reduction entry filed under the stored key `key`.
+function _base_arc_entry(nr::NetworkReductionData, key::Tuple{Int, Int})
+    direct_map = get_direct_branch_map(nr)
+    haskey(direct_map, key) && return direct_map[key]
+    series_map = get_series_branch_map(nr)
+    haskey(series_map, key) && return series_map[key]
+    parallel_map = get_parallel_branch_map(nr)
+    haskey(parallel_map, key) && return parallel_map[key]
     added_map = get_added_arc_impedance_map(nr)
-    haskey(added_map, arc) && return added_map[arc]
-    error("Arc $(arc) not found in any network reduction map.")
+    haskey(added_map, key) && return added_map[key]
+    error("Arc $(key) not found in any network reduction map.")
 end
 
 function _in_service_entry(

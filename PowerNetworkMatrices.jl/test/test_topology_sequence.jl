@@ -512,6 +512,20 @@ end
           -PNM.arc_dc_shift_injection(lone_nr, reverse(arc)) atol = 1e-10
 end
 
+@testset "A reverse-key query of a parallel group follows the group's outages" begin
+    sys, base, dup = _c_sys14_with_parallel_pair(; r_scale = 1.7)
+    vmodf = VirtualMODF(VirtualPTDF(sys), sys; automatically_register_outages = false)
+    rev = reverse(_arc_numbers(base))
+    ts = TopologySequence(
+        vmodf,
+        sys,
+        [Set{PSY.Component}([dup]), Set{PSY.Component}([base, dup])],
+    )
+    @test get_in_service_entry(ts, rev, 1) === base
+    @test isnothing(get_in_service_entry(ts, rev, 2))
+    @test get_arc_shift_injection(ts, rev, 2) == 0.0
+end
+
 @testset "Unattached components with equal ids are distinct topologies" begin
     sys = _c_sys14()
     vmodf = VirtualMODF(VirtualPTDF(sys), sys; automatically_register_outages = false)
