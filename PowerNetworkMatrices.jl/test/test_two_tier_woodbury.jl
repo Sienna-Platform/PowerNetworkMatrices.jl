@@ -990,7 +990,8 @@ end
     passed =
         success(process) &&
         occursin("nthreads=4 same=true misses_equal_entries=true", output)
-    passed || @error "The four-thread subprocess did not succeed with matching rows" output errors
+    passed ||
+        @error "The four-thread subprocess did not succeed with matching rows" output errors
     @test passed
 end
 
