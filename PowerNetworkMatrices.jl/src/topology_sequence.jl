@@ -169,12 +169,17 @@ end
     is_arc_out(ts::TopologySequence, arc::Tuple{Int, Int}, t::Int) -> Bool
 
 Whether `arc` carries no flow at step `t`. An arc is out only when every parallel member is
-out of service.
+out of service. A query on the reverse of a series or parallel arc resolves to the arc's
+stored key.
 """
-function is_arc_out(ts::TopologySequence, arc::Tuple{Int, Int}, t::Int)
+is_arc_out(ts::TopologySequence, arc::Tuple{Int, Int}, t::Int) =
+    _is_key_out(ts, _stored_arc_key(get_network_reduction_data(ts.vmodf), arc), t)
+
+# `key` is a stored key, as `_stored_arc_key` returns it.
+function _is_key_out(ts::TopologySequence, key::Tuple{Int, Int}, t::Int)
     k = get_topology_index(ts, t)
     k == 0 && return false
-    return arc in ts.arcs_out[k]
+    return key in ts.arcs_out[k]
 end
 
 """
@@ -217,7 +222,7 @@ reverse of a series or parallel arc resolves to the arc's stored key.
 function get_in_service_entry(ts::TopologySequence, arc::Tuple{Int, Int}, t::Int)
     nr = get_network_reduction_data(ts.vmodf)
     key = _stored_arc_key(nr, arc)
-    is_arc_out(ts, key, t) && return nothing
+    _is_key_out(ts, key, t) && return nothing
     entry = _base_arc_entry(nr, key)
     k = get_topology_index(ts, t)
     k == 0 && return entry

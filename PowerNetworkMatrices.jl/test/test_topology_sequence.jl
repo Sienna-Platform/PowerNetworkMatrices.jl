@@ -523,6 +523,8 @@ end
     )
     @test get_in_service_entry(ts, rev, 1) === base
     @test isnothing(get_in_service_entry(ts, rev, 2))
+    @test !is_arc_out(ts, rev, 1)
+    @test is_arc_out(ts, rev, 2)
     @test get_arc_shift_injection(ts, rev, 2) == 0.0
 end
 
