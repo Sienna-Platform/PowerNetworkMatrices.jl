@@ -126,12 +126,16 @@ A [`PTDF`](@ref) of the rebuilt network instead gives such an island a reference
 A [`TopologySequence`](@ref) assigns each time step a topology K, the base network with the components out at that step removed.
 [`get_post_contingency_network`](@ref) returns the [`PostContingencyNetwork`](@ref) of a registered contingency c on the topology of a step, the network K ∪ c.
 Steps on the same topology return equal networks, so they share every cached factor and row.
+When every component of the contingency is already out at the step, K ∪ c is K and there is no post-contingency network: the function returns `nothing`.
+[`get_post_contingency_ptdf_rows`](@ref) accepts only networks, so use the row of the topology K itself for such a step.
 `PostContingencyNetwork(vmodf, contingency_id)` returns the network of a registered contingency on the base topology.
 
 [`get_post_contingency_ptdf_rows`](@ref) returns one monitored arc's rows on several post-contingency networks from a single solve of its base column.
 On a topology other than the base network, the row is a second Woodbury update from K to K ∪ c of the arc's row on K, so K's factors are computed once and reused by every contingency on it.
 On the base topology, the row equals the registered contingency's row bit for bit.
 Rows on K and on K ∪ c follow the rule for islands without a reference bus: an island that the topology, the contingency, or both cut off from every reference bus has zero rows.
+A monitored arc that the contingency opens has a zero row on K ∪ c, and the row is returned before the islands of K ∪ c are examined.
+The result is correct, since an open arc carries no flow.
 Indexing a [`VirtualMODF`](@ref) with a hand-built [`NetworkModification`](@ref) for K ∪ c gives the same row, but computes the full combined update from the base network instead of reusing K's factors.
 
 Each post-contingency network on a topology other than the base network has its own tier-2 Woodbury factors and its own row cache, held in the `PowerMatricesCore.Tier2Cache` of the [`VirtualMODF`](@ref).
