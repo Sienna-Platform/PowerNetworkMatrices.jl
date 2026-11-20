@@ -209,8 +209,10 @@ _in_service_members(
 The branch entry conducting on `arc` at step `t`. Returns `nothing` when the arc is out,
 and the arc's reduction entry when none of its members is out. Otherwise returns the member
 still in service, a parallel group of the members still in service framed on the original
-group's arc, or the Ward equivalent filed on the arc when it is all that remains. A query on
-the reverse of a series or parallel arc resolves to the arc's stored key.
+group's arc, or the Ward equivalent filed on the arc when it is all that remains. A series
+chain, or a group member, that loses part of a parallel segment without opening is rebuilt
+from its remaining members, as [`NetworkModification`](@ref) rebuilds it. A query on the
+reverse of a series or parallel arc resolves to the arc's stored key.
 """
 function get_in_service_entry(ts::TopologySequence, arc::Tuple{Int, Int}, t::Int)
     nr = get_network_reduction_data(ts.vmodf)
@@ -252,14 +254,24 @@ function _base_arc_entry(nr::NetworkReductionData, key::Tuple{Int, Int})
     error("Arc $(key) not found in any network reduction map.")
 end
 
+# Whether the outage trips any leaf of `entry`; an entry it does not reach keeps its
+# identity.
+_outage_reaches(entry::PSY.ACTransmission, removed::AbstractSet{PSY.ACTransmission}) =
+    is_open_after_outage(entry, removed)
+_outage_reaches(
+    aggregate::AbstractReductionAggregate,
+    removed::AbstractSet{PSY.ACTransmission},
+) = any(member -> _outage_reaches(member, removed), aggregate)
+
 function _in_service_entry(
     entry::PSY.ACTransmission,
     nr::NetworkReductionData,
     arc::Tuple{Int, Int},
     removed::AbstractSet{PSY.ACTransmission},
 )
-    is_open_after_outage(entry, removed) || return entry
-    return get_added_arc_impedance_map(nr)[arc]
+    _outage_reaches(entry, removed) || return entry
+    is_open_after_outage(entry, removed) && return get_added_arc_impedance_map(nr)[arc]
+    return _entry_after_outage(entry, removed)
 end
 
 function _in_service_entry(
@@ -268,8 +280,10 @@ function _in_service_entry(
     arc::Tuple{Int, Int},
     removed::AbstractSet{PSY.ACTransmission},
 )
-    members = _in_service_members(bp, removed)
-    length(members) == length(bp) && return bp
+    _outage_reaches(bp, removed) || return bp
+    members = PSY.ACTransmission[
+        _entry_after_outage(m, removed) for m in bp if !is_open_after_outage(m, removed)
+    ]
     isempty(members) && return get_added_arc_impedance_map(nr)[arc]
     length(members) == 1 && return only(members)
     return _parallel_group(members, get_arc_tuple(bp))

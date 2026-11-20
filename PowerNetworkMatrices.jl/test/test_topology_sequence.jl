@@ -526,6 +526,40 @@ end
     @test get_arc_shift_injection(ts, rev, 2) == 0.0
 end
 
+@testset "In-service entry of a partly tripped chain matches a rebuild" begin
+    reductions =
+        NetworkReduction[DegreeTwoReduction(; reduce_reactive_power_injectors = false)]
+    builds = (
+        build_antiparallel_chain_segment_system,
+        build_grouped_chains_with_parallel_segment,
+    )
+    for build in builds
+        sys = build()
+        vmodf = VirtualMODF(
+            VirtualPTDF(sys; network_reductions = reductions),
+            sys;
+            automatically_register_outages = false,
+        )
+        nr = get_network_reduction_data(vmodf)
+        line = PSY.get_component(PSY.Line, sys, "L_10_3")
+        _, arc = PNM._resolve_branch_arc(nr, line)
+        ts = TopologySequence(vmodf, sys, [Set{PSY.Component}([line])])
+        @test !is_arc_out(ts, arc, 1)
+        entry = get_in_service_entry(ts, arc, 1)
+
+        ref_sys = build()
+        PSY.set_available!(PSY.get_component(PSY.Line, ref_sys, "L_10_3"), false)
+        ref_nr = get_network_reduction_data(Ybus(ref_sys; network_reductions = reductions))
+        ref_entry, _ = PNM._resolve_arc_entry(ref_nr, arc)
+        @test PNM._finite_series_susceptance(entry, nr) ≈
+              PNM._finite_series_susceptance(ref_entry, ref_nr) rtol = 1e-12
+        @test PNM.get_equivalent_emergency_rating(entry) ==
+              PNM.get_equivalent_emergency_rating(ref_entry)
+        @test get_arc_shift_injection(ts, arc, 1) ≈
+              PNM.arc_dc_shift_injection(ref_nr, arc) atol = 1e-12
+    end
+end
+
 @testset "Unattached components with equal ids are distinct topologies" begin
     sys = _c_sys14()
     vmodf = VirtualMODF(VirtualPTDF(sys), sys; automatically_register_outages = false)
