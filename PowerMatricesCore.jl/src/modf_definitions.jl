@@ -216,10 +216,15 @@ end
 """
     WoodburyBasis
 
-Low-rank form `B_post = B̃ + U D Uᵀ` of a network change, on the buses live after it, where
-`B̃` is the Schur complement of the starting network's Laplacian on its live buses onto the
-buses live after the change (`B_start` itself when the change kills no bus). Column `j` of
-`U` is `scale[j] * (e_{p[j]} − e_{q[j]})` in bus positions.
+Low-rank form `B_post = B̃ + U D Uᵀ` of a network change. Column `j` of `U` is
+`scale[j] * (e_{p[j]} − e_{q[j]})` in bus positions.
+
+In node-pair form the update is on the buses live after the change, where `B̃` is the Schur
+complement of the starting network's Laplacian on its live buses onto the buses live after the
+change (`B_start` itself when the change kills no bus). The Schur complement is defined only
+when the dead block is nonsingular; otherwise the basis falls back to arc form. The arc-form
+basis represents the original update in full-bus coordinates, and its columns can touch dead
+buses, so `B̃` carries no Schur-complement meaning there.
 
 In arc form every column is one changed arc `e`, in the change's order: `(p, q)` are the
 arc's from and to positions, `scale = arc_susceptance_signs[e]` and `D` is the diagonal of

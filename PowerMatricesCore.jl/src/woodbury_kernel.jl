@@ -210,6 +210,22 @@ PowerTransmissionSecurityAnalysis read these fields.
 _changed_modifications(modifications::Vector{ArcModification}) =
     [j for (j, mod) in enumerate(modifications) if !iszero(mod.delta_b)]
 
+# ν = BA[:, e] / b_e is 0/0 for an arc with no DC susceptance, e.g. a parallel group whose
+# reactances cancel, so every solve for it holds NaN.
+function _check_changed_arcs_have_susceptance(
+    arc_sus::Vector{Float64},
+    modifications::Vector{ArcModification},
+)
+    for k in _changed_modifications(modifications)
+        e = modifications[k].arc_index
+        iszero(arc_sus[e]) && error(
+            "Arc $e has zero DC susceptance, but its modification changes it by " *
+            "$(modifications[k].delta_b). The Woodbury update cannot add susceptance to it.",
+        )
+    end
+    return nothing
+end
+
 """
     _woodbury_factors_from_Z(Z, basis, BA, signs, arc_sus, modifications, arc_out[, labeler]) -> WoodburyFactors
 
@@ -234,6 +250,7 @@ function _woodbury_factors_from_Z(
     n_bus = size(Z, 1)
     kept = _changed_modifications(modifications)
     M = length(kept)
+    _check_changed_arcs_have_susceptance(arc_sus, modifications)
     size(Z, 2) == M ||
         error("Z has $(size(Z, 2)) columns; expected $M, one per changed arc.")
 
@@ -241,12 +258,6 @@ function _woodbury_factors_from_Z(
     delta_b_vec = Vector{Float64}(undef, M)
     for (j, k) in enumerate(kept)
         e = modifications[k].arc_index
-        # ν = BA[:, e] / b_e is 0/0 for an arc with no DC susceptance, e.g. a parallel group
-        # whose reactances cancel, so Z holds NaN for it.
-        iszero(arc_sus[e]) && error(
-            "Arc $e has zero DC susceptance, but its modification changes it by " *
-            "$(modifications[k].delta_b). The Woodbury update cannot add susceptance to it.",
-        )
         arc_indices[j] = e
         delta_b_vec[j] = modifications[k].delta_b
     end
@@ -681,6 +692,7 @@ function _base_network_factors(
     BA = core.BA
     signs = core.arc_susceptance_signs
     arc_sus = core.arc_susceptances
+    _check_changed_arcs_have_susceptance(arc_sus, modifications)
     post_labels = labeler(BA, arc_sus, modifications, size(BA, 1))
     basis = _woodbury_basis(core, ArcModification[], Int[], modifications, post_labels)
     arc_out = _arcs_fully_opened(core, modifications)

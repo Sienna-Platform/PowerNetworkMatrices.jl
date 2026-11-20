@@ -164,3 +164,38 @@ end
         @test [PMC._reference_position(valid, j) for j in eachindex(refs)] == refs
     end
 end
+
+# Arcs 1-3 and 2-3 carry susceptance 1; arc 1-2 has an empty BA column.
+function _zero_susceptance_core()
+    bus_ax = [1, 2, 3]
+    arc_ax = [(1, 2), (1, 3), (2, 3)]
+    b = [0.0, 1.0, 1.0]
+    A = SparseArrays.spzeros(Int8, 3, 3)
+    BA = SparseArrays.spzeros(Float64, 3, 3)
+    for (e, (f, t)) in enumerate(arc_ax)
+        A[e, f] = 1
+        A[e, t] = -1
+        BA[f, e] = b[e]
+        BA[t, e] = -b[e]
+    end
+    return PMC.FactorCore(
+        BA,
+        A,
+        Set([1]),
+        (arc_ax, bus_ax),
+        Dict(1 => (copy(arc_ax), copy(bus_ax))),
+        ones(Int, 3);
+        network_data = nothing,
+        linear_solver = "KLU",
+        tol = 0.0,
+    )
+end
+
+@testset "a change to an arc with zero base susceptance is rejected on the node-pair path" begin
+    core = _zero_susceptance_core()
+    mods = [PMC.ArcModification(1, 1.0), PMC.ArcModification(2, 1.0)]
+    @test_throws ErrorException PMC._compute_woodbury_factors(core, mods)
+    zero_delta = [PMC.ArcModification(1, 0.0), PMC.ArcModification(2, 1.0)]
+    wf = PMC._compute_woodbury_factors(core, zero_delta)
+    @test all(isfinite, PMC._apply_woodbury_correction(core, 1, wf))
+end
