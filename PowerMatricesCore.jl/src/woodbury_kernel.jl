@@ -852,7 +852,8 @@ the change and whether each arc is out are taken on K ∪ c, from `post`. Column
 [`_tier2_columns`](@ref) over the base solves `column(p, q)`, so a base solve shared by
 several networks runs once when `column` caches it. Modifications of arcs with both ends dead
 on K are left out. When the node-pair basis is singular, the factors fall back to the arc
-form of the tier-2 modification.
+form of the tier-2 modification. A modification that changes the susceptance of an arc
+with no DC susceptance raises an error.
 """
 function _tier2_factors(
     column::F,
@@ -870,6 +871,7 @@ function _tier2_factors(
     start_labels = topology_wf.bus_island_labels
     live_start = _live_buses(start_labels, ref_positions, n_bus)
     change = _start_live_change(core, live_start, _arc_modification_vector(tier2))
+    _check_changed_arcs_have_susceptance(arc_sus, change)
     post_modifications = _arc_modification_vector(post)
     post_labels = _post_contingency_bus_labels(BA, arc_sus, post_modifications, n_bus)
     basis = _woodbury_basis(

@@ -241,8 +241,9 @@ end
 On a topology K whose factors island the network, the arcs whose susceptance the contingency
 changes that lie outside the islands of K holding a reference bus. Such an arc joins only
 buses K cut off: taking it out changes no row of an arc inside those islands, and rows of
-arcs outside them are zero. Arcs with no susceptance change never enter the Woodbury update,
-and an arc with no susceptance has no BA entries to place it.
+arcs outside them are zero. Arcs with no susceptance change never enter the Woodbury update.
+Arcs are placed by their ends, so an arc with no susceptance, whose BA column is empty, is
+placed by the incidence matrix.
 """
 function _arcs_outside_reference_islands(
     core::FactorCore,
@@ -252,12 +253,10 @@ function _arcs_outside_reference_islands(
     outside = Set{Int}()
     labels = topology_wf.bus_island_labels
     reference = Set{Int}(labels[p] for p in _ref_bus_positions(core))
-    rv = SparseArrays.rowvals(core.BA)
     for mod in net.tier2.arc_modifications
         iszero(mod.delta_b) && continue
         e = mod.arc_index
-        any(k -> labels[rv[k]] in reference, SparseArrays.nzrange(core.BA, e)) ||
-            push!(outside, e)
+        any(b -> labels[b] in reference, _arc_ends(core, e)) || push!(outside, e)
     end
     return outside
 end

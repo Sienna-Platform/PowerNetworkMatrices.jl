@@ -870,6 +870,60 @@ end
     end
 end
 
+# Ring 1-2-3-4 with bus 5 radial off bus 3 and the chord 2-4 carried by "ZI1" (x = 0.1) and
+# "ZI2" (x = -0.1), whose susceptances cancel: the chord has no DC susceptance, and the
+# outage of "ZI2" alone gives it a nonzero delta_b.
+function _ring_with_cancelling_chord()
+    sys, buses = _mk_bus_system(5)
+    arcs = Dict{Tuple{Int, Int}, PSY.Arc}()
+    for (name, i, j, r, x) in (
+        ("L12", 1, 2, 0.0, 0.1),
+        ("L23", 2, 3, 0.0, 0.1),
+        ("L34", 3, 4, 0.0, 0.1),
+        ("L41", 4, 1, 0.0, 0.1),
+        ("L35", 3, 5, 0.0, 0.1),
+        ("ZI1", 2, 4, 1e-4, 0.1),
+        ("ZI2", 2, 4, 1e-4, -0.1),
+    )
+        arc = get!(arcs, (i, j)) do
+            new_arc = PSY.Arc(buses[i], buses[j])
+            PSY.add_component!(sys, new_arc)
+            return new_arc
+        end
+        _add_test_line!(sys, name, arc, r, x)
+    end
+    return sys
+end
+
+@testset "a contingency changing an arc with no susceptance raises an error on any topology" begin
+    # (components out at K, contingency components): K = L12 keeps the network whole and
+    # K = L35 cuts off bus 5. "L23" and "L34" with "ZI2" kill bus 3 and join the chord to
+    # the dead bus's component, which takes the node-pair basis.
+    cases = [
+        (["L12"], ["ZI2"]),
+        (["L12"], ["ZI2", "L23", "L34"]),
+        (["L35"], ["ZI2"]),
+        (["L35"], ["ZI2", "L23"]),
+        (["L35"], ["ZI2", "L23", "L34"]),
+    ]
+    sys, vmodf, ids = _two_tier_fixture(_ring_with_cancelling_chord, unique(last.(cases)))
+    chord = PNM.get_arc_lookup(vmodf)[_arc_numbers(_transmission(sys, "ZI2"))]
+    @test iszero(PNM._get_arc_susceptances(vmodf)[chord])
+    arcs = PNM.get_arc_axis(vmodf)
+    for (k, c) in cases
+        ts = TopologySequence(vmodf, sys, [_out_set(sys, k)])
+        net = get_post_contingency_network(ts, 1, ids[c])
+        @test net.topology != PNM._BASE_NETWORK
+        change = only(m for m in net.tier2.arc_modifications if m.arc_index == chord)
+        @test !iszero(change.delta_b)
+        @test_throws r"zero DC susceptance" foreach(
+            a -> get_post_contingency_ptdf_rows(vmodf, a, [net]),
+            arcs,
+        )
+        PNM.clear_all_caches!(vmodf)
+    end
+end
+
 @testset "a contingency's components resolve once per sequence" begin
     function builder()
         sys = first(_c_sys14_with_parallel_pair(; r_scale = 2.0))
