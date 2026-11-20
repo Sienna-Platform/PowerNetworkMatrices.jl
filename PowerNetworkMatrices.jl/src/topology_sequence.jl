@@ -334,8 +334,6 @@ function get_arc_shift_injection(
 end
 
 # `b·α` of an entry that is not registered on `arc`; its own arc tuple sets the orientation.
-# A group's susceptance-weighted α times its summed susceptance is the sum of its members'
-# injections.
 function _entry_shift_injection(
     entry::PSY.ACTransmission,
     nr::NetworkReductionData,
@@ -343,10 +341,28 @@ function _entry_shift_injection(
 )
     α = _segment_phase_shift(entry, nr)
     iszero(α) && return 0.0
-    if get_arc_tuple(entry, nr) == (arc[2], arc[1])
-        α = -α
-    end
-    return _finite_series_susceptance(entry, nr) * α
+    return _orient_to_arc(_finite_series_susceptance(entry, nr) * α, entry, nr, arc)
+end
+
+# Injections add across members, so a group's is their sum; the members' susceptances can
+# cancel, which rules out the group's equivalent angle times its summed susceptance.
+function _entry_shift_injection(
+    bp::AbstractBranchesParallel,
+    nr::NetworkReductionData,
+    arc::Tuple{Int, Int},
+)
+    injection = sum(member -> _member_shift_injection(bp, nr, member), bp)
+    return _orient_to_arc(injection, bp, nr, arc)
+end
+
+function _orient_to_arc(
+    injection::Float64,
+    entry::PSY.ACTransmission,
+    nr::NetworkReductionData,
+    arc::Tuple{Int, Int},
+)
+    get_arc_tuple(entry, nr) == (arc[2], arc[1]) && return -injection
+    return injection
 end
 
 function Base.getindex(ts::TopologySequence, arc::Tuple{Int, Int}, t::Int)

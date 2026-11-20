@@ -560,6 +560,31 @@ end
     end
 end
 
+@testset "Shift injection of a group whose remaining susceptances cancel" begin
+    # A series capacitor whose susceptance is exactly the negated shifter's, so the two
+    # members left once `base` is out sum to zero susceptance.
+    sys = _c_sys14()
+    base = first(sort!(collect(PSY.get_components(PSY.Line, sys)); by = PSY.get_name))
+    x = PSY.get_x(base, u"SU")
+    capacitor = _add_shifter!(sys, PSY.get_arc(base), -x; alpha = 0.0)
+    PSY.set_name!(sys, capacitor, "capacitor")
+    shifter = _make_parallel_shifter!(sys, base; alpha = 0.1)
+    vmodf = VirtualMODF(VirtualPTDF(sys), sys; automatically_register_outages = false)
+    nr = get_network_reduction_data(vmodf)
+    arc = _arc_numbers(base)
+    ts = TopologySequence(vmodf, sys, [Set{PSY.Component}([base])])
+    entry = get_in_service_entry(ts, arc, 1)
+    @test Set(collect(entry)) == Set{PSY.ACTransmission}([capacitor, shifter])
+    @test iszero(
+        PNM._finite_series_susceptance(capacitor, nr) +
+        PNM._finite_series_susceptance(shifter, nr),
+    )
+    expected = PNM._finite_series_susceptance(shifter, nr) * 0.1
+    @test !iszero(expected)
+    @test get_arc_shift_injection(ts, arc, 1) ≈ expected rtol = 1e-12
+    @test get_arc_shift_injection(ts, reverse(arc), 1) ≈ -expected rtol = 1e-12
+end
+
 @testset "Unattached components with equal ids are distinct topologies" begin
     sys = _c_sys14()
     vmodf = VirtualMODF(VirtualPTDF(sys), sys; automatically_register_outages = false)
