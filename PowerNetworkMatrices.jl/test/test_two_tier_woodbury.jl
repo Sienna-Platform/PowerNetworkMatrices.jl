@@ -993,3 +993,32 @@ end
     passed || @error "The four-thread subprocess did not succeed with matching rows" output errors
     @test passed
 end
+
+@testset "a base-topology network with a zero shunt out is the registered one" begin
+    sys = _c_sys14_for_row_batches()
+    bus = argmin(PSY.get_number, PSY.get_components(PSY.ACBus, sys))
+    shunt =
+        PSY.FixedAdmittance(; name = "zero_shunt", available = true, bus = bus, Y = 0.0im)
+    PSY.add_component!(sys, shunt)
+    outage = PSY.FixedForcedOutage(; outage_status = 1.0)
+    for component in (_transmission(sys, "Line3"), shunt)
+        PSY.add_supplemental_attribute!(sys, component, outage)
+    end
+    id = IS.get_id(outage)
+    vmodf = VirtualMODF(VirtualPTDF(sys), sys)
+    registered = get_registered_contingencies(vmodf)[id].modification
+    @test any(s -> iszero(s.delta_y), registered.shunt_modifications)
+    ts = TopologySequence(vmodf, sys, [Set{PSY.Component}()])
+    @test get_topology_index(ts, 1) == 0
+    net = get_post_contingency_network(ts, 1, id)
+    @test net == PostContingencyNetwork(vmodf, id)
+    @test hash(net) == hash(PostContingencyNetwork(vmodf, id))
+    @test net.tier2 == registered
+    arcs = PNM.get_arc_axis(vmodf)
+    for arc in arcs
+        get_post_contingency_ptdf_rows(vmodf, arc, [net])
+    end
+    row_caches = PNM.get_row_caches(vmodf)
+    @test collect(keys(row_caches)) == [registered]
+    @test length(row_caches[registered]) == length(arcs)
+end

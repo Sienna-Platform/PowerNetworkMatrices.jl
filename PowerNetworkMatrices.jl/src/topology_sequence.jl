@@ -449,6 +449,10 @@ function get_post_contingency_network(ts::TopologySequence, t::Int, contingency_
     post =
         _post_contingency_modification(ts, k, _contingency_components(ts, contingency_id))
     isnothing(post) && return nothing
+    # A modification keeps entries that change nothing, which deriving a tier-2 modification
+    # drops; taking `post` unchanged on the base topology keeps the network equal to the
+    # registered contingency's.
+    k == 0 && return _base_topology_network(post, contingency_id)
     topology = _topology_modification(ts, k)
     return PostContingencyNetwork(
         _Tier2Derived(),
