@@ -41,8 +41,10 @@ end
 _add_arc_buses!(buses::Set{Int}, br::PSY.ACTransmission) =
     _add_arc_buses!(buses, PSY.get_arc(br))
 
+# An unavailable winding has no arc in the admittance matrix, so its terminal bus is skipped.
 function _add_arc_buses!(buses::Set{Int}, br::PSY.ThreeWindingTransformer)
     for winding in PSY.get_circuits(br)
+        PSY.get_available(winding) || continue
         _add_arc_buses!(buses, PSY.get_arc(winding))
     end
     return

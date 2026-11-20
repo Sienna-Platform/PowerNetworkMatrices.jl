@@ -270,3 +270,40 @@ end
         sys,
     )
 end
+
+# case10 with its secondary 3WT winding out and the winding's terminal bus 103, and the
+# radial section 109-110 beyond it, isolated.
+function _sys_with_isolated_winding_bus()
+    sys = deepcopy(PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions"))
+    trf = only(PSY.get_components(PSY.ThreeWindingTransformer, sys))
+    PSY.set_available!(PSY.get_secondary_circuit(trf), false)
+    for line in PSY.get_components(PSY.Line, sys)
+        isdisjoint(_arc_bus_numbers(line), (103, 109, 110)) && continue
+        PSY.set_available!(line, false)
+    end
+    for gen in PSY.get_components(PSY.Generator, sys)
+        PSY.get_number(PSY.get_bus(gen)) == 110 && PSY.set_available!(gen, false)
+    end
+    for bus in PSY.get_components(PSY.ACBus, sys)
+        PSY.get_number(bus) in (103, 109, 110) || continue
+        PSY.set_bustype!(bus, PSY.ACBusTypes.ISOLATED)
+    end
+    return sys, trf
+end
+
+@testset "A scheduled 3WT does not pin the isolated bus of an unavailable winding" begin
+    sys, trf = _sys_with_isolated_winding_bus()
+    for reduction in (RadialReduction(), DegreeTwoReduction())
+        ybus = PNM.Ybus(
+            sys;
+            network_reductions = NetworkReduction[reduction],
+            scheduled_branches = [trf],
+        )
+        pins = PNM.get_schedule_pinned_buses(
+            PNM.get_reductions(PNM.get_network_reduction_data(ybus)),
+        )
+        @test 103 ∉ pins
+        @test issubset((101, 102), pins)
+        @test issubset(pins, PNM.get_bus_axis(ybus))
+    end
+end
