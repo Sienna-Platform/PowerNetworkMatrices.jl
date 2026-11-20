@@ -115,6 +115,7 @@ const _FIVE_BUS_TIER2_CASES = [
     nets = [_five_bus_network(k, c) for (k, c) in _FIVE_BUS_TIER2_CASES]
     for m in 1:n_arc
         rows = _five_bus_rows(core, caches, m, nets)
+        @test length(rows) == length(nets)
         for ((k, c), row) in zip(_FIVE_BUS_TIER2_CASES, rows)
             out = union(k, c)
             expected = _five_bus_dense_ptdf(core, out, _five_bus_live(core, out))

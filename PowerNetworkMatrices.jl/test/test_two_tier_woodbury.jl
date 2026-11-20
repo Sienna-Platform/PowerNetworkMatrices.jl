@@ -395,9 +395,13 @@ end
     @test PNM.get_tier2_factor_cache(vmodf)[net].is_islanding
     cut_off = [j for (j, bus) in enumerate(bus_axis) if bus ∉ only(islands)]
     @test sort!(bus_axis[cut_off]) == [7, 8]
+    @test (7, 8) in arcs
     for a in arcs
-        isempty(_compared_positions(a, bus_axis, islands)) && continue
-        @test all(==(0.0), rows[a][cut_off])
+        if isempty(_compared_positions(a, bus_axis, islands))
+            @test all(iszero, rows[a])
+        else
+            @test all(==(0.0), rows[a][cut_off])
+        end
     end
     err = _max_error_against_rebuild(
         a -> rows[a],
@@ -911,10 +915,12 @@ end
     project = "--project=$(Base.active_project())"
     cmd = `$(Base.julia_cmd()) -t 4 --startup-file=no $project -e $script`
     stdout_buf, stderr_buf = IOBuffer(), IOBuffer()
-    run(pipeline(ignorestatus(cmd); stdout = stdout_buf, stderr = stderr_buf))
+    process = run(pipeline(ignorestatus(cmd); stdout = stdout_buf, stderr = stderr_buf))
     output = String(take!(stdout_buf))
-    passed = occursin("nthreads=4 same=true misses_equal_entries=true", output)
     errors = String(take!(stderr_buf))
-    passed || @error "The four-thread subprocess did not report matching rows" output errors
+    passed =
+        success(process) &&
+        occursin("nthreads=4 same=true misses_equal_entries=true", output)
+    passed || @error "The four-thread subprocess did not succeed with matching rows" output errors
     @test passed
 end

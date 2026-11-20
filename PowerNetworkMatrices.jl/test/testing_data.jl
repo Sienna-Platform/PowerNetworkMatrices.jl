@@ -1801,7 +1801,19 @@ function _concurrent_post_contingency_rows(n_tasks::Int)
         Dict(arc => get_post_contingency_ptdf_rows(vmodf, arc, networks) for arc in order)
     serial = rows_by_arc(arcs)
     clear_caches!(vmodf)
-    tasks = [Threads.@spawn rows_by_arc(circshift(arcs, 7 * k)) for k in 1:n_tasks]
+    ready = Threads.Atomic{Int}(0)
+    start = Base.Event()
+    tasks = [
+        Threads.@spawn begin
+            Threads.atomic_add!(ready, 1)
+            wait(start)
+            rows_by_arc(circshift(arcs, 7 * k))
+        end for k in 1:n_tasks
+    ]
+    while ready[] < n_tasks
+        yield()
+    end
+    notify(start)
     same = all(fetch.(tasks)) do concurrent
         all(arc -> all(_bitwise_equal.(concurrent[arc], serial[arc])), arcs)
     end
