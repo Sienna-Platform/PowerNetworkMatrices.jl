@@ -200,6 +200,32 @@ end
     end
 end
 
+@testset "Ward reduction rejects a study area that drops a scheduled branch" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
+    study = [1, 2, 3, 4, 5]
+    branches = sort!(
+        collect(PSY.get_components(PSY.ACTransmission, sys));
+        by = PSY.get_name,
+    )
+    crossing = first(
+        br for br in branches if count(in(study), _arc_bus_numbers(br)) == 1
+    )
+    outside = only(setdiff(_arc_bus_numbers(crossing), study))
+    reductions = NetworkReduction[WardReduction(study)]
+    err = try
+        PNM.Ybus(sys; network_reductions = reductions, scheduled_branches = [crossing])
+        nothing
+    catch e
+        e
+    end
+    @test err isa IS.DataFormatError
+    @test occursin("[$(outside)]", sprint(showerror, err))
+
+    inside = first(br for br in branches if all(in(study), _arc_bus_numbers(br)))
+    ybus = PNM.Ybus(sys; network_reductions = reductions, scheduled_branches = [inside])
+    @test issubset(_arc_bus_numbers(inside), PNM.get_bus_axis(ybus))
+end
+
 @testset "A switch closed by its schedule has a reduction record" begin
     sys, switch = _sys_with_open_stub_switch()
     reductions = NetworkReduction[RadialReduction()]

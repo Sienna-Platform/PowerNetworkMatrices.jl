@@ -8,9 +8,11 @@ Holds the Ybus build configuration and the applied reduction specs.
 - `closed_switches`: names of the available switches passed as `Ybus(sys; closed_switches)`,
   included in the network as closed regardless of their `branch_status`
 
-Every `get_reduction` exempts the union of the user and schedule-pinned sets (see
-`get_reduction_exempt_buses`); per-step `NetworkReductionData.irreducible_buses`
-adds each reduction's system-derived complement on top.
+The zero-impedance, radial and degree-two reductions exempt the union of the user and
+schedule-pinned sets (see `get_reduction_exempt_buses`); per-step
+`NetworkReductionData.irreducible_buses` adds each reduction's system-derived complement on
+top. A Ward reduction keeps only its study buses, so it rejects a study area that leaves out
+a schedule-pinned bus.
 """
 @kwdef mutable struct ReductionContainer
     user_irreducible_buses::Set{Int} = Set{Int}()
@@ -43,7 +45,8 @@ get_closed_switches(rb::ReductionContainer) = rb.closed_switches
 """
     get_reduction_exempt_buses(rb::ReductionContainer) -> Set{Int}
 
-The buses every reduction keeps: the user's irreducible buses and the schedule-pinned buses.
+The buses the zero-impedance, radial and degree-two reductions keep: the user's irreducible
+buses and the schedule-pinned buses.
 """
 get_reduction_exempt_buses(rb::ReductionContainer) =
     union(rb.user_irreducible_buses, rb.schedule_pinned_buses)

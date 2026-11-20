@@ -2509,8 +2509,24 @@ function _validate_study_buses(ybus::Ybus, study_buses::Vector{Int})
     return nothing
 end
 
+# A Ward equivalent replaces the external network wholesale, so it cannot keep a scheduled
+# branch whose buses lie outside the study area.
+function _validate_schedule_pinned_in_study_area(ybus::Ybus, study_buses::Vector{Int})
+    pinned = get_schedule_pinned_buses(get_reductions(get_network_reduction_data(ybus)))
+    outside = sort!(collect(setdiff(pinned, study_buses)))
+    isempty(outside) && return
+    throw(
+        IS.DataFormatError(
+            "WardReduction study_buses exclude the buses $(outside), which scheduled \
+            branches or closed switches keep. Add them to study_buses or drop their \
+            schedule.",
+        ),
+    )
+end
+
 function get_reduction(ybus::Ybus, ::PSY.System, reduction::WardReduction)
     study_buses = get_study_buses(reduction)
+    _validate_schedule_pinned_in_study_area(ybus, study_buses)
     ref_bus_key = _validate_study_buses(ybus, study_buses)
     subnetwork_bus_axis = ybus.subnetwork_axes[ref_bus_key][1]
     bus_lookup = get_bus_lookup(ybus)

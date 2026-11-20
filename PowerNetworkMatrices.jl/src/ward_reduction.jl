@@ -7,7 +7,9 @@ are mapped to boundary buses based on impedance criteria, and equivalent admitta
 are computed.
 
 # Fields
-- `study_buses::Vector{Int}`: bus numbers to retain in the reduced network
+- `study_buses::Vector{Int}`: bus numbers to retain in the reduced network. They must
+  include every bus that `Ybus(sys; scheduled_branches, closed_switches)` keeps for the
+  schedule (see `get_schedule_pinned_buses`); the reduction throws otherwise.
 
 # Examples
 ```julia
