@@ -208,12 +208,6 @@ function _two_tier_rows(builder)
     return (; cases, sys, vmodf, nets, arcs, rows)
 end
 
-function _case_islands(r, case)
-    case[4] || return nothing
-    names = union(case[2], case[3])
-    return first(_checked_reference_islands(r.vmodf, r.sys, case[1], names))
-end
-
 @testset "two-tier rows match rebuilt systems" begin
     for builder in unique(first.(_TWO_TIER_CASES))
         r = _two_tier_rows(builder)
@@ -223,15 +217,19 @@ end
         fresh = VirtualMODF(PNM.get_core(r.vmodf), r.sys)
         for (i, case) in enumerate(r.cases)
             names = union(case[2], case[3])
-            _, n_islands = _checked_reference_islands(r.vmodf, r.sys, builder, names)
+            islands, n_islands =
+                _checked_reference_islands(r.vmodf, r.sys, builder, names)
             @test (n_islands > 1) == case[4]
+            if n_islands == 1
+                islands = nothing
+            end
             err = _max_error_against_rebuild(
                 a -> r.rows[a][i],
                 r.arcs,
                 bus_axis,
                 names;
                 builder = builder,
-                islands = _case_islands(r, case),
+                islands = islands,
             )
             @test err < 1e-10
             # On the base topology the rows are the registered contingency's rows, bit for bit.

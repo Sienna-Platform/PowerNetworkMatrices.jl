@@ -268,12 +268,19 @@ const _CORRIDOR_TIER2_ROWS = [
         rows = Dict(
             a => only(get_post_contingency_ptdf_rows(vmodf, a, [net])) for a in arcs
         )
-        tier2 = get(PNM.get_tier2_factor_cache(vmodf), net, nothing)
-        @test (isnothing(tier2) ? 0 : PNM._woodbury_rank(tier2)) == rank
+        tier2_factors = PNM.get_tier2_factor_cache(vmodf)
+        if haskey(tier2_factors, net)
+            @test PNM._woodbury_rank(tier2_factors[net]) == rank
+        else
+            @test rank == 0
+        end
         names = union(k, c)
         islands, n = _checked_reference_islands(vmodf, sys, _node_breaker_corridor, names)
+        if n == 1
+            islands = nothing
+        end
         @test _max_error_against_rebuild(a -> rows[a], arcs, PNM.get_bus_axis(vmodf), names;
-            builder = _node_breaker_corridor, islands = n > 1 ? islands : nothing) < 1e-10
+            builder = _node_breaker_corridor, islands = islands) < 1e-10
     end
 end
 
