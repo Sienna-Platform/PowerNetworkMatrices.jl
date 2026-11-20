@@ -302,6 +302,19 @@ function _topology_row_plan(
     return _RowPlan(_CORRECTED_ROW, topology_wf, b_topology)
 end
 
+# Plan of monitored arc `m`'s row on `net` when the contingency changes no arc of K's islands
+# holding a reference bus: zero for an arc outside those islands, else K's row.
+function _unchanged_topology_row_plan(
+    core::FactorCore,
+    arc_sus::Vector{Float64},
+    m::Int,
+    net::PostContingencyNetwork,
+    topology_wf::WoodburyFactors,
+)::_RowPlan
+    _outside_reference_islands(core, topology_wf, m) && return _RowPlan(_ZERO_ROW)
+    return _topology_row_plan(arc_sus, m, net, topology_wf)
+end
+
 """
     _post_contingency_row_plan(cache, core, woodbury_cache, m, net, topology_factors) -> _RowPlan
 
@@ -328,9 +341,8 @@ function _post_contingency_row_plan(
     topology_wf = get!(topology_factors, net.topology) do
         _tier1_factors!(woodbury_cache, core, net.topology)
     end
-    _outside_reference_islands(core, topology_wf, m) && return _RowPlan(_ZERO_ROW)
     isempty(net.tier2.arc_modifications) &&
-        return _topology_row_plan(arc_sus, m, net, topology_wf)
+        return _unchanged_topology_row_plan(core, arc_sus, m, net, topology_wf)
     live = net
     narrowed = false
     if topology_wf.is_islanding
@@ -338,11 +350,13 @@ function _post_contingency_row_plan(
         if !isempty(outside)
             n_changed = count(mod -> !iszero(mod.delta_b), net.tier2.arc_modifications)
             length(outside) == n_changed &&
-                return _topology_row_plan(arc_sus, m, net, topology_wf)
+                return _unchanged_topology_row_plan(core, arc_sus, m, net, topology_wf)
             live = _without_arcs(net, outside)
             narrowed = true
         end
     end
+    # The tier-2 factors come before the zero row of an arc K cuts off: building them throws
+    # when the contingency reconnects a bus K cuts off, so every row of the network throws.
     tier2_wf = get!(get_tier2_factor_cache(cache), live) do
         _tier2_factors(
             (p, q) -> _cached_column!(cache, core, p, q),
@@ -361,6 +375,7 @@ function _post_contingency_row_plan(
             off, though the topology cuts buses off.",
         )
     end
+    _outside_reference_islands(core, topology_wf, m) && return _RowPlan(_ZERO_ROW)
     _outside_reference_islands(core, tier2_wf, m) && return _RowPlan(_ZERO_ROW)
     b_post = _post_contingency_susceptance(arc_sus, m, live)
     # With no columns and no bus dead on K ∪ c (a bus dead on K counts), the row is K's row

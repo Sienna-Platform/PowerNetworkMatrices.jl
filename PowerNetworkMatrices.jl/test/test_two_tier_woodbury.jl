@@ -1022,3 +1022,35 @@ end
     @test collect(keys(row_caches)) == [registered]
     @test length(row_caches[registered]) == length(arcs)
 end
+
+# Path 1-2-3 with the pair 1-2 carried by "P1" (x = 0.1), "P2" (x = -0.1) and "P3"
+# (x = 0.1): with "P3" out the remaining members cancel and cut buses 2 and 3 off, and
+# opening "P2" as well reconnects them.
+function _path_with_cancelling_pair()
+    sys, buses = _mk_bus_system(3)
+    pair = PSY.Arc(buses[1], buses[2])
+    PSY.add_component!(sys, pair)
+    for (name, x) in (("P1", 0.1), ("P2", -0.1), ("P3", 0.1))
+        _add_test_line!(sys, name, pair, 0.0, x)
+    end
+    tail = PSY.Arc(buses[2], buses[3])
+    PSY.add_component!(sys, tail)
+    _add_test_line!(sys, "L23", tail, 0.0, 0.1)
+    return sys
+end
+
+@testset "a contingency reconnecting buses K cuts off raises an error for every arc" begin
+    sys, vmodf, ids = _two_tier_fixture(_path_with_cancelling_pair, [["P2"]])
+    ts = TopologySequence(vmodf, sys, [_out_set(sys, ["P3"])])
+    islands, refs = get_islands(ts, 1)
+    @test Set(Set(island) for island in islands) == Set([Set([1]), Set([2, 3])])
+    @test [islands[r] for r in refs] == [[1]]
+    net = get_post_contingency_network(ts, 1, ids[["P2"]])
+    for arc in PNM.get_arc_axis(vmodf)
+        @test_throws r"cannot reconnect a dead island" get_post_contingency_ptdf_rows(
+            vmodf,
+            arc,
+            [net],
+        )
+    end
+end
