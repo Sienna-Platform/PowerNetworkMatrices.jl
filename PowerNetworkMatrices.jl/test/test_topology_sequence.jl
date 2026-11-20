@@ -525,6 +525,7 @@ end
     @test isnothing(get_in_service_entry(ts, rev, 2))
     @test !is_arc_out(ts, rev, 1)
     @test is_arc_out(ts, rev, 2)
+    @test get_in_service_members(ts, rev, 1) == PSY.ACTransmission[base]
     @test get_arc_shift_injection(ts, rev, 2) == 0.0
 end
 
@@ -559,6 +560,33 @@ end
               PNM.get_equivalent_emergency_rating(ref_entry)
         @test get_arc_shift_injection(ts, arc, 1) ≈
               PNM.arc_dc_shift_injection(ref_nr, arc) atol = 1e-12
+    end
+end
+
+_leaves(entry::PSY.ACTransmission) = PSY.ACTransmission[entry]
+_leaves(entry::PNM.AbstractReductionAggregate) =
+    reduce(vcat, (_leaves(member) for member in entry); init = PSY.ACTransmission[])
+
+@testset "In-service members drop the tripped leaf of a partly tripped chain" begin
+    reductions =
+        NetworkReduction[DegreeTwoReduction(; reduce_reactive_power_injectors = false)]
+    sys = build_grouped_chains_with_parallel_segment()
+    vmodf = VirtualMODF(
+        VirtualPTDF(sys; network_reductions = reductions),
+        sys;
+        automatically_register_outages = false,
+    )
+    nr = get_network_reduction_data(vmodf)
+    line = PSY.get_component(PSY.Line, sys, "L_10_3")
+    _, arc = PNM._resolve_branch_arc(nr, line)
+    ts = TopologySequence(vmodf, sys, [Set{PSY.Component}([line])])
+    entry = get_in_service_entry(ts, arc, 1)
+    for query in (arc, reverse(arc))
+        members = get_in_service_members(ts, query, 1)
+        @test length(members) == 2
+        @test all(m -> line ∉ _leaves(m), members)
+        @test sort([PNM._finite_series_susceptance(m, nr) for m in members]) ≈
+              sort([PNM._finite_series_susceptance(m, nr) for m in entry]) rtol = 1e-12
     end
 end
 

@@ -186,13 +186,18 @@ end
     get_in_service_members(ts::TopologySequence, arc::Tuple{Int, Int}, t::Int) -> Vector{PSY.ACTransmission}
 
 The members of the parallel group `arc` that are in service at step `t`: those that
-[`is_open_after_outage`](@ref) reports closed with the step's out branches tripped. Returns
-an empty vector when `arc` is not a parallel group in the network reduction data.
+[`is_open_after_outage`](@ref) reports closed with the step's out branches tripped. A member
+chain that loses part of a parallel segment without opening is rebuilt from its remaining
+members, as in [`get_in_service_entry`](@ref). A query on the reverse of the group's arc
+resolves to the group. Returns an empty vector when `arc` is not a parallel group in the
+network reduction data.
 """
 function get_in_service_members(ts::TopologySequence, arc::Tuple{Int, Int}, t::Int)
-    parallel = get_parallel_branch_map(get_network_reduction_data(ts.vmodf))
-    haskey(parallel, arc) || return PSY.ACTransmission[]
-    return _in_service_members(parallel[arc], _removed_at(ts, t))
+    nr = get_network_reduction_data(ts.vmodf)
+    parallel = get_parallel_branch_map(nr)
+    key = _stored_arc_key(nr, arc)
+    haskey(parallel, key) || return PSY.ACTransmission[]
+    return _in_service_members(parallel[key], _removed_at(ts, t))
 end
 
 # The branches out of service at step `t`, compared by identity.
@@ -205,8 +210,18 @@ end
 _in_service_members(
     bp::AbstractBranchesParallel,
     removed::AbstractSet{PSY.ACTransmission},
-) =
-    PSY.ACTransmission[m for m in bp if !is_open_after_outage(m, removed)]
+) = PSY.ACTransmission[
+    _in_service_member(m, removed) for m in bp if !is_open_after_outage(m, removed)
+]
+
+# A member the outage does not reach keeps its identity.
+function _in_service_member(
+    member::PSY.ACTransmission,
+    removed::AbstractSet{PSY.ACTransmission},
+)
+    _outage_reaches(member, removed) || return member
+    return _entry_after_outage(member, removed)
+end
 
 """
     get_in_service_entry(ts::TopologySequence, arc::Tuple{Int, Int}, t::Int) -> Union{PSY.ACTransmission, Nothing}
@@ -286,9 +301,7 @@ function _in_service_entry(
     removed::AbstractSet{PSY.ACTransmission},
 )
     _outage_reaches(bp, removed) || return bp
-    members = PSY.ACTransmission[
-        _entry_after_outage(m, removed) for m in bp if !is_open_after_outage(m, removed)
-    ]
+    members = _in_service_members(bp, removed)
     isempty(members) && return get_added_arc_impedance_map(nr)[arc]
     length(members) == 1 && return only(members)
     return _parallel_group(members, get_arc_tuple(bp))
