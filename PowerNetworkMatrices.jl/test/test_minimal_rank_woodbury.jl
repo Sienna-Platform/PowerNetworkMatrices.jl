@@ -271,7 +271,7 @@ const _CORRIDOR_TIER2_ROWS = [
         tier2 = get(PNM.get_tier2_factor_cache(vmodf), net, nothing)
         @test (isnothing(tier2) ? 0 : PNM._woodbury_rank(tier2)) == rank
         names = union(k, c)
-        islands, n = _reference_islands(vmodf, sys, names)
+        islands, n = _checked_reference_islands(vmodf, sys, _node_breaker_corridor, names)
         @test _max_error_against_rebuild(a -> rows[a], arcs, PNM.get_bus_axis(vmodf), names;
             builder = _node_breaker_corridor, islands = n > 1 ? islands : nothing) < 1e-10
     end
@@ -325,7 +325,7 @@ end
     bus8 = PNM.get_bus_lookup(vmodf)[8]
     @test all(a -> rows[a][bus8] == 0.0, arcs)
     names = union(k, c)
-    islands, n = _reference_islands(vmodf, sys, names)
+    islands, n = _checked_reference_islands(vmodf, sys, _node_breaker_corridor, names)
     @test n > 1
     @test _max_error_against_rebuild(a -> rows[a], arcs, PNM.get_bus_axis(vmodf), names;
         builder = _node_breaker_corridor, islands = islands) < 1e-10
@@ -373,7 +373,7 @@ _compensated_corridor() = _node_breaker_corridor(; reactances = Dict("L78" => -0
     rows = Dict(a => only(get_post_contingency_ptdf_rows(vmodf, a, [net])) for a in arcs)
     @test PNM.get_tier2_factor_cache(vmodf)[net].basis.arc_form
     names = union(k, c)
-    islands, _ = _reference_islands(vmodf, sys, names)
+    islands, _ = _checked_reference_islands(vmodf, sys, _compensated_corridor, names)
     @test _max_error_against_rebuild(a -> rows[a], arcs, PNM.get_bus_axis(vmodf), names;
         builder = _compensated_corridor, islands = islands) < 1e-10
 end
@@ -460,7 +460,7 @@ end
     rows = Dict(a => only(get_post_contingency_ptdf_rows(vmodf, a, [net])) for a in arcs)
     @test PNM.get_tier2_factor_cache(vmodf)[net] === wf
     names = union(k, c)
-    islands, _ = _reference_islands(vmodf, sys, names)
+    islands, _ = _checked_reference_islands(vmodf, sys, _node_breaker_corridor, names)
     @test _max_error_against_rebuild(a -> rows[a], arcs, PNM.get_bus_axis(vmodf), names;
         builder = _node_breaker_corridor, islands = islands) < 1e-10
 
@@ -594,7 +594,7 @@ end
     @test PNM._woodbury_rank(tier2) == 1
     @test !tier2.basis.arc_form
     names = union(k, c)
-    islands, _ = _reference_islands(vmodf, sys, names)
+    islands, _ = _checked_reference_islands(vmodf, sys, _two_subnetwork_corridor, names)
     @test _max_error_against_rebuild(a -> rows[a], arcs, PNM.get_bus_axis(vmodf), names;
         builder = _two_subnetwork_corridor, islands = islands) < 1e-10
 end

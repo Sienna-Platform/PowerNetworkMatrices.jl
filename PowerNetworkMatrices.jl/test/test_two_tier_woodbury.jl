@@ -208,8 +208,11 @@ function _two_tier_rows(builder)
     return (; cases, sys, vmodf, nets, arcs, rows)
 end
 
-_case_islands(r, case) =
-    case[4] ? first(_reference_islands(r.vmodf, r.sys, union(case[2], case[3]))) : nothing
+function _case_islands(r, case)
+    case[4] || return nothing
+    names = union(case[2], case[3])
+    return first(_checked_reference_islands(r.vmodf, r.sys, case[1], names))
+end
 
 @testset "two-tier rows match rebuilt systems" begin
     for builder in unique(first.(_TWO_TIER_CASES))
@@ -220,7 +223,7 @@ _case_islands(r, case) =
         fresh = VirtualMODF(PNM.get_core(r.vmodf), r.sys)
         for (i, case) in enumerate(r.cases)
             names = union(case[2], case[3])
-            _, n_islands = _reference_islands(r.vmodf, r.sys, names)
+            _, n_islands = _checked_reference_islands(r.vmodf, r.sys, builder, names)
             @test (n_islands > 1) == case[4]
             err = _max_error_against_rebuild(
                 a -> r.rows[a][i],
@@ -331,7 +334,7 @@ end
         PNM.get_bus_axis(vmodf),
         names;
         builder = _case10,
-        islands = first(_reference_islands(vmodf, sys, names)),
+        islands = first(_checked_reference_islands(vmodf, sys, _case10, names)),
     )
     @test err < 1e-10
 end
@@ -382,7 +385,7 @@ end
             PNM.get_bus_axis(vmodf),
             names;
             builder = builder,
-            islands = first(_reference_islands(vmodf, sys, names)),
+            islands = first(_checked_reference_islands(vmodf, sys, builder, names)),
         )
         @test err < 1e-10
     end
@@ -393,7 +396,12 @@ end
     ts = TopologySequence(vmodf, sys, [_out_set(sys, ["Line16"])])
     @test length(first(get_islands(ts, 1))) == 1
     net = get_post_contingency_network(ts, 1, ids[["Trans3"]])
-    islands, n_islands = _reference_islands(vmodf, sys, ["Line16", "Trans3"])
+    islands, n_islands = _checked_reference_islands(
+        vmodf,
+        sys,
+        _c_sys14_for_row_batches,
+        ["Line16", "Trans3"],
+    )
     @test n_islands == 2
     arcs = PNM.get_arc_axis(vmodf)
     bus_axis = PNM.get_bus_axis(vmodf)
