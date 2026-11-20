@@ -210,30 +210,47 @@ PowerTransmissionSecurityAnalysis read these fields.
 _changed_modifications(modifications::Vector{ArcModification}) =
     [j for (j, mod) in enumerate(modifications) if !iszero(mod.delta_b)]
 
-"""
-    _woodbury_factors_from_Z(Z, BA, signs, arc_sus, modifications, kept, arc_out[, labeler]) -> WoodburyFactors
+# ν = BA[:, e] / b_e is 0/0 for an arc with no DC susceptance, e.g. a parallel group whose
+# reactances cancel, so every solve for it holds NaN.
+function _check_changed_arcs_have_susceptance(
+    arc_sus::Vector{Float64},
+    modifications::Vector{ArcModification},
+)
+    for k in _changed_modifications(modifications)
+        e = modifications[k].arc_index
+        iszero(arc_sus[e]) && error(
+            "Arc $e has zero DC susceptance, but its modification changes it by " *
+            "$(modifications[k].delta_b). The Woodbury update cannot add susceptance to it.",
+        )
+    end
+    return nothing
+end
 
-Assemble the Woodbury factors from an already-resolved `Z`. `kept` is
-`_changed_modifications(modifications)`, and column `j` of `Z` is `B⁻¹ν` in full-bus
-space for the arc of `modifications[kept[j]]`. The callers differ only in how they obtain
-`Z`: one solve per arc in the kernel path, a lookup into the batched pre-contingency solves in
-`populate_cache`. `arc_out` has one entry per modification. `signs[e]` is the sign of
-arc `e`'s DC susceptance (`FactorCore.arc_susceptance_signs`). Islanding labels come from
+"""
+    _woodbury_factors_from_Z(Z, basis, BA, signs, arc_sus, modifications, arc_out[, labeler]) -> WoodburyFactors
+
+Assemble the arc-form Woodbury factors from an already-resolved `Z`; `_arc_form_factors` is
+the caller. Column `j` of `Z` is `B⁻¹ν` in full-bus space for the `j`-th arc of
+`_changed_modifications(modifications)`, and `basis` is the arc-form basis of those arcs.
+`arc_out` has one entry per modification. `signs[e]` is the sign of arc `e`'s DC susceptance
+(`FactorCore.arc_susceptance_signs`). Islanding labels come from
 `labeler(BA, arc_sus, modifications, n_bus)`, e.g. a `BridgeLabels`, which sees every
 modification.
 """
 function _woodbury_factors_from_Z(
     Z::Matrix{Float64},
+    basis::WoodburyBasis,
     BA::SparseArrays.SparseMatrixCSC{Float64, Int},
     signs::Vector{Float64},
     arc_sus::Vector{Float64},
     modifications::Vector{ArcModification},
-    kept::Vector{Int},
     arc_out::Vector{Bool},
     labeler::F = _post_contingency_bus_labels,
 )::WoodburyFactors where {F}
     n_bus = size(Z, 1)
+    kept = _changed_modifications(modifications)
     M = length(kept)
+    _check_changed_arcs_have_susceptance(arc_sus, modifications)
     size(Z, 2) == M ||
         error("Z has $(size(Z, 2)) columns; expected $M, one per changed arc.")
 
@@ -241,12 +258,6 @@ function _woodbury_factors_from_Z(
     delta_b_vec = Vector{Float64}(undef, M)
     for (j, k) in enumerate(kept)
         e = modifications[k].arc_index
-        # ν = BA[:, e] / b_e is 0/0 for an arc with no DC susceptance, e.g. a parallel group
-        # whose reactances cancel, so Z holds NaN for it.
-        iszero(arc_sus[e]) && error(
-            "Arc $e has zero DC susceptance, but its modification changes it by " *
-            "$(modifications[k].delta_b). The Woodbury update cannot add susceptance to it.",
-        )
         arc_indices[j] = e
         delta_b_vec[j] = modifications[k].delta_b
     end
@@ -293,6 +304,7 @@ function _woodbury_factors_from_Z(
         arc_out[kept],
         is_island,
         labels,
+        basis,
     )
 end
 
@@ -302,6 +314,108 @@ end
 Number of columns of the Woodbury update `wf`, the size of every per-column buffer.
 """
 _woodbury_rank(wf::WoodburyFactors) = size(wf.W_inv, 1)
+
+# The arc-form factors of `basis`. They island, with `post_labels` as the island labels,
+# when `W` is singular or `post_labels` puts a bus outside the islands of the reference
+# buses `ref_positions`.
+function _arc_form_factors(
+    Z::Matrix{Float64},
+    basis::WoodburyBasis,
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    signs::Vector{Float64},
+    arc_sus::Vector{Float64},
+    modifications::Vector{ArcModification},
+    arc_out::Vector{Bool},
+    post_labels::Vector{Int},
+    ref_positions::Vector{Int},
+)::WoodburyFactors
+    wf = _woodbury_factors_from_Z(
+        Z,
+        basis,
+        BA,
+        signs,
+        arc_sus,
+        modifications,
+        arc_out,
+        (_, _, _, _) -> post_labels,
+    )
+    (wf.is_islanding || all(_live_buses(post_labels, ref_positions, size(Z, 1)))) &&
+        return wf
+    return WoodburyFactors(
+        wf.Z,
+        wf.W_inv,
+        wf.arc_indices,
+        wf.delta_b,
+        wf.arc_out,
+        true,
+        post_labels,
+        wf.basis,
+    )
+end
+
+"""
+    _woodbury_factors_from_basis(Z, basis, BA, signs, arc_sus, modifications, arc_out, post_labels, ref_positions, arc_fallback) -> WoodburyFactors
+
+Woodbury factors of `modifications` on the base network from `Z = B⁻¹U`, `U` the columns of
+`basis`. An arc-form basis assembles exactly as `_woodbury_factors_from_Z`. Otherwise
+`K[i, j] = scale_i (Z[p_i, j] − Z[q_i, j])`, `S = I + D K` and `W⁻¹ = S⁻¹ D` by LU; the
+modification islands when `post_labels` puts a bus outside the islands of the reference buses
+`ref_positions`, and then carries `post_labels`. When `S` has a pivot below
+`MODF_ISLANDING_TOLERANCE`, the result is `arc_fallback()`, the arc-form factors.
+"""
+function _woodbury_factors_from_basis(
+    Z::Matrix{Float64},
+    basis::WoodburyBasis,
+    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
+    signs::Vector{Float64},
+    arc_sus::Vector{Float64},
+    modifications::Vector{ArcModification},
+    arc_out::Vector{Bool},
+    post_labels::Vector{Int},
+    ref_positions::Vector{Int},
+    arc_fallback::F,
+)::WoodburyFactors where {F}
+    if basis.arc_form
+        return _arc_form_factors(
+            Z,
+            basis,
+            BA,
+            signs,
+            arc_sus,
+            modifications,
+            arc_out,
+            post_labels,
+            ref_positions,
+        )
+    end
+    r = length(basis)
+    K_mat = Matrix{Float64}(undef, r, r)
+    for j in 1:r, i in 1:r
+        K_mat[i, j] = basis.scale[i] * (Z[basis.p[i], j] - Z[basis.q[i], j])
+    end
+    W_inv = Matrix{Float64}(undef, 0, 0)
+    if r > 0
+        S_lu = LinearAlgebra.lu(LinearAlgebra.I + basis.D * K_mat; check = false)
+        any(i -> abs(S_lu.factors[i, i]) < MODF_ISLANDING_TOLERANCE, 1:r) &&
+            return arc_fallback()
+        W_inv = S_lu \ basis.D
+    end
+
+    kept = _changed_modifications(modifications)
+    arc_indices = Int[modifications[k].arc_index for k in kept]
+    delta_b = Float64[modifications[k].delta_b for k in kept]
+    is_island = !all(_live_buses(post_labels, ref_positions, size(Z, 1)))
+    return WoodburyFactors(
+        Z,
+        W_inv,
+        arc_indices,
+        delta_b,
+        arc_out[kept],
+        is_island,
+        is_island ? post_labels : Int[],
+        basis,
+    )
+end
 
 # zm_Z = ν_mᵀ Z[:, eachindex(zm_Z)], ν_m = BA[:, m] / b_pre (BA's sign convention, not A's).
 function _monitored_Z!(
@@ -494,6 +608,129 @@ function _check_arc_indices(
     return
 end
 
+# Column `j` of the result is `B⁻¹ν_j` for the `j`-th arc of `_changed_modifications`, in
+# full-bus space, from one base solve per arc. Call inside `with_solver`, which owns `K_solver` and `work_ba_col`.
+function _base_woodbury_columns(
+    core::FactorCore,
+    K_solver,
+    work_ba_col::Vector{Float64},
+    n_bus::Int,
+    modifications::Vector{ArcModification},
+)::Matrix{Float64}
+    kept = _changed_modifications(modifications)
+    Z = Matrix{Float64}(undef, n_bus, length(kept))
+    for (j, k) in enumerate(kept)
+        e = modifications[k].arc_index
+        lin_solve =
+            _solve_ba_column!(K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, e)
+        _gather_to_buses!(view(Z, :, j), core.valid_ix, lin_solve, core.arc_susceptances[e])
+    end
+    return Z
+end
+
+# Solve `B x = scale · (e_p − e_q)` on the valid buses; a reference bus takes no entry.
+# Capture the return: only KLU solves in place.
+function _solve_node_pair!(
+    K,
+    work::Vector{Float64},
+    bus_to_valid_idx::Vector{Int},
+    p::Int,
+    q::Int,
+    scale::Float64,
+)
+    fill!(work, 0.0)
+    valid_p = bus_to_valid_idx[p]
+    valid_p > 0 && (work[valid_p] = scale)
+    valid_q = bus_to_valid_idx[q]
+    valid_q > 0 && (work[valid_q] = -scale)
+    return _solve_factorization(K, work)
+end
+
+# Column `j` of the result is `B⁻¹u_j` for column `u_j` of `basis`, in full-bus space, from one
+# base solve per column; an arc-form basis solves each modified arc as
+# `_base_woodbury_columns`. Call inside `with_solver`, which owns `K_solver` and `work_ba_col`.
+function _basis_columns(
+    core::FactorCore,
+    K_solver,
+    work_ba_col::Vector{Float64},
+    n_bus::Int,
+    basis::WoodburyBasis,
+    modifications::Vector{ArcModification},
+)::Matrix{Float64}
+    basis.arc_form &&
+        return _base_woodbury_columns(core, K_solver, work_ba_col, n_bus, modifications)
+    Z = Matrix{Float64}(undef, n_bus, length(basis))
+    for j in 1:length(basis)
+        lin_solve = _solve_node_pair!(
+            K_solver,
+            work_ba_col,
+            core.bus_to_valid_idx,
+            basis.p[j],
+            basis.q[j],
+            basis.scale[j],
+        )
+        _gather_to_buses!(view(Z, :, j), core.valid_ix, lin_solve)
+    end
+    return Z
+end
+
+"""
+    _base_network_factors(core, modifications, labeler, columns, arc_columns) -> WoodburyFactors
+
+Woodbury factors of `modifications` on the base network over its minimal-rank basis, built
+from the island labels `labeler(BA, arc_sus, modifications, n_bus)` of the modified network.
+`columns(basis)` gives `B⁻¹U` for a basis and `arc_columns()` the arc-form `B⁻¹U` of every
+modification, used when the node-pair basis is singular.
+"""
+function _base_network_factors(
+    core::FactorCore,
+    modifications::Vector{ArcModification},
+    labeler::L,
+    columns::C,
+    arc_columns::A,
+)::WoodburyFactors where {L, C, A}
+    BA = core.BA
+    signs = core.arc_susceptance_signs
+    arc_sus = core.arc_susceptances
+    _check_changed_arcs_have_susceptance(arc_sus, modifications)
+    post_labels = labeler(BA, arc_sus, modifications, size(BA, 1))
+    basis = _woodbury_basis(core, ArcModification[], Int[], modifications, post_labels)
+    arc_out = _arcs_fully_opened(core, modifications)
+    ref_positions = _ref_bus_positions(core)
+    arc_fallback =
+        () -> _arc_form_factors(
+            arc_columns(),
+            _arc_form_basis(core, modifications),
+            BA,
+            signs,
+            arc_sus,
+            modifications,
+            arc_out,
+            post_labels,
+            ref_positions,
+        )
+    return _woodbury_factors_from_basis(
+        columns(basis),
+        basis,
+        BA,
+        signs,
+        arc_sus,
+        modifications,
+        arc_out,
+        post_labels,
+        ref_positions,
+        arc_fallback,
+    )
+end
+
+"""
+    _compute_woodbury_factors(core, modifications[, labeler]) -> WoodburyFactors
+
+Woodbury factors of `modifications` over their minimal-rank basis, solved on `core`'s
+factorization. The island labels of the modified network come from
+`labeler(BA, arc_sus, modifications, n_bus)`. Solves and the scratch slot go through
+`with_solver`, which holds the core's `solver_lock`.
+"""
 function _compute_woodbury_factors(
     core::FactorCore,
     modifications::Vector{ArcModification},
@@ -506,28 +743,14 @@ function _compute_woodbury_factors(
         core.temp_data,
         core.solver_lock,
     ) do K_solver, work_ba_col, temp_data
-        kept = _changed_modifications(modifications)
-        Z = Matrix{Float64}(undef, length(temp_data), length(kept))
-        for (j, k) in enumerate(kept)
-            e = modifications[k].arc_index
-            lin_solve =
-                _solve_ba_column!(K_solver, work_ba_col, core.BA, core.bus_to_valid_idx, e)
-            _gather_to_buses!(
-                view(Z, :, j),
-                core.valid_ix,
-                lin_solve,
-                core.arc_susceptances[e],
-            )
-        end
-        return _woodbury_factors_from_Z(
-            Z,
-            core.BA,
-            core.arc_susceptance_signs,
-            core.arc_susceptances,
+        n_bus = length(temp_data)
+        return _base_network_factors(
+            core,
             modifications,
-            kept,
-            _arcs_fully_opened(core, modifications),
             labeler,
+            basis ->
+                _basis_columns(core, K_solver, work_ba_col, n_bus, basis, modifications),
+            () -> _base_woodbury_columns(core, K_solver, work_ba_col, n_bus, modifications),
         )
     end
 end
@@ -541,6 +764,44 @@ function _apply_woodbury_correction(
 )::Vector{Float64}
     plan = _base_topology_row_plan(core, monitored_idx, wf, wf)
     return only(_rows_from_plans(core, monitored_idx, (plan,)))
+end
+
+"""
+    _outside_reference_islands(core, wf, m) -> Bool
+
+Whether monitored arc `m` lies outside the islands holding a reference bus on the network whose
+factors are `wf`: `wf` islands and the label of `m`'s from bus is no reference bus's label.
+"""
+function _outside_reference_islands(
+    core::FactorCore,
+    wf::WoodburyFactors,
+    m::Int,
+)::Bool
+    wf.is_islanding || return false
+    labels = wf.bus_island_labels
+    label = labels[first(_arc_ends(core, m))]
+    n_ref = length(core.bus_to_valid_idx) - length(core.valid_ix)
+    for j in 1:n_ref
+        labels[_reference_position(core.valid_ix, j)] == label && return false
+    end
+    return true
+end
+
+# Position of the `j`-th reference bus in ascending order, without allocating. The ascending
+# valid positions `valid` skip exactly the reference positions, so `valid[k] - k` reference
+# positions precede `valid[k]`; the `j`-th one follows the `k - 1` valid positions before the
+# first `k` with `valid[k] - k >= j`.
+function _reference_position(valid::Vector{Int}, j::Int)::Int
+    lo, hi = 1, length(valid) + 1
+    while lo < hi
+        mid = (lo + hi) >>> 1
+        if valid[mid] - mid >= j
+            hi = mid
+        else
+            lo = mid + 1
+        end
+    end
+    return lo - 1 + j
 end
 
 # --- Row plans: the one path from a monitored arc's base solve to its post-modification rows ---
@@ -569,8 +830,9 @@ Plan of monitored arc `m`'s row on the network the modification `post` takes the
 to, with `wf` its Woodbury factors on the base network, or `nothing` for the base network
 itself. The arc is judged out of service, and its susceptance taken, on `post`. An arc out of
 service has the zero row, including an arc with no susceptance on the base network, whose
-`BA` column is empty. Factors with no columns, such as those of a shunt-only modification,
-still take the correction, which scales the base solve by `b_post / b_pre`.
+`BA` column is empty, and so has an arc outside the islands of `post` that hold a reference
+bus. Factors with no columns, such as those of a shunt-only modification, still take the
+correction, which scales the base solve by `b_post / b_pre`.
 """
 function _base_topology_row_plan(
     core::FactorCore,
@@ -581,6 +843,7 @@ function _base_topology_row_plan(
     arc_sus = core.arc_susceptances
     _post_modification_arc_out(arc_sus, core, m, post) && return _RowPlan(_ZERO_ROW)
     isnothing(wf) && return _RowPlan(_BASE_ROW)
+    _outside_reference_islands(core, wf, m) && return _RowPlan(_ZERO_ROW)
     return _RowPlan(_CORRECTED_ROW, wf, _post_modification_susceptance(arc_sus, m, post))
 end
 

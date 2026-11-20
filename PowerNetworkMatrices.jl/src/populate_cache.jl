@@ -197,30 +197,48 @@ _resolve_monitored_index(vmodf::VirtualMODF, m::Tuple{Int, Int}) =
     _monitored_arc_index(vmodf, m)
 
 """
-    _woodbury_factors_from_base(base_full, BA, signs, arc_sus, modifications, arc_out, n_bus) -> WoodburyFactors
+    _woodbury_factors_from_base(core, base_full, modifications, n_bus) -> WoodburyFactors
 
-Reuse each modified arc's pre-contingency solve instead of resolving it: `base_full[arc]` is
-that solve, already scattered to full-bus space, so this assembles Woodbury factors from a
-dictionary lookup per arc rather than a fresh libklu solve. `base_full` maps each modified arc
-index to `B⁻¹ · BA[:, arc]`; the shared kernel (`_woodbury_factors_from_Z`) does the rest.
+Woodbury factors of `modifications` on the base network, reusing each modified arc's
+pre-contingency solve: `base_full` maps each modified arc index to `B⁻¹ · BA[:, arc]` in
+full-bus space, which gives the arc-form `Z` with no further solve. A node-pair basis solves
+its columns on `core`.
 """
 function _woodbury_factors_from_base(
+    core::VirtualFactorCore,
     base_full::Dict{Int, Vector{Float64}},
-    BA::SparseArrays.SparseMatrixCSC{Float64, Int},
-    signs::Vector{Float64},
-    arc_sus::Vector{Float64},
     modifications::Vector{ArcModification},
-    arc_out::Vector{Bool},
     n_bus::Int,
 )::WoodburyFactors
+    arc_sus = core.arc_susceptances
     # Z[:, j] = B⁻¹ ν_j = (B⁻¹ BA[:, e_j]) / b_{e_j}
-    kept = _changed_modifications(modifications)
-    Z = Matrix{Float64}(undef, n_bus, length(kept))
-    for (j, k) in enumerate(kept)
-        e = modifications[k].arc_index
-        Z[:, j] .= base_full[e] ./ arc_sus[e]
+    function arc_columns()
+        kept = _changed_modifications(modifications)
+        Z = Matrix{Float64}(undef, n_bus, length(kept))
+        for (j, k) in enumerate(kept)
+            e = modifications[k].arc_index
+            Z[:, j] .= base_full[e] ./ arc_sus[e]
+        end
+        return Z
     end
-    return _woodbury_factors_from_Z(Z, BA, signs, arc_sus, modifications, kept, arc_out)
+    function columns(basis::WoodburyBasis)
+        basis.arc_form && return arc_columns()
+        return with_solver(
+            core.K,
+            core.work_ba_col,
+            core.temp_data,
+            core.solver_lock,
+        ) do K_solver, work_ba_col, _
+            return _basis_columns(core, K_solver, work_ba_col, n_bus, basis, modifications)
+        end
+    end
+    return _base_network_factors(
+        core,
+        modifications,
+        _post_contingency_bus_labels,
+        columns,
+        arc_columns,
+    )
 end
 
 """
@@ -238,10 +256,10 @@ The acceleration comes from a single batched solve over the union of all arcs
 referenced — every contingency's modified arcs plus every monitored arc. Because
 the pre-contingency solve for a monitored arc is contingency-independent, it is
 computed once and reused across all contingencies; the Woodbury factors per
-contingency are then assembled from these precomputed solves with no further
-linear solves. This replaces the `O(n_contingencies × (M + n_monitored))`
-one-at-a-time solves of repeated `getindex` with one batched solve over the
-distinct arcs.
+contingency are then assembled from these precomputed solves, with one further
+solve per column only for a modification whose minimal-rank basis is not in arc
+form. This replaces the `O(n_contingencies × (M + n_monitored))` one-at-a-time solves of
+repeated `getindex` with one batched solve over the distinct arcs.
 
 Results are written into the per-contingency row caches (and Woodbury cache) and
 pinned, so subsequent `vmodf[monitored, contingency]` queries are cache hits.
@@ -254,7 +272,6 @@ function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
     woodbury_cache = get_woodbury_cache(vmodf)
     n_bus = length(core.temp_data[1])
     cutoff = get_cutoff(core)
-    BA = core.BA
     arc_sus = core.arc_susceptances
 
     @lock core.solver_lock begin
@@ -292,15 +309,7 @@ function populate_cache(vmodf::VirtualMODF, contingencies; monitored)
         for (k, mod) in enumerate(mods)
             mod == _BASE_NETWORK && continue
             factors[k] = get!(woodbury_cache, mod) do
-                _woodbury_factors_from_base(
-                    base_full,
-                    BA,
-                    core.arc_susceptance_signs,
-                    arc_sus,
-                    arc_mods[k],
-                    _arcs_fully_opened(core, arc_mods[k]),
-                    n_bus,
-                )
+                _woodbury_factors_from_base(core, base_full, arc_mods[k], n_bus)
             end
         end
         caches = [get!(() -> _new_modf_row_cache(vmodf), row_caches, mod) for mod in mods]

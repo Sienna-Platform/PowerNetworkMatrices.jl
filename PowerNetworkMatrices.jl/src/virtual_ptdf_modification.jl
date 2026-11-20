@@ -24,6 +24,7 @@ end
 Compute the post-modification PTDF row for a monitored arc using
 precomputed Woodbury factors. Accepts either an integer arc index
 or a `Tuple{Int, Int}` bus pair.
+An arc in an island that holds no base reference bus gets the all-zero row.
 
 !!! note
     Concurrent callers serialize on the per-cache `solver_lock`.
@@ -44,6 +45,7 @@ end
 One-shot convenience function: compute the post-modification PTDF row
 for a monitored arc under a network modification: the row
 `compute_woodbury_factors` followed by `apply_woodbury_correction` gives.
+An arc in an island that holds no base reference bus gets the all-zero row.
 
 No caching — each call recomputes. Use the two-step API
 (`compute_woodbury_factors` + `apply_woodbury_correction`) when querying
@@ -67,6 +69,7 @@ modification in `mods`, from a single solve of the arc's base column:
 `rows[i] == get_post_modification_ptdf_row(vptdf, monitored_arc, mods[i])`, bit for bit,
 including `vptdf`'s distributed slack. No caching: each call recomputes every modification's
 Woodbury factors.
+An arc in an island that holds no base reference bus gets the all-zero row.
 
 !!! note
     Concurrent callers serialize on the per-cache `solver_lock`.

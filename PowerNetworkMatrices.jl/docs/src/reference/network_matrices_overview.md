@@ -108,6 +108,19 @@ The MODF answers: "Under a registered contingency or network modification (one o
 
 **Use it when:** you need post-contingency or post-modification flow sensitivities for one or a few contingencies on a large system, and constructing the full LODF or recomputing PTDF per contingency is too expensive.
 
+#### Islands without a reference bus
+
+A modification can split the network so that some buses have no path to any reference bus.
+Such an island has no bus to balance its injections, so the DC model gives its flows no unique value.
+[`VirtualMODF`](@ref) treats these buses as de-energized:
+
+  - The row of an arc in such an island is all zeros.
+  - Every other row has zero entries at the island's buses, so injections there do not change flows anywhere else.
+
+The rule holds for every modification, whether it is a contingency, a planned topology change, or both, and for every way of requesting a row.
+A [`PTDF`](@ref) of the rebuilt network instead gives such an island a reference bus of its own, chosen arbitrarily, and its rows on that island depend on that choice.
+`VirtualMODF` does not reproduce those rows.
+
 ## Arc-Based Indexing
 
 All matrices that involve branches use **arc tuples** as identifiers instead of branch name strings. An arc tuple is a `Tuple{Int, Int}` of the form `(from_bus_number, to_bus_number)`, representing the directed connection between two buses.
