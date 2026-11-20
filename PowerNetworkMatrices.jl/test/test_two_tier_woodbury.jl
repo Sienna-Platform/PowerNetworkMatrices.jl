@@ -309,24 +309,31 @@ const _MV_PAIR = ["MV-SERIES1-i_1", "MV-SERIES1-i_2"]
     end
 end
 
-@testset "a contingency across the islands of an islanded topology errors" begin
+@testset "a contingency across an islanded topology's islands takes its live rows" begin
+    # SERIES1-SERIES2 lies in the section K cuts off; HV-LOOP2 in the reference island.
     c = ["SERIES1-SERIES2-i_1", "HV-LOOP2-i_1"]
-    sys, vmodf, ids = _two_tier_fixture(_case10, [c])
+    live = ["HV-LOOP2-i_1"]
+    sys, vmodf, ids = _two_tier_fixture(_case10, [c, live])
     ts = TopologySequence(vmodf, sys, [_out_set(sys, _MV_PAIR)])
     net = get_post_contingency_network(ts, 1, ids[c])
-    err = try
-        get_post_contingency_ptdf_rows(vmodf, (101, 104), [net])
-        nothing
-    catch e
-        e
+    live_net = get_post_contingency_network(ts, 1, ids[live])
+    arcs = PNM.get_arc_axis(vmodf)
+    rows =
+        Dict(a => get_post_contingency_ptdf_rows(vmodf, a, [net, live_net]) for a in arcs)
+    for a in arcs
+        @test _bitwise_equal(rows[a][1], rows[a][2])
     end
-    @test err isa ArgumentError
-    @test occursin(net.topology.label, err.msg)
-    @test occursin(string(ids[c]), err.msg)
-    @test occursin("(106, 107)", err.msg)
-    @test occursin("(101, 105)", err.msg)
-    @test isempty(PNM.get_tier2_factor_cache(vmodf))
-    @test isempty(PNM.get_tier2_row_caches(vmodf))
+    @test only(keys(PNM.get_tier2_factor_cache(vmodf))) == live_net
+    names = union(_MV_PAIR, c)
+    err = _max_error_against_rebuild(
+        a -> rows[a][1],
+        arcs,
+        PNM.get_bus_axis(vmodf),
+        names;
+        builder = _case10,
+        islands = first(_reference_islands(vmodf, sys, names)),
+    )
+    @test err < 1e-10
 end
 
 # case10 with LOOP1-LOOP2 at zero reactance: a loop arc with no DC susceptance.

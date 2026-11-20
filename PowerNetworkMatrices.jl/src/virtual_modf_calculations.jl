@@ -598,8 +598,9 @@ and scales by the arc's susceptance on K ∪ c. On the base topology the row equ
 
 A monitored arc out of service on K ∪ c gives the zero row. When K's factors island the
 network and every arc the contingency changes lies outside the islands holding a reference
-bus, the row is the arc's row on K. A contingency on an islanded K that changes arcs both
-inside and outside those islands throws an `ArgumentError`.
+bus, the row is the arc's row on K. When it changes arcs both inside and outside those
+islands, the rows are those of the contingency without its arcs outside them, which join
+only buses K cut off.
 
 Rows after a contingency on a scheduled topology come from this function. Querying
 `vmodf[monitored, mod]` with a hand-built `NetworkModification` for K ∪ c gives a correct

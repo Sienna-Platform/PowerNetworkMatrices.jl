@@ -14,7 +14,10 @@ Every function on a `Tier2Cache` requires the caller to hold the `solver_lock` o
 # Fields
 - `tier2_factor_cache::Dict{PostContingencyNetwork, WoodburyFactors}`:
         Tier-2 Woodbury factors of each post-contingency network on a topology other than
-        the base network. Those on the base network live in the tier-1 factor cache, under
+        the base network. A contingency that changes arcs both inside and outside the
+        islands holding a reference bus of a topology that islands the network has its
+        factors stored under its narrowed network, the contingency without its arcs outside
+        those islands. Those on the base network live in the tier-1 factor cache, under
         their tier-2 modification.
 - `tier2_row_caches::Dict{PostContingencyNetwork, RowCache{RowCacheValue}}`:
         One `RowCache` per post-contingency network on a topology other than the base
@@ -233,47 +236,71 @@ function _post_contingency_row_cache!(
 end
 
 """
-    _contingency_outside_reference_islands(core, topology_wf, net) -> Bool
+    _arcs_outside_reference_islands(core, topology_wf, net) -> Set{Int}
 
-The islanding rule on a topology whose factors island the network: true when every arc whose
-susceptance the contingency changes lies outside the islands of K holding a reference bus,
-so its rows are K's; false when every such arc lies inside them, so tier 2 applies. A
-contingency on both sides is not covered and throws an `ArgumentError`. Arcs with no
-susceptance change never enter the Woodbury update, and an arc with no susceptance has no
-BA entries to place it.
+On a topology K whose factors island the network, the arcs whose susceptance the contingency
+changes that lie outside the islands of K holding a reference bus. Such an arc joins only
+buses K cut off: taking it out changes no row of an arc inside those islands, and rows of
+arcs outside them are zero. Arcs with no susceptance change never enter the Woodbury update,
+and an arc with no susceptance has no BA entries to place it.
 """
-function _contingency_outside_reference_islands(
+function _arcs_outside_reference_islands(
     core::FactorCore,
     topology_wf::WoodburyFactors,
     net::PostContingencyNetwork,
-)::Bool
-    topology_wf.is_islanding || return false
+)::Set{Int}
+    outside = Set{Int}()
     labels = topology_wf.bus_island_labels
     reference = Set{Int}(labels[p] for p in _ref_bus_positions(core))
     rv = SparseArrays.rowvals(core.BA)
-    inside = Int[]
-    outside = Int[]
     for mod in net.tier2.arc_modifications
         iszero(mod.delta_b) && continue
         e = mod.arc_index
-        if any(k -> labels[rv[k]] in reference, SparseArrays.nzrange(core.BA, e))
-            push!(inside, e)
-        else
+        any(k -> labels[rv[k]] in reference, SparseArrays.nzrange(core.BA, e)) ||
             push!(outside, e)
+    end
+    return outside
+end
+
+# `net` with each arc in `arcs` as K leaves it: the post-contingency modification takes K's
+# entry for the arc, or none, and the tier-2 modification is derived again from it.
+function _without_arcs(net::PostContingencyNetwork, arcs::Set{Int})
+    post = net.post_contingency
+    at_k = Dict(m.arc_index => m for m in net.topology.arc_modifications)
+    arc_mods = ArcModification[]
+    for m in post.arc_modifications
+        if !(m.arc_index in arcs)
+            push!(arc_mods, m)
+        elseif haskey(at_k, m.arc_index)
+            push!(arc_mods, at_k[m.arc_index])
         end
     end
-    isempty(outside) && return false
-    isempty(inside) && return true
-    arc_ax = get_arc_axis(core)
-    throw(
-        ArgumentError(
-            "Post-contingency rows of contingency $(net.contingency_id) on topology \
-            \"$(net.topology.label)\" are not supported: the topology islands the network, \
-            and the contingency changes arcs $(join(arc_ax[inside], ", ")) inside the \
-            islands holding a reference bus and arcs $(join(arc_ax[outside], ", ")) \
-            outside them.",
-        ),
+    narrowed = NetworkModification(
+        post.label,
+        arc_mods,
+        ShuntModification[post.shunt_modifications...],
+        post.is_islanding,
     )
+    return PostContingencyNetwork(
+        _Tier2Derived(),
+        net.topology,
+        narrowed,
+        _tier2_modification(narrowed, net.topology),
+        net.contingency_id,
+    )
+end
+
+# Plan of monitored arc `m`'s row on K, which is its row on `net` when the contingency
+# changes no arc, or only arcs outside the islands of K holding a reference bus.
+function _topology_row_plan(
+    arc_sus::Vector{Float64},
+    m::Int,
+    net::PostContingencyNetwork,
+    topology_wf::WoodburyFactors,
+)::_RowPlan
+    b_topology =
+        _post_modification_susceptance(arc_sus, m, _arc_modification_vector(net.topology))
+    return _RowPlan(_CORRECTED_ROW, topology_wf, b_topology)
 end
 
 """
@@ -281,9 +308,11 @@ end
 
 Plan of monitored arc `m`'s row on `net`, resolving and caching the factors it needs: on the
 base topology the plan of the tier-2 modification from the base network; otherwise K's
-factors in `woodbury_cache` and the tier-2 factors in `cache`. `topology_factors` memoizes
-K's factors by object identity within one call, so networks sharing a topology object hash
-it once. The caller holds `core.solver_lock`.
+factors in `woodbury_cache` and the tier-2 factors in `cache`. When K islands the network
+and the contingency changes arcs both inside and outside the islands holding a reference
+bus, the tier-2 factors are those of its narrowed network (see `_without_arcs`), cached
+under it. `topology_factors` memoizes K's factors by object identity within one call, so
+networks sharing a topology object hash it once. The caller holds `core.solver_lock`.
 """
 function _post_contingency_row_plan(
     cache::Tier2Cache,
@@ -301,28 +330,40 @@ function _post_contingency_row_plan(
         _tier1_factors!(woodbury_cache, core, net.topology)
     end
     _outside_reference_islands(core, topology_wf, m) && return _RowPlan(_ZERO_ROW)
-    if isempty(net.tier2.arc_modifications) ||
-       _contingency_outside_reference_islands(core, topology_wf, net)
-        b_topology =
-            _post_modification_susceptance(
-                arc_sus,
-                m,
-                _arc_modification_vector(net.topology),
-            )
-        return _RowPlan(_CORRECTED_ROW, topology_wf, b_topology)
+    isempty(net.tier2.arc_modifications) &&
+        return _topology_row_plan(arc_sus, m, net, topology_wf)
+    live = net
+    narrowed = false
+    if topology_wf.is_islanding
+        outside = _arcs_outside_reference_islands(core, topology_wf, net)
+        if !isempty(outside)
+            n_changed = count(mod -> !iszero(mod.delta_b), net.tier2.arc_modifications)
+            length(outside) == n_changed &&
+                return _topology_row_plan(arc_sus, m, net, topology_wf)
+            live = _without_arcs(net, outside)
+            narrowed = true
+        end
     end
-    tier2_wf = get!(get_tier2_factor_cache(cache), net) do
+    tier2_wf = get!(get_tier2_factor_cache(cache), live) do
         _tier2_factors(
             (p, q) -> _cached_column!(cache, core, p, q),
             core,
             topology_wf,
-            net.topology,
-            net.tier2,
-            net.post_contingency,
+            live.topology,
+            live.tier2,
+            live.post_contingency,
+        )
+    end
+    # The narrowed network keeps every outage of K, so the buses K cut off stay cut off.
+    if narrowed && !tier2_wf.is_islanding
+        error(
+            "Contingency $(net.contingency_id) on topology \"$(net.topology.label)\" \
+            without its arcs outside the islands holding a reference bus leaves no bus cut \
+            off, though the topology cuts buses off.",
         )
     end
     _outside_reference_islands(core, tier2_wf, m) && return _RowPlan(_ZERO_ROW)
-    b_post = _post_contingency_susceptance(arc_sus, m, net)
+    b_post = _post_contingency_susceptance(arc_sus, m, live)
     # With no columns and no bus dead on K ∪ c (a bus dead on K counts), the row is K's row
     # scaled to K ∪ c. Otherwise it takes the tier-2 row, which zeroes the dead buses.
     if iszero(_woodbury_rank(tier2_wf)) && !tier2_wf.is_islanding
