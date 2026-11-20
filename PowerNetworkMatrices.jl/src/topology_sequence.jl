@@ -158,7 +158,8 @@ end
 Electrical islands at step `t`. Returns `(islands, reference_islands)`: `islands` holds the
 bus numbers of each island and covers the retained buses of the reduced network only;
 `reference_islands` holds the positions in `islands` of the islands that contain a
-reference bus.
+reference bus. Both are shared with the stored topology: treat them as read-only and copy
+them before mutating.
 """
 function get_islands(ts::TopologySequence, t::Int)
     k = get_topology_index(ts, t) + 1
