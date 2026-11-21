@@ -171,6 +171,21 @@ function get_islands(ts::TopologySequence, t::Int)
 end
 
 """
+    get_islands(vmodf::VirtualMODF, net::PostContingencyNetwork)
+
+Electrical islands of the post-contingency network `net`: its topology with the
+contingency's components removed. Returns `(islands, reference_islands)` in the shape of
+`get_islands(ts, t)`: `islands` holds the bus numbers of each island over the retained buses
+of the reduced network, and `reference_islands` the positions in `islands` of the islands
+that contain a reference bus. The labels are the Woodbury kernel's, so a bus lies outside
+the reference islands exactly when the post-contingency rows give it no entries. Each call
+labels the network anew; callers that query a network repeatedly should keep the result,
+and treat it as read-only.
+"""
+get_islands(vmodf::VirtualMODF, net::PostContingencyNetwork) =
+    _label_islands(vmodf, net.post_contingency)
+
+"""
     is_arc_out(ts::TopologySequence, arc::Tuple{Int, Int}, t::Int) -> Bool
 
 Whether `arc` carries no flow at step `t`. An arc is out only when every parallel member is
@@ -179,6 +194,18 @@ stored key.
 """
 is_arc_out(ts::TopologySequence, arc::Tuple{Int, Int}, t::Int) =
     _is_key_out(ts, _stored_arc_key(get_network_reduction_data(ts.vmodf), arc), t)
+
+"""
+    is_arc_out(vmodf::VirtualMODF, net::PostContingencyNetwork, arc::Tuple{Int, Int}) -> Bool
+
+Whether `arc` carries no flow on the post-contingency network `net`: every parallel member
+is out on its topology or removed by the contingency. A query on the reverse of a series or
+parallel arc resolves to the arc's stored key. Each call resolves the network's out arcs
+anew.
+"""
+is_arc_out(vmodf::VirtualMODF, net::PostContingencyNetwork, arc::Tuple{Int, Int}) =
+    _stored_arc_key(get_network_reduction_data(vmodf), arc) in
+    _fully_out_arcs(vmodf, net.post_contingency)
 
 # `key` is a stored key, as `_stored_arc_key` returns it.
 function _is_key_out(ts::TopologySequence, key::Tuple{Int, Int}, t::Int)

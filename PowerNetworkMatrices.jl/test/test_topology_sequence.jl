@@ -111,6 +111,41 @@ end
           Set(filter(!isempty, [Set(filter(in(retained), collect(s))) for s in expected]))
 end
 
+function _line_arc(line)
+    arc = PSY.get_arc(line)
+    return (PSY.get_number(PSY.get_from(arc)), PSY.get_number(PSY.get_to(arc)))
+end
+
+@testset "Post-contingency islands are the islands of the topology with the contingency removed" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    bridge = _find_bridge_line(sys)
+    outage = PSY.FixedForcedOutage(; outage_status = 1.0)
+    PSY.add_supplemental_attribute!(sys, bridge, outage)
+    contingency_id = IS.get_id(outage)
+    vmodf = VirtualMODF(VirtualPTDF(sys), sys)
+    other = first(
+        l for l in sort!(collect(PSY.get_components(PSY.Line, sys)); by = PSY.get_name) if
+        l !== bridge
+    )
+    ts = TopologySequence(vmodf, sys, [Set{PSY.Component}(), Set{PSY.Component}([other])])
+    union_ts = TopologySequence(
+        vmodf,
+        sys,
+        [Set{PSY.Component}([bridge]), Set{PSY.Component}([other, bridge])],
+    )
+    for t in 1:2
+        net = get_post_contingency_network(ts, t, contingency_id)
+        islands, refs = get_islands(vmodf, net)
+        union_islands, union_refs = get_islands(union_ts, t)
+        @test length(islands) == length(first(get_islands(ts, t))) + 1
+        @test Set(Set.(islands)) == Set(Set.(union_islands))
+        @test Set(Set(islands[k]) for k in refs) ==
+              Set(Set(union_islands[k]) for k in union_refs)
+        @test is_arc_out(vmodf, net, _line_arc(bridge))
+        @test is_arc_out(vmodf, net, _line_arc(other)) == (t == 2)
+    end
+end
+
 @testset "Parallel group outages with unequal r/x match a rebuilt PTDF" begin
     for r_scale in (1.0, 5.0)
         builder = () -> _c_sys14_with_parallel_pair(; r_scale = r_scale)[1]
