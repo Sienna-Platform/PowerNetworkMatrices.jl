@@ -19,6 +19,10 @@ Filter = t -> t in (
     PowerMatricesCore.ShuntModification,
     PowerMatricesCore.ContingencySpec,
     PowerMatricesCore.NetworkModification,
+    PowerMatricesCore.PostContingencyNetwork,
+    PowerMatricesCore.cache_statistics,
+    PowerMatricesCore.clear_caches!,
+    PowerMatricesCore.retain_modifications!,
     PowerMatricesCore.BranchOutageTable,
     PowerMatricesCore.get_outage_rows,
     PowerMatricesCore.get_outage_ids,
@@ -56,6 +60,7 @@ These names are documented here but not exported. Use them qualified, for exampl
 Modules = [PowerMatricesCore]
 Filter = t -> t in (
     PowerMatricesCore.Winding,
+    PowerMatricesCore.Tier2Cache,
     PowerMatricesCore.worker_core,
     PowerMatricesCore.worker_network_data,
 )

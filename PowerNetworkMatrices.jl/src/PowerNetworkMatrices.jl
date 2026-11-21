@@ -19,6 +19,7 @@ export BA_Matrix
 export ArcModification
 export ShuntModification
 export ContingencySpec
+export PostContingencyNetwork
 export NetworkModification
 export DegreeTwoReduction
 export IncidenceMatrix
@@ -60,6 +61,7 @@ export branch_flow_limits
 export apply_woodbury_correction
 export clear_all_caches!
 export clear_caches!
+export cache_statistics
 export retain_modifications!
 export compute_woodbury_factors
 export factorize
@@ -105,6 +107,8 @@ export is_arc_out
 export get_in_service_members
 export get_in_service_entry
 export get_arc_shift_injection
+export get_post_contingency_network
+export get_post_contingency_ptdf_rows
 
 using DocStringExtensions
 import InfrastructureSystems as IS
@@ -302,7 +306,22 @@ import PowerMatricesCore:
     _check_worker_core,
     solve_bus_angles!,
     arc_flows!,
-    WoodburyFlowScratch
+    WoodburyFlowScratch,
+    PostContingencyNetwork,
+    _Tier2Derived,
+    _on_base_topology,
+    _tier2_modification,
+    Tier2Cache,
+    get_tier2_factor_cache,
+    get_tier2_row_caches,
+    get_max_column_cache_bytes,
+    _tier1_factors!,
+    _modification_row_plan,
+    _network_row_cache,
+    _post_contingency_ptdf_rows!,
+    cache_statistics,
+    clear_caches!,
+    retain_modifications!
 
 const KLUWrapper = PMC.KLUWrapper
 const AccelerateWrapper = PMC.AccelerateWrapper

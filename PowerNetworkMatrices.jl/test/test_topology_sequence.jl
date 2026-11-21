@@ -111,6 +111,41 @@ end
           Set(filter(!isempty, [Set(filter(in(retained), collect(s))) for s in expected]))
 end
 
+function _line_arc(line)
+    arc = PSY.get_arc(line)
+    return (PSY.get_number(PSY.get_from(arc)), PSY.get_number(PSY.get_to(arc)))
+end
+
+@testset "Post-contingency islands are the islands of the topology with the contingency removed" begin
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    bridge = _find_bridge_line(sys)
+    outage = PSY.FixedForcedOutage(; outage_status = 1.0)
+    PSY.add_supplemental_attribute!(sys, bridge, outage)
+    contingency_id = IS.get_id(outage)
+    vmodf = VirtualMODF(VirtualPTDF(sys), sys)
+    other = first(
+        l for l in sort!(collect(PSY.get_components(PSY.Line, sys)); by = PSY.get_name) if
+        l !== bridge
+    )
+    ts = TopologySequence(vmodf, sys, [Set{PSY.Component}(), Set{PSY.Component}([other])])
+    union_ts = TopologySequence(
+        vmodf,
+        sys,
+        [Set{PSY.Component}([bridge]), Set{PSY.Component}([other, bridge])],
+    )
+    for t in 1:2
+        net = get_post_contingency_network(ts, t, contingency_id)
+        islands, refs = get_islands(vmodf, net)
+        union_islands, union_refs = get_islands(union_ts, t)
+        @test length(islands) == length(first(get_islands(ts, t))) + 1
+        @test Set(Set.(islands)) == Set(Set.(union_islands))
+        @test Set(Set(islands[k]) for k in refs) ==
+              Set(Set(union_islands[k]) for k in union_refs)
+        @test is_arc_out(vmodf, net, _line_arc(bridge))
+        @test is_arc_out(vmodf, net, _line_arc(other)) == (t == 2)
+    end
+end
+
 @testset "Parallel group outages with unequal r/x match a rebuilt PTDF" begin
     for r_scale in (1.0, 5.0)
         builder = () -> _c_sys14_with_parallel_pair(; r_scale = r_scale)[1]
@@ -160,6 +195,10 @@ end
         @test _max_row_error(
             a -> ts[a, 3], builder, ["dup", PSY.get_name(base)], vptdf; skip_arc = arc,
         ) < 1e-9
+
+        # a planned set and a contingency still resolve jointly
+        ctg = PNM._post_contingency_modification(ts, get_topology_index(ts, 2), [base])
+        @test ctg == full
     end
 end
 
@@ -837,4 +876,73 @@ end
     retain_modifications!(vmodf, NetworkModification[])
     @test Set(keys(PNM.get_row_caches(vmodf))) == Set([PNM._BASE_NETWORK])
     @test isempty(PNM.get_woodbury_cache(vmodf))
+end
+
+# The topologies and post-contingency networks a window of `removed` resolves rows on.
+function _window_in_use(vmodf, sys, removed, contingency_id)
+    ts = TopologySequence(vmodf, sys, removed)
+    in_use = Set{Union{NetworkModification, PostContingencyNetwork}}()
+    for t in eachindex(removed)
+        mod = get_network_modification(ts, t)
+        isnothing(mod) || push!(in_use, mod)
+        net = get_post_contingency_network(ts, t, contingency_id)
+        isnothing(net) || push!(in_use, net)
+    end
+    return ts, in_use
+end
+
+function _query_window!(vmodf, ts, contingency_id, arcs, n_steps)
+    for t in 1:n_steps, arc in arcs
+        ts[arc, t]
+        net = get_post_contingency_network(ts, t, contingency_id)
+        isnothing(net) || get_post_contingency_ptdf_rows(vmodf, arc, [net])
+    end
+    return
+end
+
+@testset "A window with an outage at every step evicts the contingency-only caches" begin
+    sys = _c_sys14_for_row_batches()
+    line(name) = PSY.get_component(PSY.Line, sys, name)
+    line7 = line("Line7")
+    outage = PSY.FixedForcedOutage(; outage_status = 1.0)
+    PSY.add_supplemental_attribute!(sys, line7, outage)
+    contingency_id = IS.get_id(outage)
+    vmodf = VirtualMODF(VirtualPTDF(sys), sys)
+    contingency = only(values(get_registered_contingencies(vmodf))).modification
+    arcs = [(1, 2), (2, 3), (4, 5)]
+    windows = [
+        [Set{PSY.Component}(), Set{PSY.Component}([line("Line1")])],
+        [Set{PSY.Component}([line("Line1")]), Set{PSY.Component}([line("dup")])],
+        [Set{PSY.Component}(), Set{PSY.Component}([line("dup")])],
+    ]
+    has_contingency = Bool[]
+    for removed in windows
+        ts, in_use = _window_in_use(vmodf, sys, removed, contingency_id)
+        retain_modifications!(vmodf, in_use)
+        _query_window!(vmodf, ts, contingency_id, arcs, length(removed))
+        topologies = Set(
+            get_network_modification(ts, t) for t in eachindex(removed) if
+            !isnothing(get_network_modification(ts, t))
+        )
+        networks = Set(n for n in in_use if n isa PostContingencyNetwork)
+        base_tier2 = Set(n.tier2 for n in networks if PNM._on_base_topology(n))
+        others = Set(n for n in networks if !PNM._on_base_topology(n))
+        @test Set(keys(PNM.get_row_caches(vmodf))) ==
+              union(topologies, base_tier2, [PNM._BASE_NETWORK])
+        @test Set(keys(PNM.get_woodbury_cache(vmodf))) == union(topologies, base_tier2)
+        @test Set(keys(PNM.get_tier2_row_caches(vmodf))) == others
+        push!(has_contingency, haskey(PNM.get_row_caches(vmodf), contingency))
+
+        # Rows resolved after the eviction equal those of a matrix that never evicted.
+        fresh = VirtualMODF(VirtualPTDF(sys), sys)
+        fresh_ts = TopologySequence(fresh, sys, removed)
+        for t in eachindex(removed), arc in arcs
+            @test ts[arc, t] ≈ fresh_ts[arc, t]
+            net = get_post_contingency_network(ts, t, contingency_id)
+            fresh_net = get_post_contingency_network(fresh_ts, t, contingency_id)
+            @test only(get_post_contingency_ptdf_rows(vmodf, arc, [net])) ≈
+                  only(get_post_contingency_ptdf_rows(fresh, arc, [fresh_net]))
+        end
+    end
+    @test has_contingency == [true, false, true]
 end

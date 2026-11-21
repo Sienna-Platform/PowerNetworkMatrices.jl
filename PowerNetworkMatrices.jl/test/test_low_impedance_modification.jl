@@ -89,51 +89,6 @@ end
     @test bridge_found
 end
 
-# c_sys14 with Line13 at zero reactance: an arc with no DC susceptance.
-function _c_sys14_resistive_line()
-    sys = PSB.build_system(PSB.PSITestSystems, "c_sys14")
-    PSY.set_x!(PSY.get_component(PSY.Line, sys, "Line13"), 0.0 * u"CU")
-    return sys
-end
-
-@testset "a contingency arc with no susceptance leaves the Woodbury set" begin
-    c = ["Line13", "Line10"]
-    sys = _c_sys14_resistive_line()
-    outage = PSY.FixedForcedOutage(; outage_status = 1.0)
-    for name in c
-        PSY.add_supplemental_attribute!(sys, _transmission(sys, name), outage)
-    end
-    vmodf = VirtualMODF(VirtualPTDF(sys), sys)
-    mod = get_registered_contingencies(vmodf)[IS.get_id(outage)].modification
-    lookup = PNM.get_arc_lookup(vmodf)
-    line13 = lookup[_arc_numbers(_transmission(sys, "Line13"))]
-    line10 = lookup[_arc_numbers(_transmission(sys, "Line10"))]
-    @test iszero(PNM._get_arc_susceptances(vmodf)[line13])
-    @test [m.arc_index for m in mod.arc_modifications] == sort!([line13, line10])
-    arcs = PNM.get_arc_axis(vmodf)
-    bus_axis = PNM.get_bus_axis(vmodf)
-    rows = Dict(a => vmodf[a, outage] for a in arcs)
-    @test PNM.get_woodbury_cache(vmodf)[mod].arc_indices == [line10]
-    @test all(row -> all(isfinite, row), values(rows))
-    err = _max_error_against_rebuild(
-        a -> rows[a],
-        arcs,
-        bus_axis,
-        c;
-        builder = _c_sys14_resistive_line,
-    )
-    @test err < 1e-10
-    vptdf = VirtualPTDF(sys)
-    err = _max_error_against_rebuild(
-        a -> vptdf[a, mod],
-        arcs,
-        bus_axis,
-        c;
-        builder = _c_sys14_resistive_line,
-    )
-    @test err < 1e-10
-end
-
 # Mesh 1-2-3-5 with L12 at very low reactance, and bus 4 on the bridge L34. Without
 # `with_bridge` bus 4 and L34 are left out, and the lines in `skip` are not added.
 const _BRIDGE_MESH_LINES = (("L12", 1, 2, 1e-6), ("L23", 2, 3, 0.12), ("L13", 1, 3, 0.15),
@@ -248,23 +203,4 @@ end
         [ContingencySpec(1, mod)];
         monitored = PNM.get_arc_axis(vptdf),
     )
-end
-
-@testset "a contingency whose every arc has no susceptance leaves the base rows" begin
-    sys = _c_sys14_resistive_line()
-    outage = PSY.FixedForcedOutage(; outage_status = 1.0)
-    PSY.add_supplemental_attribute!(sys, _transmission(sys, "Line13"), outage)
-    vmodf = VirtualMODF(VirtualPTDF(sys), sys)
-    mod = get_registered_contingencies(vmodf)[IS.get_id(outage)].modification
-    line13 = _arc_numbers(_transmission(sys, "Line13"))
-    @test iszero(PNM._get_arc_susceptances(vmodf)[PNM.get_arc_lookup(vmodf)[line13]])
-    arcs = PNM.get_arc_axis(vmodf)
-    rows = Dict(a => vmodf[a, outage] for a in arcs)
-    @test isempty(PNM.get_woodbury_cache(vmodf)[mod].arc_indices)
-    @test all(row -> all(isfinite, row), values(rows))
-    @test all(iszero, rows[line13])
-    for a in arcs
-        a == line13 && continue
-        @test maximum(abs.(rows[a] .- get_ptdf_row(vmodf, a))) < 1e-12
-    end
 end

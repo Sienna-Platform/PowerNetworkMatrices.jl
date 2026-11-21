@@ -15,6 +15,7 @@ const KiB = 1024
 const MiB = KiB * KiB
 const GiB = MiB * KiB
 const MAX_CACHE_SIZE_MiB = 100
+const MAX_COLUMN_CACHE_BYTES = 1 * GiB
 const ROW_PERSISTENT_CACHE_WARN = 1 * GiB
 
 # Cached two-port `(Y11, Y12, Y21, Y22)` of a reduction aggregate. Deliberately ComplexF64, not

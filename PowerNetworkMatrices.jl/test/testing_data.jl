@@ -1781,6 +1781,45 @@ function _two_tier_fixture(builder, contingencies)
     return sys, VirtualMODF(VirtualPTDF(sys), sys), ids
 end
 
+# Post-contingency rows of every arc of c_sys14 with "dup" on Line7-out, dup-out and base
+# topologies, queried serially and then, after `clear_caches!`, from `n_tasks` concurrent
+# tasks that each walk the arcs in their own order and so miss and fill the shared tier-1,
+# tier-2 and column caches at the same time. Returns whether every task's rows equal the
+# serial rows bit for bit, the number of networks off the base topology, and the cache
+# statistics after the concurrent queries.
+function _concurrent_post_contingency_rows(n_tasks::Int)
+    sys, vmodf, ids = _two_tier_fixture(_c_sys14_for_row_batches, [["Line3"]])
+    ts = TopologySequence(
+        vmodf,
+        sys,
+        [_out_set(sys, ["Line7"]), _out_set(sys, ["dup"]), Set{PSY.Component}()],
+    )
+    networks = [get_post_contingency_network(ts, t, ids[["Line3"]]) for t in 1:3]
+    off_base = count(n -> !PNM._on_base_topology(n), networks)
+    arcs = PNM.get_arc_axis(vmodf)
+    rows_by_arc(order) =
+        Dict(arc => get_post_contingency_ptdf_rows(vmodf, arc, networks) for arc in order)
+    serial = rows_by_arc(arcs)
+    clear_caches!(vmodf)
+    ready = Threads.Atomic{Int}(0)
+    start = Base.Event()
+    tasks = [
+        Threads.@spawn begin
+            Threads.atomic_add!(ready, 1)
+            wait(start)
+            rows_by_arc(circshift(arcs, 7 * k))
+        end for k in 1:n_tasks
+    ]
+    while ready[] < n_tasks
+        yield()
+    end
+    notify(start)
+    same = all(fetch.(tasks)) do concurrent
+        all(arc -> all(_bitwise_equal.(concurrent[arc], serial[arc])), arcs)
+    end
+    return (; same, off_base, stats = cache_statistics(vmodf))
+end
+
 # Bus-number sets of the islands holding a reference bus in `builder()` rebuilt with the
 # `names` components out, and the bus-number sets of all its islands.
 function _rebuilt_reference_islands(builder, names)

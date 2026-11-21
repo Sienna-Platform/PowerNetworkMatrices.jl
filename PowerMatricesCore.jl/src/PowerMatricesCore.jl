@@ -64,6 +64,8 @@ include("branch_reduction.jl")
 include("bridges.jl")
 include("woodbury_basis.jl")
 include("woodbury_kernel.jl")
+include("tier2.jl")
+include("tier2_cache.jl")
 include("branch_factors.jl")
 include("virtual_workers.jl")
 

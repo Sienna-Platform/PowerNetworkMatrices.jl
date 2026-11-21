@@ -17,6 +17,10 @@ Caching is two-tiered:
 - PTDF rows (1 KLU solve each) are cached per (monitored_arc, contingency) via
   one RowCache per contingency
 
+A contingency on a topology other than the base network (a [`PostContingencyNetwork`](@ref))
+caches its tier-2 factors and rows in their own caches; see
+[`get_post_contingency_ptdf_rows`](@ref).
+
 # Thread-safety
 
 Concurrent `getindex` is safe but serialized: the core's `solver_lock` (a
@@ -37,6 +41,11 @@ solves it wraps all run under a single mutex.
         One `RowCache` per modification.
 - `max_cache_size_bytes::Int`:
         Max cache size in bytes per contingency.
+- `tier2::Tier2Cache`:
+        Tier-2 factors and rows of post-contingency networks on topologies other than the
+        base network, and the base solves their factors share (see [`Tier2Cache`](@ref)).
+        Networks on the base topology use `woodbury_cache` and `row_caches`, under their
+        tier-2 modification. The core's `solver_lock` guards it with the other caches.
 """
 struct VirtualMODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}, K} <:
        PowerNetworkMatrix{Float64}
@@ -45,6 +54,24 @@ struct VirtualMODF{Ax <: NTuple{2, Vector}, L <: NTuple{2, Dict}, K} <:
     woodbury_cache::Dict{NetworkModification, WoodburyFactors}
     row_caches::Dict{NetworkModification, RowCache{RowCacheValue}}
     max_cache_size_bytes::Int
+    tier2::Tier2Cache
+end
+
+# A VirtualMODF on `core` with the given registrations and empty caches.
+function VirtualMODF(
+    core::VirtualFactorCore,
+    contingency_cache::Dict{Int, ContingencySpec},
+    max_cache_size_bytes::Int,
+    max_column_cache_bytes::Int,
+)
+    return VirtualMODF(
+        core,
+        contingency_cache,
+        Dict{NetworkModification, WoodburyFactors}(),
+        Dict{NetworkModification, RowCache{RowCacheValue}}(),
+        max_cache_size_bytes,
+        Tier2Cache(max_column_cache_bytes),
+    )
 end
 
 # --- Field forwarding ---
@@ -57,7 +84,8 @@ function Base.getproperty(vmodf::VirtualMODF, name::Symbol)
        name === :contingency_cache ||
        name === :woodbury_cache ||
        name === :row_caches ||
-       name === :max_cache_size_bytes
+       name === :max_cache_size_bytes ||
+       name === :tier2
         return getfield(vmodf, name)
     end
     name === :PTDF_A_diag && return get_PTDF_A_diag(get_core(vmodf))
@@ -75,6 +103,10 @@ get_core(M::VirtualMODF) = getfield(M, :core)
 get_woodbury_cache(M::VirtualMODF) = getfield(M, :woodbury_cache)
 get_row_caches(M::VirtualMODF) = getfield(M, :row_caches)
 get_max_cache_size_bytes(M::VirtualMODF) = getfield(M, :max_cache_size_bytes)
+get_tier2_cache(M::VirtualMODF) = getfield(M, :tier2)
+get_tier2_factor_cache(M::VirtualMODF) = get_tier2_factor_cache(get_tier2_cache(M))
+get_tier2_row_caches(M::VirtualMODF) = get_tier2_row_caches(get_tier2_cache(M))
+get_max_column_cache_bytes(M::VirtualMODF) = get_max_column_cache_bytes(get_tier2_cache(M))
 
 # Accessors forward to the core; VirtualPTDF and VirtualMODF share them.
 for f in (
@@ -167,6 +199,8 @@ auto-applied during `Ybus` construction.
         (the default) applies a relative per-row cutoff so requested columns stay
         sparse on large systems.
 - `max_cache_size::Int`: Max cache size in MiB per contingency (default: MAX_CACHE_SIZE_MiB)
+- `max_column_cache_bytes::Int`: Bound in bytes on the base solves shared by tier-2 factors
+        (default: MAX_COLUMN_CACHE_BYTES, 1 GiB)
 - `network_reductions::Vector{NetworkReduction}`: Network reductions to apply
 - `irreducible_buses::IS.ComponentSelector`: Components whose buses the network reductions must
         keep (see [`get_irreducible_bus_numbers`](@ref)). Default: `IS.make_selector()`
@@ -179,6 +213,7 @@ function VirtualMODF(
     linear_solver::String = _default_linear_solver(),
     tol::Union{Float64, AutoTolerance} = DEFAULT_AUTO_TOLERANCE,
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
+    max_column_cache_bytes::Int = MAX_COLUMN_CACHE_BYTES,
     network_reductions::Vector{NetworkReduction} = NetworkReduction[],
     irreducible_buses::IS.ComponentSelector = IS.make_selector(),
     automatically_register_outages::Bool = true,
@@ -231,6 +266,7 @@ function VirtualMODF(
         core,
         sys;
         max_cache_size = max_cache_size,
+        max_column_cache_bytes = max_column_cache_bytes,
         automatically_register_outages = automatically_register_outages,
     )
 end
@@ -246,14 +282,18 @@ and monitored buses the way `VirtualMODF(sys; ...)` does. Registration therefore
 each outage against the core's surviving arcs and errors when a reduction ate one. Reduce
 the core with those components in the `irreducible_buses` selector, or build from the system
 instead.
+
+`max_cache_size` (MiB per contingency) and `max_column_cache_bytes` are as for
+`VirtualMODF(sys; ...)`.
 """
 function VirtualMODF(
     core::VirtualFactorCore,
     sys::PSY.System;
     max_cache_size::Int = MAX_CACHE_SIZE_MiB,
+    max_column_cache_bytes::Int = MAX_COLUMN_CACHE_BYTES,
     automatically_register_outages::Bool = true,
 )
-    vmodf = VirtualMODF(core; max_cache_size = max_cache_size)
+    vmodf = VirtualMODF(core; max_cache_size, max_column_cache_bytes)
 
     # Auto-register all outage attributes from the system
     automatically_register_outages && _register_all_outages!(vmodf, sys)
@@ -262,17 +302,20 @@ function VirtualMODF(
 end
 
 """
-    VirtualMODF(core::VirtualFactorCore; max_cache_size) -> VirtualMODF
+    VirtualMODF(core::VirtualFactorCore; max_cache_size, max_column_cache_bytes) -> VirtualMODF
 
 Wrap `core` in a VirtualMODF with no registered contingencies and empty caches.
 """
-function VirtualMODF(core::VirtualFactorCore; max_cache_size::Int = MAX_CACHE_SIZE_MiB)
+function VirtualMODF(
+    core::VirtualFactorCore;
+    max_cache_size::Int = MAX_CACHE_SIZE_MiB,
+    max_column_cache_bytes::Int = MAX_COLUMN_CACHE_BYTES,
+)
     return VirtualMODF(
         core,
         Dict{Int, ContingencySpec}(),
-        Dict{NetworkModification, WoodburyFactors}(),
-        Dict{NetworkModification, RowCache{RowCacheValue}}(),
         max_cache_size * MiB,
+        max_column_cache_bytes,
     )
 end
 
@@ -390,14 +433,8 @@ Return cached Woodbury factors for a modification, computing them on a miss.
 Caller holds the core `solver_lock`; the inner `_compute_woodbury_factors`
 re-enters that same lock (it's a `ReentrantLock`).
 """
-function _get_woodbury_factors(vmodf::VirtualMODF, mod::NetworkModification)
-    # Use the do-block form, NOT `get!(dict, key, default)`: Julia evaluates
-    # function arguments eagerly, so the 3-arg form would run the M KLU solves
-    # on every call (cache hit included), defeating the cache.
-    return get!(get_woodbury_cache(vmodf), mod) do
-        _compute_woodbury_factors(vmodf, _arc_modification_vector(mod))
-    end
-end
+_get_woodbury_factors(vmodf::VirtualMODF, mod::NetworkModification) =
+    _tier1_factors!(get_woodbury_cache(vmodf), get_core(vmodf), mod)
 
 """
     _compute_modf_entry(vmodf, monitored_idx, mod) -> Vector{Float64}
@@ -416,24 +453,13 @@ function _compute_modf_entry(
     return only(_rows_from_plans(get_core(vmodf), monitored_idx, (plan,)))
 end
 
-# Plan of monitored arc `m`'s row under `mod`, from the base network. The modification's
-# factors are cached even when this row is the zero row, since its other rows need them. The
-# base network needs no correction, so it has no factors.
-function _modf_row_plan(vmodf::VirtualMODF, m::Int, mod::NetworkModification)::_RowPlan
-    wf = mod == _BASE_NETWORK ? nothing : _get_woodbury_factors(vmodf, mod)
-    return _base_topology_row_plan(get_core(vmodf), m, _arc_modification_vector(mod), wf)
-end
+# Plan of monitored arc `m`'s row under `mod`, from the base network.
+_modf_row_plan(vmodf::VirtualMODF, m::Int, mod::NetworkModification)::_RowPlan =
+    _modification_row_plan(get_woodbury_cache(vmodf), get_core(vmodf), m, mod)
 
 # Per-modification row cache: one n_bus-long row per monitored arc.
-function _new_modf_row_cache(vmodf::VirtualMODF)
-    n_arcs, n_bus = size(vmodf)
-    return RowCache(
-        get_max_cache_size_bytes(vmodf),
-        Set{Int}(),
-        n_bus * sizeof(Float64),
-        n_arcs,
-    )
-end
+_new_modf_row_cache(vmodf::VirtualMODF) =
+    _network_row_cache(get_core(vmodf), get_max_cache_size_bytes(vmodf))
 
 # --- getindex: by integer monitored index + NetworkModification ---
 
@@ -441,6 +467,12 @@ end
 Get the post-modification PTDF row for monitored arc `monitored_idx` under `mod`.
 Uses per-modification RowCache for LRU-eviction caching.
 An arc in an island that holds no base reference bus gets the all-zero row.
+
+Rows after a contingency on a scheduled topology K come from
+[`get_post_contingency_ptdf_rows`](@ref), on the networks of
+[`get_post_contingency_network`](@ref). Indexing with a hand-built `NetworkModification` for
+K ∪ c gives a correct row, but computes the full combined update from the base network and
+bypasses the reuse of K's factors.
 
 $(TYPEDSIGNATURES)
 """
@@ -475,6 +507,12 @@ end
 
 """
 Arc-tuple indexed version of getindex for VirtualMODF with NetworkModification.
+
+Rows after a contingency on a scheduled topology K come from
+[`get_post_contingency_ptdf_rows`](@ref), on the networks of
+[`get_post_contingency_network`](@ref). Indexing with a hand-built `NetworkModification` for
+K ∪ c gives a correct row, but computes the full combined update from the base network and
+bypasses the reuse of K's factors.
 
 $(TYPEDSIGNATURES)
 """
@@ -538,6 +576,61 @@ function get_post_modification_ptdf_rows(
     end
 end
 
+# --- Post-contingency rows on scheduled topologies (two-tier Woodbury) ---
+
+# The network `mod` takes the base network to, as a post-contingency network on the base
+# topology. `contingency_id` only labels it: hashing and equality ignore it.
+_base_topology_network(mod::NetworkModification, contingency_id::Int = 0) =
+    PostContingencyNetwork(_Tier2Derived(), _BASE_NETWORK, mod, mod, contingency_id)
+
+"""
+    get_post_contingency_ptdf_rows(vmodf::VirtualMODF, monitored, networks::AbstractVector{PostContingencyNetwork}) -> Vector{Union{Vector{Float64}, SparseVector{Float64, Int}}}
+
+The PTDF rows of one monitored arc (an index or a bus pair) on each post-contingency network
+in `networks`, from a single solve of the arc's base column. Each row is the arc's row on the
+network K ∪ c, referenced to the reference buses, with `vmodf`'s cutoff applied.
+
+On a topology K other than the base network, the row is a second Woodbury update K → K ∪ c
+of the arc's row on K, with no further solve: the tier-1 correction gives `B_K⁻¹ν` of the arc
+once per distinct topology, and each network corrects its own copy with its tier-2 factors
+and scales by the arc's susceptance on K ∪ c. On the base topology the row equals
+`vmodf[monitored, network.tier2]` bit for bit.
+
+A monitored arc out of service on K ∪ c gives the zero row. When K's factors island the
+network and every arc the contingency changes lies outside the islands holding a reference
+bus, the row is the arc's row on K. When it changes arcs both inside and outside those
+islands, the rows are those of the contingency without its arcs outside them, which join
+only buses K cut off.
+
+Rows after a contingency on a scheduled topology come from this function. Querying
+`vmodf[monitored, mod]` with a hand-built `NetworkModification` for K ∪ c gives a correct
+row, but computes the full combined update from the base network and bypasses the reuse of
+K's factors that the second update provides.
+
+Rows are read from and written to the row caches, and tier-2 factors are cached, per
+network: networks on the base topology share `vmodf`'s contingency caches, the others have
+their own. These rows and tier-2 factors last until the next
+[`retain_modifications!`](@ref), which ends a build. The core's `solver_lock` is held for the
+whole call. The caller owns the returned copies.
+"""
+function get_post_contingency_ptdf_rows(
+    vmodf::VirtualMODF,
+    monitored::Union{Int, Tuple{Int, Int}},
+    networks::AbstractVector{PostContingencyNetwork},
+)
+    core = get_core(vmodf)
+    m = _resolve_monitored_index(vmodf, monitored)
+    return @lock core.solver_lock _post_contingency_ptdf_rows!(
+        get_tier2_cache(vmodf),
+        core,
+        get_woodbury_cache(vmodf),
+        get_row_caches(vmodf),
+        get_max_cache_size_bytes(vmodf),
+        m,
+        networks,
+    )
+end
+
 """
     get_ptdf_row(vmodf::VirtualMODF, arc::Tuple{Int, Int}) -> Union{Vector{Float64}, SparseVector{Float64, Int}}
 
@@ -551,78 +644,101 @@ function get_ptdf_row(vmodf::VirtualMODF, arc::Tuple{Int, Int})
     return vmodf[_monitored_arc_index(vmodf, arc), _BASE_NETWORK]
 end
 
-# --- getindex: by ContingencySpec (delegates to NetworkModification) ---
+# --- getindex: by ContingencySpec or PSY.Outage (the contingency on the base network) ---
 
 """
-Get the post-contingency PTDF row for monitored arc under a ContingencySpec.
+Get the post-contingency PTDF row for monitored arc `monitored` (an index or a bus pair) under
+a `ContingencySpec`: `vmodf[monitored, contingency.modification]`, which is also the row on
+its [`PostContingencyNetwork`](@ref) on the base topology.
 
 $(TYPEDSIGNATURES)
 """
-function Base.getindex(vmodf::VirtualMODF, monitored_idx::Int, contingency::ContingencySpec)
-    return vmodf[monitored_idx, contingency.modification]
-end
-
 function Base.getindex(
     vmodf::VirtualMODF,
-    monitored::Tuple{Int, Int},
+    monitored::Union{Int, Tuple{Int, Int}},
     contingency::ContingencySpec,
 )
     return vmodf[monitored, contingency.modification]
 end
 
-# --- getindex: by PSY.Outage (id lookup → ContingencySpec → NetworkModification) ---
-
 """
-Get the post-contingency PTDF row for monitored arc `monitored` when outage `outage` trips.
+Get the post-contingency PTDF row for monitored arc `monitored` (an index or a bus pair) when
+outage `outage` trips: `vmodf[monitored, mod]` for the outage's registered modification
+`mod`, which is also the row on its [`PostContingencyNetwork`](@ref) on the base topology.
 The outage must have been registered at VirtualMODF construction time.
 
 $(TYPEDSIGNATURES)
 """
-function Base.getindex(vmodf::VirtualMODF, monitored::Int, outage::PSY.Outage)
-    # Pair with the locked `empty!` in `clear_all_caches!`; without it, a
-    # concurrent clear could rehash the contingency cache mid-lookup.
+function Base.getindex(
+    vmodf::VirtualMODF,
+    monitored::Union{Int, Tuple{Int, Int}},
+    outage::PSY.Outage,
+)
     mod = @lock get_core(vmodf).solver_lock _resolve_modification(vmodf, outage)
     return vmodf[monitored, mod]
 end
 
 """
-Arc-tuple indexed version of getindex by PSY.Outage.
-
-$(TYPEDSIGNATURES)
-"""
-function Base.getindex(vmodf::VirtualMODF, monitored::Tuple{Int, Int}, outage::PSY.Outage)
-    m_idx = _monitored_arc_index(vmodf, monitored)
-    return vmodf[m_idx, outage]
-end
-
-"""
     clear_caches!(vmodf::VirtualMODF)
 
-Clear Woodbury and row caches. Does NOT clear the contingency registration
-cache — registered outages remain valid and can be queried again.
+Clear the Woodbury, row and column caches, those of post-contingency networks on scheduled
+topologies included, and zero the column cache's hit and miss counts. Does NOT clear the
+contingency registration cache — registered outages remain valid and can be queried again.
 """
 function clear_caches!(vmodf::VirtualMODF)
     core = get_core(vmodf)
-    @lock core.solver_lock begin
-        empty!(get_woodbury_cache(vmodf))
-        empty!(get_row_caches(vmodf))
-    end
+    @lock core.solver_lock _empty_factor_and_row_caches!(vmodf)
     return
+end
+
+function _empty_factor_and_row_caches!(vmodf::VirtualMODF)
+    empty!(get_woodbury_cache(vmodf))
+    empty!(get_row_caches(vmodf))
+    clear_caches!(get_tier2_cache(vmodf))
+    return
+end
+
+"""
+    cache_statistics(vmodf::VirtualMODF) -> NamedTuple
+
+Entries and bytes of each cache of `vmodf`:
+- `columns = (; entries, bytes, hits, misses)`: the base solves shared by tier-2 factors,
+  with the lookups served from the cache and solved since the last [`clear_caches!`](@ref);
+- `tier1_factors = (; entries, bytes)`: Woodbury factors on the base network, of topologies
+  and of contingencies on the base topology;
+- `tier2_factors = (; entries, bytes)`: tier-2 factors of post-contingency networks on other
+  topologies;
+- `rows = (; entries, bytes)`: cached PTDF rows of every network.
+
+Bytes count the arrays held, not container overhead. The core's `solver_lock` is held for
+the call.
+"""
+function cache_statistics(vmodf::VirtualMODF)
+    core = get_core(vmodf)
+    return @lock core.solver_lock cache_statistics(
+        get_tier2_cache(vmodf),
+        get_woodbury_cache(vmodf),
+        get_row_caches(vmodf),
+    )
 end
 
 """
     retain_modifications!(vmodf::VirtualMODF, keep)
 
-End a build: evict the cached rows, and the Woodbury factors of every modification not
-named in `keep`.
+End a build: evict the cached rows and tier-2 factors, and the Woodbury factors of every
+modification not named in `keep`.
 
 Kept are the Woodbury factors of the base network and of every modification in `keep`,
-matched by value, so a modification rebuilt from the same components is retained. The
-base-network rows are also kept.
+matched by value, so a modification rebuilt from the same components is retained. `keep` may
+also hold [`PostContingencyNetwork`](@ref)s. A retained network keeps its topology's factors,
+so the topology need not be named. On the base topology it keeps the factors of its
+registered contingency, the network's tier-2 modification. The base-network rows and the
+column cache, with its hit and miss counts, are also kept.
 
-Every other row cache is emptied, those of retained modifications included. Rows therefore
-live for one build, while the factors of the modifications still in use serve the next one.
-The set of modifications is not bounded by `vmodf`, so a caller that queries new
+Every other row cache is emptied, those of retained modifications and networks included, and
+so is the tier-2 factor cache. Rows and tier-2 factors therefore live for one build, while
+the factors of the topologies and contingencies still in use, and the base columns, serve the
+next one. The set of modifications is not bounded by `vmodf`, so a caller that queries new
 modifications over its life, such as a topology sequence rebuilt for each simulation
 window, calls this once per build. The registrations are kept, so an evicted contingency is
 recomputed on its next query.
@@ -636,12 +752,16 @@ function retain_modifications!(vmodf::VirtualMODF, keep)
         end
         filter!(entry -> first(entry) in retained, get_woodbury_cache(vmodf))
         filter!(entry -> first(entry) == _BASE_NETWORK, get_row_caches(vmodf))
+        retain_modifications!(get_tier2_cache(vmodf), keep)
     end
     return
 end
 
 _retain!(retained::Set{NetworkModification}, mod::NetworkModification) =
     push!(retained, mod)
+
+_retain!(retained::Set{NetworkModification}, net::PostContingencyNetwork) =
+    push!(retained, _on_base_topology(net) ? net.tier2 : net.topology)
 
 """
     clear_all_caches!(vmodf::VirtualMODF)
@@ -655,8 +775,7 @@ function clear_all_caches!(vmodf::VirtualMODF)
     core = get_core(vmodf)
     @lock core.solver_lock begin
         empty!(get_registered_contingencies(vmodf))
-        empty!(get_woodbury_cache(vmodf))
-        empty!(get_row_caches(vmodf))
+        _empty_factor_and_row_caches!(vmodf)
     end
     return
 end
