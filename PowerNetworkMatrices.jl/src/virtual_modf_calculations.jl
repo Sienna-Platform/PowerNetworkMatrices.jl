@@ -171,6 +171,8 @@ auto-applied during `Ybus` construction.
 - `irreducible_buses::IS.ComponentSelector`: Components whose buses the network reductions must
         keep (see [`get_irreducible_bus_numbers`](@ref)). Default: `IS.make_selector()`
 - `automatically_register_outages::Bool`: Register all system `PSY.UnplannedOutage` attributes (default: true)
+- `scheduled_branches`, `closed_switches`: passed to [`Ybus`](@ref), which keeps the buses of
+        both lists out of the reductions and includes the closed switches as closed
 """
 function VirtualMODF(
     sys::PSY.System;
@@ -286,18 +288,19 @@ function VirtualMODF(vptdf::VirtualPTDF, sys::PSY.System; kwargs...)
 end
 
 """
-    _validate_transmission_survived(sys, outage, mod)
+    _validate_transmission_survived(sys, outage, mod, closed_switches)
 
 For an outage whose ACTransmission components resolved to no arc modifications: throw when
 any is in service (a reduction eliminated it, so every query would return the base-case row);
 warn when all are out of service (a legitimate no-op). A component is in service when it is
-available and, for a switch, closed. This is the only survive-check possible on a core that
-was reduced before outages were known.
+available and, for a switch, closed by its status or named in `closed_switches`. This is the
+only survive-check possible on a core that was reduced before outages were known.
 """
 function _validate_transmission_survived(
     sys::PSY.System,
     outage::PSY.Outage,
     mod::NetworkModification,
+    closed_switches::Set{String},
 )
     isempty(mod.arc_modifications) || return
     transmission =
@@ -305,7 +308,7 @@ function _validate_transmission_survived(
             PSY.get_associated_components(sys, outage; component_type = PSY.ACTransmission),
         )
     isempty(transmission) && return
-    in_service = filter(_in_service, transmission)
+    in_service = filter(c -> _in_service(c, closed_switches), transmission)
     if isempty(in_service)
         @warn "Outage (label=$(mod.label)) references only out-of-service transmission " *
               "component(s) $(join(sort!([PSY.get_name(c) for c in transmission]), ", ")); " *
@@ -372,7 +375,8 @@ function _register_outage!(vmodf::VirtualMODF, sys::PSY.System, outage::PSY.Outa
         return
     end
     mod = NetworkModification(vmodf, sys, outage)
-    _validate_transmission_survived(sys, outage, mod)
+    _validate_transmission_survived(sys, outage, mod,
+        get_closed_switches(get_reductions(get_network_reduction_data(vmodf))))
     contingency_cache[outage_id] = ContingencySpec(outage_id, mod)
     return
 end
@@ -605,6 +609,39 @@ function clear_caches!(vmodf::VirtualMODF)
     end
     return
 end
+
+"""
+    retain_modifications!(vmodf::VirtualMODF, keep)
+
+End a build: evict the cached rows, and the Woodbury factors of every modification not
+named in `keep`.
+
+Kept are the Woodbury factors of the base network and of every modification in `keep`,
+matched by value, so a modification rebuilt from the same components is retained. The
+base-network rows are also kept.
+
+Every other row cache is emptied, those of retained modifications included. Rows therefore
+live for one build, while the factors of the modifications still in use serve the next one.
+The set of modifications is not bounded by `vmodf`, so a caller that queries new
+modifications over its life, such as a topology sequence rebuilt for each simulation
+window, calls this once per build. The registrations are kept, so an evicted contingency is
+recomputed on its next query.
+"""
+function retain_modifications!(vmodf::VirtualMODF, keep)
+    core = get_core(vmodf)
+    @lock core.solver_lock begin
+        retained = Set{NetworkModification}([_BASE_NETWORK])
+        for entry in keep
+            _retain!(retained, entry)
+        end
+        filter!(entry -> first(entry) in retained, get_woodbury_cache(vmodf))
+        filter!(entry -> first(entry) == _BASE_NETWORK, get_row_caches(vmodf))
+    end
+    return
+end
+
+_retain!(retained::Set{NetworkModification}, mod::NetworkModification) =
+    push!(retained, mod)
 
 """
     clear_all_caches!(vmodf::VirtualMODF)

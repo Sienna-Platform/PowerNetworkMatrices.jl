@@ -24,6 +24,14 @@ function _in_ybus(br::PSY.DiscreteControlledACBranch)
            PSY.get_branch_status(br) == PSY.DiscreteControlledBranchStatus.CLOSED
 end
 
+# A switch listed in `closed_switches` is stamped as closed whatever its status.
+_in_ybus(br::PSY.ACTransmission, ::Set{String}) = _in_ybus(br)
+_in_ybus(circuit::PSY.TransformerCircuit, ::Set{String}) = _in_ybus(circuit)
+
+function _in_ybus(br::PSY.DiscreteControlledACBranch, closed_switches::Set{String})
+    return _in_ybus(br) || (PSY.get_available(br) && PSY.get_name(br) in closed_switches)
+end
+
 function _populate_ybus_branch_vector!(
     vec::Vector{T},
     sys::PSY.System,
@@ -36,7 +44,23 @@ function _populate_ybus_branch_vector!(
     return
 end
 
-function _get_ybus_two_terminal_ac_branches(sys::PSY.System)::YbusACBranches
+function _populate_ybus_branch_vector!(
+    vec::Vector{T},
+    sys::PSY.System,
+    closed_switches::Set{String},
+) where {T <: PSY.DiscreteControlledACBranch}
+    iter = PSY.get_components(T, sys)
+    sizehint!(vec, length(iter))
+    for br in iter
+        _in_ybus(br, closed_switches) && push!(vec, br)
+    end
+    return
+end
+
+function _get_ybus_two_terminal_ac_branches(
+    sys::PSY.System,
+    closed_switches::Set{String},
+)::YbusACBranches
     branches = YbusACBranches(
         Vector{PSY.Line}(),
         Vector{PSY.GenericArcImpedance}(),
@@ -47,7 +71,7 @@ function _get_ybus_two_terminal_ac_branches(sys::PSY.System)::YbusACBranches
     _populate_ybus_branch_vector!(branches.lines, sys)
     _populate_ybus_branch_vector!(branches.generic_arc_impedances, sys)
     _populate_ybus_branch_vector!(branches.two_winding_transformers, sys)
-    _populate_ybus_branch_vector!(branches.breaker_switches, sys)
+    _populate_ybus_branch_vector!(branches.breaker_switches, sys, closed_switches)
     _populate_ybus_branch_vector!(branches.series_compensators, sys)
     return branches
 end

@@ -1672,6 +1672,43 @@ function _c_sys14_for_row_batches()
     return sys
 end
 
+# case10 with a phase shift on the 3W transformer's primary winding and a two-winding
+# transformer parallel to that winding, so the two share an arc. Returns the system, the 3W
+# transformer, the parallel transformer and the shared arc.
+function _case10_with_transformer_beside_winding(; with_three_winding = true)
+    sys = PSB.build_system(PSB.PSITestSystems, "case10_radial_series_reductions")
+    trf = only(PSY.get_components(PSY.ThreeWindingTransformer, sys))
+    primary = PSY.get_primary_circuit(trf)
+    PSY.set_alpha!(primary, 0.1)
+    winding_arc = PSY.get_arc(primary)
+    beside = PSY.TwoWindingTransformer(; input_basis = u"CU",
+        name = "beside_winding",
+        circuit = PSY.TransformerCircuit(; input_basis = u"CU",
+            arc = winding_arc, tap = 1.0, alpha = 0.0, available = true,
+            active_power_flow = 0.0, reactive_power_flow = 0.0, rating = 10.0,
+            base_power = PSY.get_base_power(sys),
+            base_voltage_primary = PSY.get_base_voltage(PSY.get_from(winding_arc)),
+            r = 0.0, x = PSY.get_x(primary, u"SU"),
+        ),
+        magnetizing_shunt = Complex(0.0, 0.0),
+    )
+    PSY.add_component!(sys, beside)
+    with_three_winding || PSY.set_available!(trf, false)
+    return sys, trf, beside, _arc_numbers(primary)
+end
+
+# The first line, by name, whose outage splits `sys` into more islands; `nothing` if none.
+function _find_bridge_line(sys)
+    n_base = length(PNM.find_subnetworks(PNM.Ybus(sys)))
+    for line in sort!(collect(PSY.get_components(PSY.Line, sys)); by = PSY.get_name)
+        PSY.set_available!(line, false)
+        n_out = length(PNM.find_subnetworks(PNM.Ybus(sys)))
+        PSY.set_available!(line, true)
+        n_out > n_base && return line
+    end
+    return nothing
+end
+
 # A dense PTDF of `builder()` with the transmission components named in `names` out.
 function _ref_ptdf_without(builder, names::Vector{String}; kwargs...)
     sys_ref = builder()
@@ -1745,18 +1782,35 @@ function _two_tier_fixture(builder, contingencies)
 end
 
 # Bus-number sets of the islands holding a reference bus in `builder()` rebuilt with the
-# `names` components out, and the total number of islands.
+# `names` components out, and the bus-number sets of all its islands.
 function _rebuilt_reference_islands(builder, names)
     sys = builder()
     for n in names
         PSY.set_available!(_transmission(sys, n), false)
     end
-    islands = collect(values(PNM.find_subnetworks(PNM.Ybus(sys))))
+    islands = Set(Set(island) for island in values(PNM.find_subnetworks(PNM.Ybus(sys))))
     refs = Set{Int}(
         PSY.get_number(b) for
         b in PSY.get_components(PSY.ACBus, sys) if PSY.get_bustype(b) == ACBusTypes.REF
     )
-    return [Set(island) for island in islands if !isdisjoint(island, refs)], length(islands)
+    return Set(island for island in islands if !isdisjoint(island, refs)), islands
+end
+
+# Bus-number sets of the islands `get_islands` gives holding a reference bus once the
+# `names` components of `sys` are out, and the bus-number sets of all its islands.
+function _topology_reference_islands(vmodf, sys, names)
+    ts = TopologySequence(vmodf, sys, [_out_set(sys, names)])
+    islands, refs = get_islands(ts, 1)
+    return Set(Set(islands[r]) for r in refs), Set(Set(island) for island in islands)
+end
+
+# The reference islands of `builder()` rebuilt with the `names` components out, to mask a
+# comparison against that rebuild, and the number of its islands. Tests that `get_islands`
+# on `sys` gives the same islands and reference islands.
+function _checked_reference_islands(vmodf, sys, builder, names)
+    refs, islands = _rebuilt_reference_islands(builder, names)
+    @test _topology_reference_islands(vmodf, sys, names) == (refs, islands)
+    return refs, length(islands)
 end
 
 # Lines `(name, from, to, x)` with r = 0.01 and closed switches `(name, from, to)` with

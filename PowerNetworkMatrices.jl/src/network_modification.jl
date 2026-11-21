@@ -345,15 +345,18 @@ by the network reduction.
 """
 function NetworkModification(mat::PowerNetworkMatrix, sys::PSY.System, components)
     _validate_system_uuid(mat, sys)
-    unique_components = unique(c for c in components if _in_network_candidate(c))
+    closed_switches = get_closed_switches(get_reductions(get_network_reduction_data(mat)))
+    unique_components =
+        unique(c for c in components if _in_network_candidate(c, closed_switches))
     isempty(unique_components) && return NetworkModification("", ArcModification[])
     acc, mods = _classify_outage_components(mat, unique_components)
     _check_all_resolved(acc, "Component set")
     return _network_modification_from_classified(mat, unique_components, "", acc, mods)
 end
 
-_in_network_candidate(device::PSY.Device) = _in_service(device)
-_in_network_candidate(::PSY.Component) = true
+_in_network_candidate(device::PSY.Device, closed_switches::Set{String}) =
+    _in_service(device, closed_switches)
+_in_network_candidate(::PSY.Component, ::Set{String}) = true
 
 """
 $(TYPEDSIGNATURES)
@@ -596,11 +599,10 @@ function _classify_outage_components(mat::PowerNetworkMatrix, components)
 end
 
 # Whether `component` is in the network the reductions act on: available, and for a switch
-# also closed.
-_in_service(component) = PSY.get_available(component)
-_in_service(switch::PSY.DiscreteControlledACBranch) =
-    PSY.get_available(switch) &&
-    PSY.get_branch_status(switch) == PSY.DiscreteControlledBranchStatus.CLOSED
+# also closed, by its status or as one of `closed_switches` (see `get_closed_switches`).
+_in_service(component, ::Set{String}) = PSY.get_available(component)
+_in_service(switch::PSY.DiscreteControlledACBranch, closed_switches::Set{String}) =
+    _in_ybus(switch, closed_switches)
 
 """
     _classify_outage_component!(nr, arc_lookup, arc_sus, bus_lookup, component, acc) -> nothing
@@ -647,7 +649,8 @@ function _classify_outage_component!(
     else
         @info "Branch $(get_name(component)) not found in any reduction map. " *
               "The component may have been eliminated by a radial reduction."
-        _in_service(component) && push!(acc.unresolved, get_name(component))
+        _in_service(component, get_closed_switches(get_reductions(nr))) &&
+            push!(acc.unresolved, get_name(component))
         return
     end
     push!(acc.component_names, get_name(component))
